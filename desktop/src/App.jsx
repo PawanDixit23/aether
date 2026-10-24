@@ -38,9 +38,9 @@ import {
   BellRing
 } from 'lucide-react';
 
-const API_BASE = typeof window !== 'undefined' && window.location.hostname && window.location.hostname !== 'localhost'
+const API_BASE = typeof window !== 'undefined' && window.location.port === '5173'
   ? `http://${window.location.hostname}:8000/api`
-  : 'http://localhost:8000/api';
+  : '/api';
 
 const LANG_OPTIONS = [
   { id: 'auto', label: 'Auto', fullLabel: 'Auto (स्वचालित)', icon: '🌐' },

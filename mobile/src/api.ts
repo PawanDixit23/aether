@@ -71,7 +71,7 @@ export async function deleteTask(taskId: number) {
 
 export async function sendPromptToAether(input_text: string) {
   const base = await getServerUrl();
-  const res = await fetch(`${base}/api/quick-capture`, {
+  const res = await fetch(`${base}/api/action/quick-capture`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ input_text })
