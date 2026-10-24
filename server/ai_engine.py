@@ -5,6 +5,20 @@ import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime
+try:
+    from zoneinfo import ZoneInfo
+    DEFAULT_TZ = ZoneInfo(os.environ.get("TIMEZONE", "Asia/Kolkata"))
+except Exception:
+    DEFAULT_TZ = None
+
+def get_now_str() -> str:
+    try:
+        if DEFAULT_TZ:
+            return datetime.now(DEFAULT_TZ).strftime('%A, %d %B %Y, %I:%M %p')
+    except Exception:
+        pass
+    return datetime.now().strftime('%A, %d %B %Y, %I:%M %p')
+
 import httpx
 from dotenv import load_dotenv
 
@@ -264,7 +278,7 @@ def build_system_prompt(context: dict = None, live_feed: str = "", language: str
     if context:
         ctx_str = f"""
 CURRENT REAL-TIME CONTEXT:
-- Current Local Time: {context.get('current_time', datetime.now().strftime('%A, %d %B %Y, %I:%M %p'))}
+- Current Local Time: {context.get('current_time') or get_now_str()}
 - User Name: Pawan Dixit
 - Detected Home Location: {context.get('user_location', 'Jaipur / Bhankrota, Rajasthan')}
 - Pending Tasks ({len(context.get('tasks', []))}): {', '.join([t.get('title', '') for t in context.get('tasks', [])]) or 'None'}

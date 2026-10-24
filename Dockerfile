@@ -13,9 +13,14 @@ RUN npm run build
 FROM python:3.11-slim
 WORKDIR /app
 
+# Set Timezone to Asia/Kolkata
+ENV TZ="Asia/Kolkata"
+ENV TIMEZONE="Asia/Kolkata"
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python requirements

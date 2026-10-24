@@ -38,6 +38,8 @@ class QuickCaptureRequest(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     language: Optional[str] = "auto" # 'auto', 'hi', 'en', 'hinglish'
+    client_time: Optional[str] = None
+    timezone: Optional[str] = None
 
 class TranslateRequest(BaseModel):
     text: str
@@ -62,7 +64,24 @@ class MemoryCreate(BaseModel):
     fact: str
     category: Optional[str] = "preference"
 
-def build_context(db: Session) -> dict:
+try:
+    from zoneinfo import ZoneInfo
+    DEFAULT_TZ = ZoneInfo(os.environ.get("TIMEZONE", "Asia/Kolkata"))
+except Exception:
+    DEFAULT_TZ = None
+
+def get_current_time_str(client_time: Optional[str] = None, tz_name: Optional[str] = None) -> str:
+    if client_time and client_time.strip():
+        return client_time.strip()
+    try:
+        tz = ZoneInfo(tz_name) if tz_name else DEFAULT_TZ
+        if tz:
+            return datetime.now(tz).strftime("%A, %d %B %Y, %I:%M %p")
+    except Exception:
+        pass
+    return datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
+
+def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None) -> dict:
     tasks = db.query(Task).filter(Task.status == "pending").all()
     records = db.query(FinancialRecord).all()
     memories = db.query(MemoryItem).all()
@@ -72,7 +91,7 @@ def build_context(db: Session) -> dict:
     balance = total_income - total_expense
 
     return {
-        "current_time": datetime.now().strftime("%A, %d %B %Y, %I:%M %p"),
+        "current_time": get_current_time_str(client_time, tz_name),
         "tasks": [{"id": t.id, "title": t.title, "priority": t.priority, "reminder_time": t.reminder_time} for t in tasks],
         "total_income": total_income,
         "total_expense": total_expense,
@@ -92,7 +111,7 @@ async def quick_capture(req: QuickCaptureRequest, db: Session = Depends(get_db))
     db.add(ChatMessage(role="user", content=user_msg))
     db.commit()
 
-    context = build_context(db)
+    context = build_context(db, client_time=req.client_time, tz_name=req.timezone)
     lang = req.language or "auto"
     parsed = await parse_intent_with_llm(user_msg, context, user_lat=req.latitude, user_lon=req.longitude, language=lang)
     

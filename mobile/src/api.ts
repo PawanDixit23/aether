@@ -69,12 +69,17 @@ export async function deleteTask(taskId: number) {
   return res.json();
 }
 
-export async function sendPromptToAether(input_text: string) {
+export async function sendPromptToAether(input_text: string, language: string = 'auto') {
   const base = await getServerUrl();
   const res = await fetch(`${base}/api/action/quick-capture`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ input_text })
+    body: JSON.stringify({
+      input_text,
+      language,
+      client_time: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
+      timezone: 'Asia/Kolkata'
+    })
   });
   if (!res.ok) throw new Error('Failed to send prompt');
   return res.json();

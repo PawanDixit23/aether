@@ -650,7 +650,9 @@ export default function App() {
         input_text: prompt,
         latitude: userCoords?.latitude || null,
         longitude: userCoords?.longitude || null,
-        language: selectedLang
+        language: selectedLang,
+        client_time: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
       };
 
       const resp = await fetch(`${API_BASE}/action/quick-capture`, {
