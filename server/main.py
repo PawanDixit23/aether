@@ -319,7 +319,7 @@ def get_live_news(limit: int = 5):
 @app.get("/api/reminders/due")
 def get_due_reminders(db: Session = Depends(get_db)):
     """Fetch pending tasks whose reminder time has arrived or passed and have not been alerted yet."""
-    now = datetime.now()
+    now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     tasks = db.query(Task).filter(
         Task.status == "pending",
         Task.notified == False
