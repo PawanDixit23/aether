@@ -3,6 +3,8 @@ import json
 from datetime import datetime
 from typing import Optional, List
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -489,3 +491,33 @@ def undo_action(log_id: int, db: Session = Depends(get_db)):
     log.is_undone = True
     db.commit()
     return {"message": "Action successfully reversed (Undone)"}
+
+# ----------------- Health Check -----------------
+@app.get("/health")
+@app.get("/api/health")
+def health():
+    return {
+        "status": "healthy",
+        "app": "Aether Autonomous Executive Core",
+        "version": "0.1.0",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+# ----------------- Static Frontend Hosting (Single-Service Cloud Deployment) -----------------
+DIST_DIR = os.path.join(os.path.dirname(__file__), "..", "desktop", "dist")
+if os.path.exists(DIST_DIR):
+    assets_dir = os.path.join(DIST_DIR, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}")
+    def serve_frontend(full_path: str):
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API endpoint not found")
+        file_path = os.path.join(DIST_DIR, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        index_file = os.path.join(DIST_DIR, "index.html")
+        if os.path.isfile(index_file):
+            return FileResponse(index_file)
+        return {"message": "Aether Executive Core API running. Build frontend for UI."}

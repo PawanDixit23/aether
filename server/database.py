@@ -3,8 +3,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# Local SQLite database file in server directory
-DB_PATH = os.path.join(os.path.dirname(__file__), "aether.db")
+# Local SQLite database file (supports cloud persistent volume via DB_PATH)
+DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "aether.db"))
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 engine = create_engine(

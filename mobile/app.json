@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Aether ⚡",
+    "slug": "aether-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#080c16"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pawandixit.aether"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#080c16"
+      },
+      "package": "com.pawandixit.aether"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

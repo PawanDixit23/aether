@@ -1,0 +1,17 @@
+# ⚡ Aether 1-Click Cloud Deployment Blueprint for Render
+services:
+  - type: web
+    name: aether-ai-executive
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: dev
+    dockerfilePath: Dockerfile
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DB_PATH
+        value: /app/server/aether.db
+    healthCheckPath: /health

@@ -20,6 +20,7 @@ coverage
 # Dependency directories
 node_modules/
 jspm_packages/
+.expo/
 
 # TypeScript cache
 *.tsbuildinfo
