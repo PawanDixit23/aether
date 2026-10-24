@@ -24,6 +24,15 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "12ad123d-1809-4189-bab7-a47035403dbe"
+      }
+    },
+    "owner": "stack23",
+    "plugins": [
+      "expo-asset"
+    ]
   }
 }
