@@ -823,60 +823,34 @@ export default function App() {
       
       {/* 1. Header with Robot Icon, Share button, and Online Status */}
       <header className="aether-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        <div className="header-brand">
           <div className="bot-squircle">
-            <Bot size={22} color="var(--accent-cyan)" />
+            <Bot size={20} color="var(--accent-cyan)" />
           </div>
           <div>
-            <h1 style={{ 
-              fontFamily: 'var(--font-heading)', 
-              fontSize: '1.25rem', 
-              fontWeight: 800, 
-              letterSpacing: '0.5px',
-              color: '#ffffff',
-              lineHeight: 1.2
-            }}>
+            <h1 className="header-brand-title">
               AETHER
             </h1>
-            <p style={{ 
-              fontSize: '0.82rem', 
-              color: 'var(--text-muted)', 
-              fontWeight: 400,
-              marginTop: '1px'
-            }}>
+            <p className="header-subtitle">
               {t.subtitle}
             </p>
           </div>
         </div>
 
-        {/* Language Selector Dropdown + Share Button & Online Status */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+        {/* Action Controls in a unified non-wrapping flex row */}
+        <div className="header-actions">
           
           {/* Single Language Dropdown Button */}
           <div ref={langDropdownRef} style={{ position: 'relative' }}>
             <button 
               type="button"
+              className="header-btn-lang"
               onClick={() => setIsLangDropdownOpen(!isLangDropdownOpen)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                background: isLangDropdownOpen ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-                border: isLangDropdownOpen ? '1px solid rgba(56, 189, 248, 0.45)' : '1px solid rgba(255, 255, 255, 0.12)',
-                borderRadius: '10px',
-                padding: '6px 12px',
-                color: '#ffffff',
-                fontSize: '0.82rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                boxShadow: isLangDropdownOpen ? '0 0 16px rgba(56, 189, 248, 0.2)' : 'none'
-              }}
               title="Select Language / भाषा चुनें"
             >
               <Languages size={15} color="var(--accent-cyan)" />
-              <span>{currentLangObj.icon} {currentLangObj.label}</span>
-              <ChevronDown size={14} style={{ transform: isLangDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', opacity: 0.7 }} />
+              <span className="lang-label">{currentLangObj.icon} {currentLangObj.label}</span>
+              <ChevronDown size={13} style={{ transform: isLangDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', opacity: 0.7 }} />
             </button>
 
             {isLangDropdownOpen && (
@@ -932,28 +906,15 @@ export default function App() {
             )}
           </div>
 
-          {/* Mobile & Desktop Push Notification Quick Toggle/Test */}
+          {/* Mobile & Desktop Push Notification Quick Toggle */}
           <button
             type="button"
+            className={`header-btn-push ${pushPermission === 'granted' ? 'active' : 'inactive'}`}
             onClick={pushPermission === 'granted' ? handleSendTestPush : handleRequestPushPermission}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              background: pushPermission === 'granted' ? 'rgba(16, 185, 129, 0.12)' : 'rgba(245, 158, 11, 0.12)',
-              border: pushPermission === 'granted' ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid rgba(245, 158, 11, 0.35)',
-              borderRadius: '10px',
-              padding: '6px 12px',
-              color: pushPermission === 'granted' ? '#10b981' : '#f59e0b',
-              fontSize: '0.82rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 0.2s ease'
-            }}
             title={pushPermission === 'granted' ? "Mobile Push: Active (Click to send test alert)" : "Click to Enable Mobile Push Notifications"}
           >
             <BellRing size={15} />
-            <span>{pushPermission === 'granted' ? (effectiveLang === 'en' ? 'Push Active' : 'पुश सक्रिय') : (effectiveLang === 'en' ? 'Enable Push' : 'पुश ऑन करें')}</span>
+            <span className="push-text">{pushPermission === 'granted' ? (effectiveLang === 'en' ? 'Push Active' : 'पुश सक्रिय') : (effectiveLang === 'en' ? 'Enable Push' : 'पुश ऑन करें')}</span>
           </button>
 
           <button 
@@ -963,35 +924,27 @@ export default function App() {
             title="Share Dashboard / शेयर करें"
           >
             <Share2 size={15} />
-            <span>{t.share}</span>
+            <span className="share-text">{t.share}</span>
           </button>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div className="header-online-status">
             {serverOnline ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--accent-cyan)', fontSize: '0.88rem', fontWeight: 500 }}>
-                <Wifi size={16} />
-                <span>{t.online}</span>
+              <div className="status-indicator online">
+                <span className="status-dot-pulse"></span>
+                <span className="status-label">{t.online}</span>
               </div>
             ) : (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#f43f5e', fontSize: '0.88rem', fontWeight: 500 }}>
-                <WifiOff size={16} />
-                <span>{t.offline}</span>
+              <div className="status-indicator offline">
+                <span className="status-dot-offline"></span>
+                <span className="status-label">{t.offline}</span>
               </div>
             )}
           </div>
         </div>
       </header>
 
-      {/* 2. Main Executive Screen Container covering full width */}
-      <main style={{ 
-        width: '100%', 
-        margin: '0', 
-        padding: '24px 32px 40px', 
-        display: 'flex', 
-        flexDirection: 'column', 
-        gap: '20px',
-        flex: 1
-      }}>
+      {/* 2. Main Executive Screen Container */}
+      <main className="aether-main-content">
 
         {/* ACTIVE REMINDER ALERT BANNER */}
         {activeReminderAlert && (
@@ -1115,6 +1068,7 @@ export default function App() {
 
             {/* DYNAMIC WEATHER INFORMATION WIDGET (Serene Cyan Theme) */}
             <div 
+              className="weather-widget"
               title={`Live Weather & Day Progression: ${dayPhase.periodDesc}`}
               style={{
                 display: 'flex',
@@ -1130,7 +1084,7 @@ export default function App() {
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <WeatherSymbol 
-                  size={30} 
+                  size={28} 
                   color={dayPhase.color} 
                   className={
                     dayPhase.phase === 'morning' ? 'weather-sun' : 
@@ -1151,7 +1105,7 @@ export default function App() {
                     {weather.temp}°C
                   </span>
                   <span style={{ 
-                    fontSize: '0.76rem', 
+                    fontSize: '0.74rem', 
                     color: dayPhase.color, 
                     fontWeight: 600,
                     textTransform: 'uppercase'
@@ -1159,7 +1113,7 @@ export default function App() {
                     {dayPhase.periodDesc}
                   </span>
                 </div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <span>{effectiveLang === 'en' ? (weather.condition_en || 'Mostly Sunny') : effectiveLang === 'hinglish' ? (weather.condition_en || 'Mostly Sunny') : (weather.condition_hi || 'धूप खिली हुई')}</span>
                   <span>•</span>
                   <span style={{ color: '#cbd5e1' }}>
@@ -1171,8 +1125,8 @@ export default function App() {
 
           </div>
 
-          {/* 3 Clickable Stat Cards (Responsive: 3 cols on desktop, 2 on tablet, 1 on mobile) */}
-          <div className="stat-card-row" style={{ marginTop: '22px' }}>
+          {/* 3 Clickable Stat Cards (Responsive: 3 cols on desktop, tablet, and mobile) */}
+          <div className="stat-card-row">
             
             {/* 1. Pending tasks (Emerald) - Click to view/manage tasks */}
             <div 
@@ -1180,18 +1134,18 @@ export default function App() {
               className="stat-card stat-card-emerald" 
               title="Click to view/manage tasks"
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div className="stat-card-top">
                 <div style={{ color: 'var(--accent-emerald)' }}>
-                  <CheckSquare size={18} />
+                  <CheckSquare size={17} />
                 </div>
-                <span style={{ fontSize: '0.68rem', color: 'var(--accent-emerald)', background: 'rgba(16, 185, 129, 0.15)', padding: '1px 6px', borderRadius: '4px' }}>
+                <span className="stat-card-badge badge-emerald">
                   {t.clickToView}
                 </span>
               </div>
-              <div style={{ fontSize: '1.85rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.1, marginTop: '2px' }}>
+              <div className="stat-card-number">
                 {pendingTasksList.length || 1}
               </div>
-              <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+              <div className="stat-card-title">
                 {t.pendingTasks}
               </div>
             </div>
@@ -1202,18 +1156,18 @@ export default function App() {
               className="stat-card stat-card-blue" 
               title="Click to view upcoming events"
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div className="stat-card-top">
                 <div style={{ color: 'var(--accent-blue)' }}>
-                  <Calendar size={18} />
+                  <Calendar size={17} />
                 </div>
-                <span style={{ fontSize: '0.68rem', color: 'var(--accent-blue)', background: 'rgba(59, 130, 246, 0.15)', padding: '1px 6px', borderRadius: '4px' }}>
+                <span className="stat-card-badge badge-blue">
                   {t.events}
                 </span>
               </div>
-              <div style={{ fontSize: '1.85rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.1, marginTop: '2px' }}>
+              <div className="stat-card-number">
                 {upcomingCount}
               </div>
-              <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+              <div className="stat-card-title">
                 {t.upcoming}
               </div>
             </div>
@@ -1224,18 +1178,18 @@ export default function App() {
               className="stat-card stat-card-purple" 
               title="Click to review alerts"
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div className="stat-card-top">
                 <div style={{ color: 'var(--accent-purple)' }}>
-                  <Bell size={18} />
+                  <Bell size={17} />
                 </div>
-                <span style={{ fontSize: '0.68rem', color: 'var(--accent-purple)', background: 'rgba(168, 85, 247, 0.15)', padding: '1px 6px', borderRadius: '4px' }}>
+                <span className="stat-card-badge badge-purple">
                   {t.alertsBadge}
                 </span>
               </div>
-              <div style={{ fontSize: '1.85rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.1, marginTop: '2px' }}>
+              <div className="stat-card-number">
                 {alertCount}
               </div>
-              <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+              <div className="stat-card-title">
                 {t.alerts}
               </div>
             </div>
@@ -1337,13 +1291,13 @@ export default function App() {
             onClick={() => setActiveModule(activeModule === 'agenda' ? null : 'agenda')}
             className={`action-module-card ${activeModule === 'agenda' ? 'active' : ''}`}
           >
-            <div style={{ color: 'var(--accent-cyan)' }}>
-              <Calendar size={20} />
+            <div className="module-icon-wrap" style={{ color: 'var(--accent-cyan)' }}>
+              <Calendar size={18} />
             </div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#ffffff', marginTop: '4px' }}>
+            <h3 className="module-title">
               Agenda
             </h3>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+            <p className="module-desc">
               {t.agendaDesc}
             </p>
           </div>
@@ -1353,13 +1307,13 @@ export default function App() {
             onClick={() => setActiveModule(activeModule === 'wealth' ? null : 'wealth')}
             className={`action-module-card ${activeModule === 'wealth' ? 'active' : ''}`}
           >
-            <div style={{ color: 'var(--accent-cyan)' }}>
-              <Wallet size={20} />
+            <div className="module-icon-wrap" style={{ color: 'var(--accent-cyan)' }}>
+              <Wallet size={18} />
             </div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#ffffff', marginTop: '4px' }}>
+            <h3 className="module-title">
               Wealth
             </h3>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+            <p className="module-desc">
               {t.wealthDesc}
             </p>
           </div>
@@ -1369,13 +1323,13 @@ export default function App() {
             onClick={() => setActiveModule(activeModule === 'vault' ? null : 'vault')}
             className={`action-module-card ${activeModule === 'vault' ? 'active' : ''}`}
           >
-            <div style={{ color: 'var(--accent-cyan)' }}>
-              <Layers size={20} />
+            <div className="module-icon-wrap" style={{ color: 'var(--accent-cyan)' }}>
+              <Layers size={18} />
             </div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#ffffff', marginTop: '4px' }}>
+            <h3 className="module-title">
               Vault
             </h3>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+            <p className="module-desc">
               {t.vaultDesc}
             </p>
           </div>
@@ -1385,13 +1339,13 @@ export default function App() {
             onClick={() => setActiveModule(activeModule === 'activity' ? null : 'activity')}
             className={`action-module-card ${activeModule === 'activity' ? 'active' : ''}`}
           >
-            <div style={{ color: 'var(--accent-cyan)' }}>
-              <ShieldCheck size={20} />
+            <div className="module-icon-wrap" style={{ color: 'var(--accent-cyan)' }}>
+              <ShieldCheck size={18} />
             </div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#ffffff', marginTop: '4px' }}>
+            <h3 className="module-title">
               Activity
             </h3>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+            <p className="module-desc">
               {t.activityDesc}
             </p>
           </div>
