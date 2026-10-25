@@ -277,6 +277,73 @@ const GoogleIcon = () => (
   </svg>
 );
 
+// Lightweight Markdown & Links message formatter
+const FormattedMessage = ({ text }) => {
+  if (!text) return null;
+  const lines = text.split('\n');
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      {lines.map((line, idx) => {
+        if (!line.trim()) return <div key={idx} style={{ height: '4px' }} />;
+
+        // Match markdown links [title](url) or bold **text** or raw https URLs
+        const regex = /(\[.*?\]\(https?:\/\/[^\s)]+\)|\*\*.*?\*\*|https?:\/\/[^\s)]+)/g;
+        const parts = line.split(regex);
+
+        return (
+          <div key={idx} style={{ lineHeight: '1.55', wordBreak: 'break-word' }}>
+            {parts.map((part, pIdx) => {
+              if (!part) return null;
+
+              // Check [title](url)
+              const linkMatch = part.match(/^\[(.*?)\]\((https?:\/\/[^\s)]+)\)$/);
+              if (linkMatch) {
+                return (
+                  <a
+                    key={pIdx}
+                    href={linkMatch[2]}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: 'var(--accent-cyan)', fontWeight: 600, textDecoration: 'underline' }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {linkMatch[1]}
+                  </a>
+                );
+              }
+
+              // Check raw url
+              if (part.startsWith('http://') || part.startsWith('https://')) {
+                return (
+                  <a
+                    key={pIdx}
+                    href={part}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: 'var(--accent-cyan)', textDecoration: 'underline' }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {part.length > 40 ? part.slice(0, 37) + '...' : part}
+                  </a>
+                );
+              }
+
+              // Check **bold**
+              const boldMatch = part.match(/^\*\*(.*?)\*\*$/);
+              if (boldMatch) {
+                return <strong key={pIdx} style={{ color: '#ffffff', fontWeight: 700 }}>{boldMatch[1]}</strong>;
+              }
+
+              return <span key={pIdx}>{part}</span>;
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // 3D Fibonacci Particle Sphere Visual for Aether Core
 const AetherParticleSphere = ({ isListening, isSpeaking, onClick }) => {
   const canvasRef = useRef(null);
@@ -395,7 +462,7 @@ export default function App() {
     localStorage.getItem('aether_onboarding_done') === 'true' || 
     Boolean(localStorage.getItem('aether_user_email'))
   );
-  const [onboardingStep, setOnboardingStep] = useState(1);
+  const [onboardingStep, setOnboardingStep] = useState(3);
   const [userName, setUserName] = useState(() => localStorage.getItem('aether_user_name') || '');
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('aether_gemini_key') || '');
 
@@ -413,6 +480,12 @@ export default function App() {
       : 'Raja')
   );
   const [tempPreferredName, setTempPreferredName] = useState(userPreferredName);
+  const [appTheme, setAppTheme] = useState(() => localStorage.getItem('aether_theme') || 'obsidian');
+  const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(() => localStorage.getItem('aether_voice_output') !== 'false');
+  const [chimesEnabled, setChimesEnabled] = useState(() => localStorage.getItem('aether_chimes') !== 'false');
+  const [speechRate, setSpeechRate] = useState(() => parseFloat(localStorage.getItem('aether_speech_rate') || '1.0'));
+  const [customUsername, setCustomUsername] = useState(() => localStorage.getItem('aether_username') || '');
+  const [newMemoryText, setNewMemoryText] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState(() => localStorage.getItem('aether_selected_voice') || 'puck');
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('aether_selected_model') || 'gemini-1.5-flash');
@@ -453,7 +526,9 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const effectiveLang = selectedLang === 'auto' ? 'hi' : selectedLang;
+  const effectiveLang = selectedLang === 'auto' 
+    ? (typeof navigator !== 'undefined' && navigator.language?.toLowerCase().startsWith('hi') ? 'hi' : 'en')
+    : selectedLang;
   const t = UI_TRANSLATIONS[effectiveLang] || UI_TRANSLATIONS.hi;
   const currentLangObj = LANG_OPTIONS.find(l => l.id === selectedLang) || LANG_OPTIONS[0];
 
@@ -586,8 +661,9 @@ export default function App() {
 
         recordAuthEvent(gEmail, gName);
 
+        localStorage.setItem('aether_onboarding_done', 'true');
+        setOnboardingDone(true);
         if (window.location.hash.includes('access_token')) {
-          setOnboardingStep(4);
           showToast(`Google से सफलतापूर्वक लिंक: ${gName}`, 'success');
           window.history.replaceState(null, '', window.location.pathname);
         }
@@ -611,10 +687,9 @@ export default function App() {
 
         recordAuthEvent(gEmail, gName);
 
-        if (onboardingStep === 3) {
-          setOnboardingStep(4);
-          showToast(`Google से सफलतापूर्वक लिंक: ${gName}`, 'success');
-        }
+        localStorage.setItem('aether_onboarding_done', 'true');
+        setOnboardingDone(true);
+        showToast(`Google से सफलतापूर्वक लिंक: ${gName}`, 'success');
       }
     });
 
@@ -623,7 +698,8 @@ export default function App() {
 
   const handleGoogleSignIn = async () => {
     if (userEmail) {
-      setOnboardingStep(4);
+      localStorage.setItem('aether_onboarding_done', 'true');
+      setOnboardingDone(true);
       return;
     }
     setGoogleAuthLoading(true);
@@ -666,10 +742,9 @@ export default function App() {
     setGoogleError('');
     showToast(`Google Account कनेक्ट हुआ: ${email}`, 'success');
     setShowGoogleModal(false);
-    setTimeout(() => {
-      setOnboardingStep(4);
-      setGoogleLoginSuccess(false);
-    }, 500);
+    localStorage.setItem('aether_onboarding_done', 'true');
+    setOnboardingDone(true);
+    setGoogleLoginSuccess(false);
   };
 
   const handlePlayVoicePreview = (voice) => {
@@ -722,19 +797,29 @@ export default function App() {
     setOnboardingDone(false);
     setOnboardingStep(1);
     setIsSettingsOpen(false);
-    showToast("सफलतापूर्वक साइन आउट किया गया", "info");
+    showToast(
+      effectiveLang === 'en' ? "Signed out successfully" : effectiveLang === 'hinglish' ? "Successfully sign out ho gaye" : "सफलतापूर्वक साइन आउट किया गया",
+      "info"
+    );
   };
 
-  const handleDeleteAccount = async () => {
-    if (window.confirm("क्या आप अपना लोकल डेटा और खाता रीसेट करना चाहते हैं?")) {
-      localStorage.clear();
-      await handleSignOut();
-      showToast("खाता डेटा साफ़ कर दिया गया", "info");
-    }
+  const handleDeleteAccount = () => {
+    setActiveSubModal('delete-account');
+  };
+
+  const handleConfirmAccountReset = async () => {
+    localStorage.clear();
+    await handleSignOut();
+    setActiveSubModal(null);
+    showToast(
+      effectiveLang === 'en' ? "Account data reset successfully" : effectiveLang === 'hinglish' ? "Account data reset ho gaya" : "खाता डेटा सफलतापूर्वक रीसेट कर दिया गया",
+      "info"
+    );
   };
 
   // Play pleasant executive reminder chime
   const playReminderChime = () => {
+    if (!chimesEnabled) return;
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (!AudioCtx) return;
@@ -996,17 +1081,32 @@ export default function App() {
   const dayPhase = getDayPhaseInfo();
   const WeatherSymbol = dayPhase.IconComponent;
 
-  // Voice Recognition (Speech to Text)
-  const toggleVoiceRecognition = () => {
+  // Voice Recognition (Speech to Text) with Mobile Device Microphone Support
+  const toggleVoiceRecognition = async () => {
     if (isListening) {
-      if (recognitionRef.current) recognitionRef.current.stop();
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (e) {}
+      }
       setIsListening(false);
+      return;
+    }
+
+    // Explicitly prompt / unlock microphone via getUserMedia (Essential for Android WebView & Mobile Browsers)
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop());
+      }
+    } catch (micErr) {
+      console.warn('Microphone permission check failed:', micErr);
+      showToast("कृपया माइक्रोफ़ोन अनुमति (Microphone Permission) दें।", 'error');
       return;
     }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      showToast("Voice recognition not supported in this browser. Please use Chrome or Edge.", 'error');
+      showToast("इस डिवाइस/WebView में वॉयस इनपुट उपलब्ध नहीं है। कृपया टाइप करें।", 'info');
+      setIsTypeInputOpen(true);
       return;
     }
 
@@ -1015,11 +1115,11 @@ export default function App() {
       recognitionRef.current = recognition;
       recognition.continuous = false;
       recognition.interimResults = true;
-      recognition.lang = 'en-IN';
+      recognition.lang = selectedLang === 'hi' ? 'hi-IN' : 'en-IN';
 
       recognition.onstart = () => {
         setIsListening(true);
-        showToast("🎙️ सुन रहा हूँ... बोलिए (उदा: 'weather today' या 'ताज़ा समाचार')", 'info');
+        showToast("🎙️ Aether सुन रहा है... बोलिए", 'info');
       };
 
       recognition.onresult = (event) => {
@@ -1032,15 +1132,27 @@ export default function App() {
       };
 
       recognition.onerror = (event) => {
+        console.error("Speech recognition error:", event.error);
         setIsListening(false);
-        showToast(`माइक त्रुटि: ${event.error}`, 'error');
+        if (event.error === 'no-speech') {
+          showToast("कोई आवाज़ नहीं सुनी गई। पुनः प्रयास करें।", 'info');
+        } else if (event.error === 'not-allowed') {
+          showToast("माइक्रोफ़ोन अनुमति अस्वीकृत। सेटिंग्स में माइक ऑन करें।", 'error');
+        } else {
+          showToast(`माइक स्टेटस: ${event.error}`, 'error');
+        }
       };
 
-      recognition.onend = () => setIsListening(false);
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
       recognition.start();
     } catch (err) {
+      console.error("Failed to start speech recognition:", err);
       setIsListening(false);
-      showToast("माइक्रोफोन की अनुमति दें।", 'error');
+      showToast("माइक शुरू करने में समस्या आई। टाइप प्रॉम्प्ट का उपयोग करें।", 'error');
+      setIsTypeInputOpen(true);
     }
   };
 
@@ -1048,12 +1160,12 @@ export default function App() {
 
   // Text to Speech
   const speakText = (text) => {
-    if (!('speechSynthesis' in window)) return;
+    if (!('speechSynthesis' in window) || !voiceOutputEnabled) return;
     window.speechSynthesis.cancel();
     const cleanText = text.replace(/\[.*?\]\(.*?\)/g, '').replace(/[*_#`🔗]/g, '');
     const utterance = new SpeechSynthesisUtterance(cleanText);
     const activeVoice = AETHER_VOICES.find(v => v.id === selectedVoice);
-    utterance.rate = activeVoice ? activeVoice.rate : 1.05;
+    utterance.rate = (activeVoice ? activeVoice.rate : 1.05) * speechRate;
     utterance.pitch = activeVoice ? activeVoice.pitch : 1.0;
     const hasDevanagari = /[\u0900-\u097F]/.test(cleanText);
     utterance.lang = (selectedLang === 'hi' || hasDevanagari) ? 'hi-IN' : 'en-IN';
@@ -2021,7 +2133,7 @@ export default function App() {
                   onClick={handleDeleteAccount}
                   style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.74rem', textDecoration: 'underline', cursor: 'pointer', marginTop: '4px', padding: 0 }}
                 >
-                  Delete account
+                  {effectiveLang === 'en' ? 'Delete account' : effectiveLang === 'hinglish' ? 'Account delete karein' : 'खाता हटाएं (Delete account)'}
                 </button>
               </div>
             </div>
@@ -2030,7 +2142,7 @@ export default function App() {
               onClick={handleSignOut} 
               className="settings-signout-btn"
             >
-              Sign out
+              {effectiveLang === 'en' ? 'Sign out' : effectiveLang === 'hinglish' ? 'Sign out' : 'साइन आउट'}
             </button>
           </div>
 
@@ -2048,13 +2160,13 @@ export default function App() {
               </div>
             </div>
 
-            <div className="settings-row-item" onClick={() => setActiveSubModal('profile-name')}>
+            <div className="settings-row-item" onClick={() => setActiveSubModal('username')}>
               <div className="settings-row-left">
                 <div className="settings-row-icon-box"><User size={16} /></div>
                 <span>Username</span>
               </div>
               <div className="settings-row-right">
-                <span>@{userPreferredName.toLowerCase().replace(/\s+/g, '')}</span>
+                <span>{customUsername ? `@${customUsername}` : `@${userPreferredName.toLowerCase().replace(/\s+/g, '')}`}</span>
                 <ChevronRight size={16} />
               </div>
             </div>
@@ -2074,29 +2186,29 @@ export default function App() {
           {/* SECTION: APP */}
           <div className="settings-section-heading">APP</div>
           <div className="settings-card-group">
-            <div className="settings-row-item" onClick={() => showToast('Theme: Obsidian Dark Active', 'info')}>
+            <div className="settings-row-item" onClick={() => setActiveSubModal('appearance')}>
               <div className="settings-row-left">
                 <div className="settings-row-icon-box"><Moon size={16} /></div>
                 <span>Appearance</span>
               </div>
               <div className="settings-row-right">
-                <span>Dark</span>
+                <span>{appTheme === 'sapphire' ? 'Sapphire' : appTheme === 'oled' ? 'OLED Pure' : 'Obsidian Dark'}</span>
                 <ChevronRight size={16} />
               </div>
             </div>
 
-            <div className="settings-row-item" onClick={() => showToast('Audio & Voice Output is enabled', 'info')}>
+            <div className="settings-row-item" onClick={() => setActiveSubModal('sound')}>
               <div className="settings-row-left">
                 <div className="settings-row-icon-box"><Volume2 size={16} /></div>
                 <span>Sound & haptics</span>
               </div>
               <div className="settings-row-right">
-                <span>On</span>
+                <span>{voiceOutputEnabled ? 'On' : 'Muted'}</span>
                 <ChevronRight size={16} />
               </div>
             </div>
 
-            <div className="settings-row-item" onClick={() => setIsLangDropdownOpen(!isLangDropdownOpen)}>
+            <div className="settings-row-item" onClick={() => setActiveSubModal('language')}>
               <div className="settings-row-left">
                 <div className="settings-row-icon-box"><Languages size={16} /></div>
                 <span>Language</span>
@@ -2107,7 +2219,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="settings-row-item" onClick={() => { setIsSettingsOpen(false); setActiveTab('memory'); }}>
+            <div className="settings-row-item" onClick={() => setActiveSubModal('memory')}>
               <div className="settings-row-left">
                 <div className="settings-row-icon-box"><Database size={16} /></div>
                 <span>Memory</span>
@@ -2306,22 +2418,31 @@ export default function App() {
                   }
                 </p>
 
-                {/* Latest AI Response Preview (if present) */}
+                {/* Latest AI Response (Full Content with Clickable Links) */}
                 {chatHistory.length > 0 && (
                   <div className="jarvis-response-bubble">
                     <div className="jarvis-bubble-header">
                       <span className="jarvis-bubble-tag">Assistant</span>
-                      <button
-                        type="button"
-                        onClick={() => speakText(chatHistory[chatHistory.length - 1].content)}
-                        style={{ background: 'none', border: 'none', color: 'var(--accent-cyan)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.74rem' }}
-                      >
-                        <Volume2 size={13} /> Speak
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setIsHistoryOpen(true)}
+                          style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#94a3b8', borderRadius: '8px', padding: '3px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem' }}
+                          title="View Full Interaction Transcript"
+                        >
+                          <Clock size={12} /> Full Log
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => speakText(chatHistory[chatHistory.length - 1].content)}
+                          style={{ background: 'none', border: 'none', color: 'var(--accent-cyan)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.74rem' }}
+                        >
+                          <Volume2 size={13} /> Speak
+                        </button>
+                      </div>
                     </div>
                     <div className="jarvis-bubble-text">
-                      {chatHistory[chatHistory.length - 1].content.slice(0, 160)}
-                      {chatHistory[chatHistory.length - 1].content.length > 160 ? '...' : ''}
+                      <FormattedMessage text={chatHistory[chatHistory.length - 1].content} />
                     </div>
                   </div>
                 )}
@@ -2783,6 +2904,347 @@ export default function App() {
         </div>
       )}
 
+            {/* 8. Appearance & Theme Modal */}
+      {activeSubModal === 'appearance' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '400px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>Appearance & Theme</h3>
+              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {[
+                { id: 'obsidian', name: 'Obsidian Dark (Default)', desc: 'Classic deep obsidian with electric cyan accents', color: '#00e5ff' },
+                { id: 'sapphire', name: 'Midnight Sapphire', desc: 'Cosmic indigo with radiant purple aura', color: '#818cf8' },
+                { id: 'oled', name: 'OLED Pure Black', desc: 'Pitch black background optimized for battery', color: '#38bdf8' }
+              ].map(themeItem => (
+                <div
+                  key={themeItem.id}
+                  onClick={() => {
+                    setAppTheme(themeItem.id);
+                    localStorage.setItem('aether_theme', themeItem.id);
+                    document.body.className = `theme-${themeItem.id}`;
+                    showToast(`Theme applied: ${themeItem.name}`, 'success');
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '12px 14px',
+                    borderRadius: '12px',
+                    background: appTheme === themeItem.id ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                    border: `1px solid ${appTheme === themeItem.id ? themeItem.color : 'rgba(255, 255, 255, 0.08)'}`,
+                    cursor: 'pointer'
+                  }}
+                >
+                  <div>
+                    <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.9rem' }}>{themeItem.name}</div>
+                    <div style={{ color: '#94a3b8', fontSize: '0.76rem' }}>{themeItem.desc}</div>
+                  </div>
+                  {appTheme === themeItem.id && <Check size={18} color={themeItem.color} />}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 9. Sound & Haptics Modal */}
+      {activeSubModal === 'sound' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '400px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>Sound & Haptics</h3>
+              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                <div>
+                  <div style={{ color: '#fff', fontSize: '0.9rem', fontWeight: 600 }}>AI Voice Readout</div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.76rem' }}>Speak assistant answers aloud automatically</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextVal = !voiceOutputEnabled;
+                    setVoiceOutputEnabled(nextVal);
+                    localStorage.setItem('aether_voice_output', String(nextVal));
+                    showToast(nextVal ? 'Voice output enabled' : 'Voice output muted', 'info');
+                  }}
+                  style={{
+                    background: voiceOutputEnabled ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.15)',
+                    border: 'none',
+                    color: voiceOutputEnabled ? '#080c16' : '#94a3b8',
+                    padding: '6px 14px',
+                    borderRadius: '20px',
+                    fontWeight: 700,
+                    fontSize: '0.78rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {voiceOutputEnabled ? 'ON' : 'OFF'}
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                <div>
+                  <div style={{ color: '#fff', fontSize: '0.9rem', fontWeight: 600 }}>Audio Chimes & Tones</div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.76rem' }}>Executive reminder sound effects</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextVal = !chimesEnabled;
+                    setChimesEnabled(nextVal);
+                    localStorage.setItem('aether_chimes', String(nextVal));
+                    if (nextVal) playReminderChime();
+                    showToast(nextVal ? 'Chimes enabled' : 'Chimes muted', 'info');
+                  }}
+                  style={{
+                    background: chimesEnabled ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.15)',
+                    border: 'none',
+                    color: chimesEnabled ? '#080c16' : '#94a3b8',
+                    padding: '6px 14px',
+                    borderRadius: '20px',
+                    fontWeight: 700,
+                    fontSize: '0.78rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {chimesEnabled ? 'ON' : 'OFF'}
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0' }}>
+                <div>
+                  <div style={{ color: '#fff', fontSize: '0.9rem', fontWeight: 600 }}>Speech Speed</div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.76rem' }}>Speaking pace for responses</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextVal = speechRate >= 1.2 ? 1.0 : 1.2;
+                    setSpeechRate(nextVal);
+                    localStorage.setItem('aether_speech_rate', String(nextVal));
+                    showToast(`Speech rate: ${nextVal}x`, 'info');
+                  }}
+                  style={{
+                    background: 'rgba(56, 189, 248, 0.15)',
+                    border: '1px solid rgba(56, 189, 248, 0.3)',
+                    color: 'var(--accent-cyan)',
+                    padding: '6px 14px',
+                    borderRadius: '10px',
+                    fontWeight: 700,
+                    fontSize: '0.78rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {speechRate}x Pace
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 10. Language Selection Modal */}
+      {activeSubModal === 'language' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '380px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>
+                {effectiveLang === 'en' ? 'Preferred Language' : effectiveLang === 'hinglish' ? 'Preferred Language' : 'पसंदीदा भाषा'}
+              </h3>
+              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {[
+                { code: 'auto', label: effectiveLang === 'en' ? 'Follow Phone (Auto)' : effectiveLang === 'hinglish' ? 'Follow Phone (Auto)' : 'फ़ोन के अनुसार (स्वचालित)', icon: '🌐' },
+                { code: 'hi', label: 'हिन्दी (Hindi)', icon: '🇮🇳' },
+                { code: 'en', label: 'English', icon: '🇬🇧' },
+                { code: 'hinglish', label: 'Hinglish (हिंग्लिश)', icon: '🇮🇳' }
+              ].map(lang => (
+                <div
+                  key={lang.code}
+                  onClick={() => {
+                    setSelectedLang(lang.code);
+                    localStorage.setItem('aether_language', lang.code);
+                    setActiveSubModal(null);
+                    showToast(
+                      lang.code === 'en' ? `Language set to: ${lang.label}` : lang.code === 'hinglish' ? `Language set ho gayi: ${lang.label}` : `भाषा सेट की गई: ${lang.label}`,
+                      'success'
+                    );
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '12px 14px',
+                    borderRadius: '12px',
+                    background: selectedLang === lang.code ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                    border: `1px solid ${selectedLang === lang.code ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.08)'}`,
+                    cursor: 'pointer'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span>{lang.icon}</span>
+                    <span style={{ color: '#fff', fontWeight: 600, fontSize: '0.92rem' }}>{lang.label}</span>
+                  </div>
+                  {selectedLang === lang.code && <Check size={18} color="var(--accent-cyan)" />}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 11. Memory Vault Manager Modal */}
+      {activeSubModal === 'memory' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '480px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8', fontWeight: 700 }}>
+                <Database size={18} />
+                <span>EXECUTIVE MEMORY VAULT</span>
+              </div>
+              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              if (newMemoryText.trim()) {
+                handleSendPrompt("Remember that: " + newMemoryText.trim());
+                setNewMemoryText('');
+                showToast(
+                  effectiveLang === 'en' ? "Fact added to memory" : effectiveLang === 'hinglish' ? "Memory me add ho gaya" : "नया तथ्य स्मृति में जोड़ा गया",
+                  'success'
+                );
+              }
+            }} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <input
+                type="text"
+                placeholder={effectiveLang === 'en' ? "Add a new fact to remember..." : effectiveLang === 'hinglish' ? "Nayi memory ya fact likhein..." : "नई मेमोरी या तथ्य जोड़ें..."}
+                value={newMemoryText}
+                onChange={(e) => setNewMemoryText(e.target.value)}
+                style={{ flex: 1, background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.84rem' }}
+              />
+              <button type="submit" style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 14px', borderRadius: '10px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}>
+                {effectiveLang === 'en' ? '+ Add' : effectiveLang === 'hinglish' ? '+ Add' : '+ जोड़ें'}
+              </button>
+            </form>
+
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {memories.length === 0 ? (
+                <div style={{ color: '#64748b', fontSize: '0.84rem', textAlign: 'center', padding: '30px 0' }}>
+                  {effectiveLang === 'en' ? 'No facts recorded yet.' : effectiveLang === 'hinglish' ? 'Abhi koi memory saved nahi hai.' : 'अभी कोई मेमोरी दर्ज नहीं है।'}
+                </div>
+              ) : (
+                memories.map(mem => (
+                  <div key={mem.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '10px' }}>
+                    <div style={{ color: '#e2e8f0', fontSize: '0.84rem', flex: 1, paddingRight: '10px' }}>{mem.content}</div>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteMemory(mem.id)}
+                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem', padding: '2px 6px' }}
+                      title="Delete this fact"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 12. Custom Username Editor Modal */}
+      {activeSubModal === 'username' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '380px' }}>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>
+              {effectiveLang === 'en' ? 'Executive Username' : effectiveLang === 'hinglish' ? 'Executive Username' : 'एग्जीक्यूटिव यूज़रनेम'}
+            </h3>
+            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '16px' }}>
+              {effectiveLang === 'en' ? 'Your unique @handle across Aether networks.' : effectiveLang === 'hinglish' ? 'Aapka unique @handle Aether ke liye.' : 'Aether पर आपकी पहचान के लिए विशिष्ट @हैंडल।'}
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '12px', padding: '0 12px', marginBottom: '18px' }}>
+              <span style={{ color: 'var(--accent-cyan)', fontWeight: 700 }}>@</span>
+              <input
+                type="text"
+                value={customUsername || userPreferredName.toLowerCase().replace(/\s+/g, '')}
+                onChange={(e) => setCustomUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
+                placeholder="username"
+                style={{ width: '100%', background: 'transparent', border: 'none', padding: '10px 8px', color: '#fff', outline: 'none' }}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', padding: '8px 14px', cursor: 'pointer' }}>
+                {effectiveLang === 'en' ? 'Cancel' : effectiveLang === 'hinglish' ? 'Cancel' : 'रद्द करें'}
+              </button>
+              <button 
+                type="button" 
+                onClick={() => {
+                  const val = customUsername.trim() || userPreferredName.toLowerCase().replace(/\s+/g, '');
+                  setCustomUsername(val);
+                  localStorage.setItem('aether_username', val);
+                  setActiveSubModal(null);
+                  showToast(
+                    effectiveLang === 'en' ? `Username updated: @${val}` : effectiveLang === 'hinglish' ? `Username update ho gaya: @${val}` : `यूज़रनेम अपडेट हुआ: @${val}`,
+                    'success'
+                  );
+                }}
+                style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 18px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}
+              >
+                {effectiveLang === 'en' ? 'Save' : effectiveLang === 'hinglish' ? 'Save' : 'सेव करें'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 13. Delete Account Custom Modal */}
+      {activeSubModal === 'delete-account' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.88)', backdropFilter: 'blur(14px)', zIndex: 130, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '380px', textAlign: 'center' }}>
+            <div style={{ width: '50px', height: '50px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
+              <Shield size={24} color="#ef4444" />
+            </div>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>
+              {effectiveLang === 'en' 
+                ? 'Reset Account & Data?' 
+                : effectiveLang === 'hinglish' 
+                ? 'Account aur Data Reset Karein?' 
+                : 'खाता और डेटा रीसेट करें?'}
+            </h3>
+            <p style={{ fontSize: '0.82rem', color: '#94a3b8', lineHeight: '1.45', marginBottom: '20px' }}>
+              {effectiveLang === 'en' 
+                ? 'This will clear your local session, private keys, authentication data, and reset the app.' 
+                : effectiveLang === 'hinglish' 
+                ? 'Yeh aapka local session, private keys aur login data delete kar dega.' 
+                : 'यह आपके स्थानीय सत्र, निजी चाबियाँ और प्रमाणीकरण डेटा को हटा देगा।'}
+            </p>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button 
+                type="button" 
+                onClick={() => setActiveSubModal(null)} 
+                style={{ flex: 1, background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#fff', padding: '10px', borderRadius: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                {effectiveLang === 'en' ? 'Cancel' : effectiveLang === 'hinglish' ? 'Cancel' : 'रद्द करें'}
+              </button>
+              <button 
+                type="button" 
+                onClick={handleConfirmAccountReset} 
+                style={{ flex: 1, background: '#ef4444', border: 'none', color: '#fff', padding: '10px', borderRadius: '12px', fontWeight: 700, cursor: 'pointer' }}
+              >
+                {effectiveLang === 'en' ? 'Yes, Reset' : effectiveLang === 'hinglish' ? 'Haan, Reset Karein' : 'हां, रीसेट करें'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 7. Database Core & Sync Modal */}
       {activeSubModal === 'db' && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
@@ -2849,7 +3311,9 @@ export default function App() {
                   <div style={{ fontSize: '0.72rem', color: msg.role === 'user' ? 'var(--accent-cyan)' : '#a855f7', fontWeight: 700, marginBottom: '3px' }}>
                     {msg.role === 'user' ? (userName || 'You') : 'Aether'}
                   </div>
-                  <div style={{ fontSize: '0.86rem', color: '#ffffff', lineHeight: '1.4' }}>{msg.content}</div>
+                  <div style={{ fontSize: '0.86rem', color: '#ffffff', lineHeight: '1.4' }}>
+                    <FormattedMessage text={msg.content} />
+                  </div>
                 </div>
               ))
             )}

@@ -1453,7 +1453,26 @@ body {
   color: #f1f5f9;
   font-size: 0.92rem;
   line-height: 1.5;
+  max-height: 240px;
+  overflow-y: auto;
+  word-break: break-word;
+  padding-right: 4px;
 }
+
+.jarvis-bubble-text::-webkit-scrollbar {
+  width: 5px;
+}
+
+.jarvis-bubble-text::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+}
+
+.jarvis-bubble-text::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.35);
+  border-radius: 4px;
+}
+
 
 /* Bottom Tab Bar (Exact 1:1 Spec) */
 .jarvis-bottom-tabbar {
@@ -1795,4 +1814,27 @@ body {
   box-shadow: 0 0 8px rgba(0, 229, 255, 0.4);
   user-select: none;
 }
+
+/* Theme Variants */
+body.theme-sapphire {
+  background: radial-gradient(circle at 50% 20%, #172554 0%, #030712 100%) !important;
+}
+body.theme-sapphire .jarvis-screen-wrapper,
+body.theme-sapphire .jarvis-settings-container {
+  background: #0b1120 !important;
+}
+
+body.theme-oled {
+  background: #000000 !important;
+}
+body.theme-oled .jarvis-screen-wrapper,
+body.theme-oled .jarvis-settings-container {
+  background: #000000 !important;
+}
+body.theme-oled .settings-card-group,
+body.theme-oled .settings-user-card {
+  background: #050505 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
 

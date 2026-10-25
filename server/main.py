@@ -363,12 +363,12 @@ def clear_chat_history(db: Session = Depends(get_db)):
     return {"message": "Chat history cleared, ready for new conversation"}
 
 @app.get("/api/news")
-def get_live_news(limit: int = 5):
+def get_live_news(limit: int = 5, category: str = None):
     try:
         from ai_engine import get_structured_news
     except ImportError:
         from .ai_engine import get_structured_news
-    return get_structured_news(limit=limit)
+    return get_structured_news(limit=limit, category=category)
 
 # ----------------- Reminders & Notification Engine -----------------
 @app.get("/api/reminders/due")
@@ -505,18 +505,24 @@ def get_executive_briefing(db: Session = Depends(get_db)):
         time_phase = "night"
         weather_icon = "moon"
 
+    try:
+        from ai_engine import get_live_weather_data
+    except ImportError:
+        from .ai_engine import get_live_weather_data
+    live_w = get_live_weather_data()
+
     weather = {
-        "temp": 28,
-        "condition_en": "Mostly Sunny" if time_phase != "night" else "Clear Sky",
-        "condition_hi": "धूप खिली हुई" if time_phase != "night" else "साफ़ आसमान",
-        "city": "Jaipur (भांकरोटा)",
-        "city_en": "Jaipur (Bhankrota)",
-        "city_hi": "Jaipur (भांकरोटा)",
-        "city_hinglish": "Jaipur (Bhankrota)",
+        "temp": live_w.get("temp", 31.4),
+        "condition_en": live_w.get("condition_en", "Mostly Sunny"),
+        "condition_hi": live_w.get("condition_hi", "धूप खिली हुई"),
+        "city": live_w.get("city", "Jaipur (भांकरोटा)"),
+        "city_en": live_w.get("city_en", "Jaipur (Bhankrota)"),
+        "city_hi": live_w.get("city_hi", "Jaipur (भांकरोटा)"),
+        "city_hinglish": live_w.get("city_hinglish", "Jaipur (Bhankrota)"),
         "time_phase": time_phase,
         "icon": weather_icon,
-        "humidity": "42%",
-        "wind": "10 km/h"
+        "humidity": live_w.get("humidity", "36%"),
+        "wind": live_w.get("wind", "4.2 km/h")
     }
 
     return {

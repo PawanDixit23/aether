@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   BackHandler,
   Platform,
+  PermissionsAndroid,
   StatusBar as RNStatusBar
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -20,6 +21,29 @@ export default function App() {
   const [canGoBack, setCanGoBack] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Request Android Microphone Permission on startup
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      const requestMic = async () => {
+        try {
+          await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+            {
+              title: "Aether Microphone Permission",
+              message: "Aether needs microphone access so you can speak your voice prompts.",
+              buttonNeutral: "Ask Later",
+              buttonNegative: "Cancel",
+              buttonPositive: "Allow"
+            }
+          );
+        } catch (err) {
+          console.warn('Mic request error:', err);
+        }
+      };
+      requestMic();
+    }
+  }, []);
 
   // Handle Android Hardware Back Button to navigate inside webview
   useEffect(() => {
@@ -59,6 +83,7 @@ export default function App() {
           geolocationEnabled={true}
           allowsInlineMediaPlayback={true}
           mediaPlaybackRequiresUserAction={false}
+          mediaCapturePermissionGrantType="grant"
           originWhitelist={['*']}
           mixedContentMode="always"
           onShouldStartLoadWithRequest={(request) => {
