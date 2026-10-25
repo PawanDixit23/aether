@@ -59,8 +59,20 @@ export default function App() {
           geolocationEnabled={true}
           allowsInlineMediaPlayback={true}
           mediaPlaybackRequiresUserAction={false}
-          showsVerticalScrollIndicator={false}
-          showsHorizontalScrollIndicator={false}
+          originWhitelist={['*']}
+          mixedContentMode="always"
+          onShouldStartLoadWithRequest={(request) => {
+            // If OAuth provider falls back to localhost redirect, redirect back to cloud AETHER_URL with token intact
+            if (request.url.includes('access_token') && (request.url.startsWith('http://localhost') || request.url.startsWith('http://127.0.0.1'))) {
+              const hashIndex = request.url.indexOf('#');
+              if (hashIndex !== -1) {
+                const targetUrl = `${AETHER_URL}/${request.url.substring(hashIndex)}`;
+                webViewRef.current?.injectJavaScript(`window.location.href = "${targetUrl}";`);
+                return false;
+              }
+            }
+            return true;
+          }}
           onNavigationStateChange={(navState) => {
             setCanGoBack(navState.canGoBack);
           }}

@@ -46,7 +46,13 @@ import {
   User,
   HelpCircle,
   Check,
-  ChevronRight
+  ChevronRight,
+  ArrowLeft,
+  Box,
+  Keyboard,
+  Zap,
+  LogOut,
+  Sliders
 } from 'lucide-react';
 import { supabase } from './supabase';
 
@@ -271,12 +277,142 @@ const GoogleIcon = () => (
   </svg>
 );
 
+// 3D Fibonacci Particle Sphere Visual for Aether Core
+const AetherParticleSphere = ({ isListening, isSpeaking, onClick }) => {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let animationFrameId;
+
+    const width = 280;
+    const height = 280;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+
+    const numParticles = 240;
+    const particles = [];
+    const baseRadius = 88;
+
+    const phi = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < numParticles; i++) {
+      const y = 1 - (i / (numParticles - 1)) * 2;
+      const radiusAtY = Math.sqrt(1 - y * y);
+      const theta = phi * i;
+      const x = Math.cos(theta) * radiusAtY;
+      const z = Math.sin(theta) * radiusAtY;
+      particles.push({ x, y, z });
+    }
+
+    let angleX = 0;
+    let angleY = 0;
+    let pulseTime = 0;
+
+    const render = () => {
+      ctx.clearRect(0, 0, width, height);
+
+      pulseTime += 0.05;
+      const pulseMultiplier = isListening 
+        ? 1 + 0.14 * Math.sin(pulseTime * 3.5) 
+        : isSpeaking 
+          ? 1 + 0.18 * Math.sin(pulseTime * 4.5) 
+          : 1 + 0.03 * Math.sin(pulseTime * 1.5);
+
+      const r = baseRadius * pulseMultiplier;
+      angleX += 0.0035;
+      angleY += 0.007;
+
+      const cosX = Math.cos(angleX);
+      const sinX = Math.sin(angleX);
+      const cosY = Math.cos(angleY);
+      const sinY = Math.sin(angleY);
+
+      const projected = particles.map(p => {
+        let x1 = p.x * cosY - p.z * sinY;
+        let z1 = p.z * cosY + p.x * sinY;
+        let y2 = p.y * cosX - z1 * sinX;
+        let z2 = z1 * cosX + p.y * sinX;
+
+        const fov = 320;
+        const scale = fov / (fov + z2 * r);
+        const screenX = width / 2 + x1 * r * scale;
+        const screenY = height / 2 + y2 * r * scale;
+        const alpha = Math.max(0.12, Math.min(1, (z2 + 1.2) / 2.2));
+
+        return { screenX, screenY, scale, alpha, z: z2 };
+      });
+
+      projected.sort((a, b) => a.z - b.z);
+
+      projected.forEach(p => {
+        ctx.beginPath();
+        const dotSize = Math.max(0.9, 1.8 * p.scale);
+        ctx.arc(p.screenX, p.screenY, dotSize, 0, Math.PI * 2);
+        
+        if (isListening) {
+          ctx.fillStyle = `rgba(56, 189, 248, ${p.alpha})`;
+          ctx.shadowColor = '#38bdf8';
+          ctx.shadowBlur = 7;
+        } else if (isSpeaking) {
+          ctx.fillStyle = `rgba(168, 85, 247, ${p.alpha})`;
+          ctx.shadowColor = '#a855f7';
+          ctx.shadowBlur = 9;
+        } else {
+          ctx.fillStyle = `rgba(240, 246, 255, ${p.alpha * 0.95})`;
+          ctx.shadowColor = 'rgba(255, 255, 255, 0.4)';
+          ctx.shadowBlur = 3;
+        }
+        ctx.fill();
+      });
+
+      animationFrameId = requestAnimationFrame(render);
+    };
+
+    render();
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [isListening, isSpeaking]);
+
+  return (
+    <div 
+      onClick={onClick}
+      className="jarvis-sphere-container"
+      style={{ position: 'relative', width: '280px', height: '280px', margin: '0 auto', cursor: 'pointer' }}
+      title="Tap to speak with Aether / माइक शुरू करें"
+    >
+      {isListening && <div className="jarvis-listening-pulse" />}
+      <canvas ref={canvasRef} style={{ width: '280px', height: '280px' }} />
+    </div>
+  );
+};
+
 export default function App() {
   // Onboarding & BYOK Intelligence Configuration
-  const [onboardingDone, setOnboardingDone] = useState(() => localStorage.getItem('aether_onboarding_done') === 'true');
+  const [onboardingDone, setOnboardingDone] = useState(() => 
+    localStorage.getItem('aether_onboarding_done') === 'true' || 
+    Boolean(localStorage.getItem('aether_user_email'))
+  );
   const [onboardingStep, setOnboardingStep] = useState(1);
   const [userName, setUserName] = useState(() => localStorage.getItem('aether_user_name') || '');
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('aether_gemini_key') || '');
+
+  // Main Jarvis Spec UI States
+  const [activeTab, setActiveTab] = useState('aether'); // 'jarvis' | 'today' | 'memory'
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isTypeInputOpen, setIsTypeInputOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isPersonaDropdownOpen, setIsPersonaDropdownOpen] = useState(false);
+  const [activeSubModal, setActiveSubModal] = useState(null); // 'key' | 'finance' | 'audit' | 'assistant-setup' | 'profile-name'
+  const [userPreferredName, setUserPreferredName] = useState(() => 
+    localStorage.getItem('aether_preferred_name') || 
+    (localStorage.getItem('aether_user_name') && localStorage.getItem('aether_user_name') !== 'Operator' 
+      ? localStorage.getItem('aether_user_name') 
+      : 'Raja')
+  );
+  const [tempPreferredName, setTempPreferredName] = useState(userPreferredName);
   const [showApiKey, setShowApiKey] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState(() => localStorage.getItem('aether_selected_voice') || 'puck');
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('aether_selected_model') || 'gemini-1.5-flash');
@@ -568,6 +704,33 @@ export default function App() {
     localStorage.setItem('aether_onboarding_done', 'true');
     setOnboardingDone(true);
     showToast('Aether सिस्टम सक्रिय! स्वागत है। (Aether Activated)', 'success');
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error(err);
+    }
+    localStorage.removeItem('aether_user_email');
+    localStorage.removeItem('aether_user_name');
+    localStorage.removeItem('aether_user_avatar');
+    localStorage.removeItem('aether_onboarding_done');
+    setUserEmail('');
+    setUserName('Operator');
+    setUserAvatar('');
+    setOnboardingDone(false);
+    setOnboardingStep(1);
+    setIsSettingsOpen(false);
+    showToast("सफलतापूर्वक साइन आउट किया गया", "info");
+  };
+
+  const handleDeleteAccount = async () => {
+    if (window.confirm("क्या आप अपना लोकल डेटा और खाता रीसेट करना चाहते हैं?")) {
+      localStorage.clear();
+      await handleSignOut();
+      showToast("खाता डेटा साफ़ कर दिया गया", "info");
+    }
   };
 
   // Play pleasant executive reminder chime
@@ -880,6 +1043,8 @@ export default function App() {
       showToast("माइक्रोफोन की अनुमति दें।", 'error');
     }
   };
+
+  const toggleListening = toggleVoiceRecognition;
 
   // Text to Speech
   const speakText = (text) => {
@@ -1808,1443 +1973,902 @@ export default function App() {
     );
   }
 
+  const currentHour = currentTime.getHours();
+  const timeGreeting = currentHour < 12 
+    ? `Morning, ${userPreferredName}.` 
+    : currentHour < 17 
+      ? `Afternoon, ${userPreferredName}.` 
+      : `Evening, ${userPreferredName}.`;
+
   return (
-    <div className={dayPhase.phaseClass} style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div className="jarvis-screen-wrapper">
       
-      {/* 1. Header with Robot Icon, Share button, and Online Status */}
-      <header className="aether-header">
-        <div className="header-brand">
-          <div className="bot-squircle">
-            <Bot size={20} color="var(--accent-cyan)" />
-          </div>
-          <div>
-            <h1 className="header-brand-title">
-              AETHER
-            </h1>
-            <p className="header-subtitle">
-              {t.subtitle}
-            </p>
-          </div>
-        </div>
-
-        {/* Action Controls in a unified non-wrapping flex row */}
-        <div className="header-actions">
+      {/* =========================================================================
+          VIEW 1: SETTINGS SCREEN (Exact 1:1 Spec from Screenshot 2)
+          ========================================================================= */}
+      {isSettingsOpen ? (
+        <div className="jarvis-settings-container">
           
-          {/* Single Language Dropdown Button */}
-          <div ref={langDropdownRef} style={{ position: 'relative' }}>
+          {/* Settings Top Bar */}
+          <div className="settings-header">
             <button 
-              type="button"
-              className="header-btn-lang"
-              onClick={() => setIsLangDropdownOpen(!isLangDropdownOpen)}
-              title="Select Language / भाषा चुनें"
+              type="button" 
+              className="jarvis-icon-btn" 
+              onClick={() => setIsSettingsOpen(false)}
+              style={{ position: 'absolute', left: 0 }}
+              title="Back to Aether"
             >
-              <Languages size={15} color="var(--accent-cyan)" />
-              <span className="lang-label">{currentLangObj.icon} {currentLangObj.label}</span>
-              <ChevronDown size={13} style={{ transform: isLangDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', opacity: 0.7 }} />
+              <ArrowLeft size={22} />
             </button>
-
-            {isLangDropdownOpen && (
-              <div style={{
-                position: 'absolute',
-                top: 'calc(100% + 8px)',
-                right: 0,
-                width: '185px',
-                background: '#0d1527',
-                border: '1px solid rgba(56, 189, 248, 0.3)',
-                borderRadius: '12px',
-                padding: '6px',
-                boxShadow: '0 12px 36px rgba(0, 0, 0, 0.65)',
-                zIndex: 1000,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '3px'
-              }}>
-                {LANG_OPTIONS.map(opt => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedLang(opt.id);
-                      localStorage.setItem('aether_language', opt.id);
-                      setIsLangDropdownOpen(false);
-                      showToast(t.langToast(opt.label), 'info');
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '8px 12px',
-                      borderRadius: '8px',
-                      border: 'none',
-                      background: selectedLang === opt.id ? 'rgba(56, 189, 248, 0.18)' : 'transparent',
-                      color: selectedLang === opt.id ? 'var(--accent-cyan)' : '#e2e8f0',
-                      fontSize: '0.82rem',
-                      fontWeight: selectedLang === opt.id ? 700 : 500,
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      transition: 'all 0.15s ease'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span>{opt.icon}</span>
-                      <span>{opt.fullLabel}</span>
-                    </div>
-                    {selectedLang === opt.id && <CheckCircle2 size={14} color="var(--accent-cyan)" />}
-                  </button>
-                ))}
-              </div>
-            )}
+            <h2 className="settings-header-title">Settings</h2>
           </div>
 
-          {/* Mobile & Desktop Push Notification Quick Toggle */}
-          <button
-            type="button"
-            className={`header-btn-push ${pushPermission === 'granted' ? 'active' : 'inactive'}`}
-            onClick={pushPermission === 'granted' ? handleSendTestPush : handleRequestPushPermission}
-            title={pushPermission === 'granted' ? "Mobile Push: Active (Click to send test alert)" : "Click to Enable Mobile Push Notifications"}
-          >
-            <BellRing size={15} />
-            <span className="push-text">{pushPermission === 'granted' ? (effectiveLang === 'en' ? 'Push Active' : 'पुश सक्रिय') : (effectiveLang === 'en' ? 'Enable Push' : 'पुश ऑन करें')}</span>
-          </button>
-
-          <button 
-            type="button"
-            onClick={() => {
-              setOnboardingStep(1);
-              setOnboardingDone(false);
-            }}
-            className="btn-share"
-            title="Aether Setup / Key & Voice Preferences"
-            style={{ gap: '6px' }}
-          >
-            <Settings size={15} />
-            <span className="share-text">Setup</span>
-          </button>
-
-          <button 
-            type="button"
-            onClick={handleShare}
-            className="btn-share"
-            title="Share Dashboard / शेयर करें"
-          >
-            <Share2 size={15} />
-            <span className="share-text">{t.share}</span>
-          </button>
-
-          <div className="header-online-status">
-            {serverOnline ? (
-              <div className="status-indicator online">
-                <span className="status-dot-pulse"></span>
-                <span className="status-label">{t.online}</span>
-              </div>
-            ) : (
-              <div className="status-indicator offline">
-                <span className="status-dot-offline"></span>
-                <span className="status-label">{t.offline}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
-
-      {/* 2. Main Executive Screen Container */}
-      <main className="aether-main-content">
-
-        {/* ACTIVE REMINDER ALERT BANNER */}
-        {activeReminderAlert && (
-          <div style={{
-            background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(249, 115, 22, 0.18))',
-            border: '1px solid rgba(239, 68, 68, 0.5)',
-            boxShadow: '0 8px 32px rgba(239, 68, 68, 0.28)',
-            borderRadius: '16px',
-            padding: '16px 20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '16px',
-            animation: 'pulse 2s infinite ease-in-out'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-              <div style={{
-                width: '44px',
-                height: '44px',
-                borderRadius: '12px',
-                background: 'rgba(239, 68, 68, 0.25)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#ef4444',
-                flexShrink: 0
-              }}>
-                <Bell size={24} />
+          {/* User Profile Card */}
+          <div className="settings-user-card">
+            <div className="settings-user-info">
+              <div className="settings-avatar-circle">
+                {userAvatar ? (
+                  <img src={userAvatar} alt="Avatar" style={{ width: '100%', height: '100%', borderRadius: '50%' }} />
+                ) : (
+                  (userName || userPreferredName || 'S').charAt(0).toUpperCase()
+                )}
               </div>
               <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.8px' }}>
-                    {t.reminderDue}
-                  </span>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                    • {activeReminderAlert.reminder_time || (effectiveLang === 'hi' ? 'समय हो गया है' : effectiveLang === 'en' ? 'Due now' : 'Time ho gaya hai')}
-                  </span>
-                </div>
-                <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#ffffff', margin: '3px 0 0' }}>
-                  {activeReminderAlert.title}
-                </h3>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <button
-                type="button"
-                onClick={() => {
-                  handleToggleTask(activeReminderAlert.id);
-                  setActiveReminderAlert(null);
-                  showToast(effectiveLang === 'en' ? "Task marked complete!" : effectiveLang === 'hinglish' ? "Task complete ho gaya!" : "कार्य पूरा चिह्नित किया गया!", "success");
-                }}
-                style={{
-                  background: 'var(--accent-cyan)',
-                  color: '#0a0d14',
-                  border: 'none',
-                  borderRadius: '10px',
-                  padding: '9px 18px',
-                  fontSize: '0.88rem',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px'
-                }}
-              >
-                <CheckCircle2 size={16} />
-                <span>{t.markComplete}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveReminderAlert(null)}
-                style={{
-                  background: 'rgba(255, 255, 255, 0.08)',
-                  color: 'var(--text-muted)',
-                  border: '1px solid rgba(255, 255, 255, 0.12)',
-                  borderRadius: '10px',
-                  padding: '9px 14px',
-                  fontSize: '0.88rem',
-                  cursor: 'pointer'
-                }}
-              >
-                {t.dismiss}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 3. YOUR DAILY BRIEFING CARD */}
-        <section className="card-briefing">
-          
-          {/* Category Tag */}
-          <div style={{ 
-            color: 'var(--accent-cyan)', 
-            fontSize: '0.75rem', 
-            fontWeight: 700, 
-            letterSpacing: '0.8px', 
-            textTransform: 'uppercase',
-            marginBottom: '8px'
-          }}>
-            {t.briefingTag} · {briefing?.date_str || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }).toUpperCase()}
-          </div>
-
-          {/* Heading with dynamic greeting */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
-            <div>
-              <h2 style={{ 
-                fontFamily: 'var(--font-heading)', 
-                fontSize: '1.9rem', 
-                fontWeight: 800, 
-                color: '#ffffff', 
-                letterSpacing: '-0.3px',
-                lineHeight: 1.2
-              }}>
-                {dayPhase.greetingLabel}, {userName || t.userName}!
-              </h2>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.92rem', marginTop: '6px' }}>
-                {t.greetingSub}
-              </p>
-            </div>
-
-            {/* DYNAMIC WEATHER INFORMATION WIDGET (Serene Cyan Theme) */}
-            <div 
-              className="weather-widget"
-              title={`Live Weather & Day Progression: ${dayPhase.periodDesc}`}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                padding: '8px 16px',
-                background: dayPhase.bgColor,
-                border: `1px solid ${dayPhase.borderColor}`,
-                borderRadius: '14px',
-                boxShadow: `0 4px 20px ${dayPhase.bgColor}`,
-                transition: 'all 0.3s ease'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <WeatherSymbol 
-                  size={28} 
-                  color={dayPhase.color} 
-                  className={
-                    dayPhase.phase === 'morning' ? 'weather-sun' : 
-                    dayPhase.phase === 'afternoon' ? 'weather-sun' : 
-                    dayPhase.phase === 'evening' ? 'weather-sunset' : 'weather-moon'
-                  } 
-                />
-              </div>
-
-              <div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-                  <span style={{ 
-                    fontFamily: 'var(--font-heading)', 
-                    fontSize: '1.45rem', 
-                    fontWeight: 800, 
-                    color: '#ffffff' 
-                  }}>
-                    {weather.temp}°C
-                  </span>
-                  <span style={{ 
-                    fontSize: '0.74rem', 
-                    color: dayPhase.color, 
-                    fontWeight: 600,
-                    textTransform: 'uppercase'
-                  }}>
-                    {dayPhase.periodDesc}
-                  </span>
-                </div>
-                <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span>{effectiveLang === 'en' ? (weather.condition_en || 'Mostly Sunny') : effectiveLang === 'hinglish' ? (weather.condition_en || 'Mostly Sunny') : (weather.condition_hi || 'धूप खिली हुई')}</span>
-                  <span>•</span>
-                  <span style={{ color: '#cbd5e1' }}>
-                    {t.city}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-          </div>
-
-          {/* 3 Clickable Stat Cards (Responsive: 3 cols on desktop, tablet, and mobile) */}
-          <div className="stat-card-row">
-            
-            {/* 1. Pending tasks (Emerald) - Click to view/manage tasks */}
-            <div 
-              onClick={() => setActiveModule(activeModule === 'agenda' ? null : 'agenda')}
-              className="stat-card stat-card-emerald" 
-              title="Click to view/manage tasks"
-            >
-              <div className="stat-card-top">
-                <div style={{ color: 'var(--accent-emerald)' }}>
-                  <CheckSquare size={17} />
-                </div>
-                <span className="stat-card-badge badge-emerald">
-                  {t.clickToView}
-                </span>
-              </div>
-              <div className="stat-card-number">
-                {pendingTasksList.length || 1}
-              </div>
-              <div className="stat-card-title">
-                {t.pendingTasks}
-              </div>
-            </div>
-
-            {/* 2. Upcoming (Blue) - Click to view upcoming reminders */}
-            <div 
-              onClick={() => setActiveModule(activeModule === 'upcoming' ? null : 'upcoming')}
-              className="stat-card stat-card-blue" 
-              title="Click to view upcoming events"
-            >
-              <div className="stat-card-top">
-                <div style={{ color: 'var(--accent-blue)' }}>
-                  <Calendar size={17} />
-                </div>
-                <span className="stat-card-badge badge-blue">
-                  {t.events}
-                </span>
-              </div>
-              <div className="stat-card-number">
-                {upcomingCount}
-              </div>
-              <div className="stat-card-title">
-                {t.upcoming}
-              </div>
-            </div>
-
-            {/* 3. Important alert (Purple) - Click to review alert details */}
-            <div 
-              onClick={() => setActiveModule(activeModule === 'alerts' ? null : 'alerts')}
-              className="stat-card stat-card-purple" 
-              title="Click to review alerts"
-            >
-              <div className="stat-card-top">
-                <div style={{ color: 'var(--accent-purple)' }}>
-                  <Bell size={17} />
-                </div>
-                <span className="stat-card-badge badge-purple">
-                  {t.alertsBadge}
-                </span>
-              </div>
-              <div className="stat-card-number">
-                {alertCount}
-              </div>
-              <div className="stat-card-title">
-                {t.alerts}
-              </div>
-            </div>
-
-          </div>
-
-          {/* Live Trust and Sync Time note */}
-          <div style={{ 
-            fontSize: '0.78rem', 
-            color: 'var(--text-dim)', 
-            marginTop: '16px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            flexWrap: 'wrap'
-          }}>
-            <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent-emerald)' }}></span>
-            <span>{t.liveData} • {t.lastUpdate}: <strong>{lastSyncTime || (effectiveLang === 'hi' ? 'अभी' : effectiveLang === 'en' ? 'Just now' : 'Abhi')}</strong> • {t.syncNote}</span>
-          </div>
-
-        </section>
-
-        {/* 4. Top Headlines Section */}
-        <section className="news-card">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <Newspaper size={20} color="var(--accent-cyan)" />
-              <h3 style={{ 
-                fontFamily: 'var(--font-heading)', 
-                fontSize: '1.15rem', 
-                fontWeight: 700, 
-                color: '#ffffff' 
-              }}>
-                {t.newsHeading}
-              </h3>
-            </div>
-            
-            <a 
-              href="https://news.google.com" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              style={{
-                color: 'var(--accent-cyan)',
-                fontSize: '0.82rem',
-                textDecoration: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                fontWeight: 600
-              }}
-            >
-              <span>{t.viewAll}</span>
-              <ExternalLink size={13} />
-            </a>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {newsItems.length === 0 ? (
-              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', padding: '12px 0' }}>
-                {effectiveLang === 'hi' ? 'ताज़ा खबरें लोड हो रही हैं...' : effectiveLang === 'en' ? 'Loading top headlines...' : 'Taaza khabarein load ho rahi hain...'}
-              </div>
-            ) : (
-              newsItems.slice(0, 3).map((item, idx) => (
-                <a 
-                  key={idx}
-                  href={item.link} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="news-item-row"
-                  title={t.readFull}
+                <div className="settings-user-name">{userName || userPreferredName || 'Operator'}</div>
+                <div className="settings-user-email">{userEmail || 'operator@aether.ai'}</div>
+                <button 
+                  type="button" 
+                  onClick={handleDeleteAccount}
+                  style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.74rem', textDecoration: 'underline', cursor: 'pointer', marginTop: '4px', padding: 0 }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', flex: 1 }}>
-                    <span style={{ color: 'var(--accent-cyan)', fontSize: '1rem', lineHeight: 1.4 }}>•</span>
-                    <div>
-                      <div style={{ fontSize: '0.9rem', color: '#f1f5f9', fontWeight: 500, lineHeight: 1.4 }}>
-                        {item.title}
-                      </div>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ color: 'var(--accent-cyan)' }}>{item.source}</span>
-                        {item.pubDate && <span>• {item.pubDate.split(' ').slice(0, 4).join(' ')}</span>}
-                      </div>
-                    </div>
-                  </div>
-                  <ExternalLink size={14} color="var(--accent-cyan)" style={{ opacity: 0.7, flexShrink: 0 }} />
-                </a>
-              ))
-            )}
-          </div>
-          <div style={{ fontSize: '0.74rem', color: 'var(--text-dim)', marginTop: '12px' }}>
-            {t.newsFooter}
-          </div>
-        </section>
-
-        {/* 5. FOUR MODULAR ACTION CARDS */}
-        <section className="grid-modules">
-          
-          {/* Card 1: Agenda */}
-          <div 
-            onClick={() => setActiveModule(activeModule === 'agenda' ? null : 'agenda')}
-            className={`action-module-card ${activeModule === 'agenda' ? 'active' : ''}`}
-          >
-            <div className="module-icon-wrap" style={{ color: 'var(--accent-cyan)' }}>
-              <Calendar size={18} />
-            </div>
-            <h3 className="module-title">
-              Agenda
-            </h3>
-            <p className="module-desc">
-              {t.agendaDesc}
-            </p>
-          </div>
-
-          {/* Card 2: Wealth */}
-          <div 
-            onClick={() => setActiveModule(activeModule === 'wealth' ? null : 'wealth')}
-            className={`action-module-card ${activeModule === 'wealth' ? 'active' : ''}`}
-          >
-            <div className="module-icon-wrap" style={{ color: 'var(--accent-cyan)' }}>
-              <Wallet size={18} />
-            </div>
-            <h3 className="module-title">
-              Wealth
-            </h3>
-            <p className="module-desc">
-              {t.wealthDesc}
-            </p>
-          </div>
-
-          {/* Card 3: Vault */}
-          <div 
-            onClick={() => setActiveModule(activeModule === 'vault' ? null : 'vault')}
-            className={`action-module-card ${activeModule === 'vault' ? 'active' : ''}`}
-          >
-            <div className="module-icon-wrap" style={{ color: 'var(--accent-cyan)' }}>
-              <Layers size={18} />
-            </div>
-            <h3 className="module-title">
-              Vault
-            </h3>
-            <p className="module-desc">
-              {t.vaultDesc}
-            </p>
-          </div>
-
-          {/* Card 4: Activity */}
-          <div 
-            onClick={() => setActiveModule(activeModule === 'activity' ? null : 'activity')}
-            className={`action-module-card ${activeModule === 'activity' ? 'active' : ''}`}
-          >
-            <div className="module-icon-wrap" style={{ color: 'var(--accent-cyan)' }}>
-              <ShieldCheck size={18} />
-            </div>
-            <h3 className="module-title">
-              Activity
-            </h3>
-            <p className="module-desc">
-              {t.activityDesc}
-            </p>
-          </div>
-
-        </section>
-
-        {/* 6. EXPANDABLE ACTION PANEL (When any stat card or module is clicked) */}
-        {activeModule && (
-          <div className="card-briefing" style={{ border: '1px solid var(--accent-cyan)', animation: 'floatGentle 0.3s ease' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ 
-                  color: 'var(--accent-cyan)', 
-                  fontWeight: 800, 
-                  fontFamily: 'var(--font-heading)',
-                  fontSize: '1.1rem',
-                  textTransform: 'uppercase'
-                }}>
-                  {activeModule === 'agenda' && 'AGENDA // बाकी काम और टास्क सूची'}
-                  {activeModule === 'wealth' && 'WEALTH // बजट, आय और निवेश'}
-                  {activeModule === 'vault' && 'VAULT // मेमोरी और प्राथमिकताएँ'}
-                  {activeModule === 'activity' && 'ACTIVITY // सुरक्षा और स्वायत्त ऑडिट'}
-                  {activeModule === 'upcoming' && 'UPCOMING // आगामी इवेंट्स और कैलेंडर'}
-                  {activeModule === 'alerts' && 'ALERTS // महत्वपूर्ण सुरक्षा व सिस्टम अलर्ट्स'}
-                </span>
+                  Delete account
+                </button>
               </div>
-              <button 
-                onClick={() => setActiveModule(null)}
-                style={{ 
-                  background: 'none', 
-                  border: 'none', 
-                  color: 'var(--text-muted)', 
-                  cursor: 'pointer',
-                  padding: '4px'
-                }}
-              >
-                <X size={18} />
-              </button>
+            </div>
+            <button 
+              type="button" 
+              onClick={handleSignOut} 
+              className="settings-signout-btn"
+            >
+              Sign out
+            </button>
+          </div>
+
+          {/* SECTION: YOUR JARVIS */}
+          <div className="settings-section-heading">YOUR AETHER</div>
+          <div className="settings-card-group">
+            <div className="settings-row-item" onClick={() => setActiveSubModal('profile-name')}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><User size={16} /></div>
+                <span>You</span>
+              </div>
+              <div className="settings-row-right">
+                <span>{userPreferredName}</span>
+                <ChevronRight size={16} />
+              </div>
             </div>
 
-            {/* AGENDA CONTENT */}
-            {activeModule === 'agenda' && (
-              <div>
-                {/* 3 Filter Tabs: Pending, Completed, All */}
-                <div style={{ display: 'flex', gap: '6px', marginBottom: '14px', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', paddingBottom: '10px' }}>
-                  {[
-                    { id: 'pending', label: t.tabPending, count: tasks.filter(tk => tk.status !== 'completed').length, icon: '⏳' },
-                    { id: 'completed', label: t.tabCompleted, count: tasks.filter(tk => tk.status === 'completed').length, icon: '✓' },
-                    { id: 'all', label: t.tabAll, count: tasks.length, icon: '📋' }
-                  ].map(tab => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setAgendaFilter(tab.id)}
-                      style={{
-                        flex: 1,
-                        padding: '6px 10px',
-                        borderRadius: '8px',
-                        border: agendaFilter === tab.id 
-                          ? (tab.id === 'completed' ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(56, 189, 248, 0.4)') 
-                          : '1px solid rgba(255, 255, 255, 0.08)',
-                        background: agendaFilter === tab.id 
-                          ? (tab.id === 'completed' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(56, 189, 248, 0.15)') 
-                          : 'rgba(255, 255, 255, 0.03)',
-                        color: agendaFilter === tab.id 
-                          ? (tab.id === 'completed' ? '#10b981' : 'var(--accent-cyan)') 
-                          : 'var(--text-muted)',
-                        fontSize: '0.78rem',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '6px',
-                        transition: 'all 0.15s ease'
-                      }}
-                    >
-                      <span>{tab.icon}</span>
-                      <span>{tab.label}</span>
-                      <span style={{ 
-                        background: 'rgba(255, 255, 255, 0.1)', 
-                        padding: '1px 5px', 
-                        borderRadius: '10px', 
-                        fontSize: '0.7rem' 
-                      }}>
-                        {tab.count}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+            <div className="settings-row-item" onClick={() => setActiveSubModal('profile-name')}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><User size={16} /></div>
+                <span>Username</span>
+              </div>
+              <div className="settings-row-right">
+                <span>@{userPreferredName.toLowerCase().replace(/\s+/g, '')}</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
 
-                <form onSubmit={handleCreateTask} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                  <input 
-                    type="text" 
-                    value={newTaskInput}
-                    onChange={(e) => setNewTaskInput(e.target.value)}
-                    placeholder={effectiveLang === 'en' ? "Add new task or reminder (e.g. Call Amit at 2 PM)..." : effectiveLang === 'hinglish' ? "Naya task ya reminder jodein (eg. Team review at 11 AM)..." : "नया कार्य या रिमाइंडर जोड़ें (उदा. कल 11 बजे रिव्यू)..."}
-                    style={{
-                      flex: 1,
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.1)',
-                      borderRadius: '8px',
-                      padding: '8px 12px',
-                      color: 'white',
-                      fontSize: '0.88rem',
-                      outline: 'none'
-                    }}
-                  />
+            <div className="settings-row-item" onClick={() => setActiveSubModal('assistant')}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><Sliders size={16} /></div>
+                <span>Assistants</span>
+              </div>
+              <div className="settings-row-right">
+                <span>Aether · Warm</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION: APP */}
+          <div className="settings-section-heading">APP</div>
+          <div className="settings-card-group">
+            <div className="settings-row-item" onClick={() => showToast('Theme: Obsidian Dark Active', 'info')}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><Moon size={16} /></div>
+                <span>Appearance</span>
+              </div>
+              <div className="settings-row-right">
+                <span>Dark</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
+            <div className="settings-row-item" onClick={() => showToast('Audio & Voice Output is enabled', 'info')}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><Volume2 size={16} /></div>
+                <span>Sound & haptics</span>
+              </div>
+              <div className="settings-row-right">
+                <span>On</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
+            <div className="settings-row-item" onClick={() => setIsLangDropdownOpen(!isLangDropdownOpen)}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><Languages size={16} /></div>
+                <span>Language</span>
+              </div>
+              <div className="settings-row-right">
+                <span>{currentLangObj.label}</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
+            <div className="settings-row-item" onClick={() => { setIsSettingsOpen(false); setActiveTab('memory'); }}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><Database size={16} /></div>
+                <span>Memory</span>
+              </div>
+              <div className="settings-row-right">
+                <span>{memories.length} facts</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
+            <div className="settings-row-item" onClick={() => setActiveSubModal('assistant-setup')}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><Zap size={16} /></div>
+                <span>Set as phone assistant</span>
+              </div>
+              <div className="settings-row-right">
+                <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>Set up</span>
+              </div>
+            </div>
+          </div>
+          <p className="settings-subtext-note">
+            Then hold the power button, or swipe in from a bottom corner, to reach Aether from any screen.
+          </p>
+
+          {/* SECTION: ADVANCED & EXECUTIVE SERVICES */}
+          <div className="settings-section-heading">ADVANCED</div>
+          <div className="settings-card-group">
+            <div className="settings-row-item" onClick={() => setActiveSubModal('key')}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><Key size={16} /></div>
+                <span>Key</span>
+              </div>
+              <div className="settings-row-right">
+                <span style={{ fontFamily: 'JetBrains Mono', fontSize: '0.8rem' }}>
+                  {apiKey ? `••••${apiKey.slice(-4)}` : 'Set Key'}
+                </span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
+            <div className="settings-row-item" onClick={() => setActiveSubModal('finance')}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><Wallet size={16} /></div>
+                <span>Executive Finance & Wealth</span>
+              </div>
+              <div className="settings-row-right">
+                <span>₹{financeSummary.balance.toLocaleString('en-IN')}</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
+            <div className="settings-row-item" onClick={() => setActiveSubModal('audit')}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><Shield size={16} /></div>
+                <span>Actions & Audit Trail</span>
+              </div>
+              <div className="settings-row-right">
+                <span>{auditLogs.length} logs</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
+            <div className="settings-row-item" onClick={() => setActiveSubModal('db')}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><Layers size={16} /></div>
+                <span>Database Core & Sync</span>
+              </div>
+              <div className="settings-row-right">
+                <span>{serverOnline ? 'Connected' : 'Offline'}</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+          </div>
+
+        </div>
+      ) : (
+        /* =========================================================================
+            VIEW 2: MAIN APP TABS (Jarvis | Today | Memory)
+            ========================================================================= */
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingBottom: '76px' }}>
+
+          {/* TAB 1: JARVIS MAIN SCREEN (Exact 1:1 Spec from Screenshot 1) */}
+          {activeTab === 'aether' && (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+              
+              {/* TOP BAR */}
+              <div className="jarvis-top-bar">
+                <button 
+                  type="button" 
+                  className="jarvis-icon-btn" 
+                  onClick={() => setIsHistoryOpen(true)}
+                  title="Interaction History"
+                >
+                  <Clock size={22} />
+                </button>
+
+                <div style={{ position: 'relative' }}>
                   <button 
-                    type="submit" 
-                    style={{
-                      background: 'var(--accent-cyan)',
-                      color: '#080c16',
-                      border: 'none',
-                      borderRadius: '8px',
-                      padding: '8px 14px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px'
-                    }}
+                    type="button" 
+                    className="jarvis-title-dropdown"
+                    onClick={() => setIsPersonaDropdownOpen(!isPersonaDropdownOpen)}
                   >
-                    <Plus size={16} /> {effectiveLang === 'en' ? 'Add' : effectiveLang === 'hinglish' ? 'Add Karein' : 'जोड़ें'}
+                    <span className="aether-top-mini-logo">Æ</span>
+                    <span className="jarvis-title-text">
+                      Aether
+                    </span>
+                    <ChevronDown size={14} color="#94a3b8" />
                   </button>
-                </form>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '280px', overflowY: 'auto' }}>
-                  {tasks.filter(tk => {
-                    if (agendaFilter === 'pending') return tk.status !== 'completed';
-                    if (agendaFilter === 'completed') return tk.status === 'completed';
-                    return true;
-                  }).length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                      {agendaFilter === 'completed' 
-                        ? (effectiveLang === 'en' ? 'No completed tasks yet. Marked complete tasks appear here.' : effectiveLang === 'hinglish' ? 'Abhi koi task complete nahi hua hai.' : 'कोई कार्य अभी पूरा नहीं हुआ है। पूरे किए गए काम यहाँ दिखेंगे।')
-                        : (effectiveLang === 'en' ? 'No pending tasks! All clear.' : effectiveLang === 'hinglish' ? 'Koi pending task nahi hai!' : 'कोई कार्य लंबित नहीं है।')}
-                    </div>
-                  ) : (
-                    tasks
-                      .filter(tk => {
-                        if (agendaFilter === 'pending') return tk.status !== 'completed';
-                        if (agendaFilter === 'completed') return tk.status === 'completed';
-                        return true;
-                      })
-                      .map(tk => (
-                        <div 
-                          key={tk.id} 
-                          style={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            justifyContent: 'space-between', 
-                            padding: '10px 14px', 
-                            background: tk.status === 'completed' ? 'rgba(16, 185, 129, 0.05)' : 'rgba(255, 255, 255, 0.03)', 
-                            border: tk.status === 'completed' ? '1px solid rgba(16, 185, 129, 0.15)' : '1px solid rgba(255, 255, 255, 0.05)',
+                  {isPersonaDropdownOpen && (
+                    <div style={{
+                      position: 'absolute',
+                      top: 'calc(100% + 8px)',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      background: '#0d1527',
+                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      borderRadius: '14px',
+                      padding: '6px',
+                      boxShadow: '0 16px 40px rgba(0, 0, 0, 0.8)',
+                      zIndex: 100,
+                      minWidth: '160px'
+                    }}>
+                      {AETHER_VOICES.map(voice => (
+                        <button
+                          key={voice.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedVoice(voice.id);
+                            localStorage.setItem('aether_selected_voice', voice.id);
+                            setIsPersonaDropdownOpen(false);
+                            showToast(`Voice set to ${voice.name}`, 'info');
+                          }}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            width: '100%',
+                            padding: '8px 12px',
+                            border: 'none',
+                            background: selectedVoice === voice.id ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
+                            color: selectedVoice === voice.id ? 'var(--accent-cyan)' : '#e2e8f0',
                             borderRadius: '8px',
-                            transition: 'all 0.15s ease'
+                            cursor: 'pointer',
+                            fontSize: '0.84rem',
+                            fontWeight: selectedVoice === voice.id ? 700 : 500
                           }}
                         >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
-                            <button 
-                              type="button"
-                              onClick={() => handleToggleTask(tk.id)}
-                              style={{ 
-                                background: 'none', 
-                                border: 'none', 
-                                cursor: 'pointer', 
-                                color: tk.status === 'completed' ? 'var(--accent-emerald)' : 'var(--text-muted)',
-                                padding: 0,
-                                display: 'flex'
-                              }}
-                              title={tk.status === 'completed' ? 'Mark Pending' : 'Mark Complete'}
-                            >
-                              {tk.status === 'completed' ? <CheckCircle2 size={18} color="#10b981" /> : <Circle size={18} />}
-                            </button>
-                            <span style={{ 
-                              fontSize: '0.88rem', 
-                              color: tk.status === 'completed' ? 'var(--text-muted)' : '#ffffff', 
-                              textDecoration: tk.status === 'completed' ? 'line-through' : 'none',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis'
-                            }}>
-                              {tk.title}
-                            </span>
-                          </div>
-                          
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                            {tk.reminder_time && (
-                              <span style={{ 
-                                display: 'inline-flex', 
-                                alignItems: 'center', 
-                                gap: '3px', 
-                                background: 'rgba(56, 189, 248, 0.12)', 
-                                color: 'var(--accent-cyan)', 
-                                border: '1px solid rgba(56, 189, 248, 0.25)', 
-                                borderRadius: '4px', 
-                                padding: '2px 6px', 
-                                fontSize: '0.68rem', 
-                                fontWeight: 600 
-                              }}>
-                                <Clock size={11} /> {tk.reminder_time}
-                              </span>
-                            )}
-                            {tk.status === 'completed' && (
-                              <span style={{ 
-                                background: 'rgba(16, 185, 129, 0.15)', 
-                                color: '#10b981', 
-                                border: '1px solid rgba(16, 185, 129, 0.3)', 
-                                borderRadius: '4px', 
-                                padding: '2px 6px', 
-                                fontSize: '0.68rem', 
-                                fontWeight: 600 
-                              }}>
-                                ✓ {t.completedTag}
-                              </span>
-                            )}
-                            <span style={{ fontSize: '0.68rem', color: tk.priority === 'urgent' ? '#f43f5e' : 'var(--accent-cyan)' }}>
-                              [{tk.priority.toUpperCase()}]
-                            </span>
-                            <button 
-                              type="button"
-                              onClick={() => handleDeleteTask(tk.id)} 
-                              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '2px' }}
-                              title="Delete Task"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* UPCOMING CONTENT */}
-            {activeModule === 'upcoming' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <div style={{ fontSize: '0.84rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                  आने वाले कैलेंडर इवेंट्स और तय रिमाइंडर:
-                </div>
-                <div style={{ padding: '12px 14px', background: 'rgba(59, 130, 246, 0.06)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <Clock size={16} color="var(--accent-blue)" />
-                    <div>
-                      <div style={{ fontSize: '0.88rem', color: '#ffffff', fontWeight: 600 }}>मासिक बजट समीक्षा व बिल भुगतान</div>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>कल दोपहर 2:00 PM • पर्सनल रिमाइंडर</div>
-                    </div>
-                  </div>
-                  <span style={{ fontSize: '0.7rem', color: 'var(--accent-blue)', background: 'rgba(59, 130, 246, 0.15)', padding: '2px 8px', borderRadius: '4px' }}>निर्धारित</span>
-                </div>
-
-                <div style={{ padding: '12px 14px', background: 'rgba(59, 130, 246, 0.06)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <Calendar size={16} color="var(--accent-blue)" />
-                    <div>
-                      <div style={{ fontSize: '0.88rem', color: '#ffffff', fontWeight: 600 }}>प्रोजेक्ट रिव्यू व टास्क अपडेट</div>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>सोमवार 11:00 AM • AETHER सिंक</div>
-                    </div>
-                  </div>
-                  <span style={{ fontSize: '0.7rem', color: 'var(--accent-blue)', background: 'rgba(59, 130, 246, 0.15)', padding: '2px 8px', borderRadius: '4px' }}>कैलेंडर</span>
-                </div>
-              </div>
-            )}
-
-            {/* ALERTS CONTENT */}
-            {activeModule === 'alerts' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <div style={{ padding: '14px', background: 'rgba(168, 85, 247, 0.08)', border: '1px solid rgba(168, 85, 247, 0.25)', borderRadius: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                    <AlertTriangle size={16} color="var(--accent-purple)" />
-                    <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#ffffff' }}>सिस्टम सुरक्षा व डेटा सिंक एक्टिव</span>
-                  </div>
-                  <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                    स्थानीय डेटाबेस एन्क्लेव सक्रिय है। सभी फ़ाइनेंशियल और मेमोरी रिकॉर्ड्स सुरक्षित हैं। कोई पेंडिंग क्रिटिकल चेतावनी नहीं है।
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* WEALTH CONTENT */}
-            {activeModule === 'wealth' && (
-              <div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '16px' }}>
-                  <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '12px', borderRadius: '8px' }}>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>NET BALANCE</div>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ffffff', marginTop: '2px' }}>
-                      ₹{(financeSummary.balance || 0).toLocaleString('en-IN')}
-                    </div>
-                  </div>
-                  <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '12px', borderRadius: '8px' }}>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>INCOME</div>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-emerald)', marginTop: '2px' }}>
-                      ₹{(financeSummary.total_income || 0).toLocaleString('en-IN')}
-                    </div>
-                  </div>
-                  <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '12px', borderRadius: '8px' }}>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>EXPENSES</div>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#f43f5e', marginTop: '2px' }}>
-                      ₹{(financeSummary.total_expense || 0).toLocaleString('en-IN')}
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '8px' }}>हालिया लेनदेन:</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
-                  {financeRecords.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                      कोई खर्च दर्ज नहीं हुआ है। (उदा: "₹500 का पेट्रोल UPI से किया")
-                    </div>
-                  ) : (
-                    financeRecords.map(r => (
-                      <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '6px' }}>
-                        <div>
-                          <div style={{ fontSize: '0.85rem', color: '#ffffff' }}>{r.note || r.category}</div>
-                          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{r.category.toUpperCase()} • {r.payment_mode.toUpperCase()}</div>
-                        </div>
-                        <div style={{ fontWeight: 700, color: r.type === 'income' ? 'var(--accent-emerald)' : '#f43f5e', fontSize: '0.92rem' }}>
-                          {r.type === 'income' ? '+' : '-'} ₹{r.amount.toLocaleString('en-IN')}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* VAULT CONTENT */}
-            {activeModule === 'vault' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: '380px', overflowY: 'auto' }}>
-                
-                {/* 1. Database & Storage Inspector Card */}
-                <div style={{ 
-                  background: 'rgba(56, 189, 248, 0.05)', 
-                  border: '1px solid rgba(56, 189, 248, 0.25)', 
-                  borderRadius: '10px', 
-                  padding: '14px' 
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <Database size={18} color="var(--accent-cyan)" />
-                      <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#ffffff' }}>
-                        {effectiveLang === 'en' ? "SQLite Database & Storage Inspector" : effectiveLang === 'hinglish' ? "Local SQLite Database & Storage Info" : "स्थानीय SQLite डेटाबेस व स्टोरेज जानकारी"}
-                      </span>
-                    </div>
-                    <span style={{ 
-                      fontSize: '0.68rem', 
-                      background: 'rgba(16, 185, 129, 0.15)', 
-                      color: '#10b981', 
-                      border: '1px solid rgba(16, 185, 129, 0.3)', 
-                      padding: '2px 8px', 
-                      borderRadius: '12px',
-                      fontWeight: 600
-                    }}>
-                      ACTIVE ENCLAVE
-                    </span>
-                  </div>
-
-                  <div style={{ 
-                    background: 'rgba(0, 0, 0, 0.35)', 
-                    padding: '8px 10px', 
-                    borderRadius: '6px', 
-                    fontSize: '0.78rem',
-                    fontFamily: 'monospace',
-                    color: 'var(--accent-cyan)',
-                    marginBottom: '10px',
-                    wordBreak: 'break-all'
-                  }}>
-                    📁 /Users/pawandixit/Desktop/Projects/aether/server/aether.db
-                  </div>
-
-                  {/* 4 Database Tables Stats */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '10px' }}>
-                    <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '8px 10px', borderRadius: '6px' }}>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>📋 TABLE: tasks (रिमाइंडर)</div>
-                      <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#ffffff', marginTop: '2px' }}>
-                        {tasks.length} total ({tasks.filter(tk => tk.status !== 'completed').length} pending, {tasks.filter(tk => tk.status === 'completed').length} completed)
-                      </div>
-                    </div>
-
-                    <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '8px 10px', borderRadius: '6px' }}>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>💰 TABLE: financial_records</div>
-                      <div style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--accent-emerald)', marginTop: '2px' }}>
-                        {financeRecords.length} records
-                      </div>
-                    </div>
-
-                    <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '8px 10px', borderRadius: '6px' }}>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>🧠 TABLE: memory_vault</div>
-                      <div style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--accent-purple)', marginTop: '2px' }}>
-                        {memories.length} facts learned
-                      </div>
-                    </div>
-
-                    <div style={{ background: 'rgba(255, 255, 255, 0.03)', padding: '8px 10px', borderRadius: '6px' }}>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>🛡️ TABLE: audit_logs</div>
-                      <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#f59e0b', marginTop: '2px' }}>
-                        {auditLogs.length} actions
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                    💡 <strong>Terminal Query:</strong> <code style={{ color: '#e2e8f0', background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: '4px' }}>sqlite3 server/aether.db "SELECT * FROM tasks;"</code>
-                  </div>
-                </div>
-
-                {/* 2. Mobile & Desktop Push Notifications Hub */}
-                <div style={{
-                  background: 'rgba(16, 185, 129, 0.05)',
-                  border: '1px solid rgba(16, 185, 129, 0.25)',
-                  borderRadius: '10px',
-                  padding: '14px'
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <Smartphone size={18} color="var(--accent-emerald)" />
-                      <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#ffffff' }}>
-                        {effectiveLang === 'en' ? "Mobile Push Notifications (Zero Phone Number Required)" : effectiveLang === 'hinglish' ? "Mobile Push Notifications (No Phone Number Needed)" : "मोबाइल पुश नोटिफिकेशन (बिना किसी मोबाइल नंबर के)"}
-                      </span>
-                    </div>
-                    <span style={{
-                      fontSize: '0.68rem',
-                      background: pushPermission === 'granted' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)',
-                      color: pushPermission === 'granted' ? '#10b981' : '#f59e0b',
-                      border: `1px solid ${pushPermission === 'granted' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)'}`,
-                      padding: '2px 8px',
-                      borderRadius: '12px',
-                      fontWeight: 600
-                    }}>
-                      {pushPermission === 'granted' ? 'ACTIVE & PERMITTED' : 'PERMISSION NEEDED'}
-                    </span>
-                  </div>
-
-                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5, margin: '0 0 10px 0' }}>
-                    {effectiveLang === 'en' 
-                      ? "Direct native OS push alerts with audio chime and vibration. 100% private, zero cost, and never requires sharing your phone number." 
-                      : effectiveLang === 'hinglish'
-                        ? "Audio chime aur vibration ke saath direct screen alerts. 100% private, zero cost aur koi phone number nahi chahiye."
-                        : "सीधे आपके फोन/लैपटॉप स्क्रीन पर ऑडियो घंटी और वाइब्रेशन के साथ अलर्ट। 100% सुरक्षित और निजी, बिना किसी मोबाइल नंबर के।"}
-                  </p>
-
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
-                    {pushPermission !== 'granted' && (
-                      <button
-                        type="button"
-                        onClick={handleRequestPushPermission}
-                        style={{
-                          background: 'var(--accent-emerald)',
-                          color: '#080c16',
-                          border: 'none',
-                          borderRadius: '8px',
-                          padding: '7px 14px',
-                          fontSize: '0.8rem',
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px'
-                        }}
-                      >
-                        <BellRing size={15} /> {effectiveLang === 'en' ? 'Allow Push Notifications' : 'पुश अनुमति दें'}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={handleSendTestPush}
-                      style={{
-                        background: 'rgba(56, 189, 248, 0.15)',
-                        border: '1px solid rgba(56, 189, 248, 0.35)',
-                        color: 'var(--accent-cyan)',
-                        borderRadius: '8px',
-                        padding: '7px 14px',
-                        fontSize: '0.8rem',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
-                      }}
-                    >
-                      <BellRing size={15} /> {effectiveLang === 'en' ? '📲 Send Test Mobile Alert' : '📲 टेस्ट नोटिफिकेशन भेजें'}
-                    </button>
-                  </div>
-
-                  <div style={{ background: 'rgba(0, 0, 0, 0.3)', padding: '8px 10px', borderRadius: '6px', fontSize: '0.73rem', color: '#94a3b8', lineHeight: 1.5 }}>
-                    📱 <strong>Install as Mobile App (PWA):</strong><br />
-                    • <strong>Android:</strong> Open in Chrome → Tap (⋮) → Tap <em>"Install App"</em> or <em>"Add to Home screen"</em>.<br />
-                    • <strong>iPhone (iOS):</strong> Open in Safari → Tap Share icon (⎋) → Tap <em>"Add to Home Screen"</em>.
-                  </div>
-                </div>
-
-                {/* 3. Learned Memories list */}
-                <div>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '8px' }}>
-                    {effectiveLang === 'en' ? "Learned Memory Items" : effectiveLang === 'hinglish' ? "Memory Vault Items" : "मेमोरी वॉल्ट (Aether द्वारा याद रखी गई बातें)"}
-                  </div>
-                  
-                  {memories.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
-                      {effectiveLang === 'en' ? "Memory vault is empty. Speak: 'Remember my gym is at 6 PM'" : effectiveLang === 'hinglish' ? "Memory vault khali hai. Boliye: 'Yaad rakhna meri medicine raat 9 baje hai'" : 'मेमोरी वॉल्ट खाली है। बोलें: "याद रखना कि मेरी दवा रात 9 बजे है"'}
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {memories.map(m => (
-                        <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: '8px' }}>
-                          <div>
-                            <span style={{ fontSize: '0.68rem', color: 'var(--accent-cyan)', display: 'block', marginBottom: '2px' }}>
-                              [{m.category.toUpperCase()}]
-                            </span>
-                            <span style={{ fontSize: '0.85rem', color: '#ffffff' }}>"{m.fact}"</span>
-                          </div>
-                          <button 
-                            type="button"
-                            onClick={() => handleDeleteMemory(m.id)} 
-                            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '2px' }}
-                            title="Delete Memory"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
+                          <span>{voice.name}</span>
+                          {selectedVoice === voice.id && <Check size={14} />}
+                        </button>
                       ))}
                     </div>
                   )}
                 </div>
 
+                <button 
+                  type="button" 
+                  className="jarvis-icon-btn" 
+                  onClick={() => setIsSettingsOpen(true)}
+                  title="Settings"
+                >
+                  <Settings size={22} />
+                </button>
               </div>
-            )}
 
-            {/* ACTIVITY CONTENT */}
-            {activeModule === 'activity' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '250px', overflowY: 'auto' }}>
-                {auditLogs.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                    कोई स्वायत्त एक्शन लॉग नहीं है।
+              {/* CENTER STAGE */}
+              <div className="jarvis-center-stage">
+                
+                {/* Signature Aether Brand Logo Orb (Interactive, Acoustic Halo Rings, Audio Reactive) */}
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '18px 0 26px' }}>
+                  <div className="aether-logo-ring-outer" />
+                  <div className="aether-logo-ring-inner" />
+                  <div 
+                    className={`aether-brand-orb aether-postlogin-logo ${isListening ? 'listening' : ''} ${isSpeaking ? 'speaking' : ''}`}
+                    onClick={toggleListening}
+                    title="Tap to speak with Aether / माइक शुरू करें"
+                  >
+                    <div className="aether-orb-badge hero">Æ</div>
+                    {isListening && <div className="jarvis-listening-pulse" />}
                   </div>
+                </div>
+
+                {/* Big Dynamic Greeting */}
+                <h1 className="jarvis-greeting-title">
+                  {timeGreeting}
+                </h1>
+
+                {/* Dynamic Subtitle */}
+                <p className="jarvis-greeting-sub">
+                  {isListening 
+                    ? 'Listening... Speak naturally in English, Hindi, or Hinglish' 
+                    : isSpeaking 
+                      ? 'Aether is speaking...' 
+                      : 'Say "open Spotify" — Aether launches apps'
+                  }
+                </p>
+
+                {/* Latest AI Response Preview (if present) */}
+                {chatHistory.length > 0 && (
+                  <div className="jarvis-response-bubble">
+                    <div className="jarvis-bubble-header">
+                      <span className="jarvis-bubble-tag">Assistant</span>
+                      <button
+                        type="button"
+                        onClick={() => speakText(chatHistory[chatHistory.length - 1].content)}
+                        style={{ background: 'none', border: 'none', color: 'var(--accent-cyan)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.74rem' }}
+                      >
+                        <Volume2 size={13} /> Speak
+                      </button>
+                    </div>
+                    <div className="jarvis-bubble-text">
+                      {chatHistory[chatHistory.length - 1].content.slice(0, 160)}
+                      {chatHistory[chatHistory.length - 1].content.length > 160 ? '...' : ''}
+                    </div>
+                  </div>
+                )}
+
+                {/* Type Toggle Pill */}
+                <button
+                  type="button"
+                  className={`jarvis-type-pill ${isTypeInputOpen ? 'active' : ''}`}
+                  onClick={() => setIsTypeInputOpen(!isTypeInputOpen)}
+                >
+                  <Keyboard size={15} />
+                  <span>Type</span>
+                </button>
+
+                {/* Expandable Prompt Input Field */}
+                {isTypeInputOpen && (
+                  <form 
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (inputText.trim()) {
+                        handleSendPrompt(inputText);
+                      }
+                    }} 
+                    className="jarvis-input-bar-wrap"
+                  >
+                    <input
+                      type="text"
+                      className="jarvis-input-field"
+                      placeholder="Ask Aether anything..."
+                      value={inputText}
+                      onChange={(e) => setInputText(e.target.value)}
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      onClick={toggleListening}
+                      className={`jarvis-action-circle-btn mic ${isListening ? 'active' : ''}`}
+                      title={isListening ? "Stop listening" : "Start voice input"}
+                    >
+                      <Mic size={16} />
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={!inputText.trim() || isProcessing}
+                      className="jarvis-action-circle-btn send"
+                      title="Send prompt"
+                    >
+                      <ArrowUp size={16} />
+                    </button>
+                  </form>
+                )}
+              </div>
+
+            </div>
+          )}
+
+          {/* TAB 2: TODAY'S EXECUTIVE AGENDA */}
+          {activeTab === 'today' && (
+            <div style={{ maxWidth: '640px', margin: '0 auto', width: '100%', padding: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <h1 style={{ fontFamily: 'Newsreader', fontSize: '1.8rem', fontWeight: 600, color: '#ffffff' }}>
+                  Today's Agenda
+                </h1>
+                <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>
+                  {currentTime.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                </span>
+              </div>
+
+              {/* Active Reminders Card */}
+              <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px', marginBottom: '18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: 'var(--accent-cyan)', fontWeight: 700, fontSize: '0.85rem' }}>
+                  <Bell size={16} />
+                  <span>ACTIVE REMINDERS</span>
+                </div>
+                {tasks.filter(t => t.reminder_time && !t.is_completed).length === 0 ? (
+                  <div style={{ color: '#64748b', fontSize: '0.84rem' }}>No pending reminders today. Speak to set one!</div>
                 ) : (
-                  auditLogs.map(a => (
-                    <div key={a.id} style={{ padding: '10px 12px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: '8px' }}>
-                      <div style={{ fontSize: '0.82rem', color: '#ffffff' }}>{a.details}</div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
-                        <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-                          CONFIDENCE: {Math.round(a.confidence_score * 100)}%
-                        </span>
-                        {a.undo_payload && !a.is_undone && (
-                          <button 
-                            onClick={() => handleUndo(a.id)} 
-                            style={{ 
-                              background: 'rgba(56, 189, 248, 0.1)', 
-                              border: '1px solid rgba(56, 189, 248, 0.3)', 
-                              color: 'var(--accent-cyan)', 
-                              borderRadius: '4px', 
-                              padding: '2px 8px', 
-                              fontSize: '0.7rem',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
-                          >
-                            <RotateCcw size={11} /> Undo
-                          </button>
-                        )}
-                        {a.is_undone && (
-                          <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Reversed</span>
-                        )}
+                  tasks.filter(t => t.reminder_time && !t.is_completed).map(task => (
+                    <div key={task.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                      <div>
+                        <div style={{ color: '#ffffff', fontSize: '0.92rem', fontWeight: 500 }}>{task.title}</div>
+                        <div style={{ color: 'var(--accent-cyan)', fontSize: '0.76rem', marginTop: '2px' }}>⏰ {task.reminder_time}</div>
                       </div>
+                      <button 
+                        type="button" 
+                        onClick={() => handleToggleTask(task.id)}
+                        style={{ background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.3)', color: 'var(--accent-cyan)', padding: '5px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '0.76rem' }}
+                      >
+                        Done
+                      </button>
                     </div>
                   ))
                 )}
               </div>
-            )}
 
-          </div>
-        )}
+              {/* Tasks Checklist */}
+              <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px', marginBottom: '18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a855f7', fontWeight: 700, fontSize: '0.85rem' }}>
+                    <CheckSquare size={16} />
+                    <span>DAILY TASKS ({tasks.filter(t => !t.is_completed).length})</span>
+                  </div>
+                </div>
 
-        {/* 7. "AETHER से पूछें" REAL CHAT INPUT CARD */}
-        <section className="ask-aether-card">
-          
-          {/* Header Row: Title + AI Status (Listening/Thinking/Speaking) + New Chat Button */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <MessageSquare size={20} color="var(--accent-cyan)" />
-              <span style={{ 
-                fontFamily: 'var(--font-heading)', 
-                fontSize: '1.15rem', 
-                fontWeight: 700, 
-                color: '#ffffff' 
-              }}>
-                {t.askAether}
-              </span>
-            </div>
+                <form 
+                  onSubmit={handleCreateTask}
+                  style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}
+                >
+                  <input
+                    type="text"
+                    placeholder="Add a new task..."
+                    value={newTaskInput}
+                    onChange={(e) => setNewTaskInput(e.target.value)}
+                    style={{ flex: 1, background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.85rem', outline: 'none' }}
+                  />
+                  <button type="submit" style={{ background: '#a855f7', border: 'none', borderRadius: '10px', padding: '8px 14px', color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: '0.82rem' }}>
+                    Add
+                  </button>
+                </form>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-              
-              {/* Active Language Badge */}
-              <div 
-                title="Aether Response Language / उत्तर की भाषा (ऊपर हेडर से बदल सकते हैं)"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  padding: '3px 8px',
-                  borderRadius: 'var(--radius-pill)',
-                  fontSize: '0.72rem',
-                  fontFamily: 'var(--font-mono)',
-                  background: 'rgba(56, 189, 248, 0.1)',
-                  color: 'var(--accent-cyan)',
-                  border: '1px solid rgba(56, 189, 248, 0.25)'
-                }}
-              >
-                <Languages size={12} />
-                <span>
-                  {t.responseLang}: {currentLangObj.icon} {currentLangObj.label}
-                </span>
+                {tasks.map(task => (
+                  <div key={task.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}>
+                    <div 
+                      onClick={() => handleToggleTask(task.id)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', flex: 1 }}
+                    >
+                      {task.is_completed ? <CheckCircle2 size={16} color="#10b981" /> : <Circle size={16} color="#64748b" />}
+                      <span style={{ fontSize: '0.88rem', color: task.is_completed ? '#64748b' : '#ffffff', textDecoration: task.is_completed ? 'line-through' : 'none' }}>
+                        {task.title}
+                      </span>
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={() => handleDeleteTask(task.id)}
+                      style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '4px' }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
               </div>
 
-              {/* Dynamic Live AI Status Pill */}
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '3px 10px',
-                borderRadius: 'var(--radius-pill)',
-                fontSize: '0.72rem',
-                fontFamily: 'var(--font-mono)',
-                background: isListening ? 'rgba(244, 63, 94, 0.15)' : (isProcessing ? 'rgba(56, 189, 248, 0.15)' : (isSpeaking ? 'rgba(168, 85, 247, 0.15)' : 'rgba(255, 255, 255, 0.05)')),
-                color: isListening ? '#f43f5e' : (isProcessing ? 'var(--accent-cyan)' : (isSpeaking ? 'var(--accent-purple)' : 'var(--text-muted)')),
-                border: `1px solid ${isListening ? '#f43f5e' : (isProcessing ? 'var(--accent-cyan)' : (isSpeaking ? 'var(--accent-purple)' : 'rgba(255, 255, 255, 0.1)'))}`
-              }}>
-                <span style={{ 
-                  width: '6px', 
-                  height: '6px', 
-                  borderRadius: '50%', 
-                  background: isListening ? '#f43f5e' : (isProcessing ? 'var(--accent-cyan)' : (isSpeaking ? 'var(--accent-purple)' : '#10b981')) 
-                }} />
-                <span>
-                  {isListening ? t.listening : 
-                   isProcessing ? t.processing : 
-                   isSpeaking ? t.speaking : t.ready}
-                </span>
-              </div>
-
-              {/* New Chat Button */}
-              <button
-                type="button"
-                onClick={handleStartNewChat}
-                title="Start New Chat / नई बातचीत शुरू करें"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.06)',
-                  border: '1px solid rgba(255, 255, 255, 0.12)',
-                  color: '#cbd5e1',
-                  borderRadius: '6px',
-                  padding: '4px 10px',
-                  fontSize: '0.74rem',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}
-              >
-                <Plus size={13} />
-                <span>{t.newChat}</span>
-              </button>
-
-              {/* Voice Mic Button */}
-              <button 
-                type="button"
-                onClick={toggleVoiceRecognition}
-                title={isListening ? "Stop listening" : "Click to speak with Aether (बोलिए)"}
-                style={{
-                  background: isListening ? '#f43f5e' : 'rgba(56, 189, 248, 0.12)',
-                  border: isListening ? '1px solid #f43f5e' : '1px solid rgba(56, 189, 248, 0.3)',
-                  color: isListening ? '#ffffff' : 'var(--accent-cyan)',
-                  borderRadius: '8px',
-                  width: '36px',
-                  height: '36px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s ease',
-                  boxShadow: isListening ? '0 0 15px #f43f5e' : 'none'
-                }}
-              >
-                {isListening ? <MicOff size={18} /> : <Mic size={18} />}
-              </button>
+              {/* News & Market Briefing */}
+              {newsItems.length > 0 && (
+                <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: '#f59e0b', fontWeight: 700, fontSize: '0.85rem' }}>
+                    <Newspaper size={16} />
+                    <span>EXECUTIVE NEWS WIRE</span>
+                  </div>
+                  {newsItems.slice(0, 3).map((item, idx) => (
+                    <div key={idx} style={{ padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}>
+                      <div style={{ fontSize: '0.86rem', color: '#ffffff', fontWeight: 500 }}>{item.headline}</div>
+                      <div style={{ fontSize: '0.74rem', color: '#94a3b8', marginTop: '3px' }}>{item.summary}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
-          {/* Genuine Real Chat Input Bar */}
-          <form 
-            onSubmit={(e) => { e.preventDefault(); handleSendPrompt(); }}
-            style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '12px',
-              background: 'rgba(255, 255, 255, 0.03)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              borderRadius: '12px',
-              padding: '6px 8px 6px 16px',
-              marginTop: '4px'
-            }}
-          >
-            <input 
-              type="text"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              placeholder={isListening ? t.listeningPlaceholder : t.placeholder}
-              disabled={isProcessing}
-              style={{ 
-                flex: 1,
-                background: 'transparent',
-                border: 'none',
-                outline: 'none',
-                color: '#ffffff',
-                fontSize: '0.96rem',
-                fontFamily: 'var(--font-body)',
-                padding: '6px 0'
-              }}
-            />
-
-            <button 
-              type="submit"
-              disabled={isProcessing || !inputText.trim()}
-              className="btn-send-circle"
-              title="Send to AETHER"
-            >
-              <ArrowUp size={18} />
-            </button>
-          </form>
-
-        </section>
-
-        {/* 8. Centered Downward Arrow Button (Toggle Conversation History) */}
-        <div style={{ display: 'flex', justifyContent: 'center' }}>
-          <button 
-            type="button"
-            onClick={() => setShowConversation(!showConversation)}
-            className="btn-stream-toggle"
-            title={showConversation ? t.hideChat : t.viewChat}
-          >
-            {showConversation ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-          </button>
-        </div>
-
-        {/* 9. CONVERSATION STREAM (When active or toggled open) */}
-        {showConversation && (
-          <section className="card-briefing" style={{ display: 'flex', flexDirection: 'column', gap: '14px', animation: 'floatGentle 0.3s ease' }}>
-            
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', paddingBottom: '10px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Bot size={18} color="var(--accent-cyan)" />
-                <span style={{ fontFamily: 'var(--font-heading)', fontSize: '0.92rem', fontWeight: 700, color: '#ffffff' }}>
-                  {t.chatStream}
-                </span>
-              </div>
-              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                {chatHistory.length} {t.messages}
-              </span>
-            </div>
-
-            {/* Chat Scroll Container */}
-            <div 
-              onScroll={(e) => {
-                const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
-                const isNearBottom = scrollHeight - scrollTop - clientHeight < 60;
-                userScrolledUpRef.current = !isNearBottom;
-              }}
-              style={{ 
-                display: 'flex', 
-                flexDirection: 'column', 
-                gap: '12px', 
-                maxHeight: '440px', 
-                overflowY: 'auto',
-                paddingRight: '4px'
-              }}
-            >
-              {chatHistory.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '30px 10px', color: 'var(--text-muted)' }}>
-                  <p style={{ fontSize: '0.92rem', color: '#cbd5e1' }}>
-                    नमस्ते पवन! मौसम, ताज़ा समाचार, टास्क या खर्च पूछने के लिए प्रॉम्ट टाइप करें।
+          {/* TAB 3: MEMORY VAULT */}
+          {activeTab === 'memory' && (
+            <div style={{ maxWidth: '640px', margin: '0 auto', width: '100%', padding: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <div>
+                  <h1 style={{ fontFamily: 'Newsreader', fontSize: '1.8rem', fontWeight: 600, color: '#ffffff' }}>
+                    Memory Vault
+                  </h1>
+                  <p style={{ fontSize: '0.82rem', color: '#94a3b8', marginTop: '2px' }}>
+                    Facts & preferences Aether automatically remembers about you
                   </p>
                 </div>
-              ) : (
-                chatHistory.map((msg, idx) => (
-                  <div key={idx} className={msg.role === 'user' ? 'chat-bubble-user' : 'chat-bubble-aether'}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', fontSize: '0.72rem' }}>
-                      <span style={{ fontWeight: 700, color: msg.role === 'user' ? '#93c5fd' : 'var(--accent-cyan)' }}>
-                        {msg.role === 'user' ? 'YOU (PAWAN)' : 'AETHER EXECUTIVE'}
-                      </span>
+              </div>
 
-                      {/* Action buttons on AI messages: Translate to Hindi & Speak aloud */}
-                      {msg.role !== 'user' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <button
-                            onClick={() => handleTranslateMessage(idx, msg.content)}
-                            title="Translate to Hindi / हिन्दी अनुवाद"
-                            style={{
-                              background: 'rgba(56, 189, 248, 0.12)',
-                              border: '1px solid rgba(56, 189, 248, 0.3)',
-                              borderRadius: '4px',
-                              padding: '2px 8px',
-                              color: 'var(--accent-cyan)',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              fontSize: '0.68rem'
-                            }}
-                          >
-                            <Languages size={12} />
-                            <span>{msg.isTranslated ? 'अनुवादित' : 'हिन्दी अनुवाद'}</span>
-                          </button>
-
-                          <button
-                            onClick={() => speakText(msg.content)}
-                            title="Listen response aloud"
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              color: 'var(--accent-cyan)',
-                              cursor: 'pointer',
-                              padding: '2px'
-                            }}
-                          >
-                            <Volume2 size={15} />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-
-                    <div style={{ fontSize: '0.9rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                      {renderMessageContent(msg.content)}
-                    </div>
+              <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px' }}>
+                {memories.length === 0 ? (
+                  <div style={{ color: '#64748b', fontSize: '0.84rem', padding: '16px 0', textAlign: 'center' }}>
+                    No memories recorded yet. Tell Aether: "Remember that my birthday is March 23"
                   </div>
-                ))
-              )}
+                ) : (
+                  memories.map(mem => (
+                    <div key={mem.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-cyan)', marginTop: '6px' }} />
+                        <div>
+                          <div style={{ color: '#ffffff', fontSize: '0.9rem', lineHeight: '1.4' }}>{mem.fact}</div>
+                          <div style={{ color: '#64748b', fontSize: '0.74rem', marginTop: '3px' }}>
+                            Learned {new Date(mem.created_at).toLocaleDateString()}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMemory(mem.id)}
+                        style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '4px' }}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
 
-              {isProcessing && (
-                <div className="chat-bubble-aether" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <Sparkles size={16} color="var(--accent-cyan)" />
-                  <span style={{ fontSize: '0.84rem', color: 'var(--accent-cyan)' }}>
-                    {t.thinkingMsg}
-                  </span>
-                </div>
-              )}
-              <div ref={chatEndRef} />
+          {/* FIXED BOTTOM TAB BAR (Screenshot 1) */}
+          <nav className="jarvis-bottom-tabbar">
+            <button 
+              type="button" 
+              className={`jarvis-tab-item ${activeTab === 'aether' ? 'active' : ''}`}
+              onClick={() => setActiveTab('aether')}
+            >
+              <div className="aether-tab-logo-icon">Æ</div>
+              <span className="jarvis-tab-label">Aether</span>
+            </button>
+
+            <button 
+              type="button" 
+              className={`jarvis-tab-item ${activeTab === 'today' ? 'active' : ''}`}
+              onClick={() => setActiveTab('today')}
+            >
+              <CheckSquare size={22} />
+              <span className="jarvis-tab-label">Today</span>
+            </button>
+
+            <button 
+              type="button" 
+              className={`jarvis-tab-item ${activeTab === 'memory' ? 'active' : ''}`}
+              onClick={() => setActiveTab('memory')}
+            >
+              <Layers size={22} />
+              <span className="jarvis-tab-label">Memory</span>
+            </button>
+          </nav>
+
+        </div>
+      )}
+
+      {/* =========================================================================
+          SUB-MODALS (Key, Finance, Audit, Profile Name, Assistant Setup)
+          ========================================================================= */}
+
+      {/* 1. Profile Name Editor Modal */}
+      {activeSubModal === 'profile-name' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.78)', backdropFilter: 'blur(10px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0f172a', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '20px', padding: '24px', width: '100%', maxWidth: '380px' }}>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>Your Preferred Name</h3>
+            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '16px' }}>How Aether greets you on the main screen.</p>
+            <input
+              type="text"
+              value={tempPreferredName}
+              onChange={(e) => setTempPreferredName(e.target.value)}
+              placeholder="e.g. Raja or Pawan"
+              style={{ width: '100%', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '12px', padding: '10px 14px', color: '#fff', marginBottom: '18px', boxSizing: 'border-box' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', padding: '8px 14px', cursor: 'pointer' }}>Cancel</button>
+              <button 
+                type="button" 
+                onClick={() => {
+                  const val = tempPreferredName.trim() || 'Raja';
+                  setUserPreferredName(val);
+                  localStorage.setItem('aether_preferred_name', val);
+                  setActiveSubModal(null);
+                  showToast(`Name saved: ${val}`, 'success');
+                }}
+                style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 18px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}
+              >
+                Save Name
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Gemini API Key BYOK Modal */}
+      {activeSubModal === 'key' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.78)', backdropFilter: 'blur(10px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0f172a', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '20px', padding: '24px', width: '100%', maxWidth: '420px' }}>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>Google Gemini API Key</h3>
+            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '14px' }}>BYOK direct validation with Google AI Studio models.</p>
+            <input
+              type="text"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="AIzaSy..."
+              style={{ width: '100%', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '12px', padding: '10px 14px', color: '#fff', marginBottom: '12px', boxSizing: 'border-box' }}
+            />
+            {keyError && <div style={{ color: '#ef4444', fontSize: '0.8rem', marginBottom: '12px' }}>{keyError}</div>}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <button 
+                type="button" 
+                onClick={handleValidateApiKey} 
+                disabled={keyValidating}
+                style={{ background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.3)', color: 'var(--accent-cyan)', padding: '8px 14px', borderRadius: '10px', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}
+              >
+                {keyValidating ? 'Testing...' : 'Test & Verify Key'}
+              </button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', padding: '8px 12px', cursor: 'pointer' }}>Close</button>
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    localStorage.setItem('aether_gemini_key', apiKey.trim());
+                    setActiveSubModal(null);
+                    showToast('Key saved to local storage', 'success');
+                  }}
+                  style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 16px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Executive Finance & Ledger Modal */}
+      {activeSubModal === 'finance' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '500px', maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#10b981', fontWeight: 700 }}>
+                <Wallet size={18} />
+                <span>EXECUTIVE WEALTH & LEDGER</span>
+              </div>
+              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
             </div>
 
-            {/* Quick Suggestion Chips */}
-            <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingTop: '8px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
-              {[
-                "what is the weather today?",
-                "give the latest news of today?",
-                "₹500 का पेट्रोल खर्च UPI से किया",
-                "कल दोपहर 2 बजे टीम मीटिंग"
-              ].map((chip, cIdx) => (
-                <button
-                  key={cIdx}
-                  onClick={() => handleSendPrompt(chip)}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+              <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: '14px', padding: '14px' }}>
+                <div style={{ fontSize: '0.74rem', color: '#94a3b8' }}>TOTAL BALANCE</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#10b981', marginTop: '4px' }}>₹{financeSummary.balance.toLocaleString('en-IN')}</div>
+              </div>
+              <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: '14px', padding: '14px' }}>
+                <div style={{ fontSize: '0.74rem', color: '#94a3b8' }}>TOTAL EXPENSES</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#ef4444', marginTop: '4px' }}>₹{financeSummary.total_expense.toLocaleString('en-IN')}</div>
+              </div>
+            </div>
+
+            <h4 style={{ fontSize: '0.85rem', color: '#cbd5e1', marginBottom: '10px' }}>Recent Financial Entries</h4>
+            {financeRecords.length === 0 ? (
+              <div style={{ color: '#64748b', fontSize: '0.82rem', textAlign: 'center', padding: '20px 0' }}>No records yet. Tell Aether: "Spent 500 on dinner"</div>
+            ) : (
+              financeRecords.map(rec => (
+                <div key={rec.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                  <div>
+                    <div style={{ color: '#ffffff', fontSize: '0.88rem' }}>{rec.description}</div>
+                    <div style={{ color: '#64748b', fontSize: '0.74rem' }}>{new Date(rec.date).toLocaleDateString()}</div>
+                  </div>
+                  <div style={{ color: rec.record_type === 'expense' ? '#ef4444' : '#10b981', fontWeight: 700, fontSize: '0.95rem' }}>
+                    {rec.record_type === 'expense' ? '-' : '+'}₹{rec.amount.toLocaleString('en-IN')}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 4. Actions & Audit Trail Modal */}
+      {activeSubModal === 'audit' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '520px', maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent-cyan)', fontWeight: 700 }}>
+                <Shield size={18} />
+                <span>ACTIONS & AUDIT TRAIL</span>
+              </div>
+              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            {auditLogs.length === 0 ? (
+              <div style={{ color: '#64748b', fontSize: '0.84rem', textAlign: 'center', padding: '20px 0' }}>No actions logged yet.</div>
+            ) : (
+              auditLogs.map(log => (
+                <div key={log.id} style={{ padding: '12px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--accent-cyan)', fontWeight: 700, textTransform: 'uppercase' }}>{log.action_type}</span>
+                    <span style={{ fontSize: '0.72rem', color: '#64748b' }}>{new Date(log.executed_at).toLocaleTimeString()}</span>
+                  </div>
+                  <div style={{ color: '#ffffff', fontSize: '0.84rem', lineHeight: '1.4' }}>{log.details}</div>
+                  {log.undo_payload && !log.is_undone && (
+                    <button
+                      type="button"
+                      onClick={() => handleUndo(log.id)}
+                      style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444', padding: '3px 10px', borderRadius: '6px', fontSize: '0.72rem', marginTop: '6px', cursor: 'pointer' }}
+                    >
+                      Undo Action
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 5. Phone Assistant Setup Guide Modal */}
+      {activeSubModal === 'assistant-setup' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '400px' }}>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff', marginBottom: '10px' }}>Phone Assistant Integration</h3>
+            <p style={{ fontSize: '0.82rem', color: '#cbd5e1', lineHeight: '1.5', marginBottom: '16px' }}>
+              On Android, go to <b>Settings → Apps → Default Apps → Digital Assistant App</b> and select <b>Aether</b>.
+            </p>
+            <div style={{ background: 'rgba(255, 255, 255, 0.04)', borderRadius: '12px', padding: '14px', fontSize: '0.78rem', color: '#94a3b8', lineHeight: '1.4', marginBottom: '18px' }}>
+              ⚡ You will be able to hold the power button or swipe from bottom corners to talk to Aether instantly from any application!
+            </div>
+            <button 
+              type="button" 
+              onClick={() => setActiveSubModal(null)} 
+              style={{ width: '100%', background: '#38bdf8', border: 'none', color: '#080c16', padding: '10px', borderRadius: '12px', fontWeight: 700, cursor: 'pointer' }}
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 6. Assistant Voice Selector Modal */}
+      {activeSubModal === 'assistant' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '420px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>Choose Assistant Personality</h3>
+              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+              {AETHER_VOICES.map(voice => (
+                <div
+                  key={voice.id}
+                  onClick={() => {
+                    setSelectedVoice(voice.id);
+                    localStorage.setItem('aether_selected_voice', voice.id);
+                    setActiveSubModal(null);
+                    showToast(`Voice set to ${voice.name}`, 'info');
+                  }}
                   style={{
-                    background: 'rgba(56, 189, 248, 0.08)',
-                    border: '1px solid rgba(56, 189, 248, 0.25)',
-                    borderRadius: 'var(--radius-pill)',
-                    padding: '4px 12px',
-                    fontSize: '0.74rem',
-                    color: 'var(--accent-cyan)',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap'
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '12px 14px',
+                    borderRadius: '12px',
+                    background: selectedVoice === voice.id ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                    border: `1px solid ${selectedVoice === voice.id ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.08)'}`,
+                    cursor: 'pointer'
                   }}
                 >
-                  ⚡ {chip}
-                </button>
+                  <div>
+                    <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.92rem' }}>{voice.name}</div>
+                    <div style={{ color: '#94a3b8', fontSize: '0.78rem' }}>{voice.desc}</div>
+                  </div>
+                  {selectedVoice === voice.id && <Check size={18} color="var(--accent-cyan)" />}
+                </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
 
-          </section>
-        )}
+      {/* 7. Database Core & Sync Modal */}
+      {activeSubModal === 'db' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '420px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>Database Core & Sync</h3>
+              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.86rem', color: '#cbd5e1' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                <span>Server Status</span>
+                <span style={{ color: serverOnline ? '#10b981' : '#ef4444', fontWeight: 700 }}>{serverOnline ? '● Online (Port 8000)' : '● Offline'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                <span>Tasks in SQLite</span>
+                <span>{tasks.length} items</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                <span>Memories in Vault</span>
+                <span>{memories.length} items</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                <span>Audit Log Records</span>
+                <span>{auditLogs.length} entries</span>
+              </div>
+            </div>
+            <button 
+              type="button" 
+              onClick={() => { refreshAllData(); showToast('Data re-synchronized with core', 'success'); }}
+              style={{ width: '100%', marginTop: '20px', background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.3)', color: 'var(--accent-cyan)', padding: '10px', borderRadius: '12px', fontWeight: 700, cursor: 'pointer' }}
+            >
+              🔄 Refresh & Sync Core Now
+            </button>
+          </div>
+        </div>
+      )}
 
-      </main>
+      {/* 8. Interaction History Transcript Modal */}
+      {isHistoryOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '480px', maxHeight: '80vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#ffffff', fontWeight: 700 }}>
+                <Clock size={18} color="var(--accent-cyan)" />
+                <span>INTERACTION TRANSCRIPT</span>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button 
+                  type="button" 
+                  onClick={handleStartNewChat} 
+                  style={{ background: 'rgba(239, 68, 68, 0.15)', border: 'none', color: '#ef4444', padding: '4px 10px', borderRadius: '8px', fontSize: '0.74rem', cursor: 'pointer' }}
+                >
+                  Clear
+                </button>
+                <button type="button" onClick={() => setIsHistoryOpen(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+              </div>
+            </div>
+
+            {chatHistory.length === 0 ? (
+              <div style={{ color: '#64748b', fontSize: '0.84rem', textAlign: 'center', padding: '24px 0' }}>No recent chats. Speak to Aether to begin!</div>
+            ) : (
+              chatHistory.map((msg, i) => (
+                <div key={i} style={{ marginBottom: '12px', padding: '10px 14px', borderRadius: '12px', background: msg.role === 'user' ? 'rgba(56, 189, 248, 0.1)' : 'rgba(255, 255, 255, 0.04)', textAlign: 'left' }}>
+                  <div style={{ fontSize: '0.72rem', color: msg.role === 'user' ? 'var(--accent-cyan)' : '#a855f7', fontWeight: 700, marginBottom: '3px' }}>
+                    {msg.role === 'user' ? (userName || 'You') : 'Aether'}
+                  </div>
+                  <div style={{ fontSize: '0.86rem', color: '#ffffff', lineHeight: '1.4' }}>{msg.content}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Floating Toast Notification */}
       {toast && (
         <div style={{
           position: 'fixed',
-          bottom: '24px',
+          bottom: '80px',
           right: '24px',
-          zIndex: 100,
+          zIndex: 120,
           background: '#0d1526',
           border: '1px solid var(--accent-cyan)',
-          boxShadow: '0 8px 30px rgba(0, 0, 0, 0.6)',
+          boxShadow: '0 8px 30px rgba(0, 0, 0, 0.7)',
           padding: '12px 18px',
-          borderRadius: '12px',
+          borderRadius: '14px',
           display: 'flex',
           alignItems: 'center',
           gap: '10px',
