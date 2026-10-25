@@ -13,6 +13,16 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
+import * as Notifications from 'expo-notifications';
+
+// Configure heads-up push notifications
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
 
 const AETHER_URL = 'https://aether-kjrj.onrender.com';
 
@@ -22,10 +32,10 @@ export default function App() {
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Request Android Microphone Permission on startup
+  // Request Android Microphone & Push Notification Permissions on startup
   useEffect(() => {
-    if (Platform.OS === 'android') {
-      const requestMic = async () => {
+    const setupPermissions = async () => {
+      if (Platform.OS === 'android') {
         try {
           await PermissionsAndroid.request(
             PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
@@ -40,9 +50,34 @@ export default function App() {
         } catch (err) {
           console.warn('Mic request error:', err);
         }
-      };
-      requestMic();
-    }
+      }
+
+      // Configure Native Push Notifications & High-Priority Channel
+      try {
+        const { status: existingStatus } = await Notifications.getPermissionsAsync();
+        let finalStatus = existingStatus;
+        if (existingStatus !== 'granted') {
+          const { status } = await Notifications.requestPermissionsAsync();
+          finalStatus = status;
+        }
+
+        if (Platform.OS === 'android') {
+          await Notifications.setNotificationChannelAsync('reminders', {
+            name: 'Aether Reminders & Alerts',
+            importance: Notifications.AndroidImportance.MAX,
+            vibrationPattern: [0, 250, 250, 250],
+            sound: 'default',
+            lightColor: '#00f0ff',
+            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+            bypassDnd: true,
+          });
+        }
+      } catch (notifErr) {
+        console.warn('Push notification setup error:', notifErr);
+      }
+    };
+
+    setupPermissions();
   }, []);
 
   // Handle Android Hardware Back Button to navigate inside webview
@@ -102,6 +137,47 @@ export default function App() {
           }}
           onNavigationStateChange={(navState) => {
             setCanGoBack(navState.canGoBack);
+          }}
+          onMessage={async (event) => {
+            try {
+              const data = JSON.parse(event.nativeEvent.data);
+              if (data.type === 'TRIGGER_NOTIFICATION') {
+                await Notifications.scheduleNotificationAsync({
+                  content: {
+                    title: data.title || '⚡ AETHER ALERT',
+                    body: data.body || '',
+                    sound: true,
+                  },
+                  trigger: {
+                    type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+                    seconds: 1,
+                    channelId: 'reminders',
+                  },
+                });
+              } else if (data.type === 'SCHEDULE_REMINDER') {
+                const identifier = `reminder-${data.id}`;
+                await Notifications.cancelScheduledNotificationAsync(identifier).catch(() => {});
+                if (data.triggerSeconds && data.triggerSeconds > 0) {
+                  await Notifications.scheduleNotificationAsync({
+                    identifier,
+                    content: {
+                      title: `⏰ AETHER रिमाइंडर: ${data.title}`,
+                      body: data.reminder_time ? `समय: ${data.reminder_time} • कार्य का समय हो गया है!` : 'कार्य का समय हो गया है!',
+                      sound: true,
+                    },
+                    trigger: {
+                      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+                      seconds: Math.max(1, Math.round(data.triggerSeconds)),
+                      channelId: 'reminders',
+                    },
+                  });
+                }
+              } else if (data.type === 'CANCEL_REMINDER') {
+                await Notifications.cancelScheduledNotificationAsync(`reminder-${data.id}`).catch(() => {});
+              }
+            } catch (err) {
+              console.warn('WebView onMessage error:', err);
+            }
           }}
           onLoadStart={() => {
             setIsLoading(true);

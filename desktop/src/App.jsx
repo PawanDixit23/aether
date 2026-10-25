@@ -277,18 +277,26 @@ const GoogleIcon = () => (
   </svg>
 );
 
-// Lightweight Markdown & Links message formatter
+// Lightweight Markdown & Links message formatter with multiline link healing
 const FormattedMessage = ({ text }) => {
   if (!text) return null;
-  const lines = text.split('\n');
+
+  // 1. Heal links where Gemini or line breaks separated ] and ( or wrapped URLs
+  const healedText = text
+    .replace(/\]\s*\n+\s*\(/g, '](')
+    .replace(/\[\s*\n+/g, '[')
+    .replace(/\n+\s*\]/g, ']')
+    .replace(/\(\s*\n+\s*(https?:\/\/)/g, '($1');
+
+  const lines = healedText.split('\n');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
       {lines.map((line, idx) => {
         if (!line.trim()) return <div key={idx} style={{ height: '4px' }} />;
 
-        // Match markdown links [title](url) or bold **text** or raw https URLs
-        const regex = /(\[.*?\]\(https?:\/\/[^\s)]+\)|\*\*.*?\*\*|https?:\/\/[^\s)]+)/g;
+        // Match markdown links [title](url), bold **text**, or standalone (https://...) / https://...
+        const regex = /(\[[^\]]+\]\(https?:\/\/[^\s)]+\)|\*\*.*?\*\*|\(?https?:\/\/[^\s)]+\)?)/g;
         const parts = line.split(regex);
 
         return (
@@ -305,26 +313,46 @@ const FormattedMessage = ({ text }) => {
                     href={linkMatch[2]}
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ color: 'var(--accent-cyan)', fontWeight: 600, textDecoration: 'underline' }}
+                    style={{
+                      color: 'var(--accent-cyan)',
+                      fontWeight: 600,
+                      textDecoration: 'underline',
+                      wordBreak: 'break-word'
+                    }}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {linkMatch[1]}
+                    {linkMatch[1]} ↗
                   </a>
                 );
               }
 
-              // Check raw url
-              if (part.startsWith('http://') || part.startsWith('https://')) {
+              // Check standalone or wrapped URL: (https://...) or https://...
+              const rawUrlMatch = part.match(/^\(?(https?:\/\/[^\s)]+)\)?$/);
+              if (rawUrlMatch) {
+                const url = rawUrlMatch[1];
                 return (
                   <a
                     key={pIdx}
-                    href={part}
+                    href={url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ color: 'var(--accent-cyan)', textDecoration: 'underline' }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      color: 'var(--accent-cyan)',
+                      fontWeight: 600,
+                      textDecoration: 'underline',
+                      background: 'rgba(56, 189, 248, 0.12)',
+                      padding: '2px 8px',
+                      borderRadius: '6px',
+                      margin: '2px 0',
+                      fontSize: '0.8rem',
+                      verticalAlign: 'middle'
+                    }}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {part.length > 40 ? part.slice(0, 37) + '...' : part}
+                    🔗 स्रोत पढ़ें ↗ (Read Source)
                   </a>
                 );
               }
@@ -661,8 +689,14 @@ export default function App() {
 
         recordAuthEvent(gEmail, gName);
 
-        localStorage.setItem('aether_onboarding_done', 'true');
-        setOnboardingDone(true);
+        const alreadyDone = localStorage.getItem('aether_onboarding_done') === 'true';
+        if (alreadyDone) {
+          setOnboardingDone(true);
+        } else {
+          setOnboardingDone(false);
+          setOnboardingStep(4);
+        }
+
         if (window.location.hash.includes('access_token')) {
           showToast(`Google से सफलतापूर्वक लिंक: ${gName}`, 'success');
           window.history.replaceState(null, '', window.location.pathname);
@@ -687,8 +721,13 @@ export default function App() {
 
         recordAuthEvent(gEmail, gName);
 
-        localStorage.setItem('aether_onboarding_done', 'true');
-        setOnboardingDone(true);
+        const alreadyDone = localStorage.getItem('aether_onboarding_done') === 'true';
+        if (alreadyDone) {
+          setOnboardingDone(true);
+        } else {
+          setOnboardingDone(false);
+          setOnboardingStep(4);
+        }
         showToast(`Google से सफलतापूर्वक लिंक: ${gName}`, 'success');
       }
     });
@@ -698,8 +737,13 @@ export default function App() {
 
   const handleGoogleSignIn = async () => {
     if (userEmail) {
-      localStorage.setItem('aether_onboarding_done', 'true');
-      setOnboardingDone(true);
+      const alreadyDone = localStorage.getItem('aether_onboarding_done') === 'true';
+      if (alreadyDone) {
+        setOnboardingDone(true);
+      } else {
+        setOnboardingDone(false);
+        setOnboardingStep(4);
+      }
       return;
     }
     setGoogleAuthLoading(true);
@@ -742,8 +786,13 @@ export default function App() {
     setGoogleError('');
     showToast(`Google Account कनेक्ट हुआ: ${email}`, 'success');
     setShowGoogleModal(false);
-    localStorage.setItem('aether_onboarding_done', 'true');
-    setOnboardingDone(true);
+    const alreadyDone = localStorage.getItem('aether_onboarding_done') === 'true';
+    if (alreadyDone) {
+      setOnboardingDone(true);
+    } else {
+      setOnboardingDone(false);
+      setOnboardingStep(4);
+    }
     setGoogleLoginSuccess(false);
   };
 
@@ -866,7 +915,21 @@ export default function App() {
       try { navigator.vibrate([200, 100, 200, 100, 200]); } catch(e) {}
     }
 
-    // 3. Service Worker notification (mandatory for mobile PWA & background OS alerts)
+    // 3. React Native Mobile Native Push Notification Bridge
+    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'TRIGGER_NOTIFICATION',
+          title,
+          body,
+          tag
+        }));
+      } catch (e) {
+        console.warn('Native mobile bridge error:', e);
+      }
+    }
+
+    // 4. Service Worker notification (mandatory for mobile PWA & background OS alerts)
     if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && navigator.serviceWorker.controller) {
       navigator.serviceWorker.ready.then(reg => {
         reg.showNotification(title, {
@@ -984,7 +1047,45 @@ export default function App() {
           return chats;
         });
       }
-      if (resTasks.ok) setTasks(await resTasks.json());
+      if (resTasks.ok) {
+        const rawTasks = await resTasks.json();
+        setTasks(rawTasks);
+
+        // Schedule upcoming reminders natively on mobile app
+        if (typeof window !== 'undefined' && window.ReactNativeWebView && Array.isArray(rawTasks)) {
+          const nowMs = Date.now();
+          rawTasks.forEach(t => {
+            const isDone = t.is_completed || t.status === 'completed';
+            if (isDone) {
+              try {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'CANCEL_REMINDER',
+                  id: t.id
+                }));
+              } catch (e) {}
+            } else if (t.reminder_time) {
+              let triggerSec = 0;
+              if (t.due_date) {
+                const dueMs = new Date(t.due_date).getTime();
+                if (dueMs > nowMs) {
+                  triggerSec = (dueMs - nowMs) / 1000;
+                }
+              }
+              if (triggerSec > 0) {
+                try {
+                  window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'SCHEDULE_REMINDER',
+                    id: t.id,
+                    title: t.title,
+                    reminder_time: t.reminder_time,
+                    triggerSeconds: triggerSec
+                  }));
+                } catch (e) {}
+              }
+            }
+          });
+        }
+      }
       if (resFin.ok) setFinanceRecords(await resFin.json());
       if (resFinSum.ok) setFinanceSummary(await resFinSum.json());
       if (resMem.ok) setMemories(await resMem.json());
@@ -1249,11 +1350,36 @@ export default function App() {
   };
 
   const handleToggleTask = async (taskId) => {
+    // Optimistically toggle task in local state immediately so UI updates with zero delay
+    setTasks(prev => prev.map(t => {
+      if (t.id === taskId) {
+        const willBeDone = !(t.is_completed || t.status === 'completed');
+        return {
+          ...t,
+          is_completed: willBeDone,
+          status: willBeDone ? 'completed' : 'pending'
+        };
+      }
+      return t;
+    }));
+
+    // Cancel native reminder alarm if being marked done
+    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'CANCEL_REMINDER',
+          id: taskId
+        }));
+      } catch (e) {}
+    }
+
     try {
       await fetch(`${API_BASE}/tasks/${taskId}/toggle`, { method: 'PUT' });
       refreshAllData();
+      showToast("स्थिति अपडेट की गई (Status Updated)", 'info');
     } catch (err) {
       console.error(err);
+      refreshAllData();
     }
   };
 
@@ -1880,6 +2006,22 @@ export default function App() {
                 )}
               </button>
 
+              <button
+                type="button"
+                onClick={() => setOnboardingStep(6)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#94a3b8',
+                  fontSize: '0.82rem',
+                  cursor: 'pointer',
+                  marginTop: '12px',
+                  textDecoration: 'underline'
+                }}
+              >
+                Skip for now (Use Default Cloud Intelligence) →
+              </button>
+
               {/* Accordion Guide: How to get key */}
               <div style={{ width: '100%', maxWidth: '380px', marginTop: '16px' }}>
                 <button
@@ -2020,7 +2162,19 @@ export default function App() {
               <button
                 type="button"
                 className="btn-onboarding-primary"
-                onClick={() => setOnboardingStep(8)}
+                onClick={async () => {
+                  if (typeof window !== 'undefined' && 'Notification' in window) {
+                    try {
+                      await Notification.requestPermission();
+                    } catch (e) {}
+                  }
+                  if (window.ReactNativeWebView) {
+                    try {
+                      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_NOTIFICATION_PERMISSION' }));
+                    } catch (e) {}
+                  }
+                  setOnboardingStep(8);
+                }}
               >
                 Enable Autonomous Monitoring →
               </button>
@@ -2512,78 +2666,140 @@ export default function App() {
               </div>
 
               {/* Active Reminders Card */}
-              <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px', marginBottom: '18px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: 'var(--accent-cyan)', fontWeight: 700, fontSize: '0.85rem' }}>
-                  <Bell size={16} />
-                  <span>ACTIVE REMINDERS</span>
-                </div>
-                {tasks.filter(t => t.reminder_time && !t.is_completed).length === 0 ? (
-                  <div style={{ color: '#64748b', fontSize: '0.84rem' }}>No pending reminders today. Speak to set one!</div>
-                ) : (
-                  tasks.filter(t => t.reminder_time && !t.is_completed).map(task => (
-                    <div key={task.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                      <div>
-                        <div style={{ color: '#ffffff', fontSize: '0.92rem', fontWeight: 500 }}>{task.title}</div>
-                        <div style={{ color: 'var(--accent-cyan)', fontSize: '0.76rem', marginTop: '2px' }}>⏰ {task.reminder_time}</div>
+              {(() => {
+                const isTaskDone = (t) => t.is_completed || t.status === 'completed';
+                const pendingReminders = tasks.filter(t => t.reminder_time && !isTaskDone(t));
+                const pendingTasks = tasks.filter(t => !isTaskDone(t));
+                const completedTasks = tasks.filter(t => isTaskDone(t));
+
+                return (
+                  <>
+                    <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px', marginBottom: '18px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: 'var(--accent-cyan)', fontWeight: 700, fontSize: '0.85rem' }}>
+                        <Bell size={16} />
+                        <span>ACTIVE REMINDERS ({pendingReminders.length})</span>
                       </div>
-                      <button 
-                        type="button" 
-                        onClick={() => handleToggleTask(task.id)}
-                        style={{ background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.3)', color: 'var(--accent-cyan)', padding: '5px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '0.76rem' }}
+                      {pendingReminders.length === 0 ? (
+                        <div style={{ color: '#64748b', fontSize: '0.84rem' }}>No pending reminders today. Speak to set one!</div>
+                      ) : (
+                        pendingReminders.map(task => (
+                          <div key={task.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                            <div>
+                              <div style={{ color: '#ffffff', fontSize: '0.92rem', fontWeight: 500 }}>{task.title}</div>
+                              <div style={{ color: 'var(--accent-cyan)', fontSize: '0.76rem', marginTop: '2px' }}>⏰ {task.reminder_time}</div>
+                            </div>
+                            <button 
+                              type="button" 
+                              onClick={() => handleToggleTask(task.id)}
+                              style={{ background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.3)', color: 'var(--accent-cyan)', padding: '5px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600 }}
+                            >
+                              Done
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {/* Tasks Checklist */}
+                    <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px', marginBottom: '18px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a855f7', fontWeight: 700, fontSize: '0.85rem' }}>
+                          <CheckSquare size={16} />
+                          <span>DAILY TASKS ({pendingTasks.length})</span>
+                        </div>
+                      </div>
+
+                      <form 
+                        onSubmit={handleCreateTask}
+                        style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}
                       >
-                        Done
-                      </button>
+                        <input
+                          type="text"
+                          placeholder="Add a new task..."
+                          value={newTaskInput}
+                          onChange={(e) => setNewTaskInput(e.target.value)}
+                          style={{ flex: 1, background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.85rem', outline: 'none' }}
+                        />
+                        <button type="submit" style={{ background: '#a855f7', border: 'none', borderRadius: '10px', padding: '8px 14px', color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: '0.82rem' }}>
+                          Add
+                        </button>
+                      </form>
+
+                      {pendingTasks.length === 0 ? (
+                        <div style={{ color: '#64748b', fontSize: '0.84rem', padding: '8px 0' }}>All daily tasks completed! Good job.</div>
+                      ) : (
+                        pendingTasks.map(task => (
+                          <div key={task.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}>
+                            <div 
+                              onClick={() => handleToggleTask(task.id)}
+                              style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', flex: 1 }}
+                            >
+                              <Circle size={16} color="#64748b" />
+                              <div>
+                                <span style={{ fontSize: '0.88rem', color: '#ffffff' }}>
+                                  {task.title}
+                                </span>
+                                {task.reminder_time && (
+                                  <div style={{ color: 'var(--accent-cyan)', fontSize: '0.74rem' }}>⏰ {task.reminder_time}</div>
+                                )}
+                              </div>
+                            </div>
+                            <button 
+                              type="button" 
+                              onClick={() => handleDeleteTask(task.id)}
+                              style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '4px' }}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))
+                      )}
                     </div>
-                  ))
-                )}
-              </div>
 
-              {/* Tasks Checklist */}
-              <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px', marginBottom: '18px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#a855f7', fontWeight: 700, fontSize: '0.85rem' }}>
-                    <CheckSquare size={16} />
-                    <span>DAILY TASKS ({tasks.filter(t => !t.is_completed).length})</span>
-                  </div>
-                </div>
+                    {/* COMPLETED SECTION */}
+                    {completedTasks.length > 0 && (
+                      <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px', marginBottom: '18px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#10b981', fontWeight: 700, fontSize: '0.85rem' }}>
+                            <CheckCircle2 size={16} />
+                            <span>COMPLETED ({completedTasks.length})</span>
+                          </div>
+                        </div>
 
-                <form 
-                  onSubmit={handleCreateTask}
-                  style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}
-                >
-                  <input
-                    type="text"
-                    placeholder="Add a new task..."
-                    value={newTaskInput}
-                    onChange={(e) => setNewTaskInput(e.target.value)}
-                    style={{ flex: 1, background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.85rem', outline: 'none' }}
-                  />
-                  <button type="submit" style={{ background: '#a855f7', border: 'none', borderRadius: '10px', padding: '8px 14px', color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: '0.82rem' }}>
-                    Add
-                  </button>
-                </form>
-
-                {tasks.map(task => (
-                  <div key={task.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}>
-                    <div 
-                      onClick={() => handleToggleTask(task.id)}
-                      style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', flex: 1 }}
-                    >
-                      {task.is_completed ? <CheckCircle2 size={16} color="#10b981" /> : <Circle size={16} color="#64748b" />}
-                      <span style={{ fontSize: '0.88rem', color: task.is_completed ? '#64748b' : '#ffffff', textDecoration: task.is_completed ? 'line-through' : 'none' }}>
-                        {task.title}
-                      </span>
-                    </div>
-                    <button 
-                      type="button" 
-                      onClick={() => handleDeleteTask(task.id)}
-                      style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '4px' }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
+                        {completedTasks.map(task => (
+                          <div key={task.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}>
+                            <div 
+                              onClick={() => handleToggleTask(task.id)}
+                              style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', flex: 1 }}
+                              title="Click to unmark"
+                            >
+                              <CheckCircle2 size={16} color="#10b981" />
+                              <div>
+                                <span style={{ fontSize: '0.88rem', color: '#64748b', textDecoration: 'line-through' }}>
+                                  {task.title}
+                                </span>
+                                {task.reminder_time && (
+                                  <div style={{ color: '#10b981', fontSize: '0.72rem', opacity: 0.8, marginTop: '2px' }}>
+                                    ⏰ {task.reminder_time} • Completed
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <button 
+                              type="button" 
+                              onClick={() => handleDeleteTask(task.id)}
+                              style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '4px' }}
+                              title="Delete permanently"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               {/* News & Market Briefing */}
               {newsItems.length > 0 && (

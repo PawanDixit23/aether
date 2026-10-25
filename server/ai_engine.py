@@ -431,7 +431,8 @@ CRITICAL INSTRUCTIONS FOR "query":
   Share the match outcomes, scores, winners, and team details from the live feed or your sports intelligence.
   NEVER say "I only have access to today's data" or refuse to answer. Always synthesize and deliver the match results and sports scores.
 - When providing NEWS:
-  Present news items clearly with headline, source, and direct clickable markdown link [Title](url).
+  Present news items clearly with a numbered list. Each item MUST have a concise headline and direct clickable markdown link in the exact format: 1. **[Headline](url)** - Source.
+  CRITICAL: Never break [Headline] and (url) onto separate lines. Keep the markdown link strictly on one single line.
 
 Determine the action type:
 1. "task": Creating a task or reminder.

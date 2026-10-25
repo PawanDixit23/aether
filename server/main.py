@@ -412,12 +412,26 @@ def acknowledge_reminder(task_id: int, db: Session = Depends(get_db)):
     raise HTTPException(status_code=404, detail="Task not found")
 
 # ----------------- Tasks Endpoints -----------------
+def serialize_task(t: Task) -> dict:
+    return {
+        "id": t.id,
+        "title": t.title,
+        "description": t.description,
+        "priority": t.priority,
+        "status": t.status,
+        "is_completed": t.status == "completed",
+        "due_date": t.due_date.isoformat() if t.due_date else None,
+        "reminder_time": t.reminder_time,
+        "notified": t.notified,
+        "created_at": t.created_at.isoformat() if t.created_at else None
+    }
+
 @app.get("/api/tasks")
 def list_tasks(status: Optional[str] = None, db: Session = Depends(get_db)):
     query = db.query(Task)
     if status:
         query = query.filter(Task.status == status)
-    return query.order_by(Task.created_at.desc()).all()
+    return [serialize_task(t) for t in query.order_by(Task.created_at.desc()).all()]
 
 @app.post("/api/tasks")
 def create_task(task_in: TaskCreate, db: Session = Depends(get_db)):
@@ -425,7 +439,7 @@ def create_task(task_in: TaskCreate, db: Session = Depends(get_db)):
     db.add(task)
     db.commit()
     db.refresh(task)
-    return task
+    return serialize_task(task)
 
 @app.put("/api/tasks/{task_id}/toggle")
 def toggle_task(task_id: int, db: Session = Depends(get_db)):
@@ -435,7 +449,7 @@ def toggle_task(task_id: int, db: Session = Depends(get_db)):
     task.status = "completed" if task.status != "completed" else "pending"
     db.commit()
     db.refresh(task)
-    return task
+    return serialize_task(task)
 
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: int, db: Session = Depends(get_db)):
