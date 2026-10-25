@@ -596,8 +596,17 @@ if os.path.exists(DIST_DIR):
             raise HTTPException(status_code=404, detail="API endpoint not found")
         file_path = os.path.join(DIST_DIR, full_path)
         if os.path.isfile(file_path):
+            if "assets/" in full_path:
+                return FileResponse(file_path, headers={"Cache-Control": "public, max-age=31536000, immutable"})
             return FileResponse(file_path)
         index_file = os.path.join(DIST_DIR, "index.html")
         if os.path.isfile(index_file):
-            return FileResponse(index_file)
+            return FileResponse(
+                index_file,
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+                    "Pragma": "no-cache",
+                    "Expires": "0"
+                }
+            )
         return {"message": "Aether Executive Core API running. Build frontend for UI."}

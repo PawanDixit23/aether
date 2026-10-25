@@ -86,6 +86,8 @@ export default function App() {
           mediaCapturePermissionGrantType="grant"
           originWhitelist={['*']}
           mixedContentMode="always"
+          cacheEnabled={false}
+          cacheMode="LOAD_NO_CACHE"
           onShouldStartLoadWithRequest={(request) => {
             // If OAuth provider falls back to localhost redirect, redirect back to cloud AETHER_URL with token intact
             if (request.url.includes('access_token') && (request.url.startsWith('http://localhost') || request.url.startsWith('http://127.0.0.1'))) {
