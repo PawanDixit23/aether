@@ -104,7 +104,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
         <StatusBar style="light" backgroundColor="#080c16" />
 
         {/* The Exact 1:1 Live Aether Web Dashboard */}

@@ -694,7 +694,7 @@ export default function App() {
           setOnboardingDone(true);
         } else {
           setOnboardingDone(false);
-          setOnboardingStep(4);
+          setOnboardingStep(prev => (prev < 4 ? 4 : prev));
         }
 
         if (window.location.hash.includes('access_token')) {
@@ -726,14 +726,14 @@ export default function App() {
           setOnboardingDone(true);
         } else {
           setOnboardingDone(false);
-          setOnboardingStep(4);
+          setOnboardingStep(prev => (prev < 4 ? 4 : prev));
         }
         showToast(`Google से सफलतापूर्वक लिंक: ${gName}`, 'success');
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [onboardingStep]);
+  }, []);
 
   const handleGoogleSignIn = async () => {
     if (userEmail) {
@@ -1883,6 +1883,13 @@ export default function App() {
                 type="button"
                 className="btn-onboarding-primary"
                 onClick={() => setOnboardingStep(5)}
+                style={{
+                  position: 'relative',
+                  zIndex: 50,
+                  cursor: 'pointer',
+                  touchAction: 'manipulation',
+                  marginBottom: '24px'
+                }}
               >
                 I Agree & Continue →
               </button>

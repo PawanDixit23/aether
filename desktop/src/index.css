@@ -1171,8 +1171,10 @@ body {
     border-radius: 0;
     border: none;
     box-shadow: none;
-    padding: 24px 20px 32px;
+    padding: 24px 20px 48px;
     background: #000000;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
   .serif-title {
     font-size: 32px !important;
