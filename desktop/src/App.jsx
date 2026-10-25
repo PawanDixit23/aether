@@ -48,6 +48,7 @@ import {
   Check,
   ChevronRight
 } from 'lucide-react';
+import { supabase } from './supabase';
 
 const API_BASE = typeof window !== 'undefined' && window.location.port === '5173'
   ? `http://${window.location.hostname}:8000/api`
@@ -285,6 +286,17 @@ export default function App() {
   const [showKeyGuide, setShowKeyGuide] = useState(false);
   const [audioSamplePlaying, setAudioSamplePlaying] = useState(null);
 
+  // Google Authentication State
+  const [userEmail, setUserEmail] = useState(() => localStorage.getItem('aether_user_email') || '');
+  const [userAvatar, setUserAvatar] = useState(() => localStorage.getItem('aether_user_avatar') || '');
+  const [googleClientId, setGoogleClientId] = useState(() => localStorage.getItem('aether_google_client_id') || import.meta.env.VITE_GOOGLE_CLIENT_ID || '');
+  const [googleAuthLoading, setGoogleAuthLoading] = useState(false);
+  const [showGoogleModal, setShowGoogleModal] = useState(false);
+  const [googleLoginSuccess, setGoogleLoginSuccess] = useState(false);
+  const [googleCustomEmail, setGoogleCustomEmail] = useState('');
+  const [googleCustomName, setGoogleCustomName] = useState('');
+  const [googleError, setGoogleError] = useState('');
+
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -401,6 +413,127 @@ export default function App() {
     localStorage.setItem('aether_user_name', nameToSave);
     setUserName(nameToSave);
     setOnboardingStep(3);
+  };
+
+  // Record auth event to Aether local SQLite audit trail
+  const recordAuthEvent = async (email, name) => {
+    if (!email) return;
+    try {
+      await fetch(`${API_BASE}/auth/record-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, name, provider: 'google' })
+      });
+      const resAudit = await fetch(`${API_BASE}/audit-logs`);
+      if (resAudit.ok) setAuditLogs(await resAudit.json());
+    } catch (err) {
+      console.error('Failed to log auth event:', err);
+    }
+  };
+
+  // Handle Supabase Google OAuth Redirect & Session (same as vivah)
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        const user = session.user;
+        const gName = user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Operator';
+        const gEmail = user.email || '';
+        const gAvatar = user.user_metadata?.avatar_url || '';
+
+        localStorage.setItem('aether_user_name', gName);
+        localStorage.setItem('aether_user_email', gEmail);
+        if (gAvatar) localStorage.setItem('aether_user_avatar', gAvatar);
+
+        setUserName(gName);
+        setUserEmail(gEmail);
+        setUserAvatar(gAvatar);
+
+        recordAuthEvent(gEmail, gName);
+
+        if (window.location.hash.includes('access_token')) {
+          setOnboardingStep(4);
+          showToast(`Google से सफलतापूर्वक लिंक: ${gName}`, 'success');
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user) {
+        const user = session.user;
+        const gName = user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Operator';
+        const gEmail = user.email || '';
+        const gAvatar = user.user_metadata?.avatar_url || '';
+
+        localStorage.setItem('aether_user_name', gName);
+        localStorage.setItem('aether_user_email', gEmail);
+        if (gAvatar) localStorage.setItem('aether_user_avatar', gAvatar);
+
+        setUserName(gName);
+        setUserEmail(gEmail);
+        setUserAvatar(gAvatar);
+
+        recordAuthEvent(gEmail, gName);
+
+        if (onboardingStep === 3) {
+          setOnboardingStep(4);
+          showToast(`Google से सफलतापूर्वक लिंक: ${gName}`, 'success');
+        }
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [onboardingStep]);
+
+  const handleGoogleSignIn = async () => {
+    if (userEmail) {
+      setOnboardingStep(4);
+      return;
+    }
+    setGoogleAuthLoading(true);
+    setGoogleError('');
+    try {
+      // 1. Trigger Supabase Real Google OAuth (as configured in vivah)
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin
+        }
+      });
+      if (error) {
+        console.error('Supabase Google OAuth error:', error);
+        setGoogleError(error.message);
+        setShowGoogleModal(true);
+      }
+    } catch (err) {
+      console.error('Google Sign In err:', err);
+      setGoogleError('Google Sign-In प्रारंभ करने में समस्या आई।');
+      setShowGoogleModal(true);
+    } finally {
+      setGoogleAuthLoading(false);
+    }
+  };
+
+  const handleConnectGoogleManual = (e) => {
+    e?.preventDefault();
+    const email = (googleCustomEmail || userEmail).trim();
+    if (!email || !email.includes('@')) {
+      setGoogleError('कृपया एक वैध Google ईमेल दर्ज करें (e.g. name@gmail.com)');
+      return;
+    }
+    const name = (googleCustomName || userName).trim() || email.split('@')[0];
+    localStorage.setItem('aether_user_name', name);
+    localStorage.setItem('aether_user_email', email);
+    setUserName(name);
+    setUserEmail(email);
+    setGoogleLoginSuccess(true);
+    setGoogleError('');
+    showToast(`Google Account कनेक्ट हुआ: ${email}`, 'success');
+    setShowGoogleModal(false);
+    setTimeout(() => {
+      setOnboardingStep(4);
+      setGoogleLoginSuccess(false);
+    }, 500);
   };
 
   const handlePlayVoicePreview = (voice) => {
@@ -1100,23 +1233,204 @@ export default function App() {
                 Link your Google Account to synchronize your proactive calendar and private executive briefings.
               </p>
 
-              <button
-                type="button"
-                className="btn-onboarding-google"
-                onClick={() => setOnboardingStep(4)}
-              >
-                <GoogleIcon />
-                <span>Continue with Google</span>
-              </button>
+              {userEmail && (
+                <div style={{
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(0, 240, 255, 0.3)',
+                  borderRadius: '16px',
+                  padding: '14px 18px',
+                  width: '100%',
+                  maxWidth: '380px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  marginBottom: '16px',
+                  boxShadow: '0 4px 20px rgba(0, 240, 255, 0.1)'
+                }}>
+                  {userAvatar ? (
+                    <img src={userAvatar} alt="Google Avatar" style={{ width: '38px', height: '38px', borderRadius: '50%', border: '1.5px solid var(--accent-cyan)' }} />
+                  ) : (
+                    <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'rgba(56, 189, 248, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <GoogleIcon />
+                    </div>
+                  )}
+                  <div style={{ flex: 1, textAlign: 'left', overflow: 'hidden' }}>
+                    <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#ffffff' }}>{userName || 'Connected Operator'}</div>
+                    <div style={{ fontSize: '0.78rem', color: '#94a3b8', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{userEmail}</div>
+                  </div>
+                  <CheckCircle2 size={18} color="var(--accent-cyan)" />
+                </div>
+              )}
 
               <button
                 type="button"
-                className="btn-onboarding-primary"
-                style={{ background: 'rgba(255, 255, 255, 0.08)', color: '#ffffff', marginTop: '12px' }}
-                onClick={() => setOnboardingStep(4)}
+                className="btn-onboarding-google"
+                onClick={handleGoogleSignIn}
+                disabled={googleAuthLoading}
               >
-                Continue as Local Operator
+                {googleAuthLoading ? (
+                  <span className="status-dot-pulse" style={{ background: '#ffffff' }}></span>
+                ) : (
+                  <GoogleIcon />
+                )}
+                <span>{userEmail ? `Continue as ${userName || userEmail.split('@')[0]}` : 'Continue with Google'}</span>
               </button>
+
+              {userEmail && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGoogleCustomEmail(userEmail);
+                    setGoogleCustomName(userName);
+                    setShowGoogleModal(true);
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#94a3b8',
+                    fontSize: '0.8rem',
+                    cursor: 'pointer',
+                    marginTop: '12px',
+                    textDecoration: 'underline'
+                  }}
+                >
+                  Switch Google Account
+                </button>
+              )}
+
+              {/* Google Sign-In Connect Modal */}
+              {showGoogleModal && (
+                <div style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  background: 'rgba(0, 0, 0, 0.78)',
+                  backdropFilter: 'blur(8px)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 9999,
+                  padding: '20px'
+                }}>
+                  <div style={{
+                    background: '#0d1527',
+                    border: '1px solid rgba(255, 255, 255, 0.16)',
+                    borderRadius: '20px',
+                    padding: '24px',
+                    width: '100%',
+                    maxWidth: '400px',
+                    boxShadow: '0 20px 50px rgba(0, 0, 0, 0.8)',
+                    textAlign: 'left'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <GoogleIcon />
+                        <span style={{ fontSize: '1rem', fontWeight: 700, color: '#ffffff' }}>Google Sign-In</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowGoogleModal(false)}
+                        style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1.2rem', padding: '0 4px' }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <p style={{ fontSize: '0.82rem', color: '#94a3b8', lineHeight: '1.45', marginBottom: '16px' }}>
+                      Link your Google account to synchronize your executive agenda and calendar with Aether.
+                    </p>
+
+                    <form onSubmit={handleConnectGoogleManual}>
+                      <div style={{ marginBottom: '12px' }}>
+                        <label style={{ fontSize: '0.78rem', color: '#cbd5e1', display: 'block', marginBottom: '6px' }}>
+                          Google Email Address
+                        </label>
+                        <input
+                          type="email"
+                          className="onboarding-input-field"
+                          style={{
+                            width: '100%',
+                            background: 'rgba(255, 255, 255, 0.05)',
+                            border: '1px solid rgba(255, 255, 255, 0.15)',
+                            borderRadius: '12px',
+                            padding: '10px 14px',
+                            boxSizing: 'border-box'
+                          }}
+                          placeholder="yourname@gmail.com"
+                          value={googleCustomEmail}
+                          onChange={(e) => setGoogleCustomEmail(e.target.value)}
+                          autoFocus
+                          required
+                        />
+                      </div>
+
+                      <div style={{ marginBottom: '14px' }}>
+                        <label style={{ fontSize: '0.78rem', color: '#cbd5e1', display: 'block', marginBottom: '6px' }}>
+                          Google Name (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          className="onboarding-input-field"
+                          style={{
+                            width: '100%',
+                            background: 'rgba(255, 255, 255, 0.05)',
+                            border: '1px solid rgba(255, 255, 255, 0.15)',
+                            borderRadius: '12px',
+                            padding: '10px 14px',
+                            boxSizing: 'border-box'
+                          }}
+                          placeholder={userName || "e.g. Pawan Dixit"}
+                          value={googleCustomName}
+                          onChange={(e) => setGoogleCustomName(e.target.value)}
+                        />
+                      </div>
+
+                      {googleError && (
+                        <div style={{ color: '#ef4444', fontSize: '0.8rem', marginBottom: '12px' }}>
+                          {googleError}
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        className="btn-onboarding-primary"
+                        style={{ marginTop: 0 }}
+                      >
+                        Connect Google Account →
+                      </button>
+                    </form>
+
+                    <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                      <details style={{ fontSize: '0.76rem', color: '#64748b', cursor: 'pointer' }}>
+                        <summary style={{ outline: 'none' }}>Have a Google Cloud OAuth Client ID? (Optional)</summary>
+                        <div style={{ marginTop: '8px' }}>
+                          <input
+                            type="text"
+                            placeholder="xyz.apps.googleusercontent.com"
+                            value={googleClientId}
+                            onChange={(e) => {
+                              setGoogleClientId(e.target.value);
+                              localStorage.setItem('aether_google_client_id', e.target.value.trim());
+                            }}
+                            style={{
+                              width: '100%',
+                              background: 'rgba(255, 255, 255, 0.04)',
+                              border: '1px solid rgba(255, 255, 255, 0.1)',
+                              borderRadius: '8px',
+                              padding: '8px 10px',
+                              color: '#ffffff',
+                              fontSize: '0.74rem',
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                        </div>
+                      </details>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

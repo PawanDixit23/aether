@@ -34,6 +34,11 @@ app.add_middleware(
 )
 
 # ----------------- Pydantic Schemas -----------------
+class AuthRecordRequest(BaseModel):
+    email: str
+    name: Optional[str] = "Operator"
+    provider: Optional[str] = "google"
+
 class KeyValidationRequest(BaseModel):
     api_key: str
 
@@ -124,6 +129,21 @@ async def validate_gemini_key(req: KeyValidationRequest):
                 return {"valid": False, "error": "Invalid API key or unauthorized access"}
     except Exception as e:
         return {"valid": False, "error": str(e)}
+
+@app.post("/api/auth/record-login")
+def record_user_login(req: AuthRecordRequest, db: Session = Depends(get_db)):
+    """Log user authentication in local audit log & memory."""
+    details = f"User {req.name} ({req.email}) successfully authenticated via {req.provider.capitalize()} OAuth."
+    audit = AuditLog(
+        action_type="user_auth",
+        details=details,
+        confidence_score=1.0,
+        executed_at=datetime.utcnow()
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(audit)
+    return {"status": "logged", "audit_id": audit.id, "details": details}
 
 # ----------------- Quick Capture / Action Engine -----------------
 @app.post("/api/action/quick-capture")
