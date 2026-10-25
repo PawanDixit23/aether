@@ -35,7 +35,18 @@ import {
   AlertTriangle,
   Database,
   Smartphone,
-  BellRing
+  BellRing,
+  ArrowRight,
+  Eye,
+  EyeOff,
+  Key,
+  Play,
+  Settings,
+  Shield,
+  User,
+  HelpCircle,
+  Check,
+  ChevronRight
 } from 'lucide-react';
 
 const API_BASE = typeof window !== 'undefined' && window.location.port === '5173'
@@ -235,7 +246,45 @@ const UI_TRANSLATIONS = {
   }
 };
 
+const AETHER_VOICES = [
+  { id: 'puck', name: 'Puck', desc: 'Crisp, focused, analytical • Male', pitch: 1.0, rate: 1.05 },
+  { id: 'charon', name: 'Charon', desc: 'Deep, calm, authoritative • Male', pitch: 0.75, rate: 0.95 },
+  { id: 'kore', name: 'Kore', desc: 'Warm, articulate, balanced • Female', pitch: 1.08, rate: 1.0 },
+  { id: 'fenrir', name: 'Fenrir', desc: 'Strong, commanding, direct • Male', pitch: 0.82, rate: 1.0 },
+  { id: 'aoede', name: 'Aoede', desc: 'Melodic, polished, empathetic • Female', pitch: 1.2, rate: 1.0 },
+  { id: 'zephyr', name: 'Zephyr', desc: 'Modern, energetic, concise • Neutral', pitch: 1.0, rate: 1.1 }
+];
+
+const AETHER_MODELS = [
+  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', tag: 'Fast & Low Latency', desc: 'Ultra-fast responses with generous free limits' },
+  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', tag: 'Deep Reasoning', desc: 'Complex reasoning across lengthy context' },
+  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', tag: 'Next-Gen Preview', desc: 'Experimental next-gen multimodal speed' }
+];
+
+const GoogleIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24">
+    <path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.7l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 8.9 5 12 5z"/>
+    <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"/>
+    <path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 10.8 0 12.5s.7 2.8 1.9 5.2l3.7-2.9z"/>
+    <path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3.1 0-5.5-2.4-6.4-5.2L1.9 17C3.7 20.7 7.5 24 12 24z"/>
+  </svg>
+);
+
 export default function App() {
+  // Onboarding & BYOK Intelligence Configuration
+  const [onboardingDone, setOnboardingDone] = useState(() => localStorage.getItem('aether_onboarding_done') === 'true');
+  const [onboardingStep, setOnboardingStep] = useState(1);
+  const [userName, setUserName] = useState(() => localStorage.getItem('aether_user_name') || '');
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem('aether_gemini_key') || '');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [selectedVoice, setSelectedVoice] = useState(() => localStorage.getItem('aether_selected_voice') || 'puck');
+  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('aether_selected_model') || 'gemini-1.5-flash');
+  const [keyValidating, setKeyValidating] = useState(false);
+  const [keyError, setKeyError] = useState('');
+  const [keySuccess, setKeySuccess] = useState(false);
+  const [showKeyGuide, setShowKeyGuide] = useState(false);
+  const [audioSamplePlaying, setAudioSamplePlaying] = useState(null);
+
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -285,6 +334,108 @@ export default function App() {
   const chatEndRef = useRef(null);
   const recognitionRef = useRef(null);
   const userScrolledUpRef = useRef(false);
+
+  // Onboarding & BYOK Intelligence Handlers
+  const handleValidateApiKey = async () => {
+    const cleanKey = apiKey.trim();
+    if (!cleanKey) {
+      setKeyError('कृपया अपनी Gemini API Key दर्ज करें (Please enter your Gemini API key)');
+      return;
+    }
+    setKeyValidating(true);
+    setKeyError('');
+    setKeySuccess(false);
+
+    try {
+      let isValid = false;
+      // 1. Direct validation with Google AI Studio
+      try {
+        const testUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`;
+        const resp = await fetch(testUrl, { method: 'GET' });
+        if (resp.ok) {
+          const json = await resp.json();
+          if (json && json.models && json.models.length > 0) {
+            isValid = true;
+          }
+        }
+      } catch (directErr) {
+        // Direct fetch may be blocked by CORS in some browsers
+      }
+
+      // 2. Fallback to server proxy
+      if (!isValid) {
+        const beResp = await fetch(`${API_BASE}/auth/validate-key`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: cleanKey })
+        });
+        const beData = await beResp.json();
+        if (beData.valid) {
+          isValid = true;
+        } else {
+          setKeyError('अमान्य Gemini API Key! कृपया Google AI Studio से अपनी सही Key जांचें।');
+          setKeyValidating(false);
+          return;
+        }
+      }
+
+      if (isValid) {
+        localStorage.setItem('aether_gemini_key', cleanKey);
+        setKeySuccess(true);
+        setKeyError('');
+        showToast('Gemini API Key सत्यापित! (Key Verified)', 'success');
+        setTimeout(() => {
+          setOnboardingStep(6);
+          setKeySuccess(false);
+        }, 500);
+      }
+    } catch (err) {
+      setKeyError('सत्यापन में त्रुटि। कृपया इंटरनेट या Key जांचें।');
+    } finally {
+      setKeyValidating(false);
+    }
+  };
+
+  const handleSaveName = () => {
+    const nameToSave = userName.trim() || 'Operator';
+    localStorage.setItem('aether_user_name', nameToSave);
+    setUserName(nameToSave);
+    setOnboardingStep(3);
+  };
+
+  const handlePlayVoicePreview = (voice) => {
+    try {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        setAudioSamplePlaying(voice.id);
+        const sampleText = `Hello ${userName || 'Operator'}. I am Aether, voiced by ${voice.name}. All systems operational.`;
+        const utterance = new SpeechSynthesisUtterance(sampleText);
+        utterance.pitch = voice.pitch;
+        utterance.rate = voice.rate;
+        utterance.onend = () => setAudioSamplePlaying(null);
+        utterance.onerror = () => setAudioSamplePlaying(null);
+        window.speechSynthesis.speak(utterance);
+      } else {
+        showToast(`Voice preview: ${voice.name}`, 'info');
+      }
+    } catch (e) {
+      setAudioSamplePlaying(null);
+    }
+  };
+
+  const handleCompleteOnboarding = async () => {
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop());
+      }
+    } catch (e) {
+      console.log('Mic request:', e);
+    }
+    localStorage.setItem('aether_onboarding_done', 'true');
+    setOnboardingDone(true);
+    showToast('Aether सिस्टम सक्रिय! स्वागत है। (Aether Activated)', 'success');
+  };
 
   // Play pleasant executive reminder chime
   const playReminderChime = () => {
@@ -603,7 +754,9 @@ export default function App() {
     window.speechSynthesis.cancel();
     const cleanText = text.replace(/\[.*?\]\(.*?\)/g, '').replace(/[*_#`🔗]/g, '');
     const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.rate = 1.05;
+    const activeVoice = AETHER_VOICES.find(v => v.id === selectedVoice);
+    utterance.rate = activeVoice ? activeVoice.rate : 1.05;
+    utterance.pitch = activeVoice ? activeVoice.pitch : 1.0;
     const hasDevanagari = /[\u0900-\u097F]/.test(cleanText);
     utterance.lang = (selectedLang === 'hi' || hasDevanagari) ? 'hi-IN' : 'en-IN';
     
@@ -652,7 +805,9 @@ export default function App() {
         longitude: userCoords?.longitude || null,
         language: selectedLang,
         client_time: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
+        api_key: localStorage.getItem('aether_gemini_key') || '',
+        user_name: localStorage.getItem('aether_user_name') || userName || 'Operator'
       };
 
       const resp = await fetch(`${API_BASE}/action/quick-capture`, {
@@ -818,6 +973,527 @@ export default function App() {
   const alertCount = briefing?.alert_count ?? 1;
   const upcomingCount = briefing?.upcoming_count ?? 2;
 
+  if (!onboardingDone) {
+    return (
+      <div className="onboarding-screen-wrapper">
+        <div className="unified-app-container">
+          {/* Top navigation row */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '16px' }}>
+            {onboardingStep > 1 ? (
+              <button
+                type="button"
+                onClick={() => setOnboardingStep(prev => Math.max(1, prev - 1))}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'rgba(255, 255, 255, 0.6)',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '4px 8px'
+                }}
+              >
+                ← Back
+              </button>
+            ) : <div />}
+
+            {localStorage.getItem('aether_onboarding_done') === 'true' && (
+              <button
+                type="button"
+                onClick={() => setOnboardingDone(true)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  borderRadius: '20px',
+                  color: '#ffffff',
+                  cursor: 'pointer',
+                  fontSize: '0.78rem',
+                  padding: '4px 12px'
+                }}
+              >
+                Dashboard ✕
+              </button>
+            )}
+          </div>
+
+          {/* Glowing Aether Brand Orb with Frosted Æ Badge for ALL Steps */}
+          <div className={`aether-brand-orb ${onboardingStep === 1 ? 'aether-orb-hero' : ''}`}>
+            <div className={`aether-orb-badge ${onboardingStep === 1 ? 'hero' : ''}`}>Æ</div>
+          </div>
+
+          {/* STEP 1: WELCOME SCREEN */}
+          {onboardingStep === 1 && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', flex: 1 }}>
+              <div className="step-badge">Autonomous Intelligence Executive</div>
+              <h1 className="serif-title">
+                Hi. I'm <span className="serif-italic">Aether.</span>
+              </h1>
+              <p className="step-desc">
+                Your autonomous intelligence executive for tasks, wealth, memory, and proactive daily briefing.
+              </p>
+              <button
+                type="button"
+                className="btn-onboarding-primary"
+                onClick={() => setOnboardingStep(2)}
+              >
+                Meet Aether →
+              </button>
+            </div>
+          )}
+
+          {/* STEP 2: USER NAME */}
+          {onboardingStep === 2 && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', flex: 1 }}>
+              <div className="step-badge">Callsign Configuration</div>
+              <h1 className="serif-title">
+                What should Aether <span className="serif-italic">call you?</span>
+              </h1>
+              <p className="step-desc">
+                Choose the formal title or personal callsign Aether will use across your briefings.
+              </p>
+
+              <div className="onboarding-input-card">
+                <input
+                  type="text"
+                  className="onboarding-input-field"
+                  placeholder="e.g. Pawan, Commander, Alex..."
+                  value={userName}
+                  onChange={(e) => setUserName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleSaveName(); }}
+                  autoFocus
+                />
+              </div>
+
+              <div className="quick-chips-row">
+                {['Operator', 'Commander', 'Boss', 'Director', 'Pawan'].map(chip => (
+                  <button
+                    key={chip}
+                    type="button"
+                    className="quick-chip-item"
+                    onClick={() => setUserName(chip)}
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="btn-onboarding-primary"
+                onClick={handleSaveName}
+              >
+                Continue →
+              </button>
+            </div>
+          )}
+
+          {/* STEP 3: GOOGLE SIGN IN */}
+          {onboardingStep === 3 && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', flex: 1 }}>
+              <div className="step-badge">Secure Authentication</div>
+              <h1 className="serif-title">
+                Sign in to <span className="serif-italic">start talking.</span>
+              </h1>
+              <p className="step-desc">
+                Link your Google Account to synchronize your proactive calendar and private executive briefings.
+              </p>
+
+              <button
+                type="button"
+                className="btn-onboarding-google"
+                onClick={() => setOnboardingStep(4)}
+              >
+                <GoogleIcon />
+                <span>Continue with Google</span>
+              </button>
+
+              <button
+                type="button"
+                className="btn-onboarding-primary"
+                style={{ background: 'rgba(255, 255, 255, 0.08)', color: '#ffffff', marginTop: '12px' }}
+                onClick={() => setOnboardingStep(4)}
+              >
+                Continue as Local Operator
+              </button>
+            </div>
+          )}
+
+          {/* STEP 4: PRIVACY CONSENT */}
+          {onboardingStep === 4 && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', flex: 1 }}>
+              <div className="step-badge">Executive Privacy Guarantee</div>
+              <h1 className="serif-title">
+                Talking to Aether sends <span className="serif-italic">data to Google.</span>
+              </h1>
+              <p className="step-desc">
+                We believe in total executive privacy. Here is the strict perimeter of what gets exchanged:
+              </p>
+
+              <div className="privacy-bullet-list">
+                <div className="privacy-bullet-item">
+                  <span className="privacy-bullet-dot">•</span>
+                  <div>
+                    <span className="privacy-bullet-title">Voice & Audio: </span>
+                    Processed via Gemini Multimodal Live API under enterprise privacy encryption.
+                  </div>
+                </div>
+                <div className="privacy-bullet-item">
+                  <span className="privacy-bullet-dot">•</span>
+                  <div>
+                    <span className="privacy-bullet-title">Zero Model Training: </span>
+                    Your personal financial entries, schedules, and logs are never used to train public models.
+                  </div>
+                </div>
+                <div className="privacy-bullet-item">
+                  <span className="privacy-bullet-dot">•</span>
+                  <div>
+                    <span className="privacy-bullet-title">Edge Storage: </span>
+                    Financial ledger, tasks, and memory are stored on your local Aether core database.
+                  </div>
+                </div>
+                <div className="privacy-bullet-item">
+                  <span className="privacy-bullet-dot">•</span>
+                  <div>
+                    <span className="privacy-bullet-title">Instant Revocation: </span>
+                    You can wipe memory and API keys at any moment with a single click.
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="btn-onboarding-primary"
+                onClick={() => setOnboardingStep(5)}
+              >
+                I Agree & Continue →
+              </button>
+            </div>
+          )}
+
+          {/* STEP 5: BYOK INTELLIGENCE KEY WITH LIVE GEMINI VALIDATION */}
+          {onboardingStep === 5 && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', flex: 1 }}>
+              <div className="step-badge">Direct Intelligence BYOK</div>
+              <h1 className="serif-title">
+                Bring your own <span className="serif-italic">intelligence key.</span>
+              </h1>
+              <p className="step-desc">
+                Use your personal Google Gemini API key. Lightning-fast responses at near-zero cost directly with your own quotas.
+              </p>
+
+              {/* Model Choice Row */}
+              <div className="model-choice-row">
+                {AETHER_MODELS.map(m => (
+                  <div
+                    key={m.id}
+                    className={`model-card ${selectedModel === m.id ? 'selected' : ''}`}
+                    onClick={() => {
+                      setSelectedModel(m.id);
+                      localStorage.setItem('aether_selected_model', m.id);
+                    }}
+                  >
+                    <div className="model-card-title">{m.name}</div>
+                    <div style={{ fontSize: '10px', color: selectedModel === m.id ? '#00f0ff' : '#94a3b8', marginTop: '4px' }}>
+                      {m.tag}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* API Key Input */}
+              <div className="onboarding-input-card">
+                <input
+                  type={showApiKey ? 'text' : 'password'}
+                  className="onboarding-input-field"
+                  placeholder="Paste your Gemini API key (AIzaSy...)"
+                  value={apiKey}
+                  onChange={(e) => { setApiKey(e.target.value); setKeyError(''); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleValidateApiKey(); }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowApiKey(!showApiKey)}
+                  style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 4px', display: 'flex', alignItems: 'center' }}
+                  title={showApiKey ? "Hide key" : "Show key"}
+                >
+                  {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+
+              {/* Error Message Alert */}
+              {keyError && (
+                <div style={{
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  border: '1px solid rgba(239, 68, 68, 0.4)',
+                  borderRadius: '12px',
+                  padding: '10px 14px',
+                  color: '#fca5a5',
+                  fontSize: '0.84rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  marginBottom: '10px',
+                  textAlign: 'left',
+                  width: '100%',
+                  maxWidth: '380px'
+                }}>
+                  <AlertTriangle size={16} color="#ef4444" style={{ flexShrink: 0 }} />
+                  <span>{keyError}</span>
+                </div>
+              )}
+
+              {/* Key Success Confirmation */}
+              {keySuccess && (
+                <div style={{
+                  background: 'rgba(34, 197, 94, 0.12)',
+                  border: '1px solid rgba(34, 197, 94, 0.4)',
+                  borderRadius: '12px',
+                  padding: '10px 14px',
+                  color: '#86efac',
+                  fontSize: '0.84rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  marginBottom: '10px',
+                  textAlign: 'left',
+                  width: '100%',
+                  maxWidth: '380px'
+                }}>
+                  <CheckCircle2 size={16} color="#22c55e" style={{ flexShrink: 0 }} />
+                  <span>Key Verified ✓ Continuing...</span>
+                </div>
+              )}
+
+              <button
+                type="button"
+                className="btn-onboarding-primary"
+                onClick={handleValidateApiKey}
+                disabled={keyValidating}
+              >
+                {keyValidating ? (
+                  <>
+                    <span className="status-dot-pulse" style={{ background: '#ffffff' }}></span>
+                    <span>Validating with Google...</span>
+                  </>
+                ) : keySuccess ? (
+                  <>
+                    <Check size={16} />
+                    <span>Key Verified ✓</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Validate & Continue →</span>
+                  </>
+                )}
+              </button>
+
+              {/* Accordion Guide: How to get key */}
+              <div style={{ width: '100%', maxWidth: '380px', marginTop: '16px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowKeyGuide(!showKeyGuide)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#94a3b8',
+                    fontSize: '0.8rem',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    margin: '0 auto',
+                    textDecoration: 'underline'
+                  }}
+                >
+                  <HelpCircle size={14} />
+                  <span>How to get a free Google Gemini key (takes 2 minutes)</span>
+                </button>
+
+                {showKeyGuide && (
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '12px',
+                    padding: '12px 14px',
+                    marginTop: '10px',
+                    fontSize: '0.8rem',
+                    color: '#cbd5e1',
+                    lineHeight: '1.5',
+                    textAlign: 'left'
+                  }}>
+                    <p style={{ margin: '0 0 6px 0', fontWeight: 600, color: 'var(--accent-cyan)' }}>Quick Steps:</p>
+                    <ol style={{ paddingLeft: '18px', margin: 0 }}>
+                      <li>Visit <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>aistudio.google.com</a></li>
+                      <li>Sign in with your Google account.</li>
+                      <li>Click <strong>"Get API key"</strong> → <strong>"Create API key"</strong>.</li>
+                      <li>Copy the generated key (starts with <code>AIzaSy...</code>) and paste it above.</li>
+                    </ol>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* STEP 6: VOICE SELECTION */}
+          {onboardingStep === 6 && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', flex: 1 }}>
+              <div className="step-badge">Acoustic Identity</div>
+              <h1 className="serif-title">
+                Find your <span className="serif-italic">Aether's voice.</span>
+              </h1>
+              <p className="step-desc">
+                Choose the acoustic personality that fits your executive workflow best.
+              </p>
+
+              <div className="voice-grid">
+                {AETHER_VOICES.map(voice => (
+                  <div
+                    key={voice.id}
+                    className={`voice-card ${selectedVoice === voice.id ? 'selected' : ''}`}
+                    onClick={() => {
+                      setSelectedVoice(voice.id);
+                      localStorage.setItem('aether_selected_voice', voice.id);
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span className="voice-card-name">{voice.name}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePlayVoicePreview(voice);
+                        }}
+                        style={{
+                          background: audioSamplePlaying === voice.id ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.1)',
+                          border: 'none',
+                          borderRadius: '50%',
+                          width: '24px',
+                          height: '24px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          color: '#ffffff'
+                        }}
+                        title={`Preview ${voice.name}'s voice`}
+                      >
+                        <Play size={11} fill="#ffffff" />
+                      </button>
+                    </div>
+                    <span className="voice-card-desc">{voice.desc}</span>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="btn-onboarding-primary"
+                onClick={() => {
+                  localStorage.setItem('aether_selected_voice', selectedVoice);
+                  setOnboardingStep(7);
+                }}
+              >
+                Select Voice & Continue →
+              </button>
+            </div>
+          )}
+
+          {/* STEP 7: AWAY WORK */}
+          {onboardingStep === 7 && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', flex: 1 }}>
+              <div className="step-badge">Proactive Autonomous Agent</div>
+              <h1 className="serif-title">
+                Aether works while you're <span className="serif-italic">away.</span>
+              </h1>
+              <p className="step-desc">
+                Even when the app is closed, your autonomous core monitors markets, pending deadlines, and compiles your 8:00 AM briefing.
+              </p>
+
+              {/* Notification Mock Card */}
+              <div className="notification-mock-card">
+                <div className="notif-header">
+                  <div className="notif-brand">
+                    <Sparkles size={14} color="#a855f7" />
+                    <span>AETHER CORE</span>
+                  </div>
+                  <span className="notif-time">8:00 AM</span>
+                </div>
+                <div className="notif-title">Good morning, {userName || 'Operator'}.</div>
+                <div className="notif-body">
+                  "2 critical reminders today, ₹1,200 pending invoice, Jaipur weather is 28°C sunny. Ready when you are."
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="btn-onboarding-primary"
+                onClick={() => setOnboardingStep(8)}
+              >
+                Enable Autonomous Monitoring →
+              </button>
+            </div>
+          )}
+
+          {/* STEP 8: MICROPHONE AUTHORIZATION */}
+          {onboardingStep === 8 && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', flex: 1 }}>
+              <div className="step-badge">Zero-Latency Voice Mode</div>
+              <h1 className="serif-title">
+                Aether needs to <span className="serif-italic">hear you.</span>
+              </h1>
+              <p className="step-desc">
+                Enable microphone access for real-time bi-directional conversation with zero latency interruption.
+              </p>
+
+              <div style={{
+                background: 'rgba(255, 255, 255, 0.04)',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                borderRadius: '18px',
+                padding: '24px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '12px',
+                margin: '12px 0 24px',
+                width: '100%',
+                maxWidth: '380px'
+              }}>
+                <div style={{
+                  width: '56px',
+                  height: '56px',
+                  borderRadius: '50%',
+                  background: 'rgba(56, 189, 248, 0.15)',
+                  border: '1.5px solid var(--accent-cyan)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 0 20px rgba(56, 189, 248, 0.3)'
+                }}>
+                  <Mic size={24} color="var(--accent-cyan)" />
+                </div>
+                <div style={{ fontSize: '0.9rem', color: '#ffffff', fontWeight: 600 }}>Bi-directional Audio Stream</div>
+                <div style={{ fontSize: '0.78rem', color: '#94a3b8', textAlign: 'center', lineHeight: '1.4' }}>
+                  Microphone is only engaged during active voice sessions. No passive room listening.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="btn-onboarding-primary"
+                onClick={handleCompleteOnboarding}
+              >
+                Activate Microphone & Enter Aether →
+              </button>
+            </div>
+          )}
+
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={dayPhase.phaseClass} style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       
@@ -915,6 +1591,20 @@ export default function App() {
           >
             <BellRing size={15} />
             <span className="push-text">{pushPermission === 'granted' ? (effectiveLang === 'en' ? 'Push Active' : 'पुश सक्रिय') : (effectiveLang === 'en' ? 'Enable Push' : 'पुश ऑन करें')}</span>
+          </button>
+
+          <button 
+            type="button"
+            onClick={() => {
+              setOnboardingStep(1);
+              setOnboardingDone(false);
+            }}
+            className="btn-share"
+            title="Aether Setup / Key & Voice Preferences"
+            style={{ gap: '6px' }}
+          >
+            <Settings size={15} />
+            <span className="share-text">Setup</span>
           </button>
 
           <button 
@@ -1059,7 +1749,7 @@ export default function App() {
                 letterSpacing: '-0.3px',
                 lineHeight: 1.2
               }}>
-                {dayPhase.greetingLabel}, {t.userName}!
+                {dayPhase.greetingLabel}, {userName || t.userName}!
               </h2>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.92rem', marginTop: '6px' }}>
                 {t.greetingSub}

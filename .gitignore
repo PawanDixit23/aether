@@ -19,8 +19,10 @@ coverage
 
 # Dependency directories
 node_modules/
-jspm_packages/
+# Expo / Mobile native build outputs
 .expo/
+mobile/android/
+mobile/ios/
 
 # TypeScript cache
 *.tsbuildinfo

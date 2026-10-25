@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+import httpx
 
 try:
     from .database import engine, Base, get_db
@@ -33,6 +34,9 @@ app.add_middleware(
 )
 
 # ----------------- Pydantic Schemas -----------------
+class KeyValidationRequest(BaseModel):
+    api_key: str
+
 class QuickCaptureRequest(BaseModel):
     input_text: str
     latitude: Optional[float] = None
@@ -40,6 +44,8 @@ class QuickCaptureRequest(BaseModel):
     language: Optional[str] = "auto" # 'auto', 'hi', 'en', 'hinglish'
     client_time: Optional[str] = None
     timezone: Optional[str] = None
+    api_key: Optional[str] = None
+    user_name: Optional[str] = None
 
 class TranslateRequest(BaseModel):
     text: str
@@ -99,6 +105,26 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
         "memories": [{"category": m.category, "fact": m.fact} for m in memories]
     }
 
+# ----------------- Key Validation Engine -----------------
+@app.post("/api/auth/validate-key")
+async def validate_gemini_key(req: KeyValidationRequest):
+    """Validate a Gemini API Key directly against Google Gemini API."""
+    key = req.api_key.strip()
+    if not key:
+        return {"valid": False, "error": "API key cannot be empty"}
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                models = [m.get("name", "") for m in data.get("models", [])]
+                return {"valid": True, "models_count": len(models)}
+            else:
+                return {"valid": False, "error": "Invalid API key or unauthorized access"}
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
 # ----------------- Quick Capture / Action Engine -----------------
 @app.post("/api/action/quick-capture")
 async def quick_capture(req: QuickCaptureRequest, db: Session = Depends(get_db)):
@@ -113,7 +139,15 @@ async def quick_capture(req: QuickCaptureRequest, db: Session = Depends(get_db))
 
     context = build_context(db, client_time=req.client_time, tz_name=req.timezone)
     lang = req.language or "auto"
-    parsed = await parse_intent_with_llm(user_msg, context, user_lat=req.latitude, user_lon=req.longitude, language=lang)
+    parsed = await parse_intent_with_llm(
+        user_msg, 
+        context, 
+        user_lat=req.latitude, 
+        user_lon=req.longitude, 
+        language=lang,
+        api_key=req.api_key,
+        user_name=req.user_name or "Operator"
+    )
     
     action = parsed.get("action", "query")
     confidence = parsed.get("confidence", 0.95)
@@ -125,7 +159,8 @@ async def quick_capture(req: QuickCaptureRequest, db: Session = Depends(get_db))
     undo_payload = None
 
     if action == "query":
-        result_message = data.get("response", "नमस्ते पवन! मैं आपकी सहायता के लिए तैयार हूँ।")
+        fallback_greeting = f"नमस्ते {req.user_name or 'साथी'}! मैं आपकी सहायता के लिए तैयार हूँ।"
+        result_message = data.get("response", fallback_greeting)
         executed = True
         
     elif action == "expense":

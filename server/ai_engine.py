@@ -273,13 +273,14 @@ def clean_task_title(text: str) -> str:
     cleaned = cleaned.strip(" ?.,!:\n")
     return cleaned if len(cleaned) > 2 else text.strip(" ?.,!:\n")
 
-def build_system_prompt(context: dict = None, live_feed: str = "", language: str = "auto") -> str:
+def build_system_prompt(context: dict = None, live_feed: str = "", language: str = "auto", user_name: str = "Operator") -> str:
     ctx_str = ""
+    display_name = user_name.strip() if user_name and user_name.strip() else "Operator"
     if context:
         ctx_str = f"""
 CURRENT REAL-TIME CONTEXT:
 - Current Local Time: {context.get('current_time') or get_now_str()}
-- User Name: Pawan Dixit
+- User Name: {display_name}
 - Detected Home Location: {context.get('user_location', 'Jaipur / Bhankrota, Rajasthan')}
 - Pending Tasks ({len(context.get('tasks', []))}): {', '.join([t.get('title', '') for t in context.get('tasks', [])]) or 'None'}
 - Financial Balance: ₹{context.get('balance', 0):,.2f}
@@ -319,7 +320,7 @@ LANGUAGE MATCHING:
 - If the user writes or speaks in Hinglish, reply in Hinglish.
 """
 
-    return f"""You are Aether ⚡, an Autonomous Personal AI Executive & Wealth Intelligence Assistant for Pawan Dixit.
+    return f"""You are Aether ⚡, an Autonomous Personal AI Executive & Wealth Intelligence Assistant for {display_name}.
 {ctx_str}
 {lang_rules}
 Your job is to analyze the user's input and return a strict JSON response.
@@ -366,7 +367,7 @@ Output Format (strictly valid JSON with no markdown wrapping):
 }}
 """
 
-async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat: float = None, user_lon: float = None, language: str = "auto") -> dict:
+async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat: float = None, user_lon: float = None, language: str = "auto", api_key: str = None, user_name: str = "Operator") -> dict:
     """Parse intent with live weather for user's actual location or requested city, news with links, and language control."""
     user_lower = user_input.lower().strip()
     
@@ -384,21 +385,25 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
         if news_items:
             live_feed += f"[TODAY'S TOP HEADLINES WITH DIRECT LINKS]:\n{news_items}\n"
 
-    sys_prompt = build_system_prompt(context, live_feed, language=language)
+    sys_prompt = build_system_prompt(context, live_feed, language=language, user_name=user_name)
     
+    # Prioritize user's personal API key, otherwise fallback to server's GEMINI_API_KEY
+    active_gemini_key = (api_key.strip() if api_key and api_key.strip() else None) or (GEMINI_API_KEY.strip() if GEMINI_API_KEY and GEMINI_API_KEY.strip() else None)
+
     # Try Gemini API with Google Search Grounding and seamless model failover
-    if GEMINI_API_KEY and GEMINI_API_KEY.strip():
+    if active_gemini_key:
         models_to_try = [
-            "gemini-3-flash-preview",
-            "gemini-3.8-flash",
-            "gemini-flash-lite-latest",
-            "gemini-2.5-flash"
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gemini-2.5-flash",
+            "gemini-flash-lite-latest"
         ]
         unique_models = list(dict.fromkeys(models_to_try))
 
         for model in unique_models:
             try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY.strip()}"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={active_gemini_key}"
                 payload = {
                     "contents": [
                         {"role": "user", "parts": [{"text": f"{sys_prompt}\n\nUser Input: {user_input}"}]}
