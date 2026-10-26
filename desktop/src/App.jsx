@@ -52,7 +52,9 @@ import {
   Keyboard,
   Zap,
   LogOut,
-  Sliders
+  Sliders,
+  Menu,
+  Edit3
 } from 'lucide-react';
 import { supabase } from './supabase';
 
@@ -254,13 +256,50 @@ const UI_TRANSLATIONS = {
 };
 
 const AETHER_VOICES = [
-  { id: 'puck', name: 'Puck', desc: 'Crisp, focused, analytical • Male', pitch: 1.0, rate: 1.05 },
-  { id: 'charon', name: 'Charon', desc: 'Deep, calm, authoritative • Male', pitch: 0.75, rate: 0.95 },
-  { id: 'kore', name: 'Kore', desc: 'Warm, articulate, balanced • Female', pitch: 1.08, rate: 1.0 },
-  { id: 'fenrir', name: 'Fenrir', desc: 'Strong, commanding, direct • Male', pitch: 0.82, rate: 1.0 },
-  { id: 'aoede', name: 'Aoede', desc: 'Melodic, polished, empathetic • Female', pitch: 1.2, rate: 1.0 },
-  { id: 'zephyr', name: 'Zephyr', desc: 'Modern, energetic, concise • Neutral', pitch: 1.0, rate: 1.1 }
+  { id: 'puck', name: 'Puck', desc: 'Crisp, focused, analytical • Male', pitch: 1.0, rate: 1.05, gender: 'male' },
+  { id: 'charon', name: 'Charon', desc: 'Deep, calm, authoritative • Male', pitch: 0.75, rate: 0.95, gender: 'male' },
+  { id: 'kore', name: 'Kore', desc: 'Warm, articulate, balanced • Female', pitch: 1.05, rate: 1.0, gender: 'female' },
+  { id: 'fenrir', name: 'Fenrir', desc: 'Strong, commanding, direct • Male', pitch: 0.82, rate: 1.0, gender: 'male' },
+  { id: 'aoede', name: 'Aoede', desc: 'Melodic, polished, empathetic • Female', pitch: 1.15, rate: 1.0, gender: 'female' },
+  { id: 'zephyr', name: 'Zephyr', desc: 'Modern, energetic, concise • Neutral', pitch: 1.0, rate: 1.1, gender: 'neutral' }
 ];
+
+// Helper to select an authentic browser voice matching the personality & gender
+const resolveSpeechVoice = (voiceId, lang = 'en') => {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices || voices.length === 0) return null;
+
+  const isHindi = lang && (lang.startsWith('hi') || lang === 'hi-IN');
+  if (isHindi) {
+    const hiVoice = voices.find(v => v.lang && (v.lang.toLowerCase().startsWith('hi') || /hindi/i.test(v.name)));
+    if (hiVoice) return hiVoice;
+  }
+
+  const voiceMeta = AETHER_VOICES.find(v => v.id === voiceId) || AETHER_VOICES[0];
+  const isFemale = voiceMeta.gender === 'female' || voiceId === 'kore' || voiceId === 'aoede';
+
+  const enVoices = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith('en'));
+  const pool = enVoices.length > 0 ? enVoices : voices;
+
+  if (isFemale) {
+    // Search for known female browser voices (Samantha, Victoria, Karen, Moira, Tessa, Fiona, Zira, Google UK/US Female)
+    const femaleMatch = pool.find(v => 
+      /female|woman|samantha|victoria|karen|moira|tessa|fiona|veena|zira|susan|kathy|princess|alva|alice|serena|stephanie|ava|allison|zoe/i.test(v.name)
+    ) || pool.find(v => 
+      !/male|man|alex|daniel|david|fred|george|oliver|rishi|lee|tom|bruce|ralph|junior|albert|aaron|guy/i.test(v.name)
+    );
+    if (femaleMatch) return femaleMatch;
+  } else if (voiceMeta.gender === 'male') {
+    // Search for known male voices
+    const maleMatch = pool.find(v => 
+      /male|man|alex|daniel|david|fred|george|oliver|rishi|lee|tom|bruce|ralph|junior|albert|aaron|guy/i.test(v.name)
+    );
+    if (maleMatch) return maleMatch;
+  }
+
+  return pool.find(v => v.default) || pool[0] || null;
+};
 
 const AETHER_MODELS = [
   { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', tag: 'Fast & Low Latency', desc: 'Ultra-fast responses with generous free limits' },
@@ -495,12 +534,32 @@ export default function App() {
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('aether_gemini_key') || '');
 
   // Main Jarvis Spec UI States
-  const [activeTab, setActiveTab] = useState('aether'); // 'jarvis' | 'today' | 'memory'
+  const [activeTab, setActiveTab] = useState('aether'); // 'aether' | 'today' | 'memory'
+  const [chatOrTaskView, setChatOrTaskView] = useState('chat'); // 'chat' | 'task'
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTypeInputOpen, setIsTypeInputOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isPersonaDropdownOpen, setIsPersonaDropdownOpen] = useState(false);
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [activeSubModal, setActiveSubModal] = useState(null); // 'key' | 'finance' | 'audit' | 'assistant-setup' | 'profile-name'
+
+  // Dynamic Prompt Placeholder Rotation (Aether Clean Minimal)
+  const ROTATING_PROMPTS = [
+    "Ask Aether...",
+    "Remind me to call at 5 PM...",
+    "Log ₹450 spent on lunch...",
+    "What's on my agenda today?",
+    "Check my expense summary...",
+    "What is the market status today?"
+  ];
+  const [promptPlaceholderIndex, setPromptPlaceholderIndex] = useState(0);
+
+  useEffect(() => {
+    const promptTimer = setInterval(() => {
+      setPromptPlaceholderIndex(prev => (prev + 1) % ROTATING_PROMPTS.length);
+    }, 3200);
+    return () => clearInterval(promptTimer);
+  }, []);
   const [userPreferredName, setUserPreferredName] = useState(() => 
     localStorage.getItem('aether_preferred_name') || 
     (localStorage.getItem('aether_user_name') && localStorage.getItem('aether_user_name') !== 'Operator' 
@@ -542,6 +601,7 @@ export default function App() {
   const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
   const [agendaFilter, setAgendaFilter] = useState('pending'); // 'pending' | 'completed' | 'all'
   const langDropdownRef = useRef(null);
+  const geminiChatFeedRef = useRef(null);
 
   // Close language dropdown on outside click
   useEffect(() => {
@@ -581,10 +641,117 @@ export default function App() {
 
   // Time-of-day progression state calculated continuously
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [subheadingIndex, setSubheadingIndex] = useState(0);
+
+  // Auto-cycle through dynamic executive suggestions every 4 seconds
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setSubheadingIndex(prev => prev + 1);
+    }, 4000);
+    return () => clearInterval(timer);
+  }, []);
 
   const chatEndRef = useRef(null);
   const recognitionRef = useRef(null);
   const userScrolledUpRef = useRef(false);
+
+  // Auto-scroll chat feed on new messages
+  useEffect(() => {
+    if (geminiChatFeedRef.current) {
+      geminiChatFeedRef.current.scrollTop = geminiChatFeedRef.current.scrollHeight;
+    }
+  }, [chatHistory, isProcessing]);
+
+  // Ensure browser voices are loaded early
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.getVoices();
+      const onVoicesChanged = () => {
+        window.speechSynthesis.getVoices();
+      };
+      window.speechSynthesis.addEventListener('voiceschanged', onVoicesChanged);
+      return () => {
+        window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
+      };
+    }
+  }, []);
+
+  // Dynamic Executive Greeting based on standard time of day
+  const getDynamicGreeting = () => {
+    const hour = currentTime ? currentTime.getHours() : new Date().getHours();
+    const firstName = (userName && userName !== 'Operator') ? userName.split(' ')[0] : 'Pawan';
+    if (hour >= 5 && hour < 12) {
+      return `Good morning, ${firstName}`;
+    } else if (hour >= 12 && hour < 17) {
+      return `Good afternoon, ${firstName}`;
+    } else {
+      return `Good evening, ${firstName}`;
+    }
+  };
+
+  const isTaskPending = (t) => !(t.is_completed === true || t.completed === true || t.status === 'completed');
+
+  // Dynamic Executive Subtitles list tailored to real-time context & time of day
+  const getDynamicSubheadingList = () => {
+    const hour = currentTime ? currentTime.getHours() : new Date().getHours();
+    const pendingTasks = (tasks || []).filter(isTaskPending).length;
+    const balanceNum = financeSummary?.balance;
+    const balanceStr = (balanceNum !== undefined && balanceNum !== null) 
+      ? (balanceNum < 0 ? `-₹${Math.abs(balanceNum).toLocaleString('en-IN')}` : `₹${balanceNum.toLocaleString('en-IN')}`)
+      : null;
+
+    const list = [];
+
+    // 1. Task Intelligence
+    if (pendingTasks > 0) {
+      if (hour >= 5 && hour < 12) {
+        list.push(`You have ${pendingTasks} active ${pendingTasks === 1 ? 'task' : 'tasks'} scheduled for today. Ready for your morning briefing?`);
+        list.push(`Review today's agenda: ${pendingTasks} priority ${pendingTasks === 1 ? 'task' : 'tasks'} awaiting action.`);
+      } else if (hour >= 12 && hour < 17) {
+        list.push(`${pendingTasks} agenda ${pendingTasks === 1 ? 'item requires' : 'items require'} attention. What would you like to accomplish next?`);
+        list.push(`Midday progress check: ${pendingTasks} pending ${pendingTasks === 1 ? 'task' : 'tasks'} on your board.`);
+      } else if (hour >= 17 && hour < 22) {
+        list.push(`Wrapping up the day with ${pendingTasks} pending ${pendingTasks === 1 ? 'task' : 'tasks'}. What should we prioritize next?`);
+        list.push(`Evening recap: Review or reschedule your ${pendingTasks} remaining ${pendingTasks === 1 ? 'task' : 'tasks'}.`);
+      } else {
+        list.push(`Night review: ${pendingTasks} open ${pendingTasks === 1 ? 'task' : 'tasks'} remaining. Reschedule for tomorrow?`);
+      }
+    } else {
+      list.push("All tasks completed today! Ready to plan ahead or take notes?");
+      list.push("Your agenda is completely clear. Ask Aether to organize new goals.");
+    }
+
+    // 2. Wealth / Ledger Intelligence
+    if (balanceStr) {
+      list.push(`Net Ledger Balance: ${balanceStr} • Ask: "Log expense" or "Show wealth report"`);
+    }
+
+    // 3. Time-specific Prompt Suggestions
+    if (hour >= 5 && hour < 12) {
+      list.push("Ask: 'What is my schedule and briefing for today?'");
+      list.push("Try: 'Add priority task: Client sync at 11 AM'");
+    } else if (hour >= 12 && hour < 17) {
+      list.push("Ask: 'Summarize today's progress and upcoming deadlines'");
+      list.push("Try: 'Set a reminder to check emails at 4 PM'");
+    } else if (hour >= 17 && hour < 22) {
+      list.push("Ask: 'Summarize today's key achievements and completed items'");
+      list.push("Try: 'Plan my meetings and focus time for tomorrow'");
+    } else {
+      list.push("Ask: 'Draft a quick recap of today's notes and ideas'");
+      list.push("Working late? Ask Aether to organize tomorrow's morning schedule.");
+    }
+
+    // 4. Acoustic Voice & Assistant Prompt
+    list.push("Tap the Æ orb or microphone to speak naturally in real time");
+    list.push(`What would you like to accomplish next, ${userName && userName !== 'Operator' ? userName.split(' ')[0] : 'Pawan'}?`);
+
+    return list;
+  };
+
+  const getDynamicSubheading = () => {
+    const list = getDynamicSubheadingList();
+    return list[subheadingIndex % list.length];
+  };
 
   // Onboarding & BYOK Intelligence Handlers
   const handleValidateApiKey = async () => {
@@ -677,15 +844,22 @@ export default function App() {
         const user = session.user;
         const gName = user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Operator';
         const gEmail = user.email || '';
-        const gAvatar = user.user_metadata?.avatar_url || '';
+        const gAvatar = user.user_metadata?.avatar_url || 
+                        user.user_metadata?.picture || 
+                        user.identities?.[0]?.identity_data?.avatar_url || 
+                        user.identities?.[0]?.identity_data?.picture || 
+                        user.user_metadata?.image || 
+                        '';
 
         localStorage.setItem('aether_user_name', gName);
         localStorage.setItem('aether_user_email', gEmail);
-        if (gAvatar) localStorage.setItem('aether_user_avatar', gAvatar);
+        if (gAvatar) {
+          localStorage.setItem('aether_user_avatar', gAvatar);
+          setUserAvatar(gAvatar);
+        }
 
         setUserName(gName);
         setUserEmail(gEmail);
-        setUserAvatar(gAvatar);
 
         recordAuthEvent(gEmail, gName);
 
@@ -709,15 +883,22 @@ export default function App() {
         const user = session.user;
         const gName = user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Operator';
         const gEmail = user.email || '';
-        const gAvatar = user.user_metadata?.avatar_url || '';
+        const gAvatar = user.user_metadata?.avatar_url || 
+                        user.user_metadata?.picture || 
+                        user.identities?.[0]?.identity_data?.avatar_url || 
+                        user.identities?.[0]?.identity_data?.picture || 
+                        user.user_metadata?.image || 
+                        '';
 
         localStorage.setItem('aether_user_name', gName);
         localStorage.setItem('aether_user_email', gEmail);
-        if (gAvatar) localStorage.setItem('aether_user_avatar', gAvatar);
+        if (gAvatar) {
+          localStorage.setItem('aether_user_avatar', gAvatar);
+          setUserAvatar(gAvatar);
+        }
 
         setUserName(gName);
         setUserEmail(gEmail);
-        setUserAvatar(gAvatar);
 
         recordAuthEvent(gEmail, gName);
 
@@ -798,19 +979,68 @@ export default function App() {
 
   const handlePlayVoicePreview = (voice) => {
     try {
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        setAudioSamplePlaying(voice.id);
-        const sampleText = `Hello ${userName || 'Operator'}. I am Aether, voiced by ${voice.name}. All systems operational.`;
-        const utterance = new SpeechSynthesisUtterance(sampleText);
-        utterance.pitch = voice.pitch;
-        utterance.rate = voice.rate;
-        utterance.onend = () => setAudioSamplePlaying(null);
-        utterance.onerror = () => setAudioSamplePlaying(null);
-        window.speechSynthesis.speak(utterance);
-      } else {
-        showToast(`Voice preview: ${voice.name}`, 'info');
+      setAudioSamplePlaying(voice.id);
+
+      // 1. Guaranteed Web Audio API Harmonic Synthesis (100% audible on all mobile WebViews!)
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) {
+          const ctx = new AudioContext();
+          if (ctx.state === 'suspended') {
+            ctx.resume();
+          }
+
+          // Distinct acoustic chord signatures matching each voice's personality
+          const freqs = {
+            puck: [520, 650, 780],      // Crisp, focused, analytical
+            charon: [165, 220, 330],    // Deep, calm, authoritative baritone
+            kore: [440, 554, 659],      // Warm, articulate, balanced
+            fenrir: [220, 277, 440],    // Strong, commanding, bold
+            aoede: [587, 740, 880],     // Melodic, polished flute/bell
+            zephyr: [700, 840, 1050]    // Modern, energetic, electronic
+          }[voice.id] || [440, 554, 660];
+
+          freqs.forEach((freq, idx) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = voice.id === 'charon' ? 'triangle' : voice.id === 'fenrir' ? 'sawtooth' : 'sine';
+            osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.1);
+            gain.gain.setValueAtTime(0, ctx.currentTime + idx * 0.1);
+            gain.gain.linearRampToValueAtTime(0.22, ctx.currentTime + idx * 0.1 + 0.04);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.1 + 0.55);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(ctx.currentTime + idx * 0.1);
+            osc.stop(ctx.currentTime + idx * 0.1 + 0.6);
+          });
+        }
+      } catch (audioErr) {
+        console.warn('Web Audio preview error:', audioErr);
       }
+
+      // 2. Also speak voice preview if SpeechSynthesis is available
+      if ('speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.cancel();
+          const sampleText = `Hello ${userName || 'Operator'}. I am Aether, voiced by ${voice.name}.`;
+          const utterance = new SpeechSynthesisUtterance(sampleText);
+          utterance.pitch = voice.pitch;
+          utterance.rate = voice.rate;
+          
+          const matchedVoice = resolveSpeechVoice(voice.id, 'en');
+          if (matchedVoice) {
+            utterance.voice = matchedVoice;
+          }
+          
+          utterance.onend = () => setAudioSamplePlaying(null);
+          utterance.onerror = () => setAudioSamplePlaying(null);
+          window.speechSynthesis.speak(utterance);
+        } catch (e) {}
+      }
+
+      setTimeout(() => {
+        setAudioSamplePlaying(null);
+      }, 1400);
     } catch (e) {
       setAudioSamplePlaying(null);
     }
@@ -1022,19 +1252,20 @@ export default function App() {
     }
   }, []);
 
-  // Fetch all backend data and check due reminders
+  // Fetch all backend data and check due reminders with Multi-Tenant Isolation
   const refreshAllData = async () => {
     try {
+      const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
       const [resBrief, resChat, resTasks, resFin, resFinSum, resMem, resAudit, resNews, resDue] = await Promise.all([
-        fetch(`${API_BASE}/briefing`),
-        fetch(`${API_BASE}/chat/history`),
-        fetch(`${API_BASE}/tasks`),
-        fetch(`${API_BASE}/finance/records`),
-        fetch(`${API_BASE}/finance/summary`),
-        fetch(`${API_BASE}/memory`),
-        fetch(`${API_BASE}/audit-logs`),
+        fetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}`, { headers: authHeaders }),
+        fetch(`${API_BASE}/chat/history`, { headers: authHeaders }),
+        fetch(`${API_BASE}/tasks`, { headers: authHeaders }),
+        fetch(`${API_BASE}/finance/records`, { headers: authHeaders }),
+        fetch(`${API_BASE}/finance/summary`, { headers: authHeaders }),
+        fetch(`${API_BASE}/memory`, { headers: authHeaders }),
+        fetch(`${API_BASE}/audit-logs`, { headers: authHeaders }),
         fetch(`${API_BASE}/news?limit=4`),
-        fetch(`${API_BASE}/reminders/due`)
+        fetch(`${API_BASE}/reminders/due`, { headers: authHeaders })
       ]);
 
       if (resBrief.ok) setBriefing(await resBrief.json());
@@ -1047,14 +1278,19 @@ export default function App() {
           return chats;
         });
       }
+
+      let loadedTasks = [];
+      let loadedMemories = [];
+      let loadedFinances = [];
+
       if (resTasks.ok) {
-        const rawTasks = await resTasks.json();
-        setTasks(rawTasks);
+        loadedTasks = await resTasks.json();
+        setTasks(loadedTasks);
 
         // Schedule upcoming reminders natively on mobile app
-        if (typeof window !== 'undefined' && window.ReactNativeWebView && Array.isArray(rawTasks)) {
+        if (typeof window !== 'undefined' && window.ReactNativeWebView && Array.isArray(loadedTasks)) {
           const nowMs = Date.now();
-          rawTasks.forEach(t => {
+          loadedTasks.forEach(t => {
             const isDone = t.is_completed || t.status === 'completed';
             if (isDone) {
               try {
@@ -1086,12 +1322,53 @@ export default function App() {
           });
         }
       }
-      if (resFin.ok) setFinanceRecords(await resFin.json());
+
+      if (resFin.ok) {
+        loadedFinances = await resFin.json();
+        setFinanceRecords(loadedFinances);
+      }
       if (resFinSum.ok) setFinanceSummary(await resFinSum.json());
-      if (resMem.ok) setMemories(await resMem.json());
+      if (resMem.ok) {
+        loadedMemories = await resMem.json();
+        setMemories(loadedMemories);
+      }
       if (resAudit.ok) setAuditLogs(await resAudit.json());
       if (resNews.ok) setNewsItems(await resNews.json());
       
+      // Auto-backup / restore client data so memory never disappears across Render container reboots
+      if (userEmail) {
+        if (loadedTasks.length > 0 || loadedMemories.length > 0 || loadedFinances.length > 0) {
+          localStorage.setItem(`aether_backup_${userEmail}`, JSON.stringify({
+            tasks: loadedTasks,
+            memories: loadedMemories,
+            finances: loadedFinances
+          }));
+        } else {
+          const cachedBackupStr = localStorage.getItem(`aether_backup_${userEmail}`);
+          if (cachedBackupStr) {
+            try {
+              const cached = JSON.parse(cachedBackupStr);
+              if (cached.tasks?.length > 0 || cached.memories?.length > 0 || cached.finances?.length > 0) {
+                fetch(`${API_BASE}/sync/backup`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'X-User-Email': userEmail },
+                  body: JSON.stringify({
+                    user_email: userEmail,
+                    tasks: cached.tasks || [],
+                    memories: cached.memories || [],
+                    finances: cached.finances || []
+                  })
+                }).then(() => {
+                  if (cached.tasks) setTasks(cached.tasks);
+                  if (cached.memories) setMemories(cached.memories);
+                  if (cached.finances) setFinanceRecords(cached.finances);
+                }).catch(() => {});
+              }
+            } catch (e) {}
+          }
+        }
+      }
+
       // Check if any reminder is due right now
       if (resDue.ok) {
         const dueList = await resDue.json();
@@ -1105,7 +1382,10 @@ export default function App() {
             `reminder-${dueItem.id}`
           );
           
-          fetch(`${API_BASE}/reminders/${dueItem.id}/ack`, { method: 'POST' });
+          fetch(`${API_BASE}/reminders/${dueItem.id}/ack`, { 
+            method: 'POST',
+            headers: authHeaders
+          });
         }
       }
       
@@ -1271,6 +1551,12 @@ export default function App() {
     const hasDevanagari = /[\u0900-\u097F]/.test(cleanText);
     utterance.lang = (selectedLang === 'hi' || hasDevanagari) ? 'hi-IN' : 'en-IN';
     
+    // Explicitly bind matched browser voice (Female for Kore/Aoede, Male for Puck/Charon/Fenrir)
+    const matchedVoice = resolveSpeechVoice(selectedVoice, utterance.lang);
+    if (matchedVoice) {
+      utterance.voice = matchedVoice;
+    }
+    
     setIsSpeaking(true);
     utterance.onend = () => setIsSpeaking(false);
     utterance.onerror = () => setIsSpeaking(false);
@@ -1318,19 +1604,38 @@ export default function App() {
         client_time: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
         api_key: localStorage.getItem('aether_gemini_key') || '',
-        user_name: localStorage.getItem('aether_user_name') || userName || 'Operator'
+        user_name: localStorage.getItem('aether_user_name') || userName || 'Operator',
+        user_email: userEmail || null
       };
 
       const resp = await fetch(`${API_BASE}/action/quick-capture`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(userEmail ? { 'X-User-Email': userEmail } : {})
+        },
         body: JSON.stringify(payload)
       });
       const result = await resp.json();
       
-      showToast(result.message, result.status === 'executed' ? 'success' : 'info');
+      const assistantReply = result.message || (result.parsed?.data?.response) || "Action completed.";
+      setChatHistory(prev => [...prev, {
+        role: 'assistant',
+        content: assistantReply,
+        created_at: new Date().toISOString()
+      }]);
+
+      if (isListening || audioSamplePlaying) {
+        speakText(assistantReply);
+      }
+
       await refreshAllData();
     } catch (err) {
+      setChatHistory(prev => [...prev, {
+        role: 'assistant',
+        content: "Aether कोर से संपर्क नहीं हो पाया। कृपया इंटरनेट या सर्वर जांचें।",
+        created_at: new Date().toISOString()
+      }]);
       showToast("Aether कोर से संपर्क नहीं हो पाया", 'error');
     } finally {
       setIsProcessing(false);
@@ -1340,7 +1645,10 @@ export default function App() {
   // Start a New Chat
   const handleStartNewChat = async () => {
     try {
-      await fetch(`${API_BASE}/chat/history`, { method: 'DELETE' });
+      await fetch(`${API_BASE}/chat/history`, { 
+        method: 'DELETE',
+        headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
+      });
       setChatHistory([]);
       setInputText('');
       showToast("नई चैट शुरू की गई!", 'success');
@@ -1374,7 +1682,10 @@ export default function App() {
     }
 
     try {
-      await fetch(`${API_BASE}/tasks/${taskId}/toggle`, { method: 'PUT' });
+      await fetch(`${API_BASE}/tasks/${taskId}/toggle`, { 
+        method: 'PUT',
+        headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
+      });
       refreshAllData();
       showToast("स्थिति अपडेट की गई (Status Updated)", 'info');
     } catch (err) {
@@ -1385,7 +1696,10 @@ export default function App() {
 
   const handleDeleteTask = async (taskId) => {
     try {
-      await fetch(`${API_BASE}/tasks/${taskId}`, { method: 'DELETE' });
+      await fetch(`${API_BASE}/tasks/${taskId}`, { 
+        method: 'DELETE',
+        headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
+      });
       refreshAllData();
       showToast("कार्य हटा दिया गया", 'info');
     } catch (err) {
@@ -1399,8 +1713,15 @@ export default function App() {
     try {
       await fetch(`${API_BASE}/tasks`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: newTaskInput.trim(), priority: 'medium' })
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(userEmail ? { 'X-User-Email': userEmail } : {})
+        },
+        body: JSON.stringify({ 
+          title: newTaskInput.trim(), 
+          priority: 'medium',
+          user_email: userEmail || null 
+        })
       });
       setNewTaskInput('');
       refreshAllData();
@@ -1412,7 +1733,10 @@ export default function App() {
 
   const handleDeleteMemory = async (memId) => {
     try {
-      await fetch(`${API_BASE}/memory/${memId}`, { method: 'DELETE' });
+      await fetch(`${API_BASE}/memory/${memId}`, { 
+        method: 'DELETE',
+        headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
+      });
       refreshAllData();
       showToast("स्मृति वॉल्ट से हटा दी गई", 'info');
     } catch (err) {
@@ -1422,7 +1746,10 @@ export default function App() {
 
   const handleUndo = async (logId) => {
     try {
-      await fetch(`${API_BASE}/audit-logs/${logId}/undo`, { method: 'POST' });
+      await fetch(`${API_BASE}/audit-logs/${logId}/undo`, { 
+        method: 'POST',
+        headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
+      });
       showToast("Action reverted successfully [Undo]", 'success');
       refreshAllData();
     } catch (err) {
@@ -2152,6 +2479,7 @@ export default function App() {
               </p>
 
               {/* Notification Mock Card */}
+              {/* Notification Mock Card */}
               <div className="notification-mock-card">
                 <div className="notif-header">
                   <div className="notif-brand">
@@ -2160,26 +2488,23 @@ export default function App() {
                   </div>
                   <span className="notif-time">8:00 AM</span>
                 </div>
-                <div className="notif-title">Good morning, {userName || 'Operator'}.</div>
+                <div className="notif-title">Good morning, {userName || 'Pawan'}.</div>
                 <div className="notif-body">
-                  "2 critical reminders today, ₹1,200 pending invoice, Jaipur weather is 28°C sunny. Ready when you are."
+                  "2 critical reminders today, ₹1,200 pending invoice, Jaipur weather is {briefing?.weather?.temp || 29}°C {briefing?.weather?.condition_en || 'sunny'}. Ready when you are."
                 </div>
               </div>
 
               <button
                 type="button"
                 className="btn-onboarding-primary"
-                onClick={async () => {
-                  if (typeof window !== 'undefined' && 'Notification' in window) {
-                    try {
-                      await Notification.requestPermission();
-                    } catch (e) {}
-                  }
-                  if (window.ReactNativeWebView) {
-                    try {
+                onClick={() => {
+                  try {
+                    if (window.ReactNativeWebView) {
                       window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_NOTIFICATION_PERMISSION' }));
-                    } catch (e) {}
-                  }
+                    } else if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+                      Notification.requestPermission().catch(() => {});
+                    }
+                  } catch (e) {}
                   setOnboardingStep(8);
                 }}
               >
@@ -2458,52 +2783,37 @@ export default function App() {
         </div>
       ) : (
         /* =========================================================================
-            VIEW 2: MAIN APP TABS (Jarvis | Today | Memory)
+            VIEW 2: MAIN APP TABS (Gemini Clean Dark | Today | Memory)
             ========================================================================= */
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingBottom: '76px' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', paddingBottom: '68px', boxSizing: 'border-box', overflow: 'hidden' }}>
 
-          {/* TAB 1: JARVIS MAIN SCREEN (Exact 1:1 Spec from Screenshot 1) */}
+          {/* TAB 1: AETHER CLEAN MINIMAL DARK UI */}
           {activeTab === 'aether' && (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div className="gemini-screen-container">
               
-              {/* TOP BAR */}
-              <div className="jarvis-top-bar">
-                <button 
-                  type="button" 
-                  className="jarvis-icon-btn" 
-                  onClick={() => setIsHistoryOpen(true)}
-                  title="Interaction History"
-                >
-                  <Clock size={22} />
-                </button>
+              {/* TOP BAR: [Spacer] [Aether ⌵ (Centered)] [Edit3] [Profile Avatar] */}
+              <header className="gemini-top-bar">
+                <div className="gemini-top-left" style={{ width: '80px', display: 'flex', alignItems: 'center' }}>
+                  {/* Left spacer keeping Aether centered */}
+                </div>
 
-                <div style={{ position: 'relative' }}>
+                <div className="gemini-top-center" style={{ position: 'relative', display: 'flex', justifyContent: 'center' }}>
                   <button 
                     type="button" 
-                    className="jarvis-title-dropdown"
+                    className="gemini-model-pill"
                     onClick={() => setIsPersonaDropdownOpen(!isPersonaDropdownOpen)}
+                    title="Select Aether Voice / आवाज चुनें"
                   >
                     <span className="aether-top-mini-logo">Æ</span>
-                    <span className="jarvis-title-text">
-                      Aether
-                    </span>
+                    <span>Aether</span>
                     <ChevronDown size={14} color="#94a3b8" />
                   </button>
 
                   {isPersonaDropdownOpen && (
-                    <div style={{
-                      position: 'absolute',
-                      top: 'calc(100% + 8px)',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      background: '#0d1527',
-                      border: '1px solid rgba(255, 255, 255, 0.15)',
-                      borderRadius: '14px',
-                      padding: '6px',
-                      boxShadow: '0 16px 40px rgba(0, 0, 0, 0.8)',
-                      zIndex: 100,
-                      minWidth: '160px'
-                    }}>
+                    <div className="aether-voice-dropdown" style={{ left: '50%', transform: 'translateX(-50%)' }}>
+                      <div style={{ padding: '8px 12px 6px', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.8px', color: '#94a3b8', fontWeight: 600 }}>
+                        Voice Personality
+                      </div>
                       {AETHER_VOICES.map(voice => (
                         <button
                           key={voice.id}
@@ -2512,149 +2822,155 @@ export default function App() {
                             setSelectedVoice(voice.id);
                             localStorage.setItem('aether_selected_voice', voice.id);
                             setIsPersonaDropdownOpen(false);
-                            showToast(`Voice set to ${voice.name}`, 'info');
+                            handlePlayVoicePreview(voice);
+                            showToast(`Aether Voice: ${voice.name}`, 'info');
                           }}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            width: '100%',
-                            padding: '8px 12px',
-                            border: 'none',
-                            background: selectedVoice === voice.id ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
-                            color: selectedVoice === voice.id ? 'var(--accent-cyan)' : '#e2e8f0',
-                            borderRadius: '8px',
-                            cursor: 'pointer',
-                            fontSize: '0.84rem',
-                            fontWeight: selectedVoice === voice.id ? 700 : 500
-                          }}
+                          className={`aether-voice-option ${selectedVoice === voice.id ? 'active' : ''}`}
                         >
-                          <span>{voice.name}</span>
-                          {selectedVoice === voice.id && <Check size={14} />}
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', textAlign: 'left' }}>
+                            <span style={{ fontWeight: 600, fontSize: '0.88rem', color: selectedVoice === voice.id ? '#38bdf8' : '#f8fafc' }}>
+                              {voice.name}
+                            </span>
+                            <span style={{ fontSize: '0.74rem', color: '#94a3b8', marginTop: '2px' }}>
+                              {voice.desc}
+                            </span>
+                          </div>
+                          {selectedVoice === voice.id && <Check size={16} color="#38bdf8" />}
                         </button>
                       ))}
                     </div>
                   )}
                 </div>
 
-                <button 
-                  type="button" 
-                  className="jarvis-icon-btn" 
-                  onClick={() => setIsSettingsOpen(true)}
-                  title="Settings"
-                >
-                  <Settings size={22} />
-                </button>
-              </div>
-
-              {/* CENTER STAGE */}
-              <div className="jarvis-center-stage">
-                
-                {/* Signature Aether Brand Logo Orb (Interactive, Acoustic Halo Rings, Audio Reactive) */}
-                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '18px 0 26px' }}>
-                  <div className="aether-logo-ring-outer" />
-                  <div className="aether-logo-ring-inner" />
-                  <div 
-                    className={`aether-brand-orb aether-postlogin-logo ${isListening ? 'listening' : ''} ${isSpeaking ? 'speaking' : ''}`}
-                    onClick={toggleListening}
-                    title="Tap to speak with Aether / माइक शुरू करें"
+                <div className="gemini-top-right">
+                  <button 
+                    type="button" 
+                    className="gemini-icon-btn" 
+                    onClick={handleStartNewChat}
+                    title="New Chat / नया चैट शुरू करें"
                   >
-                    <div className="aether-orb-badge hero">Æ</div>
-                    {isListening && <div className="jarvis-listening-pulse" />}
+                    <Edit3 size={20} />
+                  </button>
+
+                  <div className="gemini-avatar-wrap" onClick={() => setIsSettingsOpen(true)} title="Profile & Settings">
+                    {userAvatar ? (
+                      <img 
+                        src={userAvatar} 
+                        alt="Profile" 
+                        className="gemini-avatar-img" 
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="gemini-avatar-fallback">
+                        {((userName && userName !== 'Operator') ? userName[0] : 'P').toUpperCase()}
+                      </div>
+                    )}
                   </div>
                 </div>
+              </header>
 
-                {/* Big Dynamic Greeting */}
-                <h1 className="jarvis-greeting-title">
-                  {timeGreeting}
-                </h1>
-
-                {/* Dynamic Subtitle */}
-                <p className="jarvis-greeting-sub">
-                  {isListening 
-                    ? 'Listening... Speak naturally in English, Hindi, or Hinglish' 
-                    : isSpeaking 
-                      ? 'Aether is speaking...' 
-                      : 'Say "open Spotify" — Aether launches apps'
-                  }
-                </p>
-
-                {/* Latest AI Response (Full Content with Clickable Links) */}
-                {chatHistory.length > 0 && (
-                  <div className="jarvis-response-bubble">
-                    <div className="jarvis-bubble-header">
-                      <span className="jarvis-bubble-tag">Assistant</span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <button
-                          type="button"
-                          onClick={() => setIsHistoryOpen(true)}
-                          style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#94a3b8', borderRadius: '8px', padding: '3px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem' }}
-                          title="View Full Interaction Transcript"
-                        >
-                          <Clock size={12} /> Full Log
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => speakText(chatHistory[chatHistory.length - 1].content)}
-                          style={{ background: 'none', border: 'none', color: 'var(--accent-cyan)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.74rem' }}
-                        >
-                          <Volume2 size={13} /> Speak
-                        </button>
-                      </div>
-                    </div>
-                    <div className="jarvis-bubble-text">
-                      <FormattedMessage text={chatHistory[chatHistory.length - 1].content} />
-                    </div>
-                  </div>
-                )}
-
-                {/* Type Toggle Pill */}
-                <button
-                  type="button"
-                  className={`jarvis-type-pill ${isTypeInputOpen ? 'active' : ''}`}
-                  onClick={() => setIsTypeInputOpen(!isTypeInputOpen)}
-                >
-                  <Keyboard size={15} />
-                  <span>Type</span>
-                </button>
-
-                {/* Expandable Prompt Input Field */}
-                {isTypeInputOpen && (
-                  <form 
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      if (inputText.trim()) {
-                        handleSendPrompt(inputText);
-                      }
-                    }} 
-                    className="jarvis-input-bar-wrap"
+              {/* CENTER STAGE OR CONVERSATION STREAM */}
+              {chatHistory.length === 0 ? (
+                <div className="gemini-center-stage">
+                  {/* Signature Glowing Aether Brand Orb (Center Stage) */}
+                  <div 
+                    className="aether-center-orb"
+                    onClick={() => {
+                      toggleListening();
+                      showToast(isListening ? "Listening stopped" : "⚡ Aether listening...", "info");
+                    }}
+                    title="Click to speak / Aether voice"
                   >
-                    <input
-                      type="text"
-                      className="jarvis-input-field"
-                      placeholder="Ask Aether anything..."
-                      value={inputText}
-                      onChange={(e) => setInputText(e.target.value)}
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      onClick={toggleListening}
-                      className={`jarvis-action-circle-btn mic ${isListening ? 'active' : ''}`}
-                      title={isListening ? "Stop listening" : "Start voice input"}
+                    <div className="aether-orb-badge hero">Æ</div>
+                  </div>
+
+                  {/* Headline: Dynamic Greeting as per executive standard */}
+                  <h1 className="gemini-hero-heading">
+                    {getDynamicGreeting()}
+                  </h1>
+                  <p 
+                    key={subheadingIndex}
+                    className="gemini-hero-subheading dynamic-fade"
+                    onClick={() => setSubheadingIndex(prev => prev + 1)}
+                    title="Click for next suggestion"
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {getDynamicSubheading()}
+                  </p>
+                </div>
+              ) : (
+                <div className="gemini-chat-feed" ref={geminiChatFeedRef}>
+                  {chatHistory.map((msg, idx) => (
+                    <div 
+                      key={idx} 
+                      className={msg.role === 'user' ? 'gemini-msg-user' : 'gemini-msg-assistant'}
                     >
-                      <Mic size={16} />
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={!inputText.trim() || isProcessing}
-                      className="jarvis-action-circle-btn send"
-                      title="Send prompt"
-                    >
-                      <ArrowUp size={16} />
-                    </button>
-                  </form>
-                )}
+                      <FormattedMessage text={msg.content} />
+                    </div>
+                  ))}
+                  {isProcessing && (
+                    <div className="gemini-msg-assistant" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div className="gemini-waveform-icon">
+                        <span /><span /><span />
+                      </div>
+                      <span style={{ fontSize: '0.86rem', color: '#94a3b8' }}>Thinking & calculating...</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* BOTTOM DOCK: CLEAN EXECUTIVE PROMPT BAR (Standard 1:1 Company Interface) */}
+              <div className="gemini-bottom-dock">
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (inputText.trim()) {
+                      handleSendPrompt(inputText);
+                    }
+                  }}
+                  className="gemini-prompt-bar"
+                >
+                  <button 
+                    type="button" 
+                    className="gemini-prompt-btn plus"
+                    onClick={() => setActiveSubModal('finance')}
+                    title="Quick Actions / Ledger"
+                  >
+                    <Plus size={20} />
+                  </button>
+
+                  <input 
+                    type="text" 
+                    className="gemini-input-field"
+                    placeholder={ROTATING_PROMPTS[promptPlaceholderIndex]}
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    autoFocus
+                  />
+
+                  <button 
+                    type="button" 
+                    className={`gemini-prompt-btn mic ${isListening ? 'listening' : ''}`}
+                    onClick={toggleListening}
+                    title={isListening ? "Stop listening" : "Voice Input (माइक शुरू करें)"}
+                  >
+                    <Mic size={20} />
+                  </button>
+
+                  <button 
+                    type="button" 
+                    className="gemini-prompt-btn waveform-btn"
+                    onClick={() => {
+                      toggleListening();
+                      showToast("⚡ Zero-Latency Acoustic Voice Mode Active", "info");
+                    }}
+                    title="Live Voice Mode"
+                  >
+                    <div className="gemini-waveform-icon">
+                      <span /><span /><span />
+                    </div>
+                  </button>
+                </form>
               </div>
 
             </div>

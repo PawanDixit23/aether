@@ -1,14 +1,24 @@
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# Local SQLite database file (supports cloud persistent volume via DB_PATH)
-DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "aether.db"))
-DATABASE_URL = f"sqlite:///{DB_PATH}"
+# Support persistent cloud PostgreSQL (Supabase / Render / Neon) or local SQLite
+DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
+if not DATABASE_URL:
+    DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "aether.db"))
+    DATABASE_URL = f"sqlite:///{DB_PATH}"
+
+# SQLAlchemy requires postgresql:// instead of postgres://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
 engine = create_engine(
-    DATABASE_URL, connect_args={"check_same_thread": False}
+    DATABASE_URL, 
+    connect_args=connect_args,
+    pool_pre_ping=True
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -20,3 +30,18 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def ensure_schema_migrations():
+    """Ensure user_email column exists on all tables even if existing SQLite file is used."""
+    try:
+        with engine.connect() as conn:
+            tables = ["tasks", "financial_records", "memory_vault", "audit_logs", "chat_messages"]
+            for table in tables:
+                try:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_email VARCHAR"))
+                    conn.commit()
+                except Exception:
+                    # Column already exists or table not created yet
+                    pass
+    except Exception as e:
+        print(f"[Schema Migration Note] {e}")

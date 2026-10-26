@@ -10,6 +10,7 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, index=True, nullable=True)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     priority = Column(String, default="medium")  # low, medium, high, urgent
@@ -23,6 +24,7 @@ class FinancialRecord(Base):
     __tablename__ = "financial_records"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, index=True, nullable=True)
     type = Column(String, nullable=False)        # expense, income, emi, investment
     category = Column(String, default="general") # food, rent, fuel, client, etc.
     amount = Column(Float, nullable=False)
@@ -35,6 +37,7 @@ class MemoryItem(Base):
     __tablename__ = "memory_vault"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, index=True, nullable=True)
     category = Column(String, default="general") # preference, personal_rule, contact, context
     fact = Column(Text, nullable=False)
     confidence = Column(Float, default=1.0)
@@ -45,6 +48,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, index=True, nullable=True)
     action_type = Column(String, nullable=False) # create_task, log_expense, etc.
     details = Column(Text, nullable=False)
     confidence_score = Column(Float, default=1.0)
@@ -56,6 +60,7 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, index=True, nullable=True)
     role = Column(String, nullable=False)        # "user" or "aether"
     content = Column(Text, nullable=False)
     action_type = Column(String, default="query")# "task", "expense", "income", "memory", "query"

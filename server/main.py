@@ -2,7 +2,7 @@ import os
 import json
 from datetime import datetime
 from typing import Optional, List
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,16 +11,17 @@ from sqlalchemy.orm import Session
 import httpx
 
 try:
-    from .database import engine, Base, get_db
+    from .database import engine, Base, get_db, ensure_schema_migrations
     from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage
     from .ai_engine import parse_intent_with_llm
 except ImportError:
-    from database import engine, Base, get_db
+    from database import engine, Base, get_db, ensure_schema_migrations
     from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage
     from ai_engine import parse_intent_with_llm
 
-# Initialize SQLite tables
+# Initialize tables & run automated schema migrations
 Base.metadata.create_all(bind=engine)
+ensure_schema_migrations()
 
 app = FastAPI(title="Aether Executive Core", version="0.1.0")
 
@@ -33,6 +34,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def get_user_email(
+    x_user_email: Optional[str] = Header(None, alias="X-User-Email"),
+    user_email: Optional[str] = None
+) -> Optional[str]:
+    email = x_user_email or user_email
+    if email and email.strip():
+        return email.strip().lower()
+    return None
+
 # ----------------- Pydantic Schemas -----------------
 class AuthRecordRequest(BaseModel):
     email: str
@@ -44,6 +54,7 @@ class KeyValidationRequest(BaseModel):
 
 class QuickCaptureRequest(BaseModel):
     input_text: str
+    user_email: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     language: Optional[str] = "auto" # 'auto', 'hi', 'en', 'hinglish'
@@ -58,6 +69,7 @@ class TranslateRequest(BaseModel):
 
 class TaskCreate(BaseModel):
     title: str
+    user_email: Optional[str] = None
     description: Optional[str] = None
     priority: Optional[str] = "medium"
     due_date: Optional[datetime] = None
@@ -65,6 +77,7 @@ class TaskCreate(BaseModel):
 
 class FinancialRecordCreate(BaseModel):
     type: str
+    user_email: Optional[str] = None
     category: Optional[str] = "general"
     amount: float
     currency: Optional[str] = "INR"
@@ -73,7 +86,14 @@ class FinancialRecordCreate(BaseModel):
 
 class MemoryCreate(BaseModel):
     fact: str
+    user_email: Optional[str] = None
     category: Optional[str] = "preference"
+
+class ClientSyncBackup(BaseModel):
+    user_email: str
+    tasks: Optional[List[dict]] = []
+    memories: Optional[List[dict]] = []
+    finances: Optional[List[dict]] = []
 
 try:
     from zoneinfo import ZoneInfo
@@ -92,10 +112,19 @@ def get_current_time_str(client_time: Optional[str] = None, tz_name: Optional[st
         pass
     return datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
 
-def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None) -> dict:
-    tasks = db.query(Task).filter(Task.status == "pending").all()
-    records = db.query(FinancialRecord).all()
-    memories = db.query(MemoryItem).all()
+def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None) -> dict:
+    if not user_email:
+        return {
+            "current_time": get_current_time_str(client_time, tz_name),
+            "tasks": [],
+            "total_income": 0,
+            "total_expense": 0,
+            "balance": 0,
+            "memories": []
+        }
+    tasks = db.query(Task).filter(Task.user_email == user_email, Task.status == "pending").all()
+    records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).all()
+    memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
 
     total_income = sum(r.amount for r in records if r.type == "income")
     total_expense = sum(r.amount for r in records if r.type == "expense")
@@ -132,9 +161,22 @@ async def validate_gemini_key(req: KeyValidationRequest):
 
 @app.post("/api/auth/record-login")
 def record_user_login(req: AuthRecordRequest, db: Session = Depends(get_db)):
-    """Log user authentication in local audit log & memory."""
-    details = f"User {req.name} ({req.email}) successfully authenticated via {req.provider.capitalize()} OAuth."
+    """Log user authentication in local audit log and claim legacy unassigned tenant data."""
+    email = req.email.strip().lower()
+    try:
+        # Migrate any previously unassigned records to this authenticated user
+        db.query(Task).filter(Task.user_email == None).update({Task.user_email: email})
+        db.query(FinancialRecord).filter(FinancialRecord.user_email == None).update({FinancialRecord.user_email: email})
+        db.query(MemoryItem).filter(MemoryItem.user_email == None).update({MemoryItem.user_email: email})
+        db.query(ChatMessage).filter(ChatMessage.user_email == None).update({ChatMessage.user_email: email})
+        db.query(AuditLog).filter(AuditLog.user_email == None).update({AuditLog.user_email: email})
+        db.commit()
+    except Exception as e:
+        print(f"[Record Login Auto-claim Note] {e}")
+
+    details = f"User {req.name} ({email}) successfully authenticated via {req.provider.capitalize()} OAuth."
     audit = AuditLog(
+        user_email=email,
         action_type="user_auth",
         details=details,
         confidence_score=1.0,
@@ -145,19 +187,88 @@ def record_user_login(req: AuthRecordRequest, db: Session = Depends(get_db)):
     db.refresh(audit)
     return {"status": "logged", "audit_id": audit.id, "details": details}
 
+# ----------------- Client Sync & Resilience Engine -----------------
+@app.post("/api/sync/backup")
+def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
+    """Restore client local persistent cache if Render container restarts or resets SQLite."""
+    email = req.user_email.strip().lower()
+    if not email:
+        return {"status": "skipped", "message": "No email provided"}
+    
+    restored_counts = {"tasks": 0, "memories": 0, "finances": 0}
+    
+    # Restore tasks if DB has zero for this user
+    existing_tasks = db.query(Task).filter(Task.user_email == email).count()
+    if existing_tasks == 0 and req.tasks:
+        for t in req.tasks:
+            try:
+                db.add(Task(
+                    user_email=email,
+                    title=t.get("title", ""),
+                    priority=t.get("priority", "medium"),
+                    status=t.get("status", "pending"),
+                    reminder_time=t.get("reminder_time"),
+                    notified=t.get("notified", False)
+                ))
+                restored_counts["tasks"] += 1
+            except Exception:
+                pass
+        db.commit()
+
+    # Restore memories if DB has zero for this user
+    existing_mem = db.query(MemoryItem).filter(MemoryItem.user_email == email).count()
+    if existing_mem == 0 and req.memories:
+        for m in req.memories:
+            try:
+                db.add(MemoryItem(
+                    user_email=email,
+                    category=m.get("category", "preference"),
+                    fact=m.get("fact", "")
+                ))
+                restored_counts["memories"] += 1
+            except Exception:
+                pass
+        db.commit()
+
+    # Restore finances if DB has zero for this user
+    existing_fin = db.query(FinancialRecord).filter(FinancialRecord.user_email == email).count()
+    if existing_fin == 0 and req.finances:
+        for f in req.finances:
+            try:
+                db.add(FinancialRecord(
+                    user_email=email,
+                    type=f.get("type", "expense"),
+                    category=f.get("category", "general"),
+                    amount=f.get("amount", 0.0),
+                    payment_mode=f.get("payment_mode", "upi"),
+                    note=f.get("note", "")
+                ))
+                restored_counts["finances"] += 1
+            except Exception:
+                pass
+        db.commit()
+
+    return {"status": "synced", "user": email, "restored": restored_counts}
+
 # ----------------- Quick Capture / Action Engine -----------------
 @app.post("/api/action/quick-capture")
-async def quick_capture(req: QuickCaptureRequest, db: Session = Depends(get_db)):
-    """Core Smart Action Engine with Real Context & Conversational History."""
+async def quick_capture(
+    req: QuickCaptureRequest, 
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    """Core Smart Action Engine with Multi-Tenant Isolation & Conversational History."""
     user_msg = req.input_text.strip()
     if not user_msg:
         raise HTTPException(status_code=400, detail="Empty input")
 
+    eff_email = (req.user_email or user_email or "").strip().lower() or None
+
     # Record User Message
-    db.add(ChatMessage(role="user", content=user_msg))
+    db.add(ChatMessage(role="user", content=user_msg, user_email=eff_email))
     db.commit()
 
-    context = build_context(db, client_time=req.client_time, tz_name=req.timezone)
+    context = build_context(db, client_time=req.client_time, tz_name=req.timezone, user_email=eff_email)
     lang = req.language or "auto"
     parsed = await parse_intent_with_llm(
         user_msg, 
@@ -185,6 +296,7 @@ async def quick_capture(req: QuickCaptureRequest, db: Session = Depends(get_db))
         
     elif action == "expense":
         record = FinancialRecord(
+            user_email=eff_email,
             type="expense",
             category=data.get("category", "general"),
             amount=data.get("amount", 0.0),
@@ -206,6 +318,7 @@ async def quick_capture(req: QuickCaptureRequest, db: Session = Depends(get_db))
 
     elif action == "income":
         record = FinancialRecord(
+            user_email=eff_email,
             type="income",
             category=data.get("category", "salary"),
             amount=data.get("amount", 0.0),
@@ -227,6 +340,7 @@ async def quick_capture(req: QuickCaptureRequest, db: Session = Depends(get_db))
 
     elif action == "memory":
         item = MemoryItem(
+            user_email=eff_email,
             category=data.get("category", "preference"),
             fact=data.get("fact", user_msg),
             confidence=confidence
@@ -271,6 +385,7 @@ async def quick_capture(req: QuickCaptureRequest, db: Session = Depends(get_db))
             pass
 
         task = Task(
+            user_email=eff_email,
             title=title,
             priority=data.get("priority", "medium"),
             reminder_time=r_time,
@@ -296,6 +411,7 @@ async def quick_capture(req: QuickCaptureRequest, db: Session = Depends(get_db))
 
     # Record AI Response in Chat History
     ai_chat = ChatMessage(
+        user_email=eff_email,
         role="aether",
         content=result_message,
         action_type=action,
@@ -307,6 +423,7 @@ async def quick_capture(req: QuickCaptureRequest, db: Session = Depends(get_db))
     # Log to Audit Log if real action was taken
     if executed and action != "query":
         audit = AuditLog(
+            user_email=eff_email,
             action_type=f"auto_{action}",
             details=result_message,
             confidence_score=confidence,
@@ -352,14 +469,25 @@ async def translate_text(req: TranslateRequest):
 
 # ----------------- Chat History & News -----------------
 @app.get("/api/chat/history")
-def get_chat_history(limit: int = 30, db: Session = Depends(get_db)):
-    msgs = db.query(ChatMessage).order_by(ChatMessage.created_at.asc()).all()
+def get_chat_history(
+    limit: int = 30, 
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    if not user_email:
+        msgs = db.query(ChatMessage).filter(ChatMessage.user_email == None).order_by(ChatMessage.created_at.asc()).all()
+        return msgs[-limit:]
+    msgs = db.query(ChatMessage).filter(ChatMessage.user_email == user_email.strip().lower()).order_by(ChatMessage.created_at.asc()).all()
     return msgs[-limit:]
 
 @app.delete("/api/chat/history")
-def clear_chat_history(db: Session = Depends(get_db)):
-    db.query(ChatMessage).delete()
-    db.commit()
+def clear_chat_history(
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    if user_email:
+        db.query(ChatMessage).filter(ChatMessage.user_email == user_email).delete()
+        db.commit()
     return {"message": "Chat history cleared, ready for new conversation"}
 
 @app.get("/api/news")
@@ -372,10 +500,17 @@ def get_live_news(limit: int = 5, category: str = None):
 
 # ----------------- Reminders & Notification Engine -----------------
 @app.get("/api/reminders/due")
-def get_due_reminders(db: Session = Depends(get_db)):
+def get_due_reminders(
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
     """Fetch pending tasks whose reminder time has arrived or passed and have not been alerted yet."""
+    if not user_email:
+        return []
+
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     tasks = db.query(Task).filter(
+        Task.user_email == user_email,
         Task.status == "pending",
         Task.notified == False
     ).all()
@@ -402,9 +537,16 @@ def get_due_reminders(db: Session = Depends(get_db)):
     return due_tasks
 
 @app.post("/api/reminders/{task_id}/ack")
-def acknowledge_reminder(task_id: int, db: Session = Depends(get_db)):
+def acknowledge_reminder(
+    task_id: int, 
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
     """Acknowledge reminder so it won't repeatedly alert."""
-    task = db.query(Task).filter(Task.id == task_id).first()
+    query = db.query(Task).filter(Task.id == task_id)
+    if user_email:
+        query = query.filter(Task.user_email == user_email)
+    task = query.first()
     if task:
         task.notified = True
         db.commit()
@@ -427,23 +569,43 @@ def serialize_task(t: Task) -> dict:
     }
 
 @app.get("/api/tasks")
-def list_tasks(status: Optional[str] = None, db: Session = Depends(get_db)):
-    query = db.query(Task)
+def list_tasks(
+    status: Optional[str] = None, 
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    if not user_email:
+        return []
+    query = db.query(Task).filter(Task.user_email == user_email)
     if status:
         query = query.filter(Task.status == status)
     return [serialize_task(t) for t in query.order_by(Task.created_at.desc()).all()]
 
 @app.post("/api/tasks")
-def create_task(task_in: TaskCreate, db: Session = Depends(get_db)):
-    task = Task(**task_in.dict())
+def create_task(
+    task_in: TaskCreate, 
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = (task_in.user_email or user_email or "").strip().lower() or None
+    data = task_in.dict()
+    data["user_email"] = eff_email
+    task = Task(**data)
     db.add(task)
     db.commit()
     db.refresh(task)
     return serialize_task(task)
 
 @app.put("/api/tasks/{task_id}/toggle")
-def toggle_task(task_id: int, db: Session = Depends(get_db)):
-    task = db.query(Task).filter(Task.id == task_id).first()
+def toggle_task(
+    task_id: int, 
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    query = db.query(Task).filter(Task.id == task_id)
+    if user_email:
+        query = query.filter(Task.user_email == user_email)
+    task = query.first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     task.status = "completed" if task.status != "completed" else "pending"
@@ -452,8 +614,15 @@ def toggle_task(task_id: int, db: Session = Depends(get_db)):
     return serialize_task(task)
 
 @app.delete("/api/tasks/{task_id}")
-def delete_task(task_id: int, db: Session = Depends(get_db)):
-    task = db.query(Task).filter(Task.id == task_id).first()
+def delete_task(
+    task_id: int, 
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    query = db.query(Task).filter(Task.id == task_id)
+    if user_email:
+        query = query.filter(Task.user_email == user_email)
+    task = query.first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     db.delete(task)
@@ -462,12 +631,28 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
 
 # ----------------- Finance Endpoints -----------------
 @app.get("/api/finance/records")
-def list_finance_records(limit: int = 50, db: Session = Depends(get_db)):
-    return db.query(FinancialRecord).order_by(FinancialRecord.date.desc()).limit(limit).all()
+def list_finance_records(
+    limit: int = 50, 
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    if not user_email:
+        return []
+    return db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).order_by(FinancialRecord.date.desc()).limit(limit).all()
 
 @app.get("/api/finance/summary")
-def get_finance_summary(db: Session = Depends(get_db)):
-    records = db.query(FinancialRecord).all()
+def get_finance_summary(
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    if not user_email:
+        return {
+            "total_income": 0.0,
+            "total_expense": 0.0,
+            "balance": 0.0,
+            "record_count": 0
+        }
+    records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).all()
     total_income = sum(r.amount for r in records if r.type == "income")
     total_expense = sum(r.amount for r in records if r.type == "expense")
     balance = total_income - total_expense
@@ -480,12 +665,24 @@ def get_finance_summary(db: Session = Depends(get_db)):
 
 # ----------------- Memory Vault Endpoints -----------------
 @app.get("/api/memory")
-def list_memory(db: Session = Depends(get_db)):
-    return db.query(MemoryItem).order_by(MemoryItem.created_at.desc()).all()
+def list_memory(
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    if not user_email:
+        return []
+    return db.query(MemoryItem).filter(MemoryItem.user_email == user_email).order_by(MemoryItem.created_at.desc()).all()
 
 @app.delete("/api/memory/{item_id}")
-def delete_memory(item_id: int, db: Session = Depends(get_db)):
-    item = db.query(MemoryItem).filter(MemoryItem.id == item_id).first()
+def delete_memory(
+    item_id: int, 
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    query = db.query(MemoryItem).filter(MemoryItem.id == item_id)
+    if user_email:
+        query = query.filter(MemoryItem.user_email == user_email)
+    item = query.first()
     if not item:
         raise HTTPException(status_code=404, detail="Memory item not found")
     db.delete(item)
@@ -494,11 +691,21 @@ def delete_memory(item_id: int, db: Session = Depends(get_db)):
 
 # ----------------- Executive Briefing -----------------
 @app.get("/api/briefing")
-def get_executive_briefing(db: Session = Depends(get_db)):
-    tasks = db.query(Task).filter(Task.status == "pending").all()
-    urgent_tasks = [t for t in tasks if t.priority in ["high", "urgent"]]
-    finance = get_finance_summary(db)
-    memories = db.query(MemoryItem).limit(5).all()
+def get_executive_briefing(
+    user_email: Optional[str] = Depends(get_user_email),
+    user_name: Optional[str] = "Operator",
+    db: Session = Depends(get_db)
+):
+    if not user_email:
+        tasks = []
+        urgent_tasks = []
+        finance = {"total_income": 0.0, "total_expense": 0.0, "balance": 0.0, "record_count": 0}
+        memories = []
+    else:
+        tasks = db.query(Task).filter(Task.user_email == user_email, Task.status == "pending").all()
+        urgent_tasks = [t for t in tasks if t.priority in ["high", "urgent"]]
+        finance = get_finance_summary(user_email=user_email, db=db)
+        memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).limit(5).all()
 
     now = datetime.now()
     hour = now.hour
@@ -539,12 +746,16 @@ def get_executive_briefing(db: Session = Depends(get_db)):
         "wind": live_w.get("wind", "4.2 km/h")
     }
 
+    display_name = user_name or "साथी"
+    if display_name == "Operator":
+        display_name = "पवन"
+
     return {
-        "greeting": f"{greeting}, पवन!",
+        "greeting": f"{greeting}, {display_name}!",
         "date_str": now.strftime("%d %b").upper(),
         "pending_tasks_count": len(tasks),
-        "upcoming_count": 2,
-        "alert_count": max(1, len(urgent_tasks)),
+        "upcoming_count": len(tasks),
+        "alert_count": len(urgent_tasks),
         "urgent_tasks": [{"id": t.id, "title": t.title, "priority": t.priority} for t in urgent_tasks],
         "financial_snapshot": finance,
         "active_rules_count": len(memories),
@@ -554,8 +765,14 @@ def get_executive_briefing(db: Session = Depends(get_db)):
 
 # ----------------- Audit Logs & Undo -----------------
 @app.get("/api/audit-logs")
-def list_audit_logs(limit: int = 30, db: Session = Depends(get_db)):
-    return db.query(AuditLog).order_by(AuditLog.executed_at.desc()).limit(limit).all()
+def list_audit_logs(
+    limit: int = 30, 
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    if not user_email:
+        return []
+    return db.query(AuditLog).filter(AuditLog.user_email == user_email).order_by(AuditLog.executed_at.desc()).limit(limit).all()
 
 @app.post("/api/audit-logs/{log_id}/undo")
 def undo_action(log_id: int, db: Session = Depends(get_db)):

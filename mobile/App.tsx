@@ -31,6 +31,8 @@ export default function App() {
   const [canGoBack, setCanGoBack] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [retryCountdown, setRetryCountdown] = useState(5);
+  const [errorDetails, setErrorDetails] = useState('');
 
   // Request Android Microphone & Push Notification Permissions on startup
   useEffect(() => {
@@ -86,9 +88,9 @@ export default function App() {
       const onBackPress = () => {
         if (webViewRef.current && canGoBack) {
           webViewRef.current.goBack();
-          return true; // handled
+          return true;
         }
-        return false; // let system exit app
+        return false;
       };
 
       const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
@@ -96,11 +98,54 @@ export default function App() {
     }
   }, [canGoBack]);
 
+  // Auto-retry timer when connection error / timeout occurs
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (hasError) {
+      setRetryCountdown(5);
+      timer = setInterval(() => {
+        setRetryCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            handleRetry();
+            return 5;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [hasError]);
+
   const handleRetry = () => {
     setHasError(false);
     setIsLoading(true);
     webViewRef.current?.reload();
   };
+
+  const renderCustomError = (desc?: string) => (
+    <View style={styles.errorContainer}>
+      <View style={styles.errorCard}>
+        <View style={styles.radarPulse}>
+          <ActivityIndicator size="large" color="#38bdf8" />
+        </View>
+        <Text style={styles.errorTitle}>Cloud Server Waking Up</Text>
+        <Text style={styles.errorSubtitle}>
+          {desc?.includes('TIMED_OUT') 
+            ? "Aether cloud enclave is waking from cold sleep on mobile network. Connecting automatically..." 
+            : "Re-establishing secure encrypted session with Aether Cloud."}
+        </Text>
+        <Text style={styles.countdownText}>
+          Auto-retrying in <Text style={{ color: '#38bdf8', fontWeight: 'bold' }}>{retryCountdown}s</Text>
+        </Text>
+        <TouchableOpacity style={styles.retryButton} onPress={handleRetry}>
+          <Text style={styles.retryButtonText}>⚡ Connect Now</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 
   return (
     <SafeAreaProvider>
@@ -186,10 +231,13 @@ export default function App() {
           onLoadEnd={() => {
             setIsLoading(false);
           }}
-          onError={() => {
+          onError={(syntheticEvent) => {
+            const { nativeEvent } = syntheticEvent;
+            setErrorDetails(nativeEvent.description || 'Connection timeout');
             setHasError(true);
             setIsLoading(false);
           }}
+          renderError={(errorDomain, errorCode, errorDesc) => renderCustomError(errorDesc)}
           renderLoading={() => (
             <View style={styles.loadingContainer}>
               <View style={styles.logoBadge}>
@@ -201,21 +249,8 @@ export default function App() {
           )}
         />
 
-        {/* Offline / Connection Error Screen */}
-        {hasError && (
-          <View style={styles.errorContainer}>
-            <View style={styles.errorCard}>
-              <Text style={styles.errorIcon}>📡</Text>
-              <Text style={styles.errorTitle}>Connection Offline</Text>
-              <Text style={styles.errorSubtitle}>
-                Could not connect to Aether Cloud server. Please check your internet connection.
-              </Text>
-              <TouchableOpacity style={styles.retryButton} onPress={handleRetry}>
-                <Text style={styles.retryButtonText}>🔄 Retry Connection</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
+        {/* Offline / Connection Error Overlay */}
+        {hasError && renderCustomError(errorDetails)}
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -292,6 +327,22 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
     marginBottom: 24,
+  },
+  radarPulse: {
+    marginBottom: 20,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.3)',
+  },
+  countdownText: {
+    color: '#94a3b8',
+    fontSize: 13,
+    marginBottom: 20,
   },
   retryButton: {
     backgroundColor: '#0284c7',
