@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Bot, 
   Wifi, 
@@ -60,7 +60,9 @@ import {
   Image,
   FileText,
   HardDrive,
-  MapPin
+  MapPin,
+  RefreshCw,
+  Upload
 } from 'lucide-react';
 import { supabase } from './supabase';
 
@@ -633,6 +635,16 @@ export default function App() {
   const [googleCustomEmail, setGoogleCustomEmail] = useState('');
   const [googleCustomName, setGoogleCustomName] = useState('');
   const [googleError, setGoogleError] = useState('');
+  const [googleProviderToken, setGoogleProviderToken] = useState(() => localStorage.getItem('aether_google_provider_token') || '');
+  const [googleTasks, setGoogleTasks] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('aether_gcal_events') || '[]');
+    } catch (e) {
+      return [];
+    }
+  });
+  const [isSyncingGCal, setIsSyncingGCal] = useState(false);
+  const icsFileInputRef = useRef(null);
 
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -677,6 +689,11 @@ export default function App() {
   const [briefing, setBriefing] = useState(null);
   const [chatHistory, setChatHistory] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const combinedTasks = useMemo(() => {
+    const existingIds = new Set(tasks.map(t => t.id));
+    const uniqueG = googleTasks.filter(gt => !existingIds.has(gt.id));
+    return [...tasks, ...uniqueG];
+  }, [tasks, googleTasks]);
   const [newTaskInput, setNewTaskInput] = useState('');
   const [financeRecords, setFinanceRecords] = useState([]);
   const [financeSummary, setFinanceSummary] = useState({ total_income: 0, total_expense: 0, balance: 0 });
@@ -977,6 +994,10 @@ export default function App() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
+        if (session.provider_token) {
+          localStorage.setItem('aether_google_provider_token', session.provider_token);
+          setGoogleProviderToken(session.provider_token);
+        }
         const user = session.user;
         const gName = user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Operator';
         const gEmail = user.email || '';
@@ -1016,6 +1037,10 @@ export default function App() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (session?.user) {
+        if (session.provider_token) {
+          localStorage.setItem('aether_google_provider_token', session.provider_token);
+          setGoogleProviderToken(session.provider_token);
+        }
         const user = session.user;
         const gName = user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'Operator';
         const gEmail = user.email || '';
@@ -1056,8 +1081,8 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const handleGoogleSignIn = async () => {
-    if (userEmail) {
+  const handleGoogleSignIn = async (forceCalendarScope = false) => {
+    if (userEmail && !forceCalendarScope) {
       const alreadyDone = localStorage.getItem('aether_onboarding_done') === 'true';
       if (alreadyDone) {
         setOnboardingDone(true);
@@ -1070,11 +1095,16 @@ export default function App() {
     setGoogleAuthLoading(true);
     setGoogleError('');
     try {
-      // 1. Trigger Supabase Real Google OAuth (as configured in vivah)
+      // 1. Trigger Supabase Real Google OAuth with Calendar scopes
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin
+          scopes: 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events.readonly',
+          redirectTo: window.location.origin,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent'
+          }
         }
       });
       if (error) {
@@ -1905,7 +1935,7 @@ export default function App() {
     e?.preventDefault?.();
     if (!newCalReminderTitle.trim()) return;
     try {
-      const dateStr = calSelectedDate.toISOString().split('T')[0];
+      const dateStr = formatLocalDateStr(calSelectedDate);
       const timeStr = newCalReminderTime || '10:00 AM';
       const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
       const res = await fetch(`${API_BASE}/tasks`, {
@@ -1928,6 +1958,175 @@ export default function App() {
       console.error(err);
       showToast('रिमाइंडर जोड़ने में त्रुटि', 'error');
     }
+  };
+
+  const syncGoogleCalendar = async (explicitToken) => {
+    const token = explicitToken || googleProviderToken || localStorage.getItem('aether_google_provider_token');
+    if (!token) {
+      try {
+        await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            scopes: 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events.readonly',
+            redirectTo: window.location.origin,
+            queryParams: {
+              access_type: 'offline',
+              prompt: 'consent'
+            }
+          }
+        });
+      } catch (err) {
+        showToast('Google Calendar से कनेक्ट करने में समस्या आई', 'error');
+      }
+      return;
+    }
+
+    setIsSyncingGCal(true);
+    try {
+      const now = new Date();
+      const timeMin = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+      const timeMax = new Date(now.getFullYear(), now.getMonth() + 2, 0).toISOString();
+
+      const res = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime&maxResults=250`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          localStorage.removeItem('aether_google_provider_token');
+          setGoogleProviderToken('');
+          await supabase.auth.signInWithOAuth({
+            provider: 'google',
+            options: {
+              scopes: 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events.readonly',
+              redirectTo: window.location.origin,
+              queryParams: {
+                access_type: 'offline',
+                prompt: 'consent'
+              }
+            }
+          });
+          return;
+        }
+        throw new Error(`Google Calendar API status ${res.status}`);
+      }
+
+      const data = await res.json();
+      const items = data.items || [];
+      const mapped = items.map(item => {
+        const startStr = item.start?.dateTime || item.start?.date;
+        const d = startStr ? new Date(startStr) : new Date();
+        const timeStr = item.start?.dateTime
+          ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+          : 'All Day';
+
+        return {
+          id: `gcal_${item.id}`,
+          title: item.summary || 'Google Calendar Event',
+          due_date: startStr,
+          reminder_time: timeStr,
+          priority: 'medium',
+          status: 'pending',
+          is_completed: false,
+          is_google_calendar: true,
+          htmlLink: item.htmlLink,
+          created_at: item.created || startStr
+        };
+      });
+
+      setGoogleTasks(mapped);
+      localStorage.setItem('aether_gcal_events', JSON.stringify(mapped));
+      showToast(`Google Calendar से ${mapped.length} इवेंट्स और रिमाइंडर्स सिंक हुए! 📅`, 'success');
+    } catch (e) {
+      console.error('GCal sync error:', e);
+      showToast('Google Calendar सिंक करने में विफल: ' + (e.message || ''), 'error');
+    } finally {
+      setIsSyncingGCal(false);
+    }
+  };
+
+  const handleImportIcsFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target.result;
+        const events = [];
+        const lines = text.split(/\r\n|\n|\r/);
+        let inEvent = false;
+        let curr = {};
+        for (let line of lines) {
+          if (line.startsWith('BEGIN:VEVENT')) {
+            inEvent = true;
+            curr = {};
+          } else if (line.startsWith('END:VEVENT')) {
+            inEvent = false;
+            if (curr.summary && (curr.dtstart || curr.created)) {
+              let due = curr.dtstart || curr.created;
+              let timeStr = 'All Day';
+              if (due.includes('T')) {
+                try {
+                  const d = new Date(due);
+                  timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                } catch(err) {}
+              }
+              events.push({
+                id: `gcal_ics_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+                title: curr.summary,
+                due_date: due,
+                reminder_time: timeStr,
+                priority: 'medium',
+                status: 'pending',
+                is_completed: false,
+                is_google_calendar: true,
+                created_at: curr.created || due
+              });
+            }
+          } else if (inEvent) {
+            if (line.startsWith('SUMMARY:')) {
+              curr.summary = line.substring(8).trim();
+            } else if (line.startsWith('DTSTART')) {
+              const val = line.split(':')[1]?.trim();
+              if (val) {
+                if (val.length === 8) {
+                  curr.dtstart = `${val.slice(0,4)}-${val.slice(4,6)}-${val.slice(6,8)}`;
+                } else {
+                  try {
+                    const y = val.slice(0,4), m = val.slice(4,6), d = val.slice(6,8);
+                    const h = val.slice(9,11), min = val.slice(11,13);
+                    curr.dtstart = `${y}-${m}-${d}T${h}:${min}:00`;
+                  } catch (err) {
+                    curr.dtstart = val;
+                  }
+                }
+              }
+            } else if (line.startsWith('DESCRIPTION:')) {
+              curr.description = line.substring(12).trim();
+            }
+          }
+        }
+        if (events.length > 0) {
+          setGoogleTasks(prev => {
+            const next = [...prev, ...events];
+            localStorage.setItem('aether_gcal_events', JSON.stringify(next));
+            return next;
+          });
+          showToast(`Google Calendar (.ics) से ${events.length} इवेंट्स इम्पोर्ट हुए!`, 'success');
+        } else {
+          showToast('कोई इवेंट नहीं मिला। कृपया वैध .ics फ़ाइल चुनें।', 'info');
+        }
+      } catch (err) {
+        showToast('फ़ाइल पढ़ने में त्रुटि आई', 'error');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
 
@@ -3442,7 +3641,12 @@ export default function App() {
               </div>
             </div>
 
-            <div className="settings-row-item" onClick={() => { setActiveSubModal('calendar'); setRemindersViewMode('calendar'); }}>
+            <div className="settings-row-item" onClick={() => { 
+              setActiveSubModal('calendar'); 
+              setRemindersViewMode('calendar'); 
+              setCalSelectedDate(new Date()); 
+              setCalCurrentMonth(new Date()); 
+            }}>
               <div className="settings-row-left">
                 <div className="settings-row-icon-box" style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#c084fc' }}>
                   <Calendar size={16} />
@@ -4166,7 +4370,7 @@ export default function App() {
       {/* 0. Reminders & Calendar Submodal */}
       {(activeSubModal === 'reminders' || activeSubModal === 'calendar') && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(14px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '540px', maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '18px 14px', width: '100%', maxWidth: '540px', maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8', fontWeight: 700, fontSize: '1rem' }}>
                 {remindersViewMode === 'calendar' ? <Calendar size={20} /> : <Bell size={20} />}
@@ -4274,32 +4478,91 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* Google Calendar Sync Action */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', padding: '0 4px' }}>
-                  <span style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
-                    📅 All active reminders appear on dates below:
-                  </span>
-                  <button
-                    type="button"
-                    onClick={downloadAllRemindersIcs}
-                    style={{
-                      background: 'rgba(16, 185, 129, 0.15)',
-                      border: '1px solid rgba(16, 185, 129, 0.3)',
-                      color: '#34d399',
-                      padding: '4px 10px',
-                      borderRadius: '10px',
-                      fontSize: '0.74rem',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '5px'
-                    }}
-                    title="Download .ics to import into Google Calendar / Apple Calendar"
-                  >
-                    <span>📥</span>
-                    <span>Sync / Export .ics</span>
-                  </button>
+                {/* Google Calendar Sync & Actions */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '12px', background: 'rgba(255, 255, 255, 0.03)', padding: '10px 12px', borderRadius: '14px', border: '1px solid rgba(255, 255, 255, 0.07)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '0.74rem', color: googleTasks.length > 0 ? '#60a5fa' : '#94a3b8', fontWeight: 600 }}>
+                      {googleTasks.length > 0 
+                        ? `📅 GCal Synced (${googleTasks.length} events)` 
+                        : '📅 Google Calendar'}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => syncGoogleCalendar()}
+                      disabled={isSyncingGCal}
+                      style={{
+                        background: 'rgba(66, 133, 244, 0.2)',
+                        border: '1px solid rgba(66, 133, 244, 0.45)',
+                        color: '#60a5fa',
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        fontSize: '0.74rem',
+                        fontWeight: 600,
+                        cursor: isSyncingGCal ? 'wait' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px'
+                      }}
+                      title="Sync live reminders & events from your Google Calendar"
+                    >
+                      <RefreshCw size={12} className={isSyncingGCal ? 'animate-spin' : ''} />
+                      <span>{isSyncingGCal ? 'Syncing...' : 'Sync GCal'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => icsFileInputRef.current?.click()}
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.06)',
+                        border: '1px solid rgba(255, 255, 255, 0.15)',
+                        color: '#cbd5e1',
+                        padding: '6px 10px',
+                        borderRadius: '8px',
+                        fontSize: '0.74rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                      title="Import Google Calendar (.ics) file"
+                    >
+                      <Upload size={12} />
+                      <span>Import .ics</span>
+                    </button>
+                    <input 
+                      type="file" 
+                      ref={icsFileInputRef} 
+                      onChange={handleImportIcsFile} 
+                      accept=".ics,text/calendar" 
+                      style={{ display: 'none' }} 
+                    />
+
+                    <button
+                      type="button"
+                      onClick={downloadAllRemindersIcs}
+                      style={{
+                        background: 'rgba(16, 185, 129, 0.15)',
+                        border: '1px solid rgba(16, 185, 129, 0.3)',
+                        color: '#34d399',
+                        padding: '6px 10px',
+                        borderRadius: '8px',
+                        fontSize: '0.74rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                      title="Download .ics to import into Google Calendar / Apple Calendar"
+                    >
+                      <span>📥</span>
+                      <span>Export</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Weekdays Header */}
@@ -4344,7 +4607,7 @@ export default function App() {
                       const cellDateStr = formatLocalDateStr(cellDate);
                       const isToday = cellDateStr === todayStr;
                       const isSelected = cellDateStr === selectedStr;
-                      const dayReminders = tasks.filter(t => getTaskDateStr(t) === cellDateStr);
+                      const dayReminders = combinedTasks.filter(t => getTaskDateStr(t) === cellDateStr);
 
                       cells.push(
                         <div
@@ -4381,44 +4644,60 @@ export default function App() {
                       </span>
                     </div>
                     <span style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
-                      {tasks.filter(t => getTaskDateStr(t) === formatLocalDateStr(calSelectedDate)).length} Reminders
+                      {combinedTasks.filter(t => getTaskDateStr(t) === formatLocalDateStr(calSelectedDate)).length} Reminders
                     </span>
                   </div>
 
                   {/* Quick Add for Selected Date */}
-                  <form onSubmit={handleCreateDateReminder} style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
+                  <form onSubmit={handleCreateDateReminder} style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
                     <input
                       type="text"
                       placeholder="New reminder for this date..."
                       value={newCalReminderTitle}
                       onChange={(e) => setNewCalReminderTitle(e.target.value)}
-                      style={{ flex: 1, background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.82rem', outline: 'none' }}
+                      style={{ width: '100%', boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '10px', padding: '10px 12px', color: '#fff', fontSize: '0.84rem', outline: 'none' }}
                     />
-                    <input
-                      type="text"
-                      placeholder="10:00 AM"
-                      value={newCalReminderTime}
-                      onChange={(e) => setNewCalReminderTime(e.target.value)}
-                      style={{ width: '85px', background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '10px', padding: '8px 8px', color: '#fff', fontSize: '0.82rem', outline: 'none', textAlign: 'center' }}
-                    />
-                    <button
-                      type="submit"
-                      style={{ background: '#38bdf8', color: '#04101e', border: 'none', borderRadius: '10px', padding: '8px 14px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}
-                    >
-                      Add
-                    </button>
+                    <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                      <input
+                        type="text"
+                        placeholder="10:00 AM"
+                        value={newCalReminderTime}
+                        onChange={(e) => setNewCalReminderTime(e.target.value)}
+                        style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.82rem', outline: 'none', textAlign: 'center' }}
+                      />
+                      <button
+                        type="submit"
+                        style={{ background: '#38bdf8', color: '#04101e', border: 'none', borderRadius: '10px', padding: '8px 18px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      >
+                        + Add
+                      </button>
+                    </div>
                   </form>
 
                   {/* Reminders List for Selected Date */}
                   {(() => {
                     const isTaskDone = (t) => t.is_completed || t.status === 'completed';
                     const dateStr = formatLocalDateStr(calSelectedDate);
-                    const dateTasks = tasks.filter(t => getTaskDateStr(t) === dateStr);
+                    const dateTasks = combinedTasks.filter(t => getTaskDateStr(t) === dateStr);
 
                     if (dateTasks.length === 0) {
+                      const todayTasks = combinedTasks.filter(t => getTaskDateStr(t) === formatLocalDateStr(new Date()));
                       return (
-                        <div style={{ textAlign: 'center', padding: '18px 10px', color: '#64748b', fontSize: '0.82rem' }}>
-                          No reminders scheduled for this date.
+                        <div style={{ textAlign: 'center', padding: '18px 10px', color: '#94a3b8', fontSize: '0.82rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                          <span>No reminders scheduled for this date.</span>
+                          {todayTasks.length > 0 && formatLocalDateStr(calSelectedDate) !== formatLocalDateStr(new Date()) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const today = new Date();
+                                setCalSelectedDate(today);
+                                setCalCurrentMonth(today);
+                              }}
+                              style={{ background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.35)', color: '#38bdf8', borderRadius: '10px', padding: '7px 16px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}
+                            >
+                              📅 View Today's Reminders ({todayTasks.length})
+                            </button>
+                          )}
                         </div>
                       );
                     }
@@ -4443,22 +4722,23 @@ export default function App() {
                             >
                               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
                                 <div 
-                                  onClick={() => handleToggleTask(t.id)}
+                                  onClick={() => !t.is_google_calendar && handleToggleTask(t.id)}
                                   style={{
                                     width: '20px',
                                     height: '20px',
                                     borderRadius: '6px',
-                                    border: done ? '1px solid #10b981' : '1px solid rgba(255, 255, 255, 0.3)',
+                                    border: done ? '1px solid #10b981' : t.is_google_calendar ? '1px solid #60a5fa' : '1px solid rgba(255, 255, 255, 0.3)',
                                     background: done ? '#10b981' : 'transparent',
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',
-                                    cursor: 'pointer',
+                                    cursor: t.is_google_calendar ? 'default' : 'pointer',
                                     color: '#022c22',
                                     flexShrink: 0
                                   }}
                                 >
                                   {done && <Check size={14} />}
+                                  {!done && t.is_google_calendar && <Calendar size={12} color="#60a5fa" />}
                                 </div>
 
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
@@ -4477,47 +4757,75 @@ export default function App() {
                                       padding: '1px 6px',
                                       borderRadius: '6px',
                                       textTransform: 'uppercase',
-                                      background: t.priority === 'urgent' ? 'rgba(244, 63, 94, 0.2)' : t.priority === 'high' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(56, 189, 248, 0.2)',
-                                      color: t.priority === 'urgent' ? '#fb7185' : t.priority === 'high' ? '#fbbf24' : '#38bdf8'
+                                      background: t.is_google_calendar ? 'rgba(66, 133, 244, 0.2)' : t.priority === 'urgent' ? 'rgba(244, 63, 94, 0.2)' : t.priority === 'high' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(56, 189, 248, 0.2)',
+                                      color: t.is_google_calendar ? '#60a5fa' : t.priority === 'urgent' ? '#fb7185' : t.priority === 'high' ? '#fbbf24' : '#38bdf8'
                                     }}>
-                                      {t.priority}
+                                      {t.is_google_calendar ? 'Google Calendar' : t.priority}
                                     </span>
                                   </div>
                                 </div>
                               </div>
 
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <button
-                                  type="button"
-                                  onClick={() => openTaskInGoogleCalendar(t)}
-                                  style={{
-                                    background: 'rgba(56, 189, 248, 0.12)',
-                                    border: '1px solid rgba(56, 189, 248, 0.25)',
-                                    color: '#38bdf8',
-                                    padding: '4px 8px',
-                                    borderRadius: '8px',
-                                    fontSize: '0.72rem',
-                                    fontWeight: 600,
-                                    cursor: 'pointer'
-                                  }}
-                                  title="Sync to Google Calendar"
-                                >
-                                  + GCal
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteTask(t.id)}
-                                  style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    color: '#64748b',
-                                    padding: '4px',
-                                    cursor: 'pointer'
-                                  }}
-                                  title="Delete reminder"
-                                >
-                                  <Trash2 size={15} />
-                                </button>
+                                {t.is_google_calendar ? (
+                                  t.htmlLink && (
+                                    <button
+                                      type="button"
+                                      onClick={() => window.open(t.htmlLink, '_blank', 'noopener,noreferrer')}
+                                      style={{
+                                        background: 'rgba(66, 133, 244, 0.15)',
+                                        border: '1px solid rgba(66, 133, 244, 0.3)',
+                                        color: '#60a5fa',
+                                        padding: '4px 8px',
+                                        borderRadius: '8px',
+                                        fontSize: '0.72rem',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '3px'
+                                      }}
+                                      title="Open event in Google Calendar"
+                                    >
+                                      <ExternalLink size={12} />
+                                      <span>Open</span>
+                                    </button>
+                                  )
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => openTaskInGoogleCalendar(t)}
+                                      style={{
+                                        background: 'rgba(56, 189, 248, 0.12)',
+                                        border: '1px solid rgba(56, 189, 248, 0.25)',
+                                        color: '#38bdf8',
+                                        padding: '4px 8px',
+                                        borderRadius: '8px',
+                                        fontSize: '0.72rem',
+                                        fontWeight: 600,
+                                        cursor: 'pointer'
+                                      }}
+                                      title="Sync to Google Calendar"
+                                    >
+                                      + GCal
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteTask(t.id)}
+                                      style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        color: '#64748b',
+                                        padding: '4px',
+                                        cursor: 'pointer'
+                                      }}
+                                      title="Delete reminder"
+                                    >
+                                      <Trash2 size={15} />
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             </div>
                           );
@@ -4546,7 +4854,7 @@ export default function App() {
                       cursor: 'pointer'
                     }}
                   >
-                    Pending ({tasks.filter(t => !t.is_completed && t.status !== 'completed').length})
+                    Pending ({combinedTasks.filter(t => !t.is_completed && t.status !== 'completed').length})
                   </button>
                   <button 
                     type="button"
@@ -4562,7 +4870,7 @@ export default function App() {
                       cursor: 'pointer'
                     }}
                   >
-                    Completed ({tasks.filter(t => t.is_completed || t.status === 'completed').length})
+                    Completed ({combinedTasks.filter(t => t.is_completed || t.status === 'completed').length})
                   </button>
                   <button 
                     type="button"
@@ -4578,7 +4886,7 @@ export default function App() {
                       cursor: 'pointer'
                     }}
                   >
-                    All ({tasks.length})
+                    All ({combinedTasks.length})
                   </button>
                 </div>
 
@@ -4603,7 +4911,7 @@ export default function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
                   {(() => {
                     const isTaskDone = (t) => t.is_completed || t.status === 'completed';
-                    const filtered = tasks.filter(t => {
+                    const filtered = combinedTasks.filter(t => {
                       if (agendaFilter === 'pending') return !isTaskDone(t);
                       if (agendaFilter === 'completed') return isTaskDone(t);
                       return true;
@@ -4634,32 +4942,58 @@ export default function App() {
                           }}
                         >
                           <div 
-                            onClick={() => handleToggleTask(t.id)} 
-                            style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', flex: 1, textDecoration: done ? 'line-through' : 'none', opacity: done ? 0.6 : 1 }}
+                            onClick={() => !t.is_google_calendar && handleToggleTask(t.id)} 
+                            style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: t.is_google_calendar ? 'default' : 'pointer', flex: 1, textDecoration: done ? 'line-through' : 'none', opacity: done ? 0.6 : 1 }}
                           >
-                            <div style={{ color: done ? '#10b981' : '#64748b' }}>
-                              {done ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+                            <div style={{ color: done ? '#10b981' : t.is_google_calendar ? '#60a5fa' : '#64748b' }}>
+                              {done ? <CheckCircle2 size={18} /> : t.is_google_calendar ? <Calendar size={18} /> : <Circle size={18} />}
                             </div>
                             <div>
                               <div style={{ color: done ? '#94a3b8' : '#f1f5f9', fontSize: '0.92rem', fontWeight: done ? 400 : 500 }}>
                                 {t.title}
                               </div>
-                              {t.reminder_time && (
-                                <div style={{ color: '#38bdf8', fontSize: '0.76rem', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                  <span>⏰</span>
-                                  <span>{t.reminder_time}</span>
-                                </div>
-                              )}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px', flexWrap: 'wrap' }}>
+                                {t.reminder_time && (
+                                  <span style={{ color: '#38bdf8', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <span>⏰</span>
+                                    <span>{t.reminder_time}</span>
+                                  </span>
+                                )}
+                                {t.due_date && (
+                                  <span style={{ color: '#94a3b8', fontSize: '0.74rem' }}>
+                                    📅 {formatLocalDateStr(t.due_date)}
+                                  </span>
+                                )}
+                                {t.is_google_calendar && (
+                                  <span style={{ fontSize: '0.65rem', background: 'rgba(66, 133, 244, 0.2)', color: '#60a5fa', padding: '1px 6px', borderRadius: '4px', fontWeight: 700 }}>
+                                    GOOGLE CALENDAR
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
-                          <button 
-                            type="button" 
-                            onClick={() => handleDeleteTask(t.id)} 
-                            style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '6px' }}
-                            title="Delete task"
-                          >
-                            <Trash2 size={15} />
-                          </button>
+                          {t.is_google_calendar ? (
+                            t.htmlLink && (
+                              <button 
+                                type="button" 
+                                onClick={() => window.open(t.htmlLink, '_blank', 'noopener,noreferrer')} 
+                                style={{ background: 'rgba(66, 133, 244, 0.15)', border: '1px solid rgba(66, 133, 244, 0.3)', color: '#60a5fa', borderRadius: '8px', padding: '4px 8px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+                                title="Open in Google Calendar"
+                              >
+                                <ExternalLink size={12} />
+                                <span>Open</span>
+                              </button>
+                            )
+                          ) : (
+                            <button 
+                              type="button" 
+                              onClick={() => handleDeleteTask(t.id)} 
+                              style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '6px' }}
+                              title="Delete task"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          )}
                         </div>
                       );
                     });
