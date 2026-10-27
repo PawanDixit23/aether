@@ -664,6 +664,31 @@ export default function App() {
         currentAudioRef.current = null;
       }
       const ttsUrl = `${API_BASE}/tts?text=${encodeURIComponent(text.slice(0, 300))}&voice=${voiceId}&lang=${lang || 'en'}`;
+
+      // Check if running inside React Native WebView (mobile app)
+      const isInReactNativeWebView = typeof window !== 'undefined' && !!window.ReactNativeWebView;
+
+      if (isInReactNativeWebView) {
+        // Mobile: Send TTS URL to native layer via postMessage bridge
+        // Native App.tsx will inject audio playback back into WebView context
+        try {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'PLAY_TTS_AUDIO',
+            url: ttsUrl
+          }));
+        } catch (e) {
+          console.warn('RN postMessage TTS error:', e);
+        }
+        setIsSpeaking(true);
+        // Auto-reset speaking state after estimated duration
+        setTimeout(() => {
+          setIsSpeaking(false);
+          setAudioSamplePlaying(null);
+        }, 4000);
+        return;
+      }
+
+      // Desktop / standard browser: use Audio element directly
       const audio = new Audio(ttsUrl);
       currentAudioRef.current = audio;
       setIsSpeaking(true);
@@ -1013,6 +1038,14 @@ export default function App() {
       setAudioSamplePlaying(voice.id);
       const firstName = (userName && userName !== 'Operator') ? userName.split(' ')[0] : 'Operator';
       const sampleText = `Hello ${firstName}. I am Aether, voiced by ${voice.name}.`;
+
+      // On Mobile WebView: always use server-side TTS (SpeechSynthesis not available)
+      const isInReactNativeWebView = typeof window !== 'undefined' && !!window.ReactNativeWebView;
+      if (isInReactNativeWebView) {
+        playStreamAudio(sampleText, voice.id, 'en');
+        setTimeout(() => setAudioSamplePlaying(null), 4000);
+        return;
+      }
 
       // 1. Try browser SpeechSynthesis if voices are available (Desktop)
       let spoken = false;
@@ -1480,9 +1513,20 @@ export default function App() {
     }
 
     // Trigger native Android microphone permission if wrapped in mobile app
-    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+    const isInReactNativeWebView = typeof window !== 'undefined' && !!window.ReactNativeWebView;
+    if (isInReactNativeWebView) {
       try {
         window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_MIC_PERMISSION' }));
+        // Give native layer time to show permission dialog and inject result
+        await new Promise((resolve) => {
+          // Set a callback that native layer will call after permission result
+          window.__onMicPermissionResult = (granted) => {
+            window.__onMicPermissionResult = null;
+            resolve(granted);
+          };
+          // Fallback: proceed after 3s regardless
+          setTimeout(() => resolve(true), 3000);
+        });
       } catch (e) {}
     }
 
@@ -2947,7 +2991,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* BOTTOM DOCK: CLEAN EXECUTIVE PROMPT BAR (Standard 1:1 Company Interface) */}
+              {/* BOTTOM DOCK: CLEAN EXECUTIVE PROMPT BAR — Gemini Style */}
               <div className="gemini-bottom-dock">
                 <form 
                   onSubmit={(e) => {
@@ -2976,28 +3020,45 @@ export default function App() {
                     autoFocus
                   />
 
-                  <button 
-                    type="button" 
-                    className={`gemini-prompt-btn mic ${isListening ? 'listening' : ''}`}
-                    onClick={toggleListening}
-                    title={isListening ? "Stop listening" : "Voice Input (माइक शुरू करें)"}
-                  >
-                    <Mic size={20} />
-                  </button>
+                  {inputText.trim() ? (
+                    /* Send Arrow Button — shown when user has typed text */
+                    <button 
+                      type="submit" 
+                      className="gemini-prompt-btn send-btn"
+                      title="Send message"
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13" />
+                        <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                      </svg>
+                    </button>
+                  ) : (
+                    /* Mic + Waveform — shown when input is empty */
+                    <>
+                      <button 
+                        type="button" 
+                        className={`gemini-prompt-btn mic ${isListening ? 'listening' : ''}`}
+                        onClick={toggleListening}
+                        title={isListening ? "Stop listening" : "Voice Input (माइक शुरू करें)"}
+                      >
+                        <Mic size={20} />
+                      </button>
 
-                  <button 
-                    type="button" 
-                    className="gemini-prompt-btn waveform-btn"
-                    onClick={() => {
-                      toggleListening();
-                      showToast("⚡ Zero-Latency Acoustic Voice Mode Active", "info");
-                    }}
-                    title="Live Voice Mode"
-                  >
-                    <div className="gemini-waveform-icon">
-                      <span /><span /><span />
-                    </div>
-                  </button>
+                      <button 
+                        type="button" 
+                        className="gemini-prompt-btn waveform-btn"
+                        onClick={() => {
+                          toggleListening();
+                          showToast("⚡ Zero-Latency Acoustic Voice Mode Active", "info");
+                        }}
+                        title="Live Voice Mode"
+                      >
+                        <div className="gemini-waveform-icon">
+                          <span /><span /><span />
+                        </div>
+                      </button>
+                    </>
+                  )}
                 </form>
               </div>
 
@@ -3215,35 +3276,7 @@ export default function App() {
             </div>
           )}
 
-          {/* FIXED BOTTOM TAB BAR (Screenshot 1) */}
-          <nav className="jarvis-bottom-tabbar">
-            <button 
-              type="button" 
-              className={`jarvis-tab-item ${activeTab === 'aether' ? 'active' : ''}`}
-              onClick={() => setActiveTab('aether')}
-            >
-              <div className="aether-tab-logo-icon">Æ</div>
-              <span className="jarvis-tab-label">Aether</span>
-            </button>
-
-            <button 
-              type="button" 
-              className={`jarvis-tab-item ${activeTab === 'today' ? 'active' : ''}`}
-              onClick={() => setActiveTab('today')}
-            >
-              <CheckSquare size={22} />
-              <span className="jarvis-tab-label">Today</span>
-            </button>
-
-            <button 
-              type="button" 
-              className={`jarvis-tab-item ${activeTab === 'memory' ? 'active' : ''}`}
-              onClick={() => setActiveTab('memory')}
-            >
-              <Layers size={22} />
-              <span className="jarvis-tab-label">Memory</span>
-            </button>
-          </nav>
+          {/* BOTTOM TAB BAR — REMOVED (Navigation now via header) */}
 
         </div>
       )}

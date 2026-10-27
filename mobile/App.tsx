@@ -15,6 +15,9 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import * as Notifications from 'expo-notifications';
 
+// App background color - dark navy matching Aether theme
+const APP_BG = '#080c16';
+
 // Configure heads-up push notifications
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -148,9 +151,15 @@ export default function App() {
   );
 
   return (
-    <SafeAreaProvider>
-      <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
-        <StatusBar style="light" translucent={true} backgroundColor="transparent" />
+    <SafeAreaProvider style={{ backgroundColor: APP_BG }}>
+      {/* Force status bar area to match dark background */}
+      <RNStatusBar
+        backgroundColor={APP_BG}
+        barStyle="light-content"
+        translucent={false}
+      />
+      <SafeAreaView style={styles.container} edges={['bottom', 'left', 'right']}>
+        <StatusBar style="light" translucent={false} backgroundColor={APP_BG} />
 
         {/* The Exact 1:1 Live Aether Web Dashboard */}
         <WebView
@@ -225,15 +234,44 @@ export default function App() {
               } else if (data.type === 'REQUEST_MIC_PERMISSION') {
                 if (Platform.OS === 'android') {
                   try {
-                    await PermissionsAndroid.request(
+                    const result = await PermissionsAndroid.request(
                       PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
                       {
                         title: "Aether Microphone Permission",
                         message: "Aether needs microphone access so you can speak your voice prompts.",
+                        buttonNeutral: "Ask Later",
+                        buttonNegative: "Cancel",
                         buttonPositive: "Allow"
                       }
                     );
+                    // Send result back to WebView
+                    const granted = result === PermissionsAndroid.RESULTS.GRANTED;
+                    webViewRef.current?.injectJavaScript(`
+                      window.__micPermissionGranted = ${granted};
+                      if (window.__onMicPermissionResult) window.__onMicPermissionResult(${granted});
+                      true;
+                    `);
                   } catch (e) {}
+                }
+              } else if (data.type === 'PLAY_TTS_AUDIO') {
+                // Mobile TTS: inject audio playback directly into WebView context
+                const { url } = data;
+                if (url) {
+                  webViewRef.current?.injectJavaScript(`
+                    (function() {
+                      try {
+                        if (window.__aetherAudio) {
+                          window.__aetherAudio.pause();
+                          window.__aetherAudio = null;
+                        }
+                        var audio = new Audio('${url}');
+                        audio.volume = 1.0;
+                        window.__aetherAudio = audio;
+                        audio.play().catch(function(e) { console.warn('TTS play error:', e); });
+                      } catch(e) { console.warn('TTS inject error:', e); }
+                    })();
+                    true;
+                  `);
                 }
               }
             } catch (err) {
@@ -275,15 +313,15 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0c1427',
+    backgroundColor: APP_BG,
   },
   webView: {
     flex: 1,
-    backgroundColor: '#0c1427',
+    backgroundColor: APP_BG,
   },
   loadingContainer: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#080c16',
+    backgroundColor: APP_BG,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 10,
@@ -310,7 +348,7 @@ const styles = StyleSheet.create({
   },
   errorContainer: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#080c16',
+    backgroundColor: APP_BG,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
