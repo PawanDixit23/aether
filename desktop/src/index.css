@@ -1851,9 +1851,17 @@ body.theme-oled .settings-user-card {
   overflow: hidden;
   background: radial-gradient(circle at 50% 30%, rgba(20, 30, 55, 0.6) 0%, var(--bg-app) 80%);
   color: #f1f5f9;
-  padding: max(4px, env(safe-area-inset-top, 4px)) 12px max(6px, env(safe-area-inset-bottom, 6px)) 12px;
+  /* Top padding: 38px clearance for phone status bar (clock, battery, camera hole) */
+  padding: max(38px, env(safe-area-inset-top, 38px)) 12px max(6px, env(safe-area-inset-bottom, 6px)) 12px;
   box-sizing: border-box;
   position: relative;
+}
+
+/* On standard desktop browsers with window > 768px and not in mobile wrapper, use compact top padding */
+@media (min-width: 769px) {
+  body:not(.in-mobile-app) .gemini-screen-container {
+    padding-top: 12px;
+  }
 }
 
 .gemini-top-bar {

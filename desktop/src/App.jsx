@@ -614,6 +614,13 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Tag body when running inside mobile React Native WebView
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+      document.body.classList.add('in-mobile-app');
+    }
+  }, []);
+
   const effectiveLang = selectedLang === 'auto' 
     ? (typeof navigator !== 'undefined' && navigator.language?.toLowerCase().startsWith('hi') ? 'hi' : 'en')
     : selectedLang;
