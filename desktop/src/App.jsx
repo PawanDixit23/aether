@@ -900,6 +900,38 @@ export default function App() {
     }
   };
 
+  // ─── Keep-Alive Ping: Render server को sleep होने से बचाता है ─────────────────
+  // Render free tier 15-30 min inactivity पर server सुला देता है।
+  // यह ping हर 8 मिनट पर server को जगाए रखता है।
+  useEffect(() => {
+    const PING_INTERVAL_MS = 8 * 60 * 1000; // 8 minutes
+
+    const pingServer = async () => {
+      try {
+        const serverBase = typeof window !== 'undefined' && window.location.port === '5173'
+          ? `http://${window.location.hostname}:8000`
+          : '';
+        await fetch(`${serverBase}/api/health`, {
+          method: 'GET',
+          cache: 'no-store',
+          signal: AbortSignal.timeout(10000),
+        });
+        console.log('[Aether Keep-Alive] ✅ Server ping successful —', new Date().toLocaleTimeString());
+      } catch (err) {
+        console.warn('[Aether Keep-Alive] ⚠️ Ping failed (server may be starting):', err?.message);
+      }
+    };
+
+    // App खुलते ही तुरंत ping करें
+    pingServer();
+
+    // फिर हर 8 मिनट पर
+    const keepAliveTimer = setInterval(pingServer, PING_INTERVAL_MS);
+
+    return () => clearInterval(keepAliveTimer);
+  }, []);
+  // ─────────────────────────────────────────────────────────────────────────────
+
   // Handle Supabase Google OAuth Redirect & Session (same as vivah)
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -972,7 +1004,11 @@ export default function App() {
           setOnboardingDone(false);
           setOnboardingStep(prev => (prev < 4 ? 4 : prev));
         }
-        showToast(`Google से सफलतापूर्वक लिंक: ${gName}`, 'success');
+
+        // ✅ Fix: सिर्फ fresh SIGNED_IN पर toast दिखाएं — session restore/token refresh पर नहीं
+        if (event === 'SIGNED_IN') {
+          showToast(`Google से सफलतापूर्वक लिंक: ${gName}`, 'success');
+        }
       }
     });
 
@@ -1264,20 +1300,82 @@ export default function App() {
     showToast("📲 टेस्ट पुश नोटिफिकेशन भेजा गया!", 'success');
   };
 
-  // Register Service Worker for Mobile PWA and Native Push
+  // ─── Register Service Worker + VAPID Web Push Subscribe ────────────────────
+  // Browser बंद होने पर भी GitHub Actions → Server → Browser push notifications!
   useEffect(() => {
-    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js')
-        .then(reg => console.log('Aether SW Active:', reg.scope))
-        .catch(err => console.log('Aether SW error:', err));
-    }
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      setPushPermission(Notification.permission);
-      if (Notification.permission === 'default') {
-        Notification.requestPermission().then(p => setPushPermission(p));
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+
+    const setupPushSubscription = async (reg) => {
+      try {
+        // 1. Notification permission check
+        if ('Notification' in window) {
+          setPushPermission(Notification.permission);
+          if (Notification.permission === 'default') {
+            const p = await Notification.requestPermission();
+            setPushPermission(p);
+            if (p !== 'granted') return;
+          } else if (Notification.permission !== 'granted') {
+            return;
+          }
+        }
+
+        // 2. Server से VAPID public key fetch करें
+        const serverBase = window.location.port === '5173'
+          ? `http://${window.location.hostname}:8000`
+          : '';
+        const keyRes = await fetch(`${serverBase}/api/push/vapid-public-key`);
+        if (!keyRes.ok) return;
+        const { publicKey } = await keyRes.json();
+
+        // Base64URL → Uint8Array convert करें (VAPID format)
+        const urlB64ToUint8Array = (base64String) => {
+          const padding = '='.repeat((4 - base64String.length % 4) % 4);
+          const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+          const rawData = window.atob(base64);
+          return new Uint8Array([...rawData].map(c => c.charCodeAt(0)));
+        };
+
+        // 3. Browser को VAPID push subscribe करें
+        const existingSub = await reg.pushManager.getSubscription();
+        let subscription = existingSub;
+
+        if (!subscription) {
+          subscription = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlB64ToUint8Array(publicKey),
+          });
+          console.log('[Aether Push] ✅ New VAPID push subscription created');
+        } else {
+          console.log('[Aether Push] ♻️ Existing push subscription found');
+        }
+
+        // 4. Subscription server को भेजें (userEmail जब available हो)
+        const emailToUse = localStorage.getItem('aether_user_email') || '';
+        if (emailToUse && subscription) {
+          await fetch(`${serverBase}/api/push/subscribe`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              user_email: emailToUse,
+              subscription: subscription.toJSON(),
+            }),
+          });
+          console.log('[Aether Push] ✅ Subscription sent to server for', emailToUse);
+        }
+      } catch (err) {
+        console.warn('[Aether Push] Setup error:', err?.message);
       }
-    }
+    };
+
+    navigator.serviceWorker.register('/sw.js')
+      .then(reg => {
+        console.log('Aether SW Active:', reg.scope);
+        setupPushSubscription(reg);
+      })
+      .catch(err => console.log('Aether SW error:', err));
   }, []);
+  // ─────────────────────────────────────────────────────────────────────────────
+
 
   // Update clock every 30 seconds for continuous day progression
   useEffect(() => {

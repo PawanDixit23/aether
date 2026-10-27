@@ -1,0 +1,50 @@
+name: ⚡ Aether Keep-Alive & Push Notifications
+
+# Render free tier sleeps after 15 min inactivity.
+# यह workflow हर 10 मिनट पर server को जगाए रखता है
+# और due reminders के लिए Web Push notifications भेजता है।
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # हर 10 मिनट पर (GitHub Actions min interval = 5 min)
+  workflow_dispatch:           # Manual trigger भी कर सकते हैं
+
+jobs:
+  keep-alive-and-push:
+    name: Ping Server & Trigger Push Notifications
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 🏓 Ping Aether Server (Keep-Alive)
+        run: |
+          echo "⚡ Pinging Aether server to prevent cold start..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 30 \
+            --retry 3 \
+            --retry-delay 5 \
+            "https://aether-kjrj.onrender.com/api/health")
+          echo "Server response status: $STATUS"
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ Server is awake and healthy!"
+          else
+            echo "⚠️ Server returned $STATUS — may be waking up from cold sleep"
+          fi
+
+      - name: 🔔 Trigger Due Reminder Push Notifications
+        run: |
+          echo "🔔 Triggering push notifications for due reminders..."
+          PUSH_STATUS=$(curl -s -o /tmp/push_response.json -w "%{http_code}" \
+            --max-time 30 \
+            --retry 2 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-GitHub-Actions: true" \
+            "https://aether-kjrj.onrender.com/api/reminders/push-check")
+          echo "Push check status: $PUSH_STATUS"
+          cat /tmp/push_response.json || true
+
+      - name: 📊 Log Status
+        run: |
+          echo "✅ Keep-alive cycle complete at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Next ping in ~10 minutes"

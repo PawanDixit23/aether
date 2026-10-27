@@ -2,13 +2,38 @@ import os
 import json
 from datetime import datetime
 from typing import Optional, List
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException, Header, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import httpx
+
+# ─── Web Push (VAPID) Setup ────────────────────────────────────────────────────
+VAPID_PUBLIC_KEY  = os.environ.get("VAPID_PUBLIC_KEY",  "FKhfDseDfQYLoVS-DYrQKtfyIhniBxzPfE2akQQ2oM3lJxakx2Ft_qE-HLnecc4UP6sSTxOLibFELDxorXiMKA")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "WXjuCeVroOHymFzQOF8YGjwF_qaLHkvPJccwf1OOyI")
+VAPID_CLAIMS_EMAIL = os.environ.get("VAPID_CLAIMS_EMAIL", "mailto:aether@pawandixit.com")
+
+# In-memory push subscription store (user_email -> list of subscriptions)
+# Render container restart पर clear होता है, इसलिए client re-subscribe करता है
+_push_subscriptions: dict = {}  # {email: [subscription_info_dict, ...]}
+
+def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "aether-alert"):
+    """VAPID Web Push notification एक subscription पर भेजें।"""
+    try:
+        from pywebpush import webpush, WebPushException
+        webpush(
+            subscription_info=subscription_info,
+            data=json.dumps({"title": title, "body": body, "tag": tag, "icon": "/favicon.svg"}),
+            vapid_private_key=VAPID_PRIVATE_KEY,
+            vapid_claims={"sub": VAPID_CLAIMS_EMAIL},
+        )
+        return True
+    except Exception as e:
+        print(f"[WebPush Error] {e}")
+        return False
+# ──────────────────────────────────────────────────────────────────────────────
 
 try:
     from .database import engine, Base, get_db, ensure_schema_migrations
@@ -852,6 +877,117 @@ def health():
         "app": "Aether Autonomous Executive Core",
         "version": "0.1.0",
         "timestamp": datetime.utcnow().isoformat()
+    }
+
+# ----------------- Web Push Subscription Endpoints -----------------
+class PushSubscribeRequest(BaseModel):
+    user_email: str
+    subscription: dict  # {endpoint, keys: {p256dh, auth}}
+
+@app.get("/api/push/vapid-public-key")
+def get_vapid_public_key():
+    """Client को VAPID public key दें ताकि वो push subscribe कर सके।"""
+    return {"publicKey": VAPID_PUBLIC_KEY}
+
+@app.post("/api/push/subscribe")
+def subscribe_push(req: PushSubscribeRequest):
+    """Browser push subscription server पर store करें।"""
+    email = req.user_email.strip().lower()
+    if not email or not req.subscription:
+        raise HTTPException(status_code=400, detail="Email and subscription required")
+    
+    if email not in _push_subscriptions:
+        _push_subscriptions[email] = []
+    
+    # Duplicate endpoint check — same endpoint दोबारा store न हो
+    endpoint = req.subscription.get("endpoint", "")
+    existing_endpoints = [s.get("endpoint") for s in _push_subscriptions[email]]
+    if endpoint not in existing_endpoints:
+        _push_subscriptions[email].append(req.subscription)
+        print(f"[WebPush] ✅ New subscription saved for {email} (total: {len(_push_subscriptions[email])})")
+    
+    return {"status": "subscribed", "user": email, "total_subscriptions": len(_push_subscriptions[email])}
+
+@app.delete("/api/push/subscribe")
+def unsubscribe_push(user_email: str, endpoint: str):
+    """Push subscription हटाएं (logout पर)।"""
+    email = user_email.strip().lower()
+    if email in _push_subscriptions:
+        _push_subscriptions[email] = [
+            s for s in _push_subscriptions[email]
+            if s.get("endpoint") != endpoint
+        ]
+    return {"status": "unsubscribed"}
+
+@app.post("/api/reminders/push-check")
+def push_check_reminders(request: Request, db: Session = Depends(get_db)):
+    """
+    GitHub Actions हर 10 मिनट पर इस endpoint को call करता है।
+    सभी users के due reminders check करके Web Push notification भेजता है।
+    Browser बंद होने पर भी notifications आते हैं!
+    """
+    now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
+    
+    pushed_count = 0
+    errors = []
+    
+    # सभी subscribed users के लिए check करें
+    for email, subscriptions in list(_push_subscriptions.items()):
+        if not subscriptions:
+            continue
+        
+        try:
+            # इस user के due reminders fetch करें
+            tasks = db.query(Task).filter(
+                Task.user_email == email,
+                Task.status == "pending",
+                Task.notified == False
+            ).all()
+            
+            due_tasks = []
+            for t in tasks:
+                if not t.due_date:
+                    continue
+                try:
+                    dt = t.due_date
+                    if isinstance(dt, str):
+                        dt = datetime.fromisoformat(dt.replace(' ', 'T'))
+                    if dt <= now:
+                        due_tasks.append(t)
+                except Exception:
+                    pass
+            
+            # Due tasks के लिए push notification भेजें
+            for task in due_tasks:
+                title = f"⏰ AETHER रिमाइंडर: {task.title}"
+                body = f"समय: {task.reminder_time or 'अभी'} • कार्य का समय हो गया है!"
+                
+                # सभी subscriptions पर push भेजें
+                failed_subscriptions = []
+                for sub in subscriptions:
+                    success = _send_web_push(sub, title, body, f"reminder-{task.id}")
+                    if success:
+                        pushed_count += 1
+                    else:
+                        failed_subscriptions.append(sub.get("endpoint", "")[:50])
+                
+                # Push भेजने के बाद task को notified mark करें
+                task.notified = True
+                db.commit()
+                
+                if failed_subscriptions:
+                    errors.append(f"Failed subs for task {task.id}: {len(failed_subscriptions)}")
+        
+        except Exception as e:
+            errors.append(f"Error for {email}: {str(e)[:100]}")
+            print(f"[PushCheck Error] {email}: {e}")
+    
+    return {
+        "status": "ok",
+        "checked_users": len(_push_subscriptions),
+        "pushed_count": pushed_count,
+        "errors": errors,
+        "timestamp": now.isoformat()
     }
 
 # ----------------- Static Frontend Hosting (Single-Service Cloud Deployment) -----------------
