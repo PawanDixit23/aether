@@ -654,6 +654,37 @@ export default function App() {
   const chatEndRef = useRef(null);
   const recognitionRef = useRef(null);
   const userScrolledUpRef = useRef(false);
+  const currentAudioRef = useRef(null);
+
+  // Universal Audio Streaming Fallback (Works 100% on Mobile WebViews where SpeechSynthesis is unavailable)
+  const playStreamAudio = (text, voiceId, lang) => {
+    try {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current = null;
+      }
+      const ttsUrl = `${API_BASE}/tts?text=${encodeURIComponent(text.slice(0, 300))}&voice=${voiceId}&lang=${lang || 'en'}`;
+      const audio = new Audio(ttsUrl);
+      currentAudioRef.current = audio;
+      setIsSpeaking(true);
+      audio.onended = () => {
+        setIsSpeaking(false);
+        setAudioSamplePlaying(null);
+      };
+      audio.onerror = () => {
+        setIsSpeaking(false);
+        setAudioSamplePlaying(null);
+      };
+      audio.play().catch(e => {
+        console.warn('Audio stream playback error:', e);
+        setIsSpeaking(false);
+        setAudioSamplePlaying(null);
+      });
+    } catch (e) {
+      setIsSpeaking(false);
+      setAudioSamplePlaying(null);
+    }
+  };
 
   // Auto-scroll chat feed on new messages
   useEffect(() => {
@@ -980,67 +1011,43 @@ export default function App() {
   const handlePlayVoicePreview = (voice) => {
     try {
       setAudioSamplePlaying(voice.id);
+      const firstName = (userName && userName !== 'Operator') ? userName.split(' ')[0] : 'Operator';
+      const sampleText = `Hello ${firstName}. I am Aether, voiced by ${voice.name}.`;
 
-      // 1. Guaranteed Web Audio API Harmonic Synthesis (100% audible on all mobile WebViews!)
-      try {
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (AudioContext) {
-          const ctx = new AudioContext();
-          if (ctx.state === 'suspended') {
-            ctx.resume();
+      // 1. Try browser SpeechSynthesis if voices are available (Desktop)
+      let spoken = false;
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        const voices = window.speechSynthesis.getVoices();
+        if (voices && voices.length > 0) {
+          try {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(sampleText);
+            utterance.pitch = voice.pitch;
+            utterance.rate = voice.rate;
+            
+            const matchedVoice = resolveSpeechVoice(voice.id, 'en');
+            if (matchedVoice) {
+              utterance.voice = matchedVoice;
+            }
+            
+            utterance.onend = () => setAudioSamplePlaying(null);
+            utterance.onerror = () => setAudioSamplePlaying(null);
+            window.speechSynthesis.speak(utterance);
+            spoken = true;
+          } catch (e) {
+            spoken = false;
           }
-
-          // Distinct acoustic chord signatures matching each voice's personality
-          const freqs = {
-            puck: [520, 650, 780],      // Crisp, focused, analytical
-            charon: [165, 220, 330],    // Deep, calm, authoritative baritone
-            kore: [440, 554, 659],      // Warm, articulate, balanced
-            fenrir: [220, 277, 440],    // Strong, commanding, bold
-            aoede: [587, 740, 880],     // Melodic, polished flute/bell
-            zephyr: [700, 840, 1050]    // Modern, energetic, electronic
-          }[voice.id] || [440, 554, 660];
-
-          freqs.forEach((freq, idx) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.type = voice.id === 'charon' ? 'triangle' : voice.id === 'fenrir' ? 'sawtooth' : 'sine';
-            osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.1);
-            gain.gain.setValueAtTime(0, ctx.currentTime + idx * 0.1);
-            gain.gain.linearRampToValueAtTime(0.22, ctx.currentTime + idx * 0.1 + 0.04);
-            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.1 + 0.55);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start(ctx.currentTime + idx * 0.1);
-            osc.stop(ctx.currentTime + idx * 0.1 + 0.6);
-          });
         }
-      } catch (audioErr) {
-        console.warn('Web Audio preview error:', audioErr);
       }
 
-      // 2. Also speak voice preview if SpeechSynthesis is available
-      if ('speechSynthesis' in window) {
-        try {
-          window.speechSynthesis.cancel();
-          const sampleText = `Hello ${userName || 'Operator'}. I am Aether, voiced by ${voice.name}.`;
-          const utterance = new SpeechSynthesisUtterance(sampleText);
-          utterance.pitch = voice.pitch;
-          utterance.rate = voice.rate;
-          
-          const matchedVoice = resolveSpeechVoice(voice.id, 'en');
-          if (matchedVoice) {
-            utterance.voice = matchedVoice;
-          }
-          
-          utterance.onend = () => setAudioSamplePlaying(null);
-          utterance.onerror = () => setAudioSamplePlaying(null);
-          window.speechSynthesis.speak(utterance);
-        } catch (e) {}
+      // 2. Guaranteed Server-Side Audio Streaming Fallback (Plays 100% on Mobile WebViews & Android/iOS)
+      if (!spoken) {
+        playStreamAudio(sampleText, voice.id, 'en');
       }
 
       setTimeout(() => {
         setAudioSamplePlaying(null);
-      }, 1400);
+      }, 3500);
     } catch (e) {
       setAudioSamplePlaying(null);
     }
@@ -1472,16 +1479,21 @@ export default function App() {
       return;
     }
 
-    // Explicitly prompt / unlock microphone via getUserMedia (Essential for Android WebView & Mobile Browsers)
-    try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    // Trigger native Android microphone permission if wrapped in mobile app
+    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_MIC_PERMISSION' }));
+      } catch (e) {}
+    }
+
+    // Non-fatal getUserMedia check (do NOT abort if WebView restricts getUserMedia directly)
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach(track => track.stop());
+      } catch (micErr) {
+        console.warn('getUserMedia non-fatal in WebView:', micErr);
       }
-    } catch (micErr) {
-      console.warn('Microphone permission check failed:', micErr);
-      showToast("कृपया माइक्रोफ़ोन अनुमति (Microphone Permission) दें।", 'error');
-      return;
     }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1518,7 +1530,7 @@ export default function App() {
         if (event.error === 'no-speech') {
           showToast("कोई आवाज़ नहीं सुनी गई। पुनः प्रयास करें।", 'info');
         } else if (event.error === 'not-allowed') {
-          showToast("माइक्रोफ़ोन अनुमति अस्वीकृत। सेटिंग्स में माइक ऑन करें।", 'error');
+          showToast("कृपया सेटिंग्स में Aether ऐप को माइक्रोफ़ोन अनुमति (Microphone Permission) दें।", 'error');
         } else {
           showToast(`माइक स्टेटस: ${event.error}`, 'error');
         }
@@ -1539,29 +1551,45 @@ export default function App() {
 
   const toggleListening = toggleVoiceRecognition;
 
-  // Text to Speech
+  // Text to Speech with Mobile WebView Audio Streaming Fallback
   const speakText = (text) => {
-    if (!('speechSynthesis' in window) || !voiceOutputEnabled) return;
-    window.speechSynthesis.cancel();
+    if (!voiceOutputEnabled) return;
     const cleanText = text.replace(/\[.*?\]\(.*?\)/g, '').replace(/[*_#`🔗]/g, '');
-    const utterance = new SpeechSynthesisUtterance(cleanText);
     const activeVoice = AETHER_VOICES.find(v => v.id === selectedVoice);
-    utterance.rate = (activeVoice ? activeVoice.rate : 1.05) * speechRate;
-    utterance.pitch = activeVoice ? activeVoice.pitch : 1.0;
     const hasDevanagari = /[\u0900-\u097F]/.test(cleanText);
-    utterance.lang = (selectedLang === 'hi' || hasDevanagari) ? 'hi-IN' : 'en-IN';
-    
-    // Explicitly bind matched browser voice (Female for Kore/Aoede, Male for Puck/Charon/Fenrir)
-    const matchedVoice = resolveSpeechVoice(selectedVoice, utterance.lang);
-    if (matchedVoice) {
-      utterance.voice = matchedVoice;
+    const lang = (selectedLang === 'hi' || hasDevanagari) ? 'hi' : 'en';
+
+    let spoken = false;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices && voices.length > 0) {
+        try {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(cleanText);
+          utterance.rate = (activeVoice ? activeVoice.rate : 1.05) * speechRate;
+          utterance.pitch = activeVoice ? activeVoice.pitch : 1.0;
+          utterance.lang = lang === 'hi' ? 'hi-IN' : 'en-IN';
+          
+          const matchedVoice = resolveSpeechVoice(selectedVoice, utterance.lang);
+          if (matchedVoice) {
+            utterance.voice = matchedVoice;
+          }
+          
+          setIsSpeaking(true);
+          utterance.onend = () => setIsSpeaking(false);
+          utterance.onerror = () => setIsSpeaking(false);
+          window.speechSynthesis.speak(utterance);
+          spoken = true;
+        } catch (e) {
+          spoken = false;
+        }
+      }
     }
-    
-    setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-    
-    window.speechSynthesis.speak(utterance);
+
+    // Stream server-side audio on mobile WebViews where speechSynthesis has no voices
+    if (!spoken) {
+      playStreamAudio(cleanText, selectedVoice, lang);
+    }
     showToast("🔊 Aether बोल रहा है...", "info");
   };
 

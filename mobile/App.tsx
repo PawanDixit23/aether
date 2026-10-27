@@ -150,7 +150,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
-        <StatusBar style="light" backgroundColor="#080c16" />
+        <StatusBar style="light" translucent={true} backgroundColor="transparent" />
 
         {/* The Exact 1:1 Live Aether Web Dashboard */}
         <WebView
@@ -164,6 +164,9 @@ export default function App() {
           allowsInlineMediaPlayback={true}
           mediaPlaybackRequiresUserAction={false}
           mediaCapturePermissionGrantType="grant"
+          onPermissionRequest={(event) => {
+            event.grant(event.resources);
+          }}
           originWhitelist={['*']}
           mixedContentMode="always"
           cacheEnabled={false}
@@ -219,6 +222,19 @@ export default function App() {
                 }
               } else if (data.type === 'CANCEL_REMINDER') {
                 await Notifications.cancelScheduledNotificationAsync(`reminder-${data.id}`).catch(() => {});
+              } else if (data.type === 'REQUEST_MIC_PERMISSION') {
+                if (Platform.OS === 'android') {
+                  try {
+                    await PermissionsAndroid.request(
+                      PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+                      {
+                        title: "Aether Microphone Permission",
+                        message: "Aether needs microphone access so you can speak your voice prompts.",
+                        buttonPositive: "Allow"
+                      }
+                    );
+                  } catch (e) {}
+                }
               }
             } catch (err) {
               console.warn('WebView onMessage error:', err);
@@ -259,12 +275,11 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#080c16',
-    paddingTop: Platform.OS === 'android' ? RNStatusBar.currentHeight : 0,
+    backgroundColor: '#0c1427',
   },
   webView: {
     flex: 1,
-    backgroundColor: '#080c16',
+    backgroundColor: '#0c1427',
   },
   loadingContainer: {
     ...StyleSheet.absoluteFillObject,
