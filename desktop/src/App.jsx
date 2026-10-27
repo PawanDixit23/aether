@@ -644,6 +644,8 @@ export default function App() {
     }
   });
   const [isSyncingGCal, setIsSyncingGCal] = useState(false);
+  const [gcalIcalUrl, setGcalIcalUrl] = useState(() => localStorage.getItem('aether_gcal_ical_url') || '');
+  const [showGCalConnectModal, setShowGCalConnectModal] = useState(false);
   const icsFileInputRef = useRef(null);
 
   const [inputText, setInputText] = useState('');
@@ -1095,17 +1097,20 @@ export default function App() {
     setGoogleAuthLoading(true);
     setGoogleError('');
     try {
-      // 1. Trigger Supabase Real Google OAuth with Calendar scopes
+      // 1. Trigger Supabase Real Google OAuth (standard profile scopes to avoid Google 403 access_denied)
+      const options = {
+        redirectTo: window.location.origin
+      };
+      if (forceCalendarScope) {
+        options.scopes = 'https://www.googleapis.com/auth/calendar.readonly';
+        options.queryParams = {
+          access_type: 'offline',
+          prompt: 'consent'
+        };
+      }
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: {
-          scopes: 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events.readonly',
-          redirectTo: window.location.origin,
-          queryParams: {
-            access_type: 'offline',
-            prompt: 'consent'
-          }
-        }
+        options
       });
       if (error) {
         console.error('Supabase Google OAuth error:', error);
@@ -1960,95 +1965,54 @@ export default function App() {
     }
   };
 
-  const syncGoogleCalendar = async (explicitToken) => {
-    const token = explicitToken || googleProviderToken || localStorage.getItem('aether_google_provider_token');
-    if (!token) {
-      try {
-        await supabase.auth.signInWithOAuth({
-          provider: 'google',
-          options: {
-            scopes: 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events.readonly',
-            redirectTo: window.location.origin,
-            queryParams: {
-              access_type: 'offline',
-              prompt: 'consent'
-            }
-          }
-        });
-      } catch (err) {
-        showToast('Google Calendar से कनेक्ट करने में समस्या आई', 'error');
-      }
+  const syncGCalViaIcalUrl = async (customUrl) => {
+    const url = (customUrl || gcalIcalUrl).trim();
+    if (!url || !url.startsWith('http')) {
+      showToast('कृपया वैध Google Calendar iCal लिंक दर्ज करें (https://...)', 'error');
       return;
     }
-
     setIsSyncingGCal(true);
     try {
-      const now = new Date();
-      const timeMin = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
-      const timeMax = new Date(now.getFullYear(), now.getMonth() + 2, 0).toISOString();
-
-      const res = await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&singleEvents=true&orderBy=startTime&maxResults=250`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
-
-      if (!res.ok) {
-        if (res.status === 401 || res.status === 403) {
-          localStorage.removeItem('aether_google_provider_token');
-          setGoogleProviderToken('');
-          await supabase.auth.signInWithOAuth({
-            provider: 'google',
-            options: {
-              scopes: 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events.readonly',
-              redirectTo: window.location.origin,
-              queryParams: {
-                access_type: 'offline',
-                prompt: 'consent'
-              }
-            }
-          });
-          return;
-        }
-        throw new Error(`Google Calendar API status ${res.status}`);
-      }
-
-      const data = await res.json();
-      const items = data.items || [];
-      const mapped = items.map(item => {
-        const startStr = item.start?.dateTime || item.start?.date;
-        const d = startStr ? new Date(startStr) : new Date();
-        const timeStr = item.start?.dateTime
-          ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-          : 'All Day';
-
-        return {
-          id: `gcal_${item.id}`,
-          title: item.summary || 'Google Calendar Event',
-          due_date: startStr,
-          reminder_time: timeStr,
-          priority: 'medium',
-          status: 'pending',
-          is_completed: false,
-          is_google_calendar: true,
-          htmlLink: item.htmlLink,
-          created_at: item.created || startStr
-        };
+      const res = await fetch(`${API_BASE}/calendar/sync-ical`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, user_email: userEmail })
       });
-
-      setGoogleTasks(mapped);
-      localStorage.setItem('aether_gcal_events', JSON.stringify(mapped));
-      showToast(`Google Calendar से ${mapped.length} इवेंट्स और रिमाइंडर्स सिंक हुए! 📅`, 'success');
-    } catch (e) {
-      console.error('GCal sync error:', e);
-      showToast('Google Calendar सिंक करने में विफल: ' + (e.message || ''), 'error');
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || 'iCal sync failed');
+      }
+      const events = data.events || [];
+      setGoogleTasks(events);
+      localStorage.setItem('aether_gcal_events', JSON.stringify(events));
+      localStorage.setItem('aether_gcal_ical_url', url);
+      setGcalIcalUrl(url);
+      setShowGCalConnectModal(false);
+      showToast(`Google Calendar से ${events.length} इवेंट्स और रिमाइंडर्स सिंक हुए! 📅`, 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('Google Calendar लिंक सिंक विफल: ' + err.message, 'error');
     } finally {
       setIsSyncingGCal(false);
     }
   };
+
+  const handleSyncGCalClick = () => {
+    const savedIcal = gcalIcalUrl || localStorage.getItem('aether_gcal_ical_url');
+    if (savedIcal) {
+      syncGCalViaIcalUrl(savedIcal);
+    } else {
+      setShowGCalConnectModal(true);
+    }
+  };
+
+  // Auto-sync Google Calendar iCal feed if previously saved
+  useEffect(() => {
+    const savedIcal = localStorage.getItem('aether_gcal_ical_url');
+    if (savedIcal) {
+      syncGCalViaIcalUrl(savedIcal).catch(() => {});
+    }
+  }, []);
 
   const handleImportIcsFile = (e) => {
     const file = e.target.files?.[0];
@@ -4491,7 +4455,7 @@ export default function App() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                     <button
                       type="button"
-                      onClick={() => syncGoogleCalendar()}
+                      onClick={handleSyncGCalClick}
                       disabled={isSyncingGCal}
                       style={{
                         background: 'rgba(66, 133, 244, 0.2)',
@@ -5001,6 +4965,91 @@ export default function App() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Google Calendar Connect Dialog */}
+      {showGCalConnectModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 130, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '22px 18px', width: '100%', maxWidth: '460px', maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#60a5fa', fontWeight: 700, fontSize: '0.98rem' }}>
+                <Calendar size={18} />
+                <span>Sync Google Calendar</span>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setShowGCalConnectModal(false)} 
+                style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', borderRadius: '50%', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '1.1rem', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.8rem', color: '#94a3b8', margin: '0 0 16px 0', lineHeight: 1.5 }}>
+              Choose how you want to sync your Google Calendar reminders and events:
+            </p>
+
+            {/* Method 1: Instant .ics Upload */}
+            <div style={{ background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: '16px', padding: '14px', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                <span style={{ fontSize: '1rem' }}>📥</span>
+                <span style={{ color: '#34d399', fontWeight: 700, fontSize: '0.88rem' }}>Method 1: Instant .ics Import (1-Click)</span>
+              </div>
+              <p style={{ fontSize: '0.76rem', color: '#94a3b8', margin: '0 0 10px 0', lineHeight: 1.4 }}>
+                Google Calendar से .ics फ़ाइल डाउनलोड करें (Settings → Import & Export → Export) और यहाँ 1 क्लिक में इम्पोर्ट करें।
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowGCalConnectModal(false);
+                  icsFileInputRef.current?.click();
+                }}
+                style={{ width: '100%', background: '#10b981', color: '#022c22', border: 'none', borderRadius: '10px', padding: '10px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+              >
+                <Upload size={14} />
+                <span>Upload Google Calendar .ics File</span>
+              </button>
+            </div>
+
+            {/* Method 2: Secret iCal URL Live Sync */}
+            <div style={{ background: 'rgba(56, 189, 248, 0.08)', border: '1px solid rgba(56, 189, 248, 0.25)', borderRadius: '16px', padding: '14px', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                <span style={{ fontSize: '1rem' }}>🔗</span>
+                <span style={{ color: '#38bdf8', fontWeight: 700, fontSize: '0.88rem' }}>Method 2: Secret iCal Link (Live Auto-Sync)</span>
+              </div>
+              <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '0 0 8px 0', lineHeight: 1.4 }}>
+                1. Google Calendar वेब पर खोलें<br/>
+                2. Settings (⚙️) → बाएँ मेनू में अपने कैलेंडर नाम पर क्लिक करें<br/>
+                3. नीचे स्क्रॉल कर "Secret address in iCal format" कॉपी करें
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <input
+                  type="url"
+                  placeholder="Paste https://calendar.google.com/calendar/ical/.../basic.ics"
+                  value={gcalIcalUrl}
+                  onChange={(e) => setGcalIcalUrl(e.target.value)}
+                  style={{ width: '100%', boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '10px', padding: '9px 12px', color: '#fff', fontSize: '0.78rem', outline: 'none' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => syncGCalViaIcalUrl()}
+                  disabled={isSyncingGCal}
+                  style={{ width: '100%', background: '#38bdf8', color: '#04101e', border: 'none', borderRadius: '10px', padding: '10px', fontWeight: 700, fontSize: '0.82rem', cursor: isSyncingGCal ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                >
+                  <RefreshCw size={13} className={isSyncingGCal ? 'animate-spin' : ''} />
+                  <span>{isSyncingGCal ? 'Syncing...' : 'Save & Sync Live Events'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Notice regarding Google Error 403 */}
+            <div style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)', borderRadius: '14px', padding: '10px 12px' }}>
+              <span style={{ fontSize: '0.72rem', color: '#fbbf24', lineHeight: 1.4, display: 'block' }}>
+                ℹ️ <b>Note:</b> Google बिना वेरिफिकेशन वाले ऐप्स के डायरेक्ट पॉपअप को ब्लॉक (Error 403) करता है। ऊपर दिए गए दोनों तरीके बिना किसी ब्लॉक के 100% काम करते हैं।
+              </span>
+            </div>
           </div>
         </div>
       )}

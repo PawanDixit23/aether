@@ -120,6 +120,10 @@ class ClientSyncBackup(BaseModel):
     memories: Optional[List[dict]] = []
     finances: Optional[List[dict]] = []
 
+class ICalSyncRequest(BaseModel):
+    url: str
+    user_email: Optional[str] = None
+
 try:
     from zoneinfo import ZoneInfo
     DEFAULT_TZ = ZoneInfo(os.environ.get("TIMEZONE", "Asia/Kolkata"))
@@ -653,6 +657,73 @@ def delete_task(
     db.delete(task)
     db.commit()
     return {"message": "Task deleted successfully"}
+
+@app.post("/api/calendar/sync-ical")
+def sync_ical_feed(req: ICalSyncRequest, user_email: Optional[str] = Depends(get_user_email)):
+    import urllib.request
+    raw_url = req.url.strip()
+    if not raw_url.startswith("http"):
+        raise HTTPException(status_code=400, detail="Invalid iCal URL. Must start with http:// or https://")
+    
+    try:
+        req_obj = urllib.request.Request(
+            raw_url, 
+            headers={"User-Agent": "Mozilla/5.0 (compatible; AetherCalendar/1.0)"}
+        )
+        with urllib.request.urlopen(req_obj, timeout=12) as response:
+            content = response.read().decode("utf-8", errors="ignore")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Google Calendar iCal URL fetch failed: {str(e)}")
+
+    events = []
+    lines = content.splitlines()
+    in_event = False
+    curr = {}
+
+    for line in lines:
+        if line.startswith("BEGIN:VEVENT"):
+            in_event = True
+            curr = {}
+        elif line.startswith("END:VEVENT"):
+            in_event = False
+            summary = curr.get("summary")
+            dtstart = curr.get("dtstart")
+            if summary and dtstart:
+                time_str = "All Day"
+                due_date = dtstart
+                if "T" in dtstart:
+                    try:
+                        clean_dt = dtstart.replace("Z", "")
+                        dt_obj = datetime.strptime(clean_dt[:15], "%Y%m%dT%H%M%S")
+                        time_str = dt_obj.strftime("%I:%M %p")
+                        due_date = dt_obj.strftime("%Y-%m-%dT%H:%M:%S")
+                    except Exception:
+                        pass
+                elif len(dtstart) == 8:
+                    due_date = f"{dtstart[:4]}-{dtstart[4:6]}-{dtstart[6:8]}"
+                
+                events.append({
+                    "id": f"gcal_ical_{len(events)}_{dtstart}",
+                    "title": summary,
+                    "due_date": due_date,
+                    "reminder_time": time_str,
+                    "priority": "medium",
+                    "status": "pending",
+                    "is_completed": False,
+                    "is_google_calendar": True,
+                    "created_at": due_date
+                })
+        elif in_event:
+            if line.startswith("SUMMARY:"):
+                curr["summary"] = line[8:].strip()
+            elif line.startswith("DTSTART"):
+                parts = line.split(":")
+                if len(parts) >= 2:
+                    curr["dtstart"] = parts[-1].strip()
+            elif line.startswith("DESCRIPTION:"):
+                curr["description"] = line[12:].strip()
+
+    return {"status": "ok", "count": len(events), "events": events}
 
 # ----------------- Finance Endpoints -----------------
 @app.get("/api/finance/records")
