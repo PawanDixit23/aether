@@ -8,7 +8,8 @@ import {
   BackHandler,
   Platform,
   PermissionsAndroid,
-  StatusBar as RNStatusBar
+  StatusBar as RNStatusBar,
+  Linking
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -172,14 +173,28 @@ export default function App() {
           allowsInlineMediaPlayback={true}
           mediaPlaybackRequiresUserAction={false}
           mediaCapturePermissionGrantType="grant"
-          onPermissionRequest={(event) => {
-            event.grant(event.resources);
-          }}
+          {...({
+            onPermissionRequest: (event: any) => {
+              event?.grant?.(event.resources);
+            }
+          } as any)}
           originWhitelist={['*']}
           mixedContentMode="always"
           cacheEnabled={false}
           cacheMode="LOAD_NO_CACHE"
           onShouldStartLoadWithRequest={(request) => {
+            // Open native Map apps (Google Maps on Android, Apple Maps on iOS) externally
+            if (
+              request.url.startsWith('geo:') ||
+              request.url.startsWith('maps:') ||
+              request.url.includes('google.com/maps') ||
+              request.url.includes('maps.google.com') ||
+              request.url.includes('maps.apple.com')
+            ) {
+              Linking.openURL(request.url).catch(() => {});
+              return false;
+            }
+
             // If OAuth provider falls back to localhost redirect, redirect back to cloud AETHER_URL with token intact
             if (request.url.includes('access_token') && (request.url.startsWith('http://localhost') || request.url.startsWith('http://127.0.0.1'))) {
               const hashIndex = request.url.indexOf('#');
@@ -197,7 +212,31 @@ export default function App() {
           onMessage={async (event) => {
             try {
               const data = JSON.parse(event.nativeEvent.data);
-              if (data.type === 'TRIGGER_NOTIFICATION') {
+              if (data.type === 'OPEN_MAP') {
+                webViewRef.current?.injectJavaScript(`window.__mapOpenedByNative = true; true;`);
+                const { latitude, longitude, webUrl } = data;
+                let nativeMapUrl = '';
+                if (latitude && longitude) {
+                  if (Platform.OS === 'android') {
+                    nativeMapUrl = `geo:${latitude},${longitude}?q=${latitude},${longitude}`;
+                  } else {
+                    nativeMapUrl = `maps://?q=${latitude},${longitude}`;
+                  }
+                } else {
+                  nativeMapUrl = Platform.OS === 'android' ? 'geo:0,0?q=maps' : 'maps://';
+                }
+
+                Linking.canOpenURL(nativeMapUrl)
+                  .then((supported) => {
+                    if (supported) {
+                      return Linking.openURL(nativeMapUrl);
+                    }
+                    return Linking.openURL(webUrl || `https://www.google.com/maps?q=${latitude || ''},${longitude || ''}`);
+                  })
+                  .catch(() => {
+                    Linking.openURL(webUrl || `https://www.google.com/maps?q=${latitude || ''},${longitude || ''}`).catch(() => {});
+                  });
+              } else if (data.type === 'TRIGGER_NOTIFICATION') {
                 await Notifications.scheduleNotificationAsync({
                   content: {
                     title: data.title || '⚡ AETHER ALERT',

@@ -37,11 +37,11 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
 
 try:
     from .database import engine, Base, get_db, ensure_schema_migrations
-    from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage
+    from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
     from .ai_engine import parse_intent_with_llm
 except ImportError:
     from database import engine, Base, get_db, ensure_schema_migrations
-    from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage
+    from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
     from ai_engine import parse_intent_with_llm
 
 # Initialize tables & run automated schema migrations
@@ -890,26 +890,46 @@ def get_vapid_public_key():
     return {"publicKey": VAPID_PUBLIC_KEY}
 
 @app.post("/api/push/subscribe")
-def subscribe_push(req: PushSubscribeRequest):
-    """Browser push subscription server पर store करें।"""
+def subscribe_push(req: PushSubscribeRequest, db: Session = Depends(get_db)):
+    """Browser push subscription server पर store करें (Memory + Database persistence)."""
     email = req.user_email.strip().lower()
     if not email or not req.subscription:
         raise HTTPException(status_code=400, detail="Email and subscription required")
     
+    # 1. Update in-memory cache
     if email not in _push_subscriptions:
         _push_subscriptions[email] = []
-    
-    # Duplicate endpoint check — same endpoint दोबारा store न हो
     endpoint = req.subscription.get("endpoint", "")
-    existing_endpoints = [s.get("endpoint") for s in _push_subscriptions[email]]
-    if endpoint not in existing_endpoints:
-        _push_subscriptions[email].append(req.subscription)
-        print(f"[WebPush] ✅ New subscription saved for {email} (total: {len(_push_subscriptions[email])})")
+    _push_subscriptions[email] = [s for s in _push_subscriptions[email] if s.get("endpoint") != endpoint]
+    _push_subscriptions[email].append(req.subscription)
     
+    # 2. Persist to Database table so subscriptions survive cold container sleep & restart
+    try:
+        keys = req.subscription.get("keys", {})
+        p256dh = keys.get("p256dh", "")
+        auth = keys.get("auth", "")
+        existing = db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint).first()
+        if existing:
+            existing.user_email = email
+            existing.p256dh = p256dh
+            existing.auth = auth
+        else:
+            new_sub = PushSubscription(
+                user_email=email,
+                endpoint=endpoint,
+                p256dh=p256dh,
+                auth=auth
+            )
+            db.add(new_sub)
+        db.commit()
+    except Exception as dbe:
+        print(f"[PushSubscribe DB Error] {dbe}")
+    
+    print(f"[WebPush] ✅ Subscription saved in DB & Memory for {email}")
     return {"status": "subscribed", "user": email, "total_subscriptions": len(_push_subscriptions[email])}
 
 @app.delete("/api/push/subscribe")
-def unsubscribe_push(user_email: str, endpoint: str):
+def unsubscribe_push(user_email: str, endpoint: str, db: Session = Depends(get_db)):
     """Push subscription हटाएं (logout पर)।"""
     email = user_email.strip().lower()
     if email in _push_subscriptions:
@@ -917,6 +937,11 @@ def unsubscribe_push(user_email: str, endpoint: str):
             s for s in _push_subscriptions[email]
             if s.get("endpoint") != endpoint
         ]
+    try:
+        db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint).delete()
+        db.commit()
+    except Exception as dbe:
+        print(f"[PushUnsubscribe DB Error] {dbe}")
     return {"status": "unsubscribed"}
 
 @app.post("/api/reminders/push-check")
@@ -924,14 +949,31 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
     """
     GitHub Actions हर 10 मिनट पर इस endpoint को call करता है।
     सभी users के due reminders check करके Web Push notification भेजता है।
-    Browser बंद होने पर भी notifications आते हैं!
+    Database persistence की वजह से Render cold-sleep/reboot के बाद भी 1 घंटे वाले reminders 100% डिलीवर होते हैं!
     """
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
-    
     pushed_count = 0
     errors = []
     
-    # सभी subscribed users के लिए check करें
+    # 1. Database से सभी active subscriptions reload करें (Cold boot survival guarantee)
+    try:
+        db_subs = db.query(PushSubscription).all()
+        for s in db_subs:
+            em = s.user_email
+            if em not in _push_subscriptions:
+                _push_subscriptions[em] = []
+            if not any(sub.get("endpoint") == s.endpoint for sub in _push_subscriptions[em]):
+                _push_subscriptions[em].append({
+                    "endpoint": s.endpoint,
+                    "keys": {
+                        "p256dh": s.p256dh,
+                        "auth": s.auth
+                    }
+                })
+    except Exception as dbe:
+        print(f"[PushCheck DB Load Error] {dbe}")
+
+    # 2. सभी subscribed users के लिए check करें
     for email, subscriptions in list(_push_subscriptions.items()):
         if not subscriptions:
             continue

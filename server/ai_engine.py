@@ -332,10 +332,44 @@ def get_structured_news(limit: int = 5, category: str = None) -> list:
         ]
 
 def parse_reminder_time(text: str) -> tuple:
-    """Extracts reminder time like 10:30AM, 1:30 PM, 5 baje, and returns (display_time, datetime_obj)."""
+    """
+    Extracts reminder time:
+    - Relative: 'after 1 hour', 'in 1 hr', '1 ghante baad', 'in 10 minutes', '5 minute baad', 'aadhe ghante baad'
+    - Absolute: '10:30 AM', '1:30 PM', '5 baje', 'at 6pm'
+    Returns (display_time, datetime_obj).
+    """
     now = datetime.now()
     text_lower = text.lower()
-    
+
+    # 1. Relative hours: "in 1 hour", "after 2 hours", "1 ghante baad", "ek ghante baad", "aadha ghanta"
+    word_to_num = {'ek': 1, 'एक': 1, 'do': 2, 'दो': 2, 'teen': 3, 'तीन': 3, 'char': 4, 'चार': 4, 'aadha': 0.5, 'आधा': 0.5, 'half': 0.5}
+    for word, num in word_to_num.items():
+        if re.search(rf'\b{word}\s*(?:hours?|hrs?|ghante|ghanta|घंटे|घंटा|hour)\b', text_lower):
+            target_dt = now + timedelta(hours=num)
+            return target_dt.strftime('%I:%M %p').lstrip('0'), target_dt
+
+    rel_hour_match = re.search(r'(?:in|after|ke\s*baad)?\s*(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|ghante|ghanta|घंटे|घंटा)\s*(?:baad|me|mein|later)?', text_lower)
+    if rel_hour_match:
+        try:
+            h_val = float(rel_hour_match.group(1))
+            if 0 < h_val <= 72:
+                target_dt = now + timedelta(hours=h_val)
+                return target_dt.strftime('%I:%M %p').lstrip('0'), target_dt
+        except Exception:
+            pass
+
+    # 2. Relative minutes: "in 5 minutes", "after 10 mins", "10 minute baad", "15 min"
+    rel_min_match = re.search(r'(?:in|after|ke\s*baad)?\s*(\d+)\s*(?:minutes?|mins?|minute|मिनट)\s*(?:baad|me|mein|later)?', text_lower)
+    if rel_min_match:
+        try:
+            m_val = int(rel_min_match.group(1))
+            if 0 < m_val <= 1440:
+                target_dt = now + timedelta(minutes=m_val)
+                return target_dt.strftime('%I:%M %p').lstrip('0'), target_dt
+        except Exception:
+            pass
+
+    # 3. Absolute time: 10:30 AM, 5 PM, 5 baje, 6:00
     is_pm_hint = any(k in text_lower for k in ['shaam', 'shang', 'शाम', 'evening', 'night', 'raat', 'रात', 'dopahar', 'दोपहर', 'pm', 'p.m.'])
     is_am_hint = any(k in text_lower for k in ['subah', 'सुबह', 'morning', 'am', 'a.m.', 'प्रातः'])
 
@@ -353,20 +387,27 @@ def parse_reminder_time(text: str) -> tuple:
         elif mer in ['am', 'a.m.'] or is_am_hint:
             if h == 12: h = 0
         elif not mer:
-            if 1 <= h <= 6: h += 12 # 1:30 without AM/PM defaults to afternoon
+            if 1 <= h <= 6 and now.hour >= 7:
+                h += 12
             
         target_date = now.date()
         if any(w in text_lower for w in ['tomorrow', 'kal', 'कल', 'agle din']):
             target_date += timedelta(days=1)
             
         target_dt = datetime.combine(target_date, datetime.min.time()).replace(hour=h, minute=minute)
+        # If target datetime is already in the past today, and user didn't explicitly say "today/aaj", schedule for tomorrow!
+        if target_dt <= now and not any(w in text_lower for w in ['today', 'aaj', 'आज']):
+            target_dt += timedelta(days=1)
+
         time_display = target_dt.strftime('%I:%M %p').lstrip('0')
         return time_display, target_dt
+
     return None, None
 
 def clean_task_title(text: str) -> str:
     """Removes reminder boilerplate words to keep titles clean and concise."""
     cleaned = re.sub(r'^(set\s+(?:the\s+)?reminder\s+(?:for|at|to)?|remind\s+(?:me\s+)?(?:to|for|at)?|रिमाइंडर\s+(?:सेट\s+करो|लगाओ)?|याद\s+दिलाना)\s*', '', text, flags=re.IGNORECASE)
+    cleaned = re.sub(r'(?:in|after|ke\s*baad)?\s*\d+(?:\.\d+)?\s*(?:hours?|hrs?|ghante|ghanta|minutes?|mins?|minute|घंटे|घंटा|मिनट)\s*(?:baad|me|mein|later|to|for|ki|ka)?', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'(?:at|on|for|by)?\s*\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|baje|बजे)?\s*(?:today|tomorrow|kal|aaj|आज|कल)?\s*(?:at|ko|par|per)?', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'^(?:at|to|for|ki|ka|par)\s+', '', cleaned.strip(), flags=re.IGNORECASE)
     cleaned = cleaned.strip(" ?.,!:\n")

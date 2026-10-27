@@ -67,4 +67,12 @@ class ChatMessage(Base):
     action_data = Column(Text, nullable=True)    # JSON string
     confidence = Column(Float, default=1.0)
     created_at = Column(DateTime, default=datetime.utcnow)
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
 
+    id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, index=True, nullable=False)
+    endpoint = Column(Text, nullable=False)
+    p256dh = Column(Text, nullable=False)
+    auth = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

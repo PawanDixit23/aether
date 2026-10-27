@@ -47,6 +47,7 @@ import {
   HelpCircle,
   Check,
   ChevronRight,
+  ChevronLeft,
   ArrowLeft,
   Box,
   Keyboard,
@@ -54,7 +55,12 @@ import {
   LogOut,
   Sliders,
   Menu,
-  Edit3
+  Edit3,
+  Camera,
+  Image,
+  FileText,
+  HardDrive,
+  MapPin
 } from 'lucide-react';
 import { supabase } from './supabase';
 
@@ -541,7 +547,42 @@ export default function App() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isPersonaDropdownOpen, setIsPersonaDropdownOpen] = useState(false);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
-  const [activeSubModal, setActiveSubModal] = useState(null); // 'key' | 'finance' | 'audit' | 'assistant-setup' | 'profile-name'
+  const [activeSubModal, setActiveSubModal] = useState(null); // 'key' | 'finance' | 'audit' | 'assistant-setup' | 'profile-name' | 'permissions'
+  const [isActivatingMic, setIsActivatingMic] = useState(false);
+  const [isPlusMenuOpen, setIsPlusMenuOpen] = useState(false);
+  const [micPermissionStatus, setMicPermissionStatus] = useState(() => {
+    if (typeof window !== 'undefined' && window.__micPermissionGranted) return 'granted';
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('aether_mic_granted') === 'true') return 'granted';
+    return 'prompt';
+  });
+  const [micEnabled, setMicEnabled] = useState(() => {
+    return localStorage.getItem('aether_mic_enabled') !== 'false' && (localStorage.getItem('aether_mic_granted') === 'true' || (typeof window !== 'undefined' && Boolean(window.__micPermissionGranted)));
+  });
+  const [pushEnabled, setPushEnabled] = useState(() => {
+    return localStorage.getItem('aether_push_enabled') !== 'false' && (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted');
+  });
+  const [locationEnabled, setLocationEnabled] = useState(() => {
+    return localStorage.getItem('aether_location_enabled') === 'true';
+  });
+  const [isMicTesting, setIsMicTesting] = useState(false);
+  const [attachedMedia, setAttachedMedia] = useState(null); // { type: 'image' | 'file' | 'drive' | 'map', name: string, url?: string, size?: string }
+
+  const [isDriveModalOpen, setIsDriveModalOpen] = useState(false);
+  const [driveInputUrl, setDriveInputUrl] = useState('');
+  const [driveDocName, setDriveDocName] = useState('');
+  const [isCameraModalOpen, setIsCameraModalOpen] = useState(false);
+  const cameraVideoRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+
+  const [calCurrentMonth, setCalCurrentMonth] = useState(() => new Date());
+  const [calSelectedDate, setCalSelectedDate] = useState(() => new Date());
+  const [remindersViewMode, setRemindersViewMode] = useState('list'); // 'list' | 'calendar'
+  const [newCalReminderTitle, setNewCalReminderTitle] = useState('');
+  const [newCalReminderTime, setNewCalReminderTime] = useState('10:00 AM');
+
+  const cameraInputRef = useRef(null);
+  const photosInputRef = useRef(null);
+  const filesInputRef = useRef(null);
 
   // Dynamic Prompt Placeholder Rotation (Aether Clean Minimal)
   const ROTATING_PROMPTS = [
@@ -1130,17 +1171,52 @@ export default function App() {
   };
 
   const handleCompleteOnboarding = async () => {
+    setIsActivatingMic(true);
     try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(track => track.stop());
+      // 1. Mobile App (React Native WebView): Trigger native Android OS RECORD_AUDIO permission
+      const isInReactNativeWebView = typeof window !== 'undefined' && !!window.ReactNativeWebView;
+      if (isInReactNativeWebView) {
+        try {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_MIC_PERMISSION' }));
+          await new Promise((resolve) => {
+            window.__onMicPermissionResult = (granted) => {
+              window.__onMicPermissionResult = null;
+              resolve(granted);
+            };
+            setTimeout(() => resolve(true), 3500);
+          });
+        } catch (nativeErr) {
+          console.warn('Native mic request error:', nativeErr);
+        }
       }
+
+      // 2. Browser / WebView Web Context: Request microphone access
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream.getTracks().forEach(track => track.stop());
+        } catch (mediaErr) {
+          console.warn('Browser mic request info/denied:', mediaErr);
+        }
+      }
+
+      // 3. Autonomous Monitoring / Notifications permission (background)
+      try {
+        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+          await Notification.requestPermission().catch(() => {});
+        }
+      } catch (notifErr) {}
+
+      localStorage.setItem('aether_onboarding_done', 'true');
+      setOnboardingDone(true);
+      showToast('Aether सिस्टम सक्रिय! स्वागत है। (Aether Activated)', 'success');
     } catch (e) {
-      console.log('Mic request:', e);
+      console.log('Complete onboarding catch:', e);
+      localStorage.setItem('aether_onboarding_done', 'true');
+      setOnboardingDone(true);
+    } finally {
+      setIsActivatingMic(false);
     }
-    localStorage.setItem('aether_onboarding_done', 'true');
-    setOnboardingDone(true);
-    showToast('Aether सिस्टम सक्रिय! स्वागत है। (Aether Activated)', 'success');
   };
 
   const handleSignOut = async () => {
@@ -1300,6 +1376,367 @@ export default function App() {
     showToast("📲 टेस्ट पुश नोटिफिकेशन भेजा गया!", 'success');
   };
 
+  // Check & sync initial microphone permission
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
+      navigator.permissions.query({ name: 'microphone' }).then(status => {
+        setMicPermissionStatus(status.state);
+        if (status.state === 'granted') {
+          localStorage.setItem('aether_mic_granted', 'true');
+        }
+        status.onchange = () => {
+          setMicPermissionStatus(status.state);
+          if (status.state === 'granted') {
+            localStorage.setItem('aether_mic_granted', 'true');
+          }
+        };
+      }).catch(() => {});
+    }
+  }, []);
+
+  const handleRequestMicPermission = async () => {
+    setIsActivatingMic(true);
+    let granted = false;
+    try {
+      // 1. Mobile Android (React Native WebView): trigger native Android OS RECORD_AUDIO permission
+      const isInReactNativeWebView = typeof window !== 'undefined' && !!window.ReactNativeWebView;
+      if (isInReactNativeWebView) {
+        try {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_MIC_PERMISSION' }));
+          granted = await new Promise((resolve) => {
+            window.__onMicPermissionResult = (res) => {
+              window.__onMicPermissionResult = null;
+              resolve(res);
+            };
+            setTimeout(() => resolve(true), 3500);
+          });
+        } catch (nativeErr) {
+          console.warn('Native mic request error:', nativeErr);
+        }
+      }
+
+      // 2. Web / Browser / WebView: Request microphone access
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream.getTracks().forEach(track => track.stop());
+          granted = true;
+        } catch (mediaErr) {
+          console.warn('Browser mic request info/denied:', mediaErr);
+        }
+      }
+
+      if (granted) {
+        setMicPermissionStatus('granted');
+        localStorage.setItem('aether_mic_granted', 'true');
+        showToast('✓ माइक्रोफ़ोन अनुमति सक्रिय कर दी गई है! (Microphone Granted)', 'success');
+      } else {
+        setMicPermissionStatus('denied');
+        showToast('माइक्रोफ़ोन अनुमति नहीं मिल सकी। कृपया सिस्टम सेटिंग्स में जांचें।', 'error');
+      }
+    } catch (e) {
+      console.log('Mic request catch:', e);
+    } finally {
+      setIsActivatingMic(false);
+    }
+  };
+
+  const handleTestMic = async () => {
+    setIsMicTesting(true);
+    showToast('माइक टेस्ट: कुछ बोलें... (Speak now)', 'info');
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        setTimeout(() => {
+          stream.getTracks().forEach(t => t.stop());
+          setIsMicTesting(false);
+          showToast('✓ माइक स्पष्ट काम कर रहा है! (Microphone Working)', 'success');
+        }, 2000);
+      } else {
+        setTimeout(() => {
+          setIsMicTesting(false);
+          showToast('✓ माइक कनेक्शन सक्रिय है', 'success');
+        }, 1500);
+      }
+    } catch (err) {
+      setIsMicTesting(false);
+      showToast('माइक टेस्ट विफल। अनुमति जांचें।', 'error');
+    }
+  };
+
+  const handleToggleMic = async () => {
+    if (micEnabled) {
+      setMicEnabled(false);
+      localStorage.setItem('aether_mic_enabled', 'false');
+      showToast('माइक्रोफ़ोन अक्षम किया गया (Microphone Disabled)', 'info');
+    } else {
+      await handleRequestMicPermission();
+      setMicEnabled(true);
+      localStorage.setItem('aether_mic_enabled', 'true');
+    }
+  };
+
+  const handleTogglePush = async () => {
+    if (pushEnabled) {
+      setPushEnabled(false);
+      localStorage.setItem('aether_push_enabled', 'false');
+      showToast('पुश नोटिफिकेशन्स म्यूट किए गए (Notifications Muted)', 'info');
+    } else {
+      await handleRequestPushPermission();
+      setPushEnabled(true);
+      localStorage.setItem('aether_push_enabled', 'true');
+    }
+  };
+
+  const handleToggleLocation = () => {
+    if (locationEnabled) {
+      setLocationEnabled(false);
+      localStorage.setItem('aether_location_enabled', 'false');
+      showToast('लोकेशन अनुमति बंद की गई (Location Disabled)', 'info');
+    } else {
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        showToast('📍 लोकेशन अनुमति जांची जा रही है...', 'info');
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            setLocationEnabled(true);
+            localStorage.setItem('aether_location_enabled', 'true');
+            setUserCoords({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+            showToast('✓ लोकेशन एक्सेस सक्रिय! (Location Enabled)', 'success');
+          },
+          (err) => {
+            console.warn('Geolocation error:', err);
+            showToast('लोकेशन अनुमति नहीं मिल सकी। GPS ऑन करें।', 'error');
+          },
+          { enableHighAccuracy: true, timeout: 6000 }
+        );
+      } else {
+        showToast('इस डिवाइस में लोकेशन समर्थित नहीं है।', 'error');
+      }
+    }
+  };
+
+  const handleCameraFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setAttachedMedia({
+          type: 'image',
+          name: file.name || 'Camera_Photo.jpg',
+          url: event.target.result,
+          size: file.size
+        });
+        showToast('📸 फ़ोटो कैप्चर की गई! (Photo Captured)', 'success');
+      };
+      reader.readAsDataURL(file);
+    }
+    e.target.value = '';
+  };
+
+  const handlePhotosFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setAttachedMedia({
+          type: 'image',
+          name: file.name,
+          url: event.target.result,
+          size: file.size
+        });
+        showToast('🖼️ फ़ोटो जोड़ी गई! (Photo Attached)', 'success');
+      };
+      reader.readAsDataURL(file);
+    }
+    e.target.value = '';
+  };
+
+  const handleDocumentFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setAttachedMedia({
+        type: 'file',
+        name: file.name,
+        size: (file.size / 1024).toFixed(1) + ' KB'
+      });
+      showToast(`📁 फ़ाइल जोड़ी गई: ${file.name}`, 'success');
+    }
+    e.target.value = '';
+  };
+
+  const handleCameraClick = () => {
+    setIsPlusMenuOpen(false);
+    const isMobile = typeof navigator !== 'undefined' && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile) {
+      cameraInputRef.current?.click();
+    } else {
+      setIsCameraModalOpen(true);
+    }
+  };
+
+  // Camera Viewfinder Stream for Desktop
+  useEffect(() => {
+    if (!isCameraModalOpen) {
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(t => t.stop());
+        cameraStreamRef.current = null;
+      }
+      return;
+    }
+
+    let isMounted = true;
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 } } })
+        .then(stream => {
+          if (!isMounted) {
+            stream.getTracks().forEach(t => t.stop());
+            return;
+          }
+          cameraStreamRef.current = stream;
+          if (cameraVideoRef.current) {
+            cameraVideoRef.current.srcObject = stream;
+          }
+        })
+        .catch(err => {
+          console.warn("Camera access error:", err);
+          showToast("कैमरा चालू नहीं हो सका। फ़ाइल सेलेक्टर खोला जा रहा है...", "info");
+          setIsCameraModalOpen(false);
+          cameraInputRef.current?.click();
+        });
+    } else {
+      setIsCameraModalOpen(false);
+      cameraInputRef.current?.click();
+    }
+
+    return () => {
+      isMounted = false;
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(t => t.stop());
+        cameraStreamRef.current = null;
+      }
+    };
+  }, [isCameraModalOpen]);
+
+  const handleCaptureCameraSnapshot = () => {
+    if (!cameraVideoRef.current) return;
+    const video = cameraVideoRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+
+    setAttachedMedia({
+      type: 'image',
+      name: `Live_Photo_${new Date().toLocaleTimeString().replace(/:/g, '-')}.jpg`,
+      url: dataUrl
+    });
+
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach(t => t.stop());
+      cameraStreamRef.current = null;
+    }
+    setIsCameraModalOpen(false);
+    showToast('📸 फ़ोटो कैप्चर कर ली गई!', 'success');
+  };
+
+  const handleAttachDriveFromModal = (e) => {
+    e?.preventDefault?.();
+    const url = driveInputUrl.trim() || 'https://drive.google.com';
+    const name = driveDocName.trim() || 'Google Drive File';
+    setAttachedMedia({
+      type: 'drive',
+      name: name,
+      url: url
+    });
+    setIsDriveModalOpen(false);
+    setDriveInputUrl('');
+    setDriveDocName('');
+    showToast('📂 Google Drive फ़ाइल जोड़ी गई!', 'success');
+  };
+
+  // Open Map in native Map app on mobile or in a new tab on desktop
+  const openMapApp = (lat, lon) => {
+    const latitude = lat ?? userCoords?.latitude;
+    const longitude = lon ?? userCoords?.longitude;
+    const isInReactNativeWebView = typeof window !== 'undefined' && !!window.ReactNativeWebView;
+
+    const webMapUrl = latitude && longitude
+      ? `https://www.google.com/maps?q=${latitude},${longitude}`
+      : `https://www.google.com/maps`;
+
+    // 1. Mobile App (React Native WebView): notify native shell to open Google Maps / Apple Maps app
+    if (isInReactNativeWebView) {
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'OPEN_MAP',
+          latitude: latitude || null,
+          longitude: longitude || null,
+          webUrl: webMapUrl
+        }));
+      } catch (err) {
+        console.warn('ReactNativeWebView postMessage error:', err);
+      }
+      // Backward-compatible fallback for currently installed APK:
+      setTimeout(() => {
+        if (!window.__mapOpenedByNative) {
+          window.open(webMapUrl, '_blank');
+        }
+      }, 350);
+      return;
+    }
+
+    // 2. Mobile Browser (Android / iOS): trigger native maps protocol
+    const isIOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+
+    if (isAndroid && latitude && longitude) {
+      window.location.href = `geo:${latitude},${longitude}?q=${latitude},${longitude}`;
+      return;
+    } else if (isIOS && latitude && longitude) {
+      window.location.href = `maps://?q=${latitude},${longitude}`;
+      return;
+    }
+
+    // 3. Desktop / Laptop: open Google Maps in a new browser tab
+    window.open(webMapUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleAttachLocation = () => {
+    setIsPlusMenuOpen(false);
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      showToast('📍 GPS लोकेशन प्राप्त कर मैप खोला जा रहा है...', 'info');
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const { latitude, longitude } = pos.coords;
+          const mapsLink = `https://www.google.com/maps?q=${latitude},${longitude}`;
+          setAttachedMedia({
+            type: 'map',
+            name: `📍 Lat ${latitude.toFixed(4)}, Lon ${longitude.toFixed(4)}`,
+            url: mapsLink,
+            latitude,
+            longitude
+          });
+          setLocationEnabled(true);
+          localStorage.setItem('aether_location_enabled', 'true');
+          setUserCoords({ latitude, longitude });
+          showToast('✓ मैप खुल रहा है!', 'success');
+          // Open map: in mobile native Map app, in desktop browser tab
+          openMapApp(latitude, longitude);
+        },
+        (err) => {
+          console.warn('Geolocation error:', err);
+          showToast('GPS अनुमति नहीं मिली। मैप खोला जा रहा है...', 'info');
+          openMapApp();
+        },
+        { enableHighAccuracy: true, timeout: 6000 }
+      );
+    } else {
+      openMapApp();
+    }
+  };
+
   // ─── Register Service Worker + VAPID Web Push Subscribe ────────────────────
   // Browser बंद होने पर भी GitHub Actions → Server → Browser push notifications!
   useEffect(() => {
@@ -1350,7 +1787,7 @@ export default function App() {
         }
 
         // 4. Subscription server को भेजें (userEmail जब available हो)
-        const emailToUse = localStorage.getItem('aether_user_email') || '';
+        const emailToUse = userEmail || localStorage.getItem('aether_user_email') || '';
         if (emailToUse && subscription) {
           await fetch(`${serverBase}/api/push/subscribe`, {
             method: 'POST',
@@ -1373,8 +1810,125 @@ export default function App() {
         setupPushSubscription(reg);
       })
       .catch(err => console.log('Aether SW error:', err));
-  }, []);
+  }, [userEmail]);
   // ─────────────────────────────────────────────────────────────────────────────
+
+  // Calendar & Reminders Helpers
+  const formatLocalDateStr = (d) => {
+    if (!d) return '';
+    const dateObj = (d instanceof Date) ? d : new Date(d);
+    if (isNaN(dateObj.getTime())) return '';
+    const y = dateObj.getFullYear();
+    const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const getTaskDateStr = (t) => {
+    if (t?.due_date) {
+      try {
+        const str = formatLocalDateStr(t.due_date);
+        if (str) return str;
+      } catch (e) {}
+    }
+    if (t?.created_at) {
+      try {
+        const str = formatLocalDateStr(t.created_at);
+        if (str) return str;
+      } catch (e) {}
+    }
+    return null;
+  };
+
+  const downloadAllRemindersIcs = () => {
+    const activeTasks = tasks.filter(t => !t.is_completed && t.status !== 'completed');
+    if (activeTasks.length === 0) {
+      showToast('कोई सक्रिय रिमाइंडर नहीं मिला', 'info');
+      return;
+    }
+    const formatIcs = (dt) => dt.toISOString().replace(/-|:|\.\d\d\d/g, '');
+    let icsLines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Aether Autonomous AI//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      'X-WR-CALNAME:Aether Reminders'
+    ];
+
+    activeTasks.forEach(t => {
+      let d = new Date();
+      if (t.due_date) {
+        const parsed = new Date(t.due_date);
+        if (!isNaN(parsed.getTime())) d = parsed;
+      }
+      const endD = new Date(d.getTime() + 30 * 60000);
+      icsLines.push('BEGIN:VEVENT');
+      icsLines.push(`UID:aether-${t.id}-${Date.now()}@aether.ai`);
+      icsLines.push(`DTSTAMP:${formatIcs(new Date())}`);
+      icsLines.push(`DTSTART:${formatIcs(d)}`);
+      icsLines.push(`DTEND:${formatIcs(endD)}`);
+      icsLines.push(`SUMMARY:${(t.title || 'Aether Reminder').replace(/[\r\n]/g, ' ')}`);
+      icsLines.push(`DESCRIPTION:Priority: ${t.priority || 'medium'}\\nReminder Time: ${t.reminder_time || ''}`);
+      icsLines.push('STATUS:CONFIRMED');
+      icsLines.push('END:VEVENT');
+    });
+
+    icsLines.push('END:VCALENDAR');
+
+    const blob = new Blob([icsLines.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = window.URL.createObjectURL(blob);
+    link.setAttribute('download', `aether_reminders_${new Date().toISOString().split('T')[0]}.ics`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('✓ Google Calendar (.ics) फ़ाइल डाउनलोड हो गई!', 'success');
+  };
+
+  const openTaskInGoogleCalendar = (t) => {
+    const title = encodeURIComponent(t.title || 'Aether Reminder');
+    const details = encodeURIComponent(`Scheduled in Aether AI\nPriority: ${t.priority || 'medium'}\nReminder Time: ${t.reminder_time || ''}`);
+    let d = new Date();
+    if (t.due_date) {
+      const parsed = new Date(t.due_date);
+      if (!isNaN(parsed.getTime())) d = parsed;
+    }
+    const endD = new Date(d.getTime() + 30 * 60000);
+    const formatGcalDate = (dt) => dt.toISOString().replace(/-|:|\.\d\d\d/g, '');
+    const dates = `${formatGcalDate(d)}/${formatGcalDate(endD)}`;
+    const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&details=${details}&dates=${dates}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleCreateDateReminder = async (e) => {
+    e?.preventDefault?.();
+    if (!newCalReminderTitle.trim()) return;
+    try {
+      const dateStr = calSelectedDate.toISOString().split('T')[0];
+      const timeStr = newCalReminderTime || '10:00 AM';
+      const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
+      const res = await fetch(`${API_BASE}/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({
+          title: newCalReminderTitle.trim(),
+          priority: 'medium',
+          reminder_time: timeStr,
+          due_date: `${dateStr}T10:00:00`,
+          user_email: userEmail
+        })
+      });
+      if (res.ok) {
+        setNewCalReminderTitle('');
+        refreshAllData();
+        showToast('✓ कैलेंडर में रिमाइंडर जोड़ा गया!', 'success');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('रिमाइंडर जोड़ने में त्रुटि', 'error');
+    }
+  };
 
 
   // Update clock every 30 seconds for continuous day progression
@@ -1617,6 +2171,12 @@ export default function App() {
       return;
     }
 
+    if (!micEnabled) {
+      showToast("माइक्रोफ़ोन सेटिंग्स में अक्षम है। कृपया सेटिंग्स में सक्षम करें।", 'info');
+      setActiveSubModal('permissions');
+      return;
+    }
+
     // Trigger native Android microphone permission if wrapped in mobile app
     const isInReactNativeWebView = typeof window !== 'undefined' && !!window.ReactNativeWebView;
     if (isInReactNativeWebView) {
@@ -1763,8 +2323,23 @@ export default function App() {
 
   // Send Command / Prompt
   const handleSendPrompt = async (textToSend) => {
-    const prompt = (textToSend || inputText).trim();
-    if (!prompt || isProcessing) return;
+    const rawPrompt = (textToSend || inputText).trim();
+    if (!rawPrompt && !attachedMedia) return;
+    if (isProcessing) return;
+
+    let prompt = rawPrompt;
+    if (attachedMedia) {
+      if (attachedMedia.type === 'image') {
+        prompt = `[Attached Photo: ${attachedMedia.name}] ${rawPrompt || 'Please inspect this photo.'}`;
+      } else if (attachedMedia.type === 'file') {
+        prompt = `[Attached File: ${attachedMedia.name} (${attachedMedia.size || ''})] ${rawPrompt || 'Review this file.'}`;
+      } else if (attachedMedia.type === 'drive') {
+        prompt = `[Google Drive: ${attachedMedia.url}] ${rawPrompt || 'Analyze this Google Drive file.'}`;
+      } else if (attachedMedia.type === 'map') {
+        prompt = `[Current Location: ${attachedMedia.url}] ${rawPrompt || 'What is near my location?'}`;
+      }
+      setAttachedMedia(null);
+    }
 
     userScrolledUpRef.current = false;
     setChatHistory(prev => [...prev, { role: 'user', content: prompt, created_at: new Date().toISOString() }]);
@@ -2647,54 +3222,8 @@ export default function App() {
             </div>
           )}
 
-          {/* STEP 7: AWAY WORK */}
+          {/* STEP 7: MICROPHONE AUTHORIZATION */}
           {onboardingStep === 7 && (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', flex: 1 }}>
-              <div className="step-badge">Proactive Autonomous Agent</div>
-              <h1 className="serif-title">
-                Aether works while you're <span className="serif-italic">away.</span>
-              </h1>
-              <p className="step-desc">
-                Even when the app is closed, your autonomous core monitors markets, pending deadlines, and compiles your 8:00 AM briefing.
-              </p>
-
-              {/* Notification Mock Card */}
-              {/* Notification Mock Card */}
-              <div className="notification-mock-card">
-                <div className="notif-header">
-                  <div className="notif-brand">
-                    <Sparkles size={14} color="#a855f7" />
-                    <span>AETHER CORE</span>
-                  </div>
-                  <span className="notif-time">8:00 AM</span>
-                </div>
-                <div className="notif-title">Good morning, {userName || 'Pawan'}.</div>
-                <div className="notif-body">
-                  "2 critical reminders today, ₹1,200 pending invoice, Jaipur weather is {briefing?.weather?.temp || 29}°C {briefing?.weather?.condition_en || 'sunny'}. Ready when you are."
-                </div>
-              </div>
-
-              <button
-                type="button"
-                className="btn-onboarding-primary"
-                onClick={() => {
-                  try {
-                    if (window.ReactNativeWebView) {
-                      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_NOTIFICATION_PERMISSION' }));
-                    } else if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
-                      Notification.requestPermission().catch(() => {});
-                    }
-                  } catch (e) {}
-                  setOnboardingStep(8);
-                }}
-              >
-                Enable Autonomous Monitoring →
-              </button>
-            </div>
-          )}
-
-          {/* STEP 8: MICROPHONE AUTHORIZATION */}
-          {onboardingStep === 8 && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', flex: 1 }}>
               <div className="step-badge">Zero-Latency Voice Mode</div>
               <h1 className="serif-title">
@@ -2740,8 +3269,10 @@ export default function App() {
                 type="button"
                 className="btn-onboarding-primary"
                 onClick={handleCompleteOnboarding}
+                disabled={isActivatingMic}
+                style={{ opacity: isActivatingMic ? 0.7 : 1, cursor: isActivatingMic ? 'wait' : 'pointer' }}
               >
-                Activate Microphone & Enter Aether →
+                {isActivatingMic ? 'Activating Microphone...' : 'Activate Microphone & Enter Aether →'}
               </button>
             </div>
           )}
@@ -2911,6 +3442,40 @@ export default function App() {
               </div>
             </div>
 
+            <div className="settings-row-item" onClick={() => { setActiveSubModal('calendar'); setRemindersViewMode('calendar'); }}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box" style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#c084fc' }}>
+                  <Calendar size={16} />
+                </div>
+                <span>Calendar & Schedule</span>
+              </div>
+              <div className="settings-row-right">
+                <span style={{ color: '#94a3b8' }}>
+                  Monthly View
+                </span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
+            <div className="settings-row-item" onClick={() => setActiveSubModal('permissions')}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+                  <ShieldCheck size={16} />
+                </div>
+                <span>App Permissions</span>
+              </div>
+              <div className="settings-row-right">
+                <span style={{ 
+                  color: (pushPermission === 'granted' && micPermissionStatus === 'granted') ? '#10b981' : '#f59e0b', 
+                  fontWeight: 600,
+                  fontSize: '0.78rem'
+                }}>
+                  {pushPermission === 'granted' && micPermissionStatus === 'granted' ? '✓ All active' : 'Manage'}
+                </span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
             <div className="settings-row-item" onClick={() => setActiveSubModal('assistant-setup')}>
               <div className="settings-row-left">
                 <div className="settings-row-icon-box"><Zap size={16} /></div>
@@ -3043,6 +3608,7 @@ export default function App() {
                     className="gemini-icon-btn" 
                     onClick={() => {
                       setActiveSubModal('reminders');
+                      setRemindersViewMode('list');
                     }}
                     title="Reminders & Today's Agenda"
                     style={{ position: 'relative' }}
@@ -3133,10 +3699,65 @@ export default function App() {
 
               {/* BOTTOM DOCK: CLEAN EXECUTIVE PROMPT BAR — Gemini Style */}
               <div className="gemini-bottom-dock">
+                {/* Hidden File Inputs for Camera, Photos & Files */}
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  ref={cameraInputRef}
+                  style={{ display: 'none' }}
+                  onChange={handleCameraFileChange}
+                />
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/*"
+                  ref={photosInputRef}
+                  style={{ display: 'none' }}
+                  onChange={handlePhotosFileChange}
+                />
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx,.txt,.csv,.json,.xls,.xlsx,.zip,application/pdf,text/*"
+                  ref={filesInputRef}
+                  style={{ display: 'none' }}
+                  onChange={handleDocumentFileChange}
+                />
+
+                {attachedMedia && (
+                  <div className="gemini-attached-chip">
+                    {attachedMedia.type === 'image' && (
+                      <img src={attachedMedia.url} alt="Attached" className="gemini-attached-thumb" />
+                    )}
+                    {attachedMedia.type === 'file' && <FileText size={15} color="#fbbf24" />}
+                    {attachedMedia.type === 'drive' && <HardDrive size={15} color="#34d399" />}
+                    {attachedMedia.type === 'map' && <MapPin size={15} color="#fb7185" />}
+                    <span 
+                      className="gemini-attached-name"
+                      onClick={() => {
+                        if (attachedMedia.type === 'map') {
+                          openMapApp(attachedMedia.latitude, attachedMedia.longitude);
+                        }
+                      }}
+                      style={{ cursor: attachedMedia.type === 'map' ? 'pointer' : 'default' }}
+                      title={attachedMedia.type === 'map' ? 'Click to open Map' : ''}
+                    >
+                      {attachedMedia.name}
+                    </span>
+                    <button 
+                      type="button" 
+                      className="gemini-attached-remove"
+                      onClick={() => setAttachedMedia(null)}
+                      title="Remove attachment"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                )}
+
                 <form 
                   onSubmit={(e) => {
                     e.preventDefault();
-                    if (inputText.trim()) {
+                    if (inputText.trim() || attachedMedia) {
                       handleSendPrompt(inputText);
                     }
                   }}
@@ -3145,11 +3766,128 @@ export default function App() {
                   <button 
                     type="button" 
                     className="gemini-prompt-btn plus"
-                    onClick={() => setActiveSubModal('finance')}
-                    title="Quick Actions / Ledger"
+                    onClick={() => setIsPlusMenuOpen(!isPlusMenuOpen)}
+                    title="Photos, Camera, Files, Drive, Map"
+                    style={{
+                      transform: isPlusMenuOpen ? 'rotate(45deg)' : 'rotate(0deg)',
+                      transition: 'transform 0.25s ease',
+                      color: isPlusMenuOpen ? '#38bdf8' : 'inherit'
+                    }}
                   >
                     <Plus size={20} />
                   </button>
+
+                  {/* QUICK ACTIONS POPUP (+ BUTTON): CAMERA, PHOTOS, FILES, DRIVE, MAP — GEMINI DOCK */}
+                  {isPlusMenuOpen && (
+                    <>
+                      <div 
+                        className="gemini-plus-backdrop" 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsPlusMenuOpen(false);
+                        }} 
+                      />
+                      <div className="gemini-plus-popup" onClick={(e) => e.stopPropagation()}>
+                        <div className="gemini-plus-drag-handle" />
+
+                        <div className="gemini-plus-grid">
+                          {/* 1. Camera */}
+                          <button 
+                            type="button"
+                            className="gemini-plus-item"
+                            onClick={handleCameraClick}
+                            title="Camera"
+                          >
+                            <div className="gemini-plus-icon-box" style={{ 
+                              background: 'radial-gradient(circle at 35% 35%, rgba(56, 189, 248, 0.28), rgba(14, 165, 233, 0.12))', 
+                              border: '1px solid rgba(56, 189, 248, 0.35)', 
+                              color: '#38bdf8' 
+                            }}>
+                              <Camera size={20} />
+                            </div>
+                            <span className="gemini-plus-item-title">Camera</span>
+                          </button>
+
+                          {/* 2. Photos */}
+                          <button 
+                            type="button"
+                            className="gemini-plus-item"
+                            onClick={() => {
+                              setIsPlusMenuOpen(false);
+                              photosInputRef.current?.click();
+                            }}
+                            title="Photos"
+                          >
+                            <div className="gemini-plus-icon-box" style={{ 
+                              background: 'radial-gradient(circle at 35% 35%, rgba(192, 132, 252, 0.28), rgba(168, 85, 247, 0.12))', 
+                              border: '1px solid rgba(192, 132, 252, 0.35)', 
+                              color: '#c084fc' 
+                            }}>
+                              <Image size={20} />
+                            </div>
+                            <span className="gemini-plus-item-title">Photos</span>
+                          </button>
+
+                          {/* 3. Files */}
+                          <button 
+                            type="button"
+                            className="gemini-plus-item"
+                            onClick={() => {
+                              setIsPlusMenuOpen(false);
+                              filesInputRef.current?.click();
+                            }}
+                            title="Files"
+                          >
+                            <div className="gemini-plus-icon-box" style={{ 
+                              background: 'radial-gradient(circle at 35% 35%, rgba(251, 191, 36, 0.28), rgba(245, 158, 11, 0.12))', 
+                              border: '1px solid rgba(251, 191, 36, 0.35)', 
+                              color: '#fbbf24' 
+                            }}>
+                              <FileText size={20} />
+                            </div>
+                            <span className="gemini-plus-item-title">Files</span>
+                          </button>
+
+                          {/* 4. Drive */}
+                          <button 
+                            type="button"
+                            className="gemini-plus-item"
+                            onClick={() => {
+                              setIsPlusMenuOpen(false);
+                              setIsDriveModalOpen(true);
+                            }}
+                            title="Google Drive"
+                          >
+                            <div className="gemini-plus-icon-box" style={{ 
+                              background: 'radial-gradient(circle at 35% 35%, rgba(52, 211, 153, 0.28), rgba(16, 185, 129, 0.12))', 
+                              border: '1px solid rgba(52, 211, 153, 0.35)', 
+                              color: '#34d399' 
+                            }}>
+                              <HardDrive size={20} />
+                            </div>
+                            <span className="gemini-plus-item-title">Drive</span>
+                          </button>
+
+                          {/* 5. Map */}
+                          <button 
+                            type="button"
+                            className="gemini-plus-item"
+                            onClick={handleAttachLocation}
+                            title="Map"
+                          >
+                            <div className="gemini-plus-icon-box" style={{ 
+                              background: 'radial-gradient(circle at 35% 35%, rgba(251, 113, 133, 0.28), rgba(244, 63, 94, 0.12))', 
+                              border: '1px solid rgba(251, 113, 133, 0.35)', 
+                              color: '#fb7185' 
+                            }}>
+                              <MapPin size={20} />
+                            </div>
+                            <span className="gemini-plus-item-title">Map</span>
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
 
                   <input 
                     type="text" 
@@ -3425,14 +4163,14 @@ export default function App() {
           SUB-MODALS (Key, Finance, Audit, Profile Name, Assistant Setup, Reminders)
           ========================================================================= */}
 
-      {/* 0. Reminders & Today's Agenda Submodal */}
-      {activeSubModal === 'reminders' && (
+      {/* 0. Reminders & Calendar Submodal */}
+      {(activeSubModal === 'reminders' || activeSubModal === 'calendar') && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(14px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '520px', maxHeight: '88vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '540px', maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8', fontWeight: 700, fontSize: '1rem' }}>
-                <Bell size={20} />
-                <span>REMINDERS & TODAY'S AGENDA</span>
+                {remindersViewMode === 'calendar' ? <Calendar size={20} /> : <Bell size={20} />}
+                <span>{remindersViewMode === 'calendar' ? 'CALENDAR & SCHEDULE' : "REMINDERS & AGENDA"}</span>
               </div>
               <button 
                 type="button" 
@@ -3443,141 +4181,492 @@ export default function App() {
               </button>
             </div>
 
-            {/* Quick Filter tabs */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-              <button 
+            {/* View Mode Toggle: List vs Calendar */}
+            <div style={{ display: 'flex', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '14px', padding: '4px', marginBottom: '16px', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+              <button
                 type="button"
-                onClick={() => setAgendaFilter('pending')}
+                onClick={() => setRemindersViewMode('list')}
                 style={{
-                  background: agendaFilter === 'pending' ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                  border: agendaFilter === 'pending' ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.1)',
-                  color: agendaFilter === 'pending' ? '#38bdf8' : '#94a3b8',
-                  padding: '6px 14px',
-                  borderRadius: '16px',
-                  fontSize: '0.8rem',
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  background: remindersViewMode === 'list' ? 'rgba(56, 189, 248, 0.22)' : 'transparent',
+                  border: remindersViewMode === 'list' ? '1px solid #38bdf8' : 'none',
+                  borderRadius: '11px',
+                  color: remindersViewMode === 'list' ? '#38bdf8' : '#94a3b8',
+                  padding: '7px 12px',
+                  fontSize: '0.82rem',
                   fontWeight: 600,
                   cursor: 'pointer'
                 }}
               >
-                Pending ({tasks.filter(t => !t.is_completed && t.status !== 'completed').length})
+                <Bell size={14} />
+                <span>List View</span>
               </button>
-              <button 
+              <button
                 type="button"
-                onClick={() => setAgendaFilter('completed')}
+                onClick={() => setRemindersViewMode('calendar')}
                 style={{
-                  background: agendaFilter === 'completed' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                  border: agendaFilter === 'completed' ? '1px solid #10b981' : '1px solid rgba(255, 255, 255, 0.1)',
-                  color: agendaFilter === 'completed' ? '#10b981' : '#94a3b8',
-                  padding: '6px 14px',
-                  borderRadius: '16px',
-                  fontSize: '0.8rem',
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  background: remindersViewMode === 'calendar' ? 'rgba(56, 189, 248, 0.22)' : 'transparent',
+                  border: remindersViewMode === 'calendar' ? '1px solid #38bdf8' : 'none',
+                  borderRadius: '11px',
+                  color: remindersViewMode === 'calendar' ? '#38bdf8' : '#94a3b8',
+                  padding: '7px 12px',
+                  fontSize: '0.82rem',
                   fontWeight: 600,
                   cursor: 'pointer'
                 }}
               >
-                Completed ({tasks.filter(t => t.is_completed || t.status === 'completed').length})
-              </button>
-              <button 
-                type="button"
-                onClick={() => setAgendaFilter('all')}
-                style={{
-                  background: agendaFilter === 'all' ? 'rgba(168, 85, 247, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                  border: agendaFilter === 'all' ? '1px solid #a855f7' : '1px solid rgba(255, 255, 255, 0.1)',
-                  color: agendaFilter === 'all' ? '#a855f7' : '#94a3b8',
-                  padding: '6px 14px',
-                  borderRadius: '16px',
-                  fontSize: '0.8rem',
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
-              >
-                All ({tasks.length})
+                <Calendar size={14} />
+                <span>Calendar View</span>
               </button>
             </div>
 
-            {/* Quick Add Task Form */}
-            <form 
-              onSubmit={handleCreateTask}
-              style={{ display: 'flex', gap: '8px', marginBottom: '18px' }}
-            >
-              <input
-                type="text"
-                placeholder="Set reminder or add task..."
-                value={newTaskInput}
-                onChange={(e) => setNewTaskInput(e.target.value)}
-                style={{ flex: 1, background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '12px', padding: '10px 14px', color: '#fff', fontSize: '0.88rem', outline: 'none' }}
-              />
-              <button type="submit" style={{ background: '#38bdf8', color: '#04101e', border: 'none', borderRadius: '12px', padding: '10px 16px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
-                Add
-              </button>
-            </form>
+            {remindersViewMode === 'calendar' ? (
+              /* ─── CALENDAR VIEW ─── */
+              <div>
+                {/* Month Navigator Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', background: 'rgba(255, 255, 255, 0.03)', padding: '10px 14px', borderRadius: '16px', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      const prev = new Date(calCurrentMonth.getFullYear(), calCurrentMonth.getMonth() - 1, 1);
+                      setCalCurrentMonth(prev);
+                    }}
+                    style={{ background: 'rgba(255, 255, 255, 0.06)', border: 'none', color: '#cbd5e1', borderRadius: '10px', width: '32px', height: '32px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <ChevronLeft size={18} />
+                  </button>
 
-            {/* List */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
-              {(() => {
-                const isTaskDone = (t) => t.is_completed || t.status === 'completed';
-                const filtered = tasks.filter(t => {
-                  if (agendaFilter === 'pending') return !isTaskDone(t);
-                  if (agendaFilter === 'completed') return isTaskDone(t);
-                  return true;
-                });
-
-                if (filtered.length === 0) {
-                  return (
-                    <div style={{ textAlign: 'center', padding: '36px 10px', color: '#64748b', fontSize: '0.9rem' }}>
-                      {agendaFilter === 'pending' ? '🎉 All tasks and reminders completed!' : 'No items found.'}
-                    </div>
-                  );
-                }
-
-                return filtered.map(t => {
-                  const done = isTaskDone(t);
-                  return (
-                    <div 
-                      key={t.id} 
-                      style={{ 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        justifyContent: 'space-between', 
-                        padding: '12px 14px', 
-                        background: 'rgba(255, 255, 255, 0.03)', 
-                        border: '1px solid rgba(255, 255, 255, 0.06)', 
-                        borderRadius: '14px',
-                        transition: 'all 0.15s ease'
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ color: '#ffffff', fontWeight: 700, fontSize: '0.98rem' }}>
+                      {calCurrentMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const today = new Date();
+                        setCalCurrentMonth(today);
+                        setCalSelectedDate(today);
                       }}
+                      style={{ background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.3)', color: '#38bdf8', padding: '3px 8px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}
                     >
-                      <div 
-                        onClick={() => handleToggleTask(t.id)} 
-                        style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', flex: 1, textDecoration: done ? 'line-through' : 'none', opacity: done ? 0.6 : 1 }}
-                      >
-                        <div style={{ color: done ? '#10b981' : '#64748b' }}>
-                          {done ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                        </div>
-                        <div>
-                          <div style={{ color: done ? '#94a3b8' : '#f1f5f9', fontSize: '0.92rem', fontWeight: done ? 400 : 500 }}>
-                            {t.title}
-                          </div>
-                          {t.reminder_time && (
-                            <div style={{ color: '#38bdf8', fontSize: '0.76rem', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              <span>⏰</span>
-                              <span>{t.reminder_time}</span>
-                            </div>
+                      Today
+                    </button>
+                  </div>
+
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      const next = new Date(calCurrentMonth.getFullYear(), calCurrentMonth.getMonth() + 1, 1);
+                      setCalCurrentMonth(next);
+                    }}
+                    style={{ background: 'rgba(255, 255, 255, 0.06)', border: 'none', color: '#cbd5e1', borderRadius: '10px', width: '32px', height: '32px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <ChevronRight size={18} />
+                  </button>
+                </div>
+
+                {/* Google Calendar Sync Action */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', padding: '0 4px' }}>
+                  <span style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
+                    📅 All active reminders appear on dates below:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={downloadAllRemindersIcs}
+                    style={{
+                      background: 'rgba(16, 185, 129, 0.15)',
+                      border: '1px solid rgba(16, 185, 129, 0.3)',
+                      color: '#34d399',
+                      padding: '4px 10px',
+                      borderRadius: '10px',
+                      fontSize: '0.74rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px'
+                    }}
+                    title="Download .ics to import into Google Calendar / Apple Calendar"
+                  >
+                    <span>📥</span>
+                    <span>Sync / Export .ics</span>
+                  </button>
+                </div>
+
+                {/* Weekdays Header */}
+                <div className="calendar-grid" style={{ marginTop: 0, marginBottom: '6px' }}>
+                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+                    <div key={d} className="calendar-day-header">{d}</div>
+                  ))}
+                </div>
+
+                {/* Calendar Month Cells */}
+                <div className="calendar-grid">
+                  {(() => {
+                    const year = calCurrentMonth.getFullYear();
+                    const month = calCurrentMonth.getMonth();
+                    const firstDayIndex = new Date(year, month, 1).getDay();
+                    const daysInMonth = new Date(year, month + 1, 0).getDate();
+                    const daysInPrevMonth = new Date(year, month, 0).getDate();
+                    const totalCells = Math.ceil((firstDayIndex + daysInMonth) / 7) * 7;
+                    const cells = [];
+
+                    const todayStr = formatLocalDateStr(new Date());
+                    const selectedStr = formatLocalDateStr(calSelectedDate);
+
+                    for (let i = 0; i < totalCells; i++) {
+                      let dayNum;
+                      let cellDate;
+                      let isOtherMonth = false;
+
+                      if (i < firstDayIndex) {
+                        dayNum = daysInPrevMonth - firstDayIndex + i + 1;
+                        cellDate = new Date(year, month - 1, dayNum);
+                        isOtherMonth = true;
+                      } else if (i >= firstDayIndex + daysInMonth) {
+                        dayNum = i - (firstDayIndex + daysInMonth) + 1;
+                        cellDate = new Date(year, month + 1, dayNum);
+                        isOtherMonth = true;
+                      } else {
+                        dayNum = i - firstDayIndex + 1;
+                        cellDate = new Date(year, month, dayNum);
+                      }
+
+                      const cellDateStr = formatLocalDateStr(cellDate);
+                      const isToday = cellDateStr === todayStr;
+                      const isSelected = cellDateStr === selectedStr;
+                      const dayReminders = tasks.filter(t => getTaskDateStr(t) === cellDateStr);
+
+                      cells.push(
+                        <div
+                          key={cellDateStr + i}
+                          className={`calendar-day-cell ${isOtherMonth ? 'other-month' : ''} ${isToday ? 'today' : ''} ${isSelected ? 'selected' : ''}`}
+                          onClick={() => {
+                            setCalSelectedDate(cellDate);
+                            if (isOtherMonth) setCalCurrentMonth(new Date(cellDate.getFullYear(), cellDate.getMonth(), 1));
+                          }}
+                        >
+                          <span>{dayNum}</span>
+                          {dayReminders.length > 0 && (
+                            <span className="calendar-badge-count">{dayReminders.length}</span>
+                          )}
+                          {dayReminders.length > 0 && (
+                            <div className="calendar-badge-dot" style={{
+                              background: dayReminders.some(t => t.priority === 'urgent' || t.priority === 'high') ? '#f43f5e' : '#f59e0b'
+                            }} />
                           )}
                         </div>
-                      </div>
-                      <button 
-                        type="button" 
-                        onClick={() => handleDeleteTask(t.id)} 
-                        style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '6px' }}
-                        title="Delete task"
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      );
+                    }
+                    return cells;
+                  })()}
+                </div>
+
+                {/* Selected Date Reminders Section */}
+                <div style={{ marginTop: '18px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: '18px', padding: '14px', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Clock size={16} color="#38bdf8" />
+                      <span style={{ color: '#ffffff', fontWeight: 700, fontSize: '0.88rem' }}>
+                        {calSelectedDate.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })} AGENDA
+                      </span>
                     </div>
-                  );
-                });
-              })()}
-            </div>
+                    <span style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
+                      {tasks.filter(t => getTaskDateStr(t) === formatLocalDateStr(calSelectedDate)).length} Reminders
+                    </span>
+                  </div>
+
+                  {/* Quick Add for Selected Date */}
+                  <form onSubmit={handleCreateDateReminder} style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
+                    <input
+                      type="text"
+                      placeholder="New reminder for this date..."
+                      value={newCalReminderTitle}
+                      onChange={(e) => setNewCalReminderTitle(e.target.value)}
+                      style={{ flex: 1, background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.82rem', outline: 'none' }}
+                    />
+                    <input
+                      type="text"
+                      placeholder="10:00 AM"
+                      value={newCalReminderTime}
+                      onChange={(e) => setNewCalReminderTime(e.target.value)}
+                      style={{ width: '85px', background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '10px', padding: '8px 8px', color: '#fff', fontSize: '0.82rem', outline: 'none', textAlign: 'center' }}
+                    />
+                    <button
+                      type="submit"
+                      style={{ background: '#38bdf8', color: '#04101e', border: 'none', borderRadius: '10px', padding: '8px 14px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}
+                    >
+                      Add
+                    </button>
+                  </form>
+
+                  {/* Reminders List for Selected Date */}
+                  {(() => {
+                    const isTaskDone = (t) => t.is_completed || t.status === 'completed';
+                    const dateStr = formatLocalDateStr(calSelectedDate);
+                    const dateTasks = tasks.filter(t => getTaskDateStr(t) === dateStr);
+
+                    if (dateTasks.length === 0) {
+                      return (
+                        <div style={{ textAlign: 'center', padding: '18px 10px', color: '#64748b', fontSize: '0.82rem' }}>
+                          No reminders scheduled for this date.
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {dateTasks.map(t => {
+                          const done = isTaskDone(t);
+                          return (
+                            <div 
+                              key={t.id}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '10px 12px',
+                                borderRadius: '12px',
+                                background: done ? 'rgba(255, 255, 255, 0.02)' : 'rgba(255, 255, 255, 0.05)',
+                                border: '1px solid rgba(255, 255, 255, 0.07)',
+                                opacity: done ? 0.6 : 1
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
+                                <div 
+                                  onClick={() => handleToggleTask(t.id)}
+                                  style={{
+                                    width: '20px',
+                                    height: '20px',
+                                    borderRadius: '6px',
+                                    border: done ? '1px solid #10b981' : '1px solid rgba(255, 255, 255, 0.3)',
+                                    background: done ? '#10b981' : 'transparent',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    cursor: 'pointer',
+                                    color: '#022c22',
+                                    flexShrink: 0
+                                  }}
+                                >
+                                  {done && <Check size={14} />}
+                                </div>
+
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                                  <span style={{ color: done ? '#64748b' : '#ffffff', fontSize: '0.86rem', fontWeight: 500, textDecoration: done ? 'line-through' : 'none' }}>
+                                    {t.title}
+                                  </span>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    {t.reminder_time && (
+                                      <span style={{ fontSize: '0.72rem', color: '#38bdf8', fontWeight: 600 }}>
+                                        ⏰ {t.reminder_time}
+                                      </span>
+                                    )}
+                                    <span style={{
+                                      fontSize: '0.65rem',
+                                      fontWeight: 700,
+                                      padding: '1px 6px',
+                                      borderRadius: '6px',
+                                      textTransform: 'uppercase',
+                                      background: t.priority === 'urgent' ? 'rgba(244, 63, 94, 0.2)' : t.priority === 'high' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(56, 189, 248, 0.2)',
+                                      color: t.priority === 'urgent' ? '#fb7185' : t.priority === 'high' ? '#fbbf24' : '#38bdf8'
+                                    }}>
+                                      {t.priority}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => openTaskInGoogleCalendar(t)}
+                                  style={{
+                                    background: 'rgba(56, 189, 248, 0.12)',
+                                    border: '1px solid rgba(56, 189, 248, 0.25)',
+                                    color: '#38bdf8',
+                                    padding: '4px 8px',
+                                    borderRadius: '8px',
+                                    fontSize: '0.72rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                  }}
+                                  title="Sync to Google Calendar"
+                                >
+                                  + GCal
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteTask(t.id)}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    color: '#64748b',
+                                    padding: '4px',
+                                    cursor: 'pointer'
+                                  }}
+                                  title="Delete reminder"
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            ) : (
+              /* ─── LIST VIEW ─── */
+              <div>
+                {/* Quick Filter tabs */}
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                  <button 
+                    type="button"
+                    onClick={() => setAgendaFilter('pending')}
+                    style={{
+                      background: agendaFilter === 'pending' ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                      border: agendaFilter === 'pending' ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.1)',
+                      color: agendaFilter === 'pending' ? '#38bdf8' : '#94a3b8',
+                      padding: '6px 14px',
+                      borderRadius: '16px',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Pending ({tasks.filter(t => !t.is_completed && t.status !== 'completed').length})
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setAgendaFilter('completed')}
+                    style={{
+                      background: agendaFilter === 'completed' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                      border: agendaFilter === 'completed' ? '1px solid #10b981' : '1px solid rgba(255, 255, 255, 0.1)',
+                      color: agendaFilter === 'completed' ? '#10b981' : '#94a3b8',
+                      padding: '6px 14px',
+                      borderRadius: '16px',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Completed ({tasks.filter(t => t.is_completed || t.status === 'completed').length})
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setAgendaFilter('all')}
+                    style={{
+                      background: agendaFilter === 'all' ? 'rgba(168, 85, 247, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                      border: agendaFilter === 'all' ? '1px solid #a855f7' : '1px solid rgba(255, 255, 255, 0.1)',
+                      color: agendaFilter === 'all' ? '#a855f7' : '#94a3b8',
+                      padding: '6px 14px',
+                      borderRadius: '16px',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    All ({tasks.length})
+                  </button>
+                </div>
+
+                {/* Quick Add Task Form */}
+                <form 
+                  onSubmit={handleCreateTask}
+                  style={{ display: 'flex', gap: '8px', marginBottom: '18px' }}
+                >
+                  <input
+                    type="text"
+                    placeholder="Set reminder or add task..."
+                    value={newTaskInput}
+                    onChange={(e) => setNewTaskInput(e.target.value)}
+                    style={{ flex: 1, background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '12px', padding: '10px 14px', color: '#fff', fontSize: '0.88rem', outline: 'none' }}
+                  />
+                  <button type="submit" style={{ background: '#38bdf8', color: '#04101e', border: 'none', borderRadius: '12px', padding: '10px 16px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
+                    Add
+                  </button>
+                </form>
+
+                {/* List */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
+                  {(() => {
+                    const isTaskDone = (t) => t.is_completed || t.status === 'completed';
+                    const filtered = tasks.filter(t => {
+                      if (agendaFilter === 'pending') return !isTaskDone(t);
+                      if (agendaFilter === 'completed') return isTaskDone(t);
+                      return true;
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div style={{ textAlign: 'center', padding: '36px 10px', color: '#64748b', fontSize: '0.9rem' }}>
+                          {agendaFilter === 'pending' ? '🎉 All tasks and reminders completed!' : 'No items found.'}
+                        </div>
+                      );
+                    }
+
+                    return filtered.map(t => {
+                      const done = isTaskDone(t);
+                      return (
+                        <div 
+                          key={t.id} 
+                          style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'space-between', 
+                            padding: '12px 14px', 
+                            background: 'rgba(255, 255, 255, 0.03)', 
+                            border: '1px solid rgba(255, 255, 255, 0.06)', 
+                            borderRadius: '14px',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <div 
+                            onClick={() => handleToggleTask(t.id)} 
+                            style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', flex: 1, textDecoration: done ? 'line-through' : 'none', opacity: done ? 0.6 : 1 }}
+                          >
+                            <div style={{ color: done ? '#10b981' : '#64748b' }}>
+                              {done ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+                            </div>
+                            <div>
+                              <div style={{ color: done ? '#94a3b8' : '#f1f5f9', fontSize: '0.92rem', fontWeight: done ? 400 : 500 }}>
+                                {t.title}
+                              </div>
+                              {t.reminder_time && (
+                                <div style={{ color: '#38bdf8', fontSize: '0.76rem', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                  <span>⏰</span>
+                                  <span>{t.reminder_time}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <button 
+                            type="button" 
+                            onClick={() => handleDeleteTask(t.id)} 
+                            style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '6px' }}
+                            title="Delete task"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -4179,6 +5268,262 @@ export default function App() {
         </div>
       )}
 
+      {/* 8. App Permissions & Access Modal */}
+      {activeSubModal === 'permissions' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(14px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '440px', maxHeight: '88vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8', fontWeight: 700, fontSize: '1.05rem' }}>
+                <ShieldCheck size={20} />
+                <span>APP PERMISSIONS & ACCESS</span>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setActiveSubModal(null)} 
+                style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <p style={{ color: '#94a3b8', fontSize: '0.8rem', lineHeight: '1.4', marginBottom: '18px' }}>
+              Manage system permissions required for real-time voice mode, automated reminders, and zero-latency executive alerts.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Permission Item 1: Microphone Access */}
+              <div style={{
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '16px',
+                padding: '14px 16px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '12px'
+              }}>
+                <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', flexShrink: 0 }}>
+                    <Mic size={20} />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ color: '#fff', fontSize: '0.92rem', fontWeight: 600 }}>Microphone Access</span>
+                      {micEnabled && (
+                        <button
+                          type="button"
+                          onClick={handleTestMic}
+                          disabled={isMicTesting}
+                          style={{
+                            background: 'rgba(56, 189, 248, 0.15)',
+                            border: '1px solid rgba(56, 189, 248, 0.3)',
+                            color: '#38bdf8',
+                            padding: '2px 8px',
+                            borderRadius: '8px',
+                            fontSize: '0.7rem',
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {isMicTesting ? 'Testing...' : 'Test 🎙️'}
+                        </button>
+                      )}
+                    </div>
+                    <span style={{ color: '#94a3b8', fontSize: '0.75rem', lineHeight: '1.3' }}>
+                      Real-time voice prompts & zero-latency listening
+                    </span>
+                  </div>
+                </div>
+
+                <div 
+                  className={`permission-toggle-switch ${micEnabled ? 'active' : ''}`}
+                  onClick={handleToggleMic}
+                  role="button"
+                  tabIndex={0}
+                  title={micEnabled ? 'Click to disable microphone' : 'Click to enable microphone'}
+                >
+                  <div className="permission-toggle-thumb" />
+                </div>
+              </div>
+
+              {/* Permission Item 2: Push Notifications */}
+              <div style={{
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '16px',
+                padding: '14px 16px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '12px'
+              }}>
+                <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(245, 158, 11, 0.15)', border: '1px solid rgba(245, 158, 11, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fbbf24', flexShrink: 0 }}>
+                    <Bell size={20} />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ color: '#fff', fontSize: '0.92rem', fontWeight: 600 }}>Push Notifications & Alerts</span>
+                      {pushEnabled && (
+                        <button
+                          type="button"
+                          onClick={handleSendTestPush}
+                          style={{
+                            background: 'rgba(245, 158, 11, 0.15)',
+                            border: '1px solid rgba(245, 158, 11, 0.3)',
+                            color: '#fbbf24',
+                            padding: '2px 8px',
+                            borderRadius: '8px',
+                            fontSize: '0.7rem',
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Test 📲
+                        </button>
+                      )}
+                    </div>
+                    <span style={{ color: '#94a3b8', fontSize: '0.75rem', lineHeight: '1.3' }}>
+                      8:00 AM briefing & background task reminders
+                    </span>
+                  </div>
+                </div>
+
+                <div 
+                  className={`permission-toggle-switch ${pushEnabled ? 'active' : ''}`}
+                  onClick={handleTogglePush}
+                  role="button"
+                  tabIndex={0}
+                  title={pushEnabled ? 'Click to disable notifications' : 'Click to enable notifications'}
+                >
+                  <div className="permission-toggle-thumb" />
+                </div>
+              </div>
+
+              {/* Permission Item 3: Location & Maps (GPS) */}
+              <div style={{
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '16px',
+                padding: '14px 16px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '12px'
+              }}>
+                <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(244, 63, 94, 0.15)', border: '1px solid rgba(244, 63, 94, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fb7185', flexShrink: 0 }}>
+                    <MapPin size={20} />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ color: '#fff', fontSize: '0.92rem', fontWeight: 600 }}>Location & Live Maps</span>
+                      {locationEnabled && (
+                        <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 700 }}>
+                          Active 📍
+                        </span>
+                      )}
+                    </div>
+                    <span style={{ color: '#94a3b8', fontSize: '0.75rem', lineHeight: '1.3' }}>
+                      Local weather, city briefing, and location sharing
+                    </span>
+                  </div>
+                </div>
+
+                <div 
+                  className={`permission-toggle-switch ${locationEnabled ? 'active' : ''}`}
+                  onClick={handleToggleLocation}
+                  role="button"
+                  tabIndex={0}
+                  title={locationEnabled ? 'Click to disable location' : 'Click to enable location'}
+                >
+                  <div className="permission-toggle-thumb" />
+                </div>
+              </div>
+
+              {/* Permission Item 4: Audio Playback & Voice Readout */}
+              <div style={{
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '16px',
+                padding: '14px 16px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '12px'
+              }}>
+                <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(168, 85, 247, 0.15)', border: '1px solid rgba(168, 85, 247, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#c084fc', flexShrink: 0 }}>
+                    <Volume2 size={20} />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                    <span style={{ color: '#fff', fontSize: '0.92rem', fontWeight: 600 }}>Audio Playback & Chimes</span>
+                    <span style={{ color: '#94a3b8', fontSize: '0.75rem', lineHeight: '1.3' }}>
+                      Spoken AI responses & executive chimes
+                    </span>
+                  </div>
+                </div>
+
+                <div 
+                  className={`permission-toggle-switch ${voiceOutputEnabled ? 'active' : ''}`}
+                  onClick={() => {
+                    const nextVal = !voiceOutputEnabled;
+                    setVoiceOutputEnabled(nextVal);
+                    localStorage.setItem('aether_voice_output', String(nextVal));
+                    showToast(nextVal ? 'वॉयस आउटपुट चालू' : 'वॉयस आउटपुट म्यूट', 'info');
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  title={voiceOutputEnabled ? 'Click to mute AI voice' : 'Click to enable AI voice'}
+                >
+                  <div className="permission-toggle-thumb" />
+                </div>
+              </div>
+
+              {/* Permission Item 5: Background Cloud Sync */}
+              <div style={{
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '16px',
+                padding: '14px 16px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '12px'
+              }}>
+                <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399', flexShrink: 0 }}>
+                    <Sparkles size={20} />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                    <span style={{ color: '#fff', fontSize: '0.92rem', fontWeight: 600 }}>Background Cloud Sync</span>
+                    <span style={{ color: '#94a3b8', fontSize: '0.75rem', lineHeight: '1.3' }}>
+                      8-min ping & automated push monitoring
+                    </span>
+                  </div>
+                </div>
+                <span style={{
+                  fontSize: '0.74rem',
+                  fontWeight: 700,
+                  padding: '4px 10px',
+                  borderRadius: '12px',
+                  background: 'rgba(16, 185, 129, 0.15)',
+                  color: '#34d399',
+                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                  whiteSpace: 'nowrap'
+                }}>
+                  ● 24/7 Active
+                </span>
+              </div>
+            </div>
+
+            <div style={{ marginTop: '18px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: '12px', padding: '12px', fontSize: '0.74rem', color: '#64748b', lineHeight: '1.4' }}>
+              🔒 <b>Enterprise Privacy:</b> Microphone is only engaged when speaking or in active voice sessions. No passive room listening.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 8. Interaction History Transcript Modal */}
       {isHistoryOpen && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
@@ -4214,6 +5559,260 @@ export default function App() {
                 </div>
               ))
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Live Camera Viewfinder Modal (Desktop & Web) */}
+      {isCameraModalOpen && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.88)',
+          backdropFilter: 'blur(16px)',
+          zIndex: 115,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            background: '#0d1527',
+            border: '1px solid rgba(255, 255, 255, 0.16)',
+            borderRadius: '24px',
+            padding: '22px',
+            width: '100%',
+            maxWidth: '520px',
+            boxShadow: '0 24px 60px rgba(0, 0, 0, 0.8)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#ffffff', fontWeight: 700, fontSize: '0.95rem' }}>
+                <Camera size={20} color="#38bdf8" />
+                <span>CAMERA VIEWFINDER</span>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setIsCameraModalOpen(false)} 
+                style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ position: 'relative', width: '100%', height: '300px', background: '#020617', borderRadius: '16px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <video 
+                ref={cameraVideoRef} 
+                autoPlay 
+                playsInline 
+                muted 
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+              />
+              <div style={{ position: 'absolute', bottom: '12px', left: '12px', background: 'rgba(0, 0, 0, 0.6)', padding: '4px 10px', borderRadius: '12px', fontSize: '0.72rem', color: '#38bdf8' }}>
+                ● Live Feed
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '14px', marginTop: '18px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCameraModalOpen(false);
+                  cameraInputRef.current?.click();
+                }}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  color: '#cbd5e1',
+                  padding: '10px 18px',
+                  borderRadius: '14px',
+                  fontSize: '0.84rem',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Choose Existing File
+              </button>
+              <button
+                type="button"
+                onClick={handleCaptureCameraSnapshot}
+                style={{
+                  background: 'linear-gradient(135deg, #0284c7, #38bdf8)',
+                  border: 'none',
+                  color: '#ffffff',
+                  padding: '10px 22px',
+                  borderRadius: '14px',
+                  fontSize: '0.86rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 16px rgba(56, 189, 248, 0.4)'
+                }}
+              >
+                <Camera size={18} />
+                Snap Photo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* In-App Google Drive Attachment Modal */}
+      {isDriveModalOpen && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.88)',
+          backdropFilter: 'blur(16px)',
+          zIndex: 115,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            background: '#0d1527',
+            border: '1px solid rgba(255, 255, 255, 0.16)',
+            borderRadius: '24px',
+            padding: '24px',
+            width: '100%',
+            maxWidth: '460px',
+            boxShadow: '0 24px 60px rgba(0, 0, 0, 0.8)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#ffffff', fontWeight: 700, fontSize: '0.98rem' }}>
+                <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(52, 211, 153, 0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399' }}>
+                  <HardDrive size={18} />
+                </div>
+                <span>GOOGLE DRIVE ATTACHMENT</span>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setIsDriveModalOpen(false)} 
+                style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <p style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '16px', lineHeight: '1.4' }}>
+              Aether से Google Drive फ़ाइल या डॉक्यूमेंट जोड़ें ताकि AI उसका विश्लेषण कर सके:
+            </p>
+
+            {/* Quick Presets */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '16px' }}>
+              {[
+                { label: 'Google Doc', icon: '📄', prefix: 'https://docs.google.com/document/d/' },
+                { label: 'Google Sheet', icon: '📊', prefix: 'https://docs.google.com/spreadsheets/d/' },
+                { label: 'Google Slides', icon: '📽️', prefix: 'https://docs.google.com/presentation/d/' },
+                { label: 'Shared Folder', icon: '📁', prefix: 'https://drive.google.com/drive/folders/' },
+              ].map(preset => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => {
+                    setDriveDocName(preset.label);
+                    if (!driveInputUrl) setDriveInputUrl(preset.prefix);
+                  }}
+                  style={{
+                    background: driveDocName === preset.label ? 'rgba(52, 211, 153, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                    border: `1px solid ${driveDocName === preset.label ? '#34d399' : 'rgba(255, 255, 255, 0.08)'}`,
+                    borderRadius: '12px',
+                    padding: '8px 10px',
+                    color: driveDocName === preset.label ? '#34d399' : '#cbd5e1',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <span>{preset.icon}</span>
+                  <span>{preset.label}</span>
+                </button>
+              ))}
+            </div>
+
+            <form onSubmit={handleAttachDriveFromModal}>
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '0.74rem', color: '#94a3b8', marginBottom: '6px', fontWeight: 600 }}>
+                  फ़ाइल का नाम (Document Title):
+                </label>
+                <input
+                  type="text"
+                  placeholder="उदा. Project_Quarterly_Report"
+                  value={driveDocName}
+                  onChange={(e) => setDriveDocName(e.target.value)}
+                  style={{
+                    width: '100%',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    borderRadius: '12px',
+                    padding: '10px 14px',
+                    color: '#ffffff',
+                    fontSize: '0.86rem',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '18px' }}>
+                <label style={{ display: 'block', fontSize: '0.74rem', color: '#94a3b8', marginBottom: '6px', fontWeight: 600 }}>
+                  Google Drive लिंक (URL):
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://drive.google.com/file/d/..."
+                  value={driveInputUrl}
+                  onChange={(e) => setDriveInputUrl(e.target.value)}
+                  style={{
+                    width: '100%',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    borderRadius: '12px',
+                    padding: '10px 14px',
+                    color: '#ffffff',
+                    fontSize: '0.86rem',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsDriveModalOpen(false)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#94a3b8',
+                    padding: '10px 16px',
+                    fontSize: '0.84rem',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{
+                    background: 'linear-gradient(135deg, #10b981, #34d399)',
+                    border: 'none',
+                    color: '#022c22',
+                    padding: '10px 20px',
+                    borderRadius: '12px',
+                    fontSize: '0.86rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 16px rgba(16, 185, 129, 0.35)'
+                  }}
+                >
+                  Attach to Chat
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

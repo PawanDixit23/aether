@@ -2358,3 +2358,271 @@ body.theme-oled .settings-user-card {
   color: #64748b;
   transition: opacity 0.3s ease;
 }
+
+/* QUICK ACTION POPUP (+ BUTTON) */
+.gemini-plus-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 28;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.gemini-plus-popup {
+  position: absolute;
+  bottom: calc(100% + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 12px);
+  max-width: 440px;
+  background: rgba(13, 21, 39, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 24px;
+  padding: 12px 14px 16px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  z-index: 35;
+  animation: geminiSlideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes geminiSlideUp {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.gemini-plus-drag-handle {
+  width: 36px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 2px;
+  margin: 0 auto 12px auto;
+}
+
+.gemini-plus-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  align-items: flex-start;
+  justify-items: center;
+}
+
+.gemini-plus-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 4px 2px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  width: 100%;
+}
+
+.gemini-plus-item:hover, .gemini-plus-item:active {
+  transform: translateY(-2px);
+}
+
+.gemini-plus-icon-box {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.gemini-plus-item:hover .gemini-plus-icon-box {
+  transform: scale(1.08);
+  filter: brightness(1.2);
+}
+
+.gemini-plus-item-title {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #cbd5e1;
+  margin-top: 6px;
+  text-align: center;
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+}
+
+/* PERMISSIONS TOGGLE SWITCH */
+.permission-toggle-switch {
+  width: 48px;
+  height: 28px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  position: relative;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  flex-shrink: 0;
+}
+
+.permission-toggle-switch.active {
+  background: #10b981;
+  border-color: #10b981;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.35);
+}
+
+.permission-toggle-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ffffff;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.permission-toggle-switch.active .permission-toggle-thumb {
+  transform: translateX(20px);
+}
+
+/* ATTACHED MEDIA CHIP IN PROMPT BAR */
+.gemini-attached-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 20px;
+  padding: 4px 10px 4px 6px;
+  margin-bottom: 6px;
+  margin-left: 12px;
+  max-width: calc(100% - 24px);
+  animation: fadeIn 0.2s ease;
+}
+
+.gemini-attached-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.gemini-attached-name {
+  color: #ffffff;
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.gemini-attached-remove {
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #cbd5e1;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-left: 2px;
+}
+
+.gemini-attached-remove:hover {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+/* ─── CALENDAR & AGENDA STYLES ─── */
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.calendar-day-header {
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #64748b;
+  padding: 6px 0;
+  text-transform: uppercase;
+}
+
+.calendar-day-cell {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.18s ease;
+  font-size: 0.85rem;
+  color: #e2e8f0;
+  min-height: 42px;
+}
+
+.calendar-day-cell:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(56, 189, 248, 0.35);
+  transform: translateY(-1px);
+}
+
+.calendar-day-cell.other-month {
+  opacity: 0.32;
+}
+
+.calendar-day-cell.today {
+  border-color: #38bdf8;
+  color: #38bdf8;
+  font-weight: 700;
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.calendar-day-cell.selected {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: #38bdf8;
+  color: #ffffff;
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.3);
+}
+
+.calendar-badge-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #f59e0b;
+  margin-top: 2px;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
+.calendar-badge-count {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  background: #38bdf8;
+  color: #020617;
+  border-radius: 6px;
+  padding: 1px 3px;
+  line-height: 1;
+}
+
+
