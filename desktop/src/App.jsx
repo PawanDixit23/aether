@@ -1920,21 +1920,23 @@ export default function App() {
       <div className="onboarding-screen-wrapper">
         <div className="unified-app-container">
           {/* Top navigation row */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '16px', minHeight: '36px' }}>
             {onboardingStep > 1 ? (
               <button
                 type="button"
                 onClick={() => setOnboardingStep(prev => Math.max(1, prev - 1))}
                 style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'rgba(255, 255, 255, 0.6)',
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  borderRadius: '16px',
+                  color: 'rgba(255, 255, 255, 0.85)',
                   cursor: 'pointer',
-                  fontSize: '0.85rem',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
                   display: 'flex',
                   alignItems: 'center',
                   gap: '4px',
-                  padding: '4px 8px'
+                  padding: '6px 14px'
                 }}
               >
                 ← Back
@@ -1948,11 +1950,12 @@ export default function App() {
                 style={{
                   background: 'rgba(255, 255, 255, 0.08)',
                   border: '1px solid rgba(255, 255, 255, 0.15)',
-                  borderRadius: '20px',
+                  borderRadius: '16px',
                   color: '#ffffff',
                   cursor: 'pointer',
-                  fontSize: '0.78rem',
-                  padding: '4px 12px'
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  padding: '6px 14px'
                 }}
               >
                 Dashboard ✕
@@ -2795,6 +2798,21 @@ export default function App() {
               </div>
             </div>
 
+            <div className="settings-row-item" onClick={() => setActiveSubModal('reminders')}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+                  <Bell size={16} />
+                </div>
+                <span>Reminders & Today's Agenda</span>
+              </div>
+              <div className="settings-row-right">
+                <span style={{ color: tasks.filter(t => !t.is_completed && t.status !== 'completed').length > 0 ? '#38bdf8' : '#94a3b8', fontWeight: 600 }}>
+                  {tasks.filter(t => !t.is_completed && t.status !== 'completed').length} pending
+                </span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
             <div className="settings-row-item" onClick={() => setActiveSubModal('assistant-setup')}>
               <div className="settings-row-left">
                 <div className="settings-row-icon-box"><Zap size={16} /></div>
@@ -2922,6 +2940,23 @@ export default function App() {
                 </div>
 
                 <div className="gemini-top-right">
+                  <button 
+                    type="button" 
+                    className="gemini-icon-btn" 
+                    onClick={() => {
+                      setActiveSubModal('reminders');
+                    }}
+                    title="Reminders & Today's Agenda"
+                    style={{ position: 'relative' }}
+                  >
+                    <Bell size={20} />
+                    {tasks.filter(t => !t.is_completed && t.status !== 'completed').length > 0 && (
+                      <span className="gemini-bell-badge">
+                        {tasks.filter(t => !t.is_completed && t.status !== 'completed').length}
+                      </span>
+                    )}
+                  </button>
+
                   <button 
                     type="button" 
                     className="gemini-icon-btn" 
@@ -3289,8 +3324,165 @@ export default function App() {
       )}
 
       {/* =========================================================================
-          SUB-MODALS (Key, Finance, Audit, Profile Name, Assistant Setup)
+          SUB-MODALS (Key, Finance, Audit, Profile Name, Assistant Setup, Reminders)
           ========================================================================= */}
+
+      {/* 0. Reminders & Today's Agenda Submodal */}
+      {activeSubModal === 'reminders' && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(14px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '520px', maxHeight: '88vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8', fontWeight: 700, fontSize: '1rem' }}>
+                <Bell size={20} />
+                <span>REMINDERS & TODAY'S AGENDA</span>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setActiveSubModal(null)} 
+                style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Quick Filter tabs */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <button 
+                type="button"
+                onClick={() => setAgendaFilter('pending')}
+                style={{
+                  background: agendaFilter === 'pending' ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                  border: agendaFilter === 'pending' ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.1)',
+                  color: agendaFilter === 'pending' ? '#38bdf8' : '#94a3b8',
+                  padding: '6px 14px',
+                  borderRadius: '16px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Pending ({tasks.filter(t => !t.is_completed && t.status !== 'completed').length})
+              </button>
+              <button 
+                type="button"
+                onClick={() => setAgendaFilter('completed')}
+                style={{
+                  background: agendaFilter === 'completed' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                  border: agendaFilter === 'completed' ? '1px solid #10b981' : '1px solid rgba(255, 255, 255, 0.1)',
+                  color: agendaFilter === 'completed' ? '#10b981' : '#94a3b8',
+                  padding: '6px 14px',
+                  borderRadius: '16px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Completed ({tasks.filter(t => t.is_completed || t.status === 'completed').length})
+              </button>
+              <button 
+                type="button"
+                onClick={() => setAgendaFilter('all')}
+                style={{
+                  background: agendaFilter === 'all' ? 'rgba(168, 85, 247, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                  border: agendaFilter === 'all' ? '1px solid #a855f7' : '1px solid rgba(255, 255, 255, 0.1)',
+                  color: agendaFilter === 'all' ? '#a855f7' : '#94a3b8',
+                  padding: '6px 14px',
+                  borderRadius: '16px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                All ({tasks.length})
+              </button>
+            </div>
+
+            {/* Quick Add Task Form */}
+            <form 
+              onSubmit={handleCreateTask}
+              style={{ display: 'flex', gap: '8px', marginBottom: '18px' }}
+            >
+              <input
+                type="text"
+                placeholder="Set reminder or add task..."
+                value={newTaskInput}
+                onChange={(e) => setNewTaskInput(e.target.value)}
+                style={{ flex: 1, background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '12px', padding: '10px 14px', color: '#fff', fontSize: '0.88rem', outline: 'none' }}
+              />
+              <button type="submit" style={{ background: '#38bdf8', color: '#04101e', border: 'none', borderRadius: '12px', padding: '10px 16px', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}>
+                Add
+              </button>
+            </form>
+
+            {/* List */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
+              {(() => {
+                const isTaskDone = (t) => t.is_completed || t.status === 'completed';
+                const filtered = tasks.filter(t => {
+                  if (agendaFilter === 'pending') return !isTaskDone(t);
+                  if (agendaFilter === 'completed') return isTaskDone(t);
+                  return true;
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div style={{ textAlign: 'center', padding: '36px 10px', color: '#64748b', fontSize: '0.9rem' }}>
+                      {agendaFilter === 'pending' ? '🎉 All tasks and reminders completed!' : 'No items found.'}
+                    </div>
+                  );
+                }
+
+                return filtered.map(t => {
+                  const done = isTaskDone(t);
+                  return (
+                    <div 
+                      key={t.id} 
+                      style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'space-between', 
+                        padding: '12px 14px', 
+                        background: 'rgba(255, 255, 255, 0.03)', 
+                        border: '1px solid rgba(255, 255, 255, 0.06)', 
+                        borderRadius: '14px',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <div 
+                        onClick={() => handleToggleTask(t.id)} 
+                        style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', flex: 1, textDecoration: done ? 'line-through' : 'none', opacity: done ? 0.6 : 1 }}
+                      >
+                        <div style={{ color: done ? '#10b981' : '#64748b' }}>
+                          {done ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+                        </div>
+                        <div>
+                          <div style={{ color: done ? '#94a3b8' : '#f1f5f9', fontSize: '0.92rem', fontWeight: done ? 400 : 500 }}>
+                            {t.title}
+                          </div>
+                          {t.reminder_time && (
+                            <div style={{ color: '#38bdf8', fontSize: '0.76rem', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <span>⏰</span>
+                              <span>{t.reminder_time}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <button 
+                        type="button" 
+                        onClick={() => handleDeleteTask(t.id)} 
+                        style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '6px' }}
+                        title="Delete task"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 1. Profile Name Editor Modal */}
       {activeSubModal === 'profile-name' && (
