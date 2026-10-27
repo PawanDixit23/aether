@@ -151,18 +151,17 @@ export default function App() {
   );
 
   return (
-    <SafeAreaProvider style={{ backgroundColor: APP_BG }}>
-      {/* Force status bar area to match dark background */}
+    <View style={styles.container}>
+      {/* Seamless edge-to-edge status bar matching dark navy background */}
       <RNStatusBar
-        backgroundColor={APP_BG}
+        backgroundColor="transparent"
         barStyle="light-content"
-        translucent={false}
+        translucent={true}
       />
-      <SafeAreaView style={styles.container} edges={['bottom', 'left', 'right']}>
-        <StatusBar style="light" translucent={false} backgroundColor={APP_BG} />
+      <StatusBar style="light" translucent={true} backgroundColor="transparent" />
 
-        {/* The Exact 1:1 Live Aether Web Dashboard */}
-        <WebView
+      {/* The Exact 1:1 Live Aether Web Dashboard */}
+      <WebView
           ref={webViewRef}
           source={{ uri: AETHER_URL }}
           style={styles.webView}
@@ -305,10 +304,9 @@ export default function App() {
 
         {/* Offline / Connection Error Overlay */}
         {hasError && renderCustomError(errorDetails)}
-      </SafeAreaView>
-    </SafeAreaProvider>
-  );
-}
+      </View>
+    );
+  }
 
 const styles = StyleSheet.create({
   container: {

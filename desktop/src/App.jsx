@@ -2857,7 +2857,7 @@ export default function App() {
         /* =========================================================================
             VIEW 2: MAIN APP TABS (Gemini Clean Dark | Today | Memory)
             ========================================================================= */
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', paddingBottom: '68px', boxSizing: 'border-box', overflow: 'hidden' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
 
           {/* TAB 1: AETHER CLEAN MINIMAL DARK UI */}
           {activeTab === 'aether' && (

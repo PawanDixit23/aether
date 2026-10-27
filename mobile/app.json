@@ -11,6 +11,15 @@
       "resizeMode": "contain",
       "backgroundColor": "#080c16"
     },
+    "androidStatusBar": {
+      "barStyle": "light-content",
+      "backgroundColor": "#080c16",
+      "translucent": true
+    },
+    "androidNavigationBar": {
+      "barStyle": "light-content",
+      "backgroundColor": "#080c16"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.pawandixit.aether"

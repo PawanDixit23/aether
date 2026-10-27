@@ -1851,7 +1851,7 @@ body.theme-oled .settings-user-card {
   overflow: hidden;
   background: radial-gradient(circle at 50% 30%, rgba(20, 30, 55, 0.6) 0%, var(--bg-app) 80%);
   color: #f1f5f9;
-  padding: env(safe-area-inset-top, 0px) 16px 12px 16px;
+  padding: max(4px, env(safe-area-inset-top, 4px)) 12px max(6px, env(safe-area-inset-bottom, 6px)) 12px;
   box-sizing: border-box;
   position: relative;
 }
@@ -1860,7 +1860,7 @@ body.theme-oled .settings-user-card {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 4px 8px 4px;
+  padding: 2px 4px 4px 4px;
   z-index: 20;
   flex-shrink: 0;
 }
@@ -2152,7 +2152,7 @@ body.theme-oled .settings-user-card {
   align-items: center;
   flex-shrink: 0;
   margin-top: auto;
-  padding: 8px 12px 16px;
+  padding: 4px 8px 6px;
   z-index: 30;
 }
 
