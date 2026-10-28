@@ -655,6 +655,7 @@ export default function App() {
   const [selectedLang, setSelectedLang] = useState(() => localStorage.getItem('aether_language') || 'auto');
   const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
   const [agendaFilter, setAgendaFilter] = useState('pending'); // 'pending' | 'completed' | 'all'
+  const [calAgendaFilter, setCalAgendaFilter] = useState('all'); // 'all' | 'pending' | 'completed'
   const langDropdownRef = useRef(null);
   const geminiChatFeedRef = useRef(null);
 
@@ -1083,8 +1084,8 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const handleGoogleSignIn = async (forceCalendarScope = false) => {
-    if (userEmail && !forceCalendarScope) {
+  const handleGoogleSignIn = async () => {
+    if (userEmail) {
       const alreadyDone = localStorage.getItem('aether_onboarding_done') === 'true';
       if (alreadyDone) {
         setOnboardingDone(true);
@@ -1097,17 +1098,11 @@ export default function App() {
     setGoogleAuthLoading(true);
     setGoogleError('');
     try {
-      // 1. Trigger Supabase Real Google OAuth (standard profile scopes to avoid Google 403 access_denied)
+      // Trigger Supabase Real Google OAuth with standard profile scopes only
+      // NOTE: Sensitive scopes like calendar.readonly are strictly blocked with Error 403 access_denied by Google on unverified apps
       const options = {
         redirectTo: window.location.origin
       };
-      if (forceCalendarScope) {
-        options.scopes = 'https://www.googleapis.com/auth/calendar.readonly';
-        options.queryParams = {
-          access_type: 'offline',
-          prompt: 'consent'
-        };
-      }
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options
@@ -1851,6 +1846,12 @@ export default function App() {
   // Calendar & Reminders Helpers
   const formatLocalDateStr = (d) => {
     if (!d) return '';
+    if (typeof d === 'string') {
+      const match = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (match && !d.includes('Z')) {
+        return `${match[1]}-${match[2]}-${match[3]}`;
+      }
+    }
     const dateObj = (d instanceof Date) ? d : new Date(d);
     if (isNaN(dateObj.getTime())) return '';
     const y = dateObj.getFullYear();
@@ -1873,6 +1874,60 @@ export default function App() {
       } catch (e) {}
     }
     return null;
+  };
+
+  const handleCopyTodayTasksToSelectedDate = async () => {
+    const todayStr = formatLocalDateStr(new Date());
+    const targetStr = formatLocalDateStr(calSelectedDate);
+    if (!targetStr || targetStr === todayStr) return;
+    const todayTasks = tasks.filter(t => getTaskDateStr(t) === todayStr);
+    if (todayTasks.length === 0) {
+      showToast('आज का कोई कार्य कॉपी करने के लिए नहीं मिला', 'info');
+      return;
+    }
+    try {
+      let count = 0;
+      for (const t of todayTasks) {
+        const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
+        await fetch(`${API_BASE}/tasks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify({
+            title: t.title,
+            priority: t.priority || 'medium',
+            reminder_time: t.reminder_time || '10:00 AM',
+            due_date: `${targetStr}T10:00:00`,
+            user_email: userEmail
+          })
+        });
+        count++;
+      }
+      refreshAllData();
+      showToast(`${count} दैनिक कार्य ${targetStr} के एजेंडा में जोड़े गए!`, 'success');
+    } catch (err) {
+      showToast('कार्य कॉपी करने में त्रुटि', 'error');
+    }
+  };
+
+  const handleResetTodayCompletedTasks = async () => {
+    const todayStr = formatLocalDateStr(new Date());
+    const completedToday = tasks.filter(t => (t.is_completed || t.status === 'completed') && getTaskDateStr(t) === todayStr);
+    if (completedToday.length === 0) {
+      showToast('आज कोई पूर्ण कार्य नहीं है जिसे रीसेट किया जा सके', 'info');
+      return;
+    }
+    try {
+      for (const t of completedToday) {
+        await fetch(`${API_BASE}/tasks/${t.id}/toggle`, {
+          method: 'PUT',
+          headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
+        });
+      }
+      refreshAllData();
+      showToast(`आज के लिए ${completedToday.length} कार्य पुनः सक्रिय (Reset) किए गए!`, 'success');
+    } catch (err) {
+      showToast('रीसेट करने में त्रुटि', 'error');
+    }
   };
 
   const downloadAllRemindersIcs = () => {
@@ -1971,6 +2026,11 @@ export default function App() {
       showToast('कृपया वैध Google Calendar iCal लिंक दर्ज करें (https://...)', 'error');
       return;
     }
+    if (url.includes('calendar.google.com/calendar/u/') || url.includes('/calendar/r')) {
+      showToast('यह Google Calendar का वेब ब्राउज़र लिंक है! कृपया नीचे "Secret address in iCal format" (.ics) लिंक डालें।', 'error');
+      setShowGCalConnectModal(true);
+      return;
+    }
     setIsSyncingGCal(true);
     try {
       const res = await fetch(`${API_BASE}/calendar/sync-ical`, {
@@ -1991,7 +2051,7 @@ export default function App() {
       showToast(`Google Calendar से ${events.length} इवेंट्स और रिमाइंडर्स सिंक हुए! 📅`, 'success');
     } catch (err) {
       console.error(err);
-      showToast('Google Calendar लिंक सिंक विफल: ' + err.message, 'error');
+      showToast('Google Calendar सिंक त्रुटि: ' + err.message, 'error');
     } finally {
       setIsSyncingGCal(false);
     }
@@ -4642,33 +4702,136 @@ export default function App() {
                   {(() => {
                     const isTaskDone = (t) => t.is_completed || t.status === 'completed';
                     const dateStr = formatLocalDateStr(calSelectedDate);
+                    const isTodaySelected = dateStr === formatLocalDateStr(new Date());
                     const dateTasks = combinedTasks.filter(t => getTaskDateStr(t) === dateStr);
+                    const pendingTasks = dateTasks.filter(t => !isTaskDone(t));
+                    const completedTasks = dateTasks.filter(t => isTaskDone(t));
+                    const displayedTasks = calAgendaFilter === 'pending'
+                      ? pendingTasks
+                      : calAgendaFilter === 'completed'
+                        ? completedTasks
+                        : dateTasks;
 
                     if (dateTasks.length === 0) {
                       const todayTasks = combinedTasks.filter(t => getTaskDateStr(t) === formatLocalDateStr(new Date()));
                       return (
                         <div style={{ textAlign: 'center', padding: '18px 10px', color: '#94a3b8', fontSize: '0.82rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
                           <span>No reminders scheduled for this date.</span>
-                          {todayTasks.length > 0 && formatLocalDateStr(calSelectedDate) !== formatLocalDateStr(new Date()) && (
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                            {!isTodaySelected && todayTasks.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={handleCopyTodayTasksToSelectedDate}
+                                style={{ background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.35)', color: '#38bdf8', borderRadius: '10px', padding: '7px 14px', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer' }}
+                              >
+                                ⚡ Copy Today's Routines Here
+                              </button>
+                            )}
                             <button
                               type="button"
-                              onClick={() => {
-                                const today = new Date();
-                                setCalSelectedDate(today);
-                                setCalCurrentMonth(today);
-                              }}
-                              style={{ background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.35)', color: '#38bdf8', borderRadius: '10px', padding: '7px 16px', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}
+                              onClick={handleSyncGCalClick}
+                              style={{ background: 'rgba(66, 133, 244, 0.15)', border: '1px solid rgba(66, 133, 244, 0.35)', color: '#60a5fa', borderRadius: '10px', padding: '7px 14px', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer' }}
                             >
-                              📅 View Today's Reminders ({todayTasks.length})
+                              📅 Sync Google Calendar
                             </button>
-                          )}
+                            {!isTodaySelected && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const today = new Date();
+                                  setCalSelectedDate(today);
+                                  setCalCurrentMonth(today);
+                                }}
+                                style={{ background: 'rgba(255, 255, 255, 0.08)', border: '1px solid rgba(255, 255, 255, 0.15)', color: '#fff', borderRadius: '10px', padding: '7px 14px', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer' }}
+                              >
+                                📅 View Today ({todayTasks.length})
+                              </button>
+                            )}
+                          </div>
                         </div>
                       );
                     }
 
                     return (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {dateTasks.map(t => {
+                        {/* Agenda Filter Pills & Today Reset Button */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <button
+                              type="button"
+                              onClick={() => setCalAgendaFilter('all')}
+                              style={{
+                                padding: '4px 10px',
+                                borderRadius: '8px',
+                                fontSize: '0.72rem',
+                                fontWeight: 600,
+                                border: 'none',
+                                cursor: 'pointer',
+                                background: calAgendaFilter === 'all' ? '#38bdf8' : 'rgba(255, 255, 255, 0.08)',
+                                color: calAgendaFilter === 'all' ? '#04101e' : '#94a3b8'
+                              }}
+                            >
+                              All ({dateTasks.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setCalAgendaFilter('pending')}
+                              style={{
+                                padding: '4px 10px',
+                                borderRadius: '8px',
+                                fontSize: '0.72rem',
+                                fontWeight: 600,
+                                border: 'none',
+                                cursor: 'pointer',
+                                background: calAgendaFilter === 'pending' ? '#38bdf8' : 'rgba(255, 255, 255, 0.08)',
+                                color: calAgendaFilter === 'pending' ? '#04101e' : '#94a3b8'
+                              }}
+                            >
+                              Pending ({pendingTasks.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setCalAgendaFilter('completed')}
+                              style={{
+                                padding: '4px 10px',
+                                borderRadius: '8px',
+                                fontSize: '0.72rem',
+                                fontWeight: 600,
+                                border: 'none',
+                                cursor: 'pointer',
+                                background: calAgendaFilter === 'completed' ? '#10b981' : 'rgba(255, 255, 255, 0.08)',
+                                color: calAgendaFilter === 'completed' ? '#022c22' : '#94a3b8'
+                              }}
+                            >
+                              Completed ({completedTasks.length})
+                            </button>
+                          </div>
+
+                          {isTodaySelected && completedTasks.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={handleResetTodayCompletedTasks}
+                              title="Reset all completed tasks for today so you can do them again"
+                              style={{
+                                background: 'rgba(245, 158, 11, 0.15)',
+                                border: '1px solid rgba(245, 158, 11, 0.35)',
+                                color: '#fbbf24',
+                                borderRadius: '8px',
+                                padding: '4px 10px',
+                                fontSize: '0.72rem',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                            >
+                              <span>🔄 Reset for Today</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {displayedTasks.map(t => {
                           const done = isTaskDone(t);
                           return (
                             <div 
@@ -5019,19 +5182,37 @@ export default function App() {
                 <span style={{ fontSize: '1rem' }}>🔗</span>
                 <span style={{ color: '#38bdf8', fontWeight: 700, fontSize: '0.88rem' }}>Method 2: Secret iCal Link (Live Auto-Sync)</span>
               </div>
-              <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '0 0 8px 0', lineHeight: 1.4 }}>
-                1. Google Calendar वेब पर खोलें<br/>
-                2. Settings (⚙️) → बाएँ मेनू में अपने कैलेंडर नाम पर क्लिक करें<br/>
-                3. नीचे स्क्रॉल कर "Secret address in iCal format" कॉपी करें
+              <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '0 0 10px 0', lineHeight: 1.4 }}>
+                1. Google Calendar Settings खोलें<br/>
+                2. बायीं ओर 'Settings for my calendars' में अपने नाम/ईमेल पर क्लिक करें<br/>
+                3. नीचे स्क्रॉल कर <b>"Secret address in iCal format"</b> कॉपी करें (यह लिंक .ics पर खत्म होता है)
               </p>
+
+              <button
+                type="button"
+                onClick={() => window.open('https://calendar.google.com/calendar/u/0/r/settings', '_blank', 'noopener,noreferrer')}
+                style={{ width: '100%', background: 'rgba(56, 189, 248, 0.14)', border: '1px solid rgba(56, 189, 248, 0.35)', color: '#38bdf8', borderRadius: '10px', padding: '9px 12px', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginBottom: '10px' }}
+              >
+                <ExternalLink size={13} />
+                <span>⚙️ Google Calendar Settings खोलें (1-Click)</span>
+              </button>
+
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <input
                   type="url"
                   placeholder="Paste https://calendar.google.com/calendar/ical/.../basic.ics"
                   value={gcalIcalUrl}
                   onChange={(e) => setGcalIcalUrl(e.target.value)}
-                  style={{ width: '100%', boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '10px', padding: '9px 12px', color: '#fff', fontSize: '0.78rem', outline: 'none' }}
+                  style={{ width: '100%', boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.06)', border: gcalIcalUrl && (gcalIcalUrl.includes('/calendar/u/') || gcalIcalUrl.includes('/calendar/r')) ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '10px', padding: '9px 12px', color: '#fff', fontSize: '0.78rem', outline: 'none' }}
                 />
+
+                {gcalIcalUrl && (gcalIcalUrl.includes('/calendar/u/') || gcalIcalUrl.includes('/calendar/r')) && (
+                  <div style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '8px', padding: '8px 10px', fontSize: '0.73rem', color: '#fca5a5', lineHeight: 1.4 }}>
+                    ⚠️ <b>यह Google Calendar का वेब ब्राउज़र लिंक है:</b> यह .ics डेटा फ़ीड नहीं है।<br/>
+                    कृपया ऊपर <b>"Google Calendar Settings खोलें"</b> बटन दबाकर अपने कैलेंडर की <b>"Secret address in iCal format"</b> लिंक कॉपी करें।
+                  </div>
+                )}
+
                 <button
                   type="button"
                   onClick={() => syncGCalViaIcalUrl()}
@@ -5045,9 +5226,9 @@ export default function App() {
             </div>
 
             {/* Notice regarding Google Error 403 */}
-            <div style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)', borderRadius: '14px', padding: '10px 12px' }}>
-              <span style={{ fontSize: '0.72rem', color: '#fbbf24', lineHeight: 1.4, display: 'block' }}>
-                ℹ️ <b>Note:</b> Google बिना वेरिफिकेशन वाले ऐप्स के डायरेक्ट पॉपअप को ब्लॉक (Error 403) करता है। ऊपर दिए गए दोनों तरीके बिना किसी ब्लॉक के 100% काम करते हैं।
+            <div style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)', borderRadius: '14px', padding: '12px' }}>
+              <span style={{ fontSize: '0.74rem', color: '#fbbf24', lineHeight: 1.5, display: 'block' }}>
+                ℹ️ <b>Google Security Note:</b> Google बिना वेरिफिकेशन वाले ऐप्स के डायरेक्ट कैलेंडर एक्सेस को ब्लॉक (Error 403: access_denied) करता है। ऊपर दिए गए <b>Method 1 (.ics Upload)</b> या <b>Method 2 (Secret iCal Link)</b> बिना किसी एरर या ब्लॉक के 100% सुरक्षित काम करते हैं!
               </span>
             </div>
           </div>

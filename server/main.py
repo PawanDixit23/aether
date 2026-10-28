@@ -231,12 +231,30 @@ def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
     if existing_tasks == 0 and req.tasks:
         for t in req.tasks:
             try:
+                due_dt = None
+                if t.get("due_date"):
+                    try:
+                        clean_due = str(t["due_date"]).replace("Z", "").replace(" ", "T")
+                        due_dt = datetime.fromisoformat(clean_due)
+                    except Exception:
+                        pass
+
+                created_dt = None
+                if t.get("created_at"):
+                    try:
+                        clean_created = str(t["created_at"]).replace("Z", "").replace(" ", "T")
+                        created_dt = datetime.fromisoformat(clean_created)
+                    except Exception:
+                        pass
+
                 db.add(Task(
                     user_email=email,
                     title=t.get("title", ""),
                     priority=t.get("priority", "medium"),
                     status=t.get("status", "pending"),
                     reminder_time=t.get("reminder_time"),
+                    due_date=due_dt,
+                    created_at=created_dt or datetime.utcnow(),
                     notified=t.get("notified", False)
                 ))
                 restored_counts["tasks"] += 1
@@ -663,7 +681,14 @@ def sync_ical_feed(req: ICalSyncRequest, user_email: Optional[str] = Depends(get
     import urllib.request
     raw_url = req.url.strip()
     if not raw_url.startswith("http"):
-        raise HTTPException(status_code=400, detail="Invalid iCal URL. Must start with http:// or https://")
+        raise HTTPException(status_code=400, detail="अमान्य लिंक। लिंक http:// या https:// से शुरू होना चाहिए।")
+
+    # Detect common mistake: user pasting the Google Calendar browser URL instead of the secret iCal URL
+    if "calendar.google.com/calendar/u/" in raw_url or "/calendar/r" in raw_url:
+        raise HTTPException(
+            status_code=400, 
+            detail="यह Google Calendar का वेब ब्राउज़र लिंक है। Google Calendar से लाइव सिंक करने के लिए Settings (⚙️) → अपने कैलेंडर पर क्लिक करें → 'Secret address in iCal format' (.ics) लिंक कॉपी करके पेस्ट करें।"
+        )
     
     try:
         req_obj = urllib.request.Request(
@@ -673,7 +698,13 @@ def sync_ical_feed(req: ICalSyncRequest, user_email: Optional[str] = Depends(get
         with urllib.request.urlopen(req_obj, timeout=12) as response:
             content = response.read().decode("utf-8", errors="ignore")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Google Calendar iCal URL fetch failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Google Calendar लिंक लोड करने में त्रुटि: {str(e)}")
+
+    if "<!doctype html" in content.lower() or "accounts.google.com" in content or "BEGIN:VCALENDAR" not in content:
+        raise HTTPException(
+            status_code=400,
+            detail="दिए गए लिंक से कैलेंडर डेटा (.ics फ़ीड) नहीं मिला। कृपया Google Calendar Settings से 'Secret address in iCal format' (.ics) लिंक दर्ज करें, या .ics फ़ाइल डाउनलोड करके अपलोड करें।"
+        )
 
     events = []
     lines = content.splitlines()
