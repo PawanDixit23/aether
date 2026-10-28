@@ -537,7 +537,7 @@ export default function App() {
     localStorage.getItem('aether_onboarding_done') === 'true' || 
     Boolean(localStorage.getItem('aether_user_email'))
   );
-  const [onboardingStep, setOnboardingStep] = useState(3);
+  const [onboardingStep, setOnboardingStep] = useState(1);
   const [userName, setUserName] = useState(() => localStorage.getItem('aether_user_name') || '');
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('aether_gemini_key') || '');
 
@@ -1623,33 +1623,78 @@ export default function App() {
         }
       };
 
-      const onLocationError = (err) => {
+      const fallbackIpLocation = async () => {
+        try {
+          const ipRes = await fetch('https://ipapi.co/json/');
+          if (ipRes.ok) {
+            const ipData = await ipRes.json();
+            if (ipData.latitude && ipData.longitude) {
+              const coords = { latitude: ipData.latitude, longitude: ipData.longitude };
+              const cityName = [ipData.city, ipData.region].filter(Boolean).join(', ') || 'Jaipur, Rajasthan';
+              setLocationEnabled(true);
+              localStorage.setItem('aether_location_enabled', 'true');
+              setUserCoords(coords);
+              setUserLocationName(cityName);
+              localStorage.setItem('aether_user_city', cityName);
+              showToast(`✓ लोकेशन सक्रिय: ${cityName} 📍`, 'success');
+              return true;
+            }
+          }
+        } catch (ipErr) {
+          console.warn('IP location fetch failed:', ipErr);
+        }
+        return false;
+      };
+
+      const onLocationError = async (err) => {
         console.warn('Geolocation error:', err);
-        if (err.code === 1) {
-          showToast('लोकेशन अनुमति नहीं मिली। App/Browser Settings में Allow करें।', 'error');
-        } else {
-          showToast('लोकेशन अनुमति नहीं मिल सकी। कृपया फोन का GPS ऑन करें।', 'error');
+        const recovered = await fallbackIpLocation();
+        if (!recovered) {
+          if (err.code === 1) {
+            showToast('लोकेशन अनुमति नहीं मिली। App/Browser Settings में Allow करें।', 'error');
+          } else {
+            showToast('लोकेशन अनुमति नहीं मिल सकी। कृपया फोन का GPS ऑन करें।', 'error');
+          }
         }
       };
 
       const startGeolocation = () => {
+        // Fallback timer: If hardware GPS takes longer than 6 seconds (common in Android WebViews), recover via IP
+        const fallbackTimer = setTimeout(async () => {
+          if (!localStorage.getItem('aether_location_enabled') || localStorage.getItem('aether_location_enabled') !== 'true') {
+            await fallbackIpLocation();
+          }
+        }, 5500);
+
         if (typeof navigator !== 'undefined' && navigator.geolocation) {
-          // Tier 1: GPS high-accuracy (10 sec timeout)
+          // Tier 1: GPS high-accuracy
           navigator.geolocation.getCurrentPosition(
-            onLocationSuccess,
+            (pos) => {
+              clearTimeout(fallbackTimer);
+              onLocationSuccess(pos);
+            },
             (err) => {
               console.warn('GPS High-accuracy timed out, falling back to network location:', err);
-              // Tier 2: Low-accuracy fallback (cell tower / WiFi, 15 sec timeout)
+              // Tier 2: Low-accuracy fallback (cell tower / WiFi)
               navigator.geolocation.getCurrentPosition(
-                onLocationSuccess,
-                onLocationError,
-                { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
+                (pos2) => {
+                  clearTimeout(fallbackTimer);
+                  onLocationSuccess(pos2);
+                },
+                (err2) => {
+                  clearTimeout(fallbackTimer);
+                  onLocationError(err2);
+                },
+                { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
               );
             },
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+            { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
           );
         } else {
-          showToast('इस डिवाइस में लोकेशन समर्थित नहीं है।', 'error');
+          clearTimeout(fallbackTimer);
+          fallbackIpLocation().then(ok => {
+            if (!ok) showToast('इस डिवाइस में लोकेशन समर्थित नहीं है।', 'error');
+          });
         }
       };
 
@@ -2228,20 +2273,28 @@ export default function App() {
       try {
         data = JSON.parse(rawText);
       } catch (jsonErr) {
-        // FIX: Server cold start — HTML page return होती है, JSON नहीं
-        // Auto-retry: 2 बार तक automatically retry करो (12 sec gap)
+        // If server returned non-JSON / HTML wake-up page
         console.warn('GCal sync response non-JSON (server waking up):', rawText?.slice(0, 80));
+        // Check if we already have synced events stored locally
+        const cachedCount = googleTasks.length;
+        if (cachedCount > 0 && isManual) {
+          showToast(`⚡ सिंक बैकग्राउंड में चालू है (${cachedCount} इवेंट्स पहले से सुरक्षित हैं)`, 'info');
+          setShowGCalConnectModal(false);
+          setIsSyncingGCal(false);
+          return;
+        }
+
         if (_retryCount < 2) {
-          const waitSec = (_retryCount + 1) * 12;
+          const waitSec = (_retryCount + 1) * 8;
           if (isManual) {
-            showToast(`सर्वर जाग रहा है... ${waitSec} सेकंड में auto-retry होगी 🔄`, 'info');
+            showToast(`सर्वर कनेक्ट हो रहा है... ${waitSec}s में ऑटो-सिंक 🔄`, 'info');
           }
           setIsSyncingGCal(false);
           setTimeout(() => syncGCalViaIcalUrl(customUrl, isManual, _retryCount + 1), waitSec * 1000);
           return;
         }
         if (isManual) {
-          showToast('सर्वर उपलब्ध नहीं है। कृपया 30 सेकंड बाद पुनः प्रयास करें।', 'error');
+          showToast('क्लाउड सर्वर रिस्पॉन्ड नहीं कर रहा। कृपया कुछ देर बाद सिंक करें।', 'error');
         }
         return;
       }
@@ -2414,11 +2467,21 @@ export default function App() {
       if (resBrief.ok) setBriefing(await resBrief.json());
       if (resChat.ok) {
         const chats = await resChat.json();
+        // Normalize role for rendering: 'aether' -> 'assistant'
+        const normalizedChats = Array.isArray(chats) ? chats.map(c => ({
+          ...c,
+          role: c.role === 'aether' ? 'assistant' : c.role
+        })) : [];
+
         setChatHistory(prev => {
-          if (prev.length === chats.length && prev[prev.length - 1]?.content === chats[chats.length - 1]?.content) {
+          // If server returned empty array but we already have optimistic/fresh messages, don't wipe them!
+          if (normalizedChats.length === 0 && prev.length > 0) {
             return prev;
           }
-          return chats;
+          if (prev.length === normalizedChats.length && prev[prev.length - 1]?.content === normalizedChats[normalizedChats.length - 1]?.content) {
+            return prev;
+          }
+          return normalizedChats;
         });
       }
 
