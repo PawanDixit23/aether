@@ -706,35 +706,158 @@ def sync_ical_feed(req: ICalSyncRequest, user_email: Optional[str] = Depends(get
             detail="दिए गए लिंक से कैलेंडर डेटा (.ics फ़ीड) नहीं मिला। कृपया Google Calendar Settings से 'Secret address in iCal format' (.ics) लिंक दर्ज करें, या .ics फ़ाइल डाउनलोड करके अपलोड करें।"
         )
 
-    events = []
-    lines = content.splitlines()
+    def parse_ics_dt(val):
+        if not val:
+            return None
+        clean = val.replace("Z", "")
+        if "T" in clean:
+            try:
+                return datetime.strptime(clean[:15], "%Y%m%dT%H%M%S")
+            except Exception:
+                return None
+        elif len(clean) >= 8:
+            try:
+                return datetime.strptime(clean[:8], "%Y%m%d")
+            except Exception:
+                return None
+        return None
+
+    def generate_rrule_dates(start_dt, rrule_str, win_start, win_end):
+        parts = dict(p.split("=", 1) for p in rrule_str.split(";") if "=" in p)
+        freq = parts.get("FREQ", "").upper()
+        try:
+            interval = max(1, int(parts.get("INTERVAL", 1)))
+        except Exception:
+            interval = 1
+        until_dt = parse_ics_dt(parts.get("UNTIL", ""))
+
+        byday = parts.get("BYDAY", "").split(",") if "BYDAY" in parts else []
+        day_map = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+        target_weekdays = [day_map[d[-2:]] for d in byday if d[-2:] in day_map]
+
+        occurrences = []
+        curr = start_dt
+
+        if freq == "DAILY":
+            if curr < win_start:
+                days_behind = (win_start.date() - curr.date()).days
+                steps = max(0, (days_behind // interval) * interval)
+                curr += timedelta(days=steps)
+            while curr <= win_end:
+                if curr >= win_start:
+                    if until_dt and curr > until_dt:
+                        break
+                    occurrences.append(curr)
+                curr += timedelta(days=interval)
+
+        elif freq == "WEEKLY":
+            if not target_weekdays:
+                target_weekdays = [curr.weekday()]
+            check_date = max(start_dt.date(), win_start.date())
+            while check_date <= win_end.date():
+                if check_date.weekday() in target_weekdays:
+                    occ = datetime.combine(check_date, curr.time())
+                    if until_dt and occ > until_dt:
+                        break
+                    occurrences.append(occ)
+                check_date += timedelta(days=1)
+
+        elif freq == "MONTHLY":
+            check_date = max(start_dt.date(), win_start.date()).replace(day=min(start_dt.day, 28))
+            while check_date <= win_end.date():
+                occ = datetime.combine(check_date, curr.time())
+                if occ >= win_start:
+                    if until_dt and occ > until_dt:
+                        break
+                    occurrences.append(occ)
+                m = check_date.month + interval
+                y = check_date.year + (m - 1) // 12
+                m = ((m - 1) % 12) + 1
+                try:
+                    check_date = check_date.replace(year=y, month=m)
+                except Exception:
+                    check_date += timedelta(days=30 * interval)
+
+        elif freq == "YEARLY":
+            check_year = max(start_dt.year, win_start.year)
+            while check_year <= win_end.year:
+                try:
+                    occ = datetime(check_year, start_dt.month, start_dt.day, curr.hour, curr.minute)
+                    if win_start <= occ <= win_end:
+                        if until_dt and occ > until_dt:
+                            break
+                        occurrences.append(occ)
+                except Exception:
+                    pass
+                check_year += interval
+
+        return occurrences
+
+    # Unfold RFC 5545 wrapped lines
+    unfolded_lines = []
+    for line in content.splitlines():
+        if (line.startswith(" ") or line.startswith("\t")) and unfolded_lines:
+            unfolded_lines[-1] += line[1:]
+        else:
+            unfolded_lines.append(line)
+
+    raw_events = []
     in_event = False
     curr = {}
 
-    for line in lines:
+    for line in unfolded_lines:
         if line.startswith("BEGIN:VEVENT"):
             in_event = True
             curr = {}
         elif line.startswith("END:VEVENT"):
             in_event = False
-            summary = curr.get("summary")
-            dtstart = curr.get("dtstart")
-            if summary and dtstart:
-                time_str = "All Day"
-                due_date = dtstart
-                if "T" in dtstart:
-                    try:
-                        clean_dt = dtstart.replace("Z", "")
-                        dt_obj = datetime.strptime(clean_dt[:15], "%Y%m%dT%H%M%S")
-                        time_str = dt_obj.strftime("%I:%M %p")
-                        due_date = dt_obj.strftime("%Y-%m-%dT%H:%M:%S")
-                    except Exception:
-                        pass
-                elif len(dtstart) == 8:
-                    due_date = f"{dtstart[:4]}-{dtstart[4:6]}-{dtstart[6:8]}"
-                
+            if curr.get("summary") and curr.get("dtstart"):
+                raw_events.append(curr)
+        elif in_event:
+            if line.startswith("SUMMARY:"):
+                curr["summary"] = line[8:].strip()
+            elif line.startswith("DTSTART"):
+                parts = line.split(":")
+                if len(parts) >= 2:
+                    curr["dtstart"] = parts[-1].strip()
+            elif line.startswith("DTEND"):
+                parts = line.split(":")
+                if len(parts) >= 2:
+                    curr["dtend"] = parts[-1].strip()
+            elif line.startswith("RRULE:"):
+                curr["rrule"] = line[6:].strip()
+            elif line.startswith("UID:"):
+                curr["uid"] = line[4:].strip()
+            elif line.startswith("DESCRIPTION:"):
+                curr["description"] = line[12:].strip()
+
+    # Expand occurrences for window (-30 days to +90 days)
+    now_ref = datetime.now()
+    window_start = now_ref - timedelta(days=30)
+    window_end = now_ref + timedelta(days=90)
+    events = []
+
+    for ev in raw_events:
+        summary = ev.get("summary", "")
+        dtstart_str = ev.get("dtstart", "")
+        dtend_str = ev.get("dtend", "")
+        rrule_str = ev.get("rrule", "")
+        uid = ev.get("uid") or f"ev_{len(events)}"
+
+        start_dt = parse_ics_dt(dtstart_str)
+        if not start_dt:
+            continue
+
+        time_str = "All Day"
+        if "T" in dtstart_str:
+            time_str = start_dt.strftime("%I:%M %p")
+
+        if rrule_str:
+            occs = generate_rrule_dates(start_dt, rrule_str, window_start, window_end)
+            for idx, occ in enumerate(occs):
+                due_date = occ.strftime("%Y-%m-%dT%H:%M:%S") if "T" in dtstart_str else occ.strftime("%Y-%m-%d")
                 events.append({
-                    "id": f"gcal_ical_{len(events)}_{dtstart}",
+                    "id": f"gcal_ical_{uid}_{due_date}",
                     "title": summary,
                     "due_date": due_date,
                     "reminder_time": time_str,
@@ -744,15 +867,53 @@ def sync_ical_feed(req: ICalSyncRequest, user_email: Optional[str] = Depends(get
                     "is_google_calendar": True,
                     "created_at": due_date
                 })
-        elif in_event:
-            if line.startswith("SUMMARY:"):
-                curr["summary"] = line[8:].strip()
-            elif line.startswith("DTSTART"):
-                parts = line.split(":")
-                if len(parts) >= 2:
-                    curr["dtstart"] = parts[-1].strip()
-            elif line.startswith("DESCRIPTION:"):
-                curr["description"] = line[12:].strip()
+        elif dtend_str and dtend_str != dtstart_str:
+            end_dt = parse_ics_dt(dtend_str)
+            if end_dt and (end_dt.date() - start_dt.date()).days > 0:
+                curr_date = start_dt.date()
+                end_date = end_dt.date()
+                while curr_date < end_date and curr_date <= window_end.date():
+                    if curr_date >= window_start.date():
+                        curr_dt = datetime.combine(curr_date, start_dt.time())
+                        due_date = curr_dt.strftime("%Y-%m-%dT%H:%M:%S") if "T" in dtstart_str else curr_date.strftime("%Y-%m-%d")
+                        events.append({
+                            "id": f"gcal_ical_{uid}_{due_date}",
+                            "title": summary,
+                            "due_date": due_date,
+                            "reminder_time": time_str,
+                            "priority": "medium",
+                            "status": "pending",
+                            "is_completed": False,
+                            "is_google_calendar": True,
+                            "created_at": due_date
+                        })
+                    curr_date += timedelta(days=1)
+            else:
+                due_date = start_dt.strftime("%Y-%m-%dT%H:%M:%S") if "T" in dtstart_str else start_dt.strftime("%Y-%m-%d")
+                events.append({
+                    "id": f"gcal_ical_{uid}_{due_date}",
+                    "title": summary,
+                    "due_date": due_date,
+                    "reminder_time": time_str,
+                    "priority": "medium",
+                    "status": "pending",
+                    "is_completed": False,
+                    "is_google_calendar": True,
+                    "created_at": due_date
+                })
+        else:
+            due_date = start_dt.strftime("%Y-%m-%dT%H:%M:%S") if "T" in dtstart_str else start_dt.strftime("%Y-%m-%d")
+            events.append({
+                "id": f"gcal_ical_{uid}_{due_date}",
+                "title": summary,
+                "due_date": due_date,
+                "reminder_time": time_str,
+                "priority": "medium",
+                "status": "pending",
+                "is_completed": False,
+                "is_google_calendar": True,
+                "created_at": due_date
+            })
 
     return {"status": "ok", "count": len(events), "events": events}
 
