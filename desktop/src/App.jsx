@@ -2958,7 +2958,7 @@ export default function App() {
         created_at: new Date().toISOString()
       }]);
 
-      if (isListening || audioSamplePlaying) {
+      if (voiceOutputEnabled) {
         speakText(assistantReply);
       }
 
@@ -4302,6 +4302,30 @@ export default function App() {
                         </div>
                       )}
                       <FormattedMessage text={msg.content} />
+                      {msg.role !== 'user' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+                          <button
+                            type="button"
+                            onClick={() => speakText(msg.content)}
+                            title="Aether की आवाज में सुनें (Listen aloud)"
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.06)',
+                              border: '1px solid rgba(255, 255, 255, 0.12)',
+                              color: '#38bdf8',
+                              borderRadius: '8px',
+                              padding: '3px 8px',
+                              fontSize: '0.72rem',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <Volume2 size={12} />
+                            <span>सुनें (Listen)</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                   {isProcessing && (
