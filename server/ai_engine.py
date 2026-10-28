@@ -118,23 +118,63 @@ def find_city_in_text(text: str):
 
     return None
 
-# Cached Live Weather with timestamp
+# Cached Live Weather with timestamp — per-coordinate caching + global fallback
+# FIX: lat/lon pass होने पर भी cache use करो, 15 min TTL, 429 on backoff
 WEATHER_CACHE = {"data": None, "timestamp": 0}
+WEATHER_COORD_CACHE = {}   # key: "lat,lon" → {"data": ..., "timestamp": ...}
+WEATHER_BACKOFF_UNTIL = 0  # 429 मिलने पर इस timestamp तक API call बंद रहे
+
+WEATHER_CACHE_TTL = 15 * 60        # 15 minutes default TTL
+WEATHER_429_BACKOFF = 20 * 60      # 429 मिलने पर 20 min के लिए API calls रोको
 
 def get_live_weather_data(lat: float = None, lon: float = None) -> dict:
-    """Fetch live accurate weather from Open-Meteo with caching (10 min TTL)."""
-    global WEATHER_CACHE
+    """Fetch live accurate weather from Open-Meteo with per-coordinate caching (15 min TTL).
+    
+    FIX: 429 rate-limit handled with:
+    1. Per-coordinate cache — same lat/lon पर repeat calls cache से serve होंगी
+    2. Global backoff — 429 मिलने पर 20 min के लिए API calls बंद
+    3. Stale cache fallback — network error / rate limit पर cached data return करो
+    """
+    global WEATHER_CACHE, WEATHER_COORD_CACHE, WEATHER_BACKOFF_UNTIL
     import time
     now_ts = time.time()
-    if WEATHER_CACHE["data"] and (now_ts - WEATHER_CACHE["timestamp"] < 600) and not lat:
+
+    use_lat = round(lat or 26.85, 4)
+    use_lon = round(lon or 75.72, 4)
+    coord_key = f"{use_lat},{use_lon}"
+
+    # 1. Per-coordinate cache check (15 min TTL)
+    coord_entry = WEATHER_COORD_CACHE.get(coord_key)
+    if coord_entry and (now_ts - coord_entry["timestamp"] < WEATHER_CACHE_TTL):
+        return coord_entry["data"]
+
+    # 2. Global cache fallback (no lat — same as before, also 15 min)
+    if not lat and WEATHER_CACHE["data"] and (now_ts - WEATHER_CACHE["timestamp"] < WEATHER_CACHE_TTL):
         return WEATHER_CACHE["data"]
-    
-    use_lat = lat or 26.85
-    use_lon = lon or 75.72
+
+    # 3. 429 backoff check — rate limit मिला था तो अभी API call नहीं करेंगे
+    if now_ts < WEATHER_BACKOFF_UNTIL:
+        remaining = int(WEATHER_BACKOFF_UNTIL - now_ts)
+        print(f"[Aether Weather] ⏳ Rate-limit backoff active — {remaining}s remaining, serving stale cache")
+        # Stale cache से serve करो
+        if coord_entry and coord_entry.get("data"):
+            return coord_entry["data"]
+        if WEATHER_CACHE["data"]:
+            return WEATHER_CACHE["data"]
+
     try:
         url = f"https://api.open-meteo.com/v1/forecast?latitude={use_lat}&longitude={use_lon}&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        req = urllib.request.Request(url, headers={'User-Agent': 'AetherAI/1.0'})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            # 429 check on response status
+            if resp.status == 429:
+                WEATHER_BACKOFF_UNTIL = now_ts + WEATHER_429_BACKOFF
+                print(f"[Aether Engine] ⚠️ Weather API 429 — backing off for {WEATHER_429_BACKOFF//60} min")
+                if coord_entry and coord_entry.get("data"):
+                    return coord_entry["data"]
+                if WEATHER_CACHE["data"]:
+                    return WEATHER_CACHE["data"]
+                raise Exception("HTTP Error 429: Too Many Requests")
             data = json.loads(resp.read().decode())
             current = data.get('current', {})
             temp = round(current.get('temperature_2m', 31.4), 1)
@@ -171,12 +211,24 @@ def get_live_weather_data(lat: float = None, lon: float = None) -> dict:
                 "city_hi": "Jaipur (भांकरोटा)",
                 "city_hinglish": "Jaipur (Bhankrota)"
             }
+            # Per-coordinate cache save
+            WEATHER_COORD_CACHE[coord_key] = {"data": result, "timestamp": now_ts}
+            # Global cache भी update (default location के लिए)
             if not lat:
                 WEATHER_CACHE["data"] = result
                 WEATHER_CACHE["timestamp"] = now_ts
             return result
     except Exception as e:
-        print(f"[Aether Engine] Live weather fetch error: {e}")
+        err_str = str(e)
+        # 429 urllib error
+        if "429" in err_str or "Too Many Requests" in err_str:
+            WEATHER_BACKOFF_UNTIL = now_ts + WEATHER_429_BACKOFF
+            print(f"[Aether Engine] ⚠️ Weather API 429 — backing off for {WEATHER_429_BACKOFF//60} min")
+        else:
+            print(f"[Aether Engine] Live weather fetch error: {e}")
+        # Stale cache से serve करो (any age)
+        if coord_entry and coord_entry.get("data"):
+            return coord_entry["data"]
         if WEATHER_CACHE["data"]:
             return WEATHER_CACHE["data"]
         import datetime

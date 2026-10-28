@@ -986,12 +986,24 @@ def delete_memory(
     return {"message": "Memory deleted successfully"}
 
 # ----------------- Executive Briefing -----------------
+# FIX: Briefing response को 5 min cache करो — weather API 429 rate-limit से बचाव
+import time as _briefing_time
+
+_BRIEFING_CACHE: dict = {}
+_BRIEFING_CACHE_TTL = 5 * 60  # 5 minutes
+
 @app.get("/api/briefing")
 def get_executive_briefing(
     user_email: Optional[str] = Depends(get_user_email),
     user_name: Optional[str] = "Operator",
     db: Session = Depends(get_db)
 ):
+    # Rapid repeated calls पर cached response return करो
+    _cache_key = user_email or "guest"
+    _cached = _BRIEFING_CACHE.get(_cache_key)
+    if _cached and (_briefing_time.time() - _cached["ts"] < _BRIEFING_CACHE_TTL):
+        return _cached["data"]
+
     if not user_email:
         tasks = []
         urgent_tasks = []
@@ -1046,7 +1058,7 @@ def get_executive_briefing(
     if display_name == "Operator":
         display_name = "पवन"
 
-    return {
+    response_data = {
         "greeting": f"{greeting}, {display_name}!",
         "date_str": now.strftime("%d %b").upper(),
         "pending_tasks_count": len(tasks),
@@ -1058,6 +1070,9 @@ def get_executive_briefing(
         "weather": weather,
         "generated_at": now.isoformat()
     }
+    # Cache save — अगले 5 min rapid calls इसी से serve होंगी
+    _BRIEFING_CACHE[user_email or "guest"] = {"data": response_data, "ts": _briefing_time.time()}
+    return response_data
 
 # ----------------- Audit Logs & Undo -----------------
 @app.get("/api/audit-logs")

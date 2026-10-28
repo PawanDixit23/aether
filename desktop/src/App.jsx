@@ -1608,58 +1608,71 @@ export default function App() {
     } else {
       showToast('📍 सटीक लोकेशन खोजी जा रही है...', 'info');
 
-      // 1. Notify native Android WebView if running in mobile app
-      if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+      const onLocationSuccess = async (pos) => {
+        const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+        setLocationEnabled(true);
+        localStorage.setItem('aether_location_enabled', 'true');
+        setUserCoords(coords);
         try {
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_LOCATION_PERMISSION' }));
-        } catch (e) {}
-      }
+          const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
+          setUserLocationName(locName);
+          localStorage.setItem('aether_user_city', locName);
+          showToast(`✓ लोकेशन सक्रिय: ${locName} 📍`, 'success');
+        } catch (geoErr) {
+          showToast('✓ लोकेशन एक्सेस सक्रिय! (Location Enabled)', 'success');
+        }
+      };
 
-      if (typeof navigator !== 'undefined' && navigator.geolocation) {
-        const onLocationSuccess = async (pos) => {
-          const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-          setLocationEnabled(true);
-          localStorage.setItem('aether_location_enabled', 'true');
-          setUserCoords(coords);
+      const onLocationError = (err) => {
+        console.warn('Geolocation error:', err);
+        if (err.code === 1) {
+          showToast('लोकेशन अनुमति नहीं मिली। App/Browser Settings में Allow करें।', 'error');
+        } else {
+          showToast('लोकेशन अनुमति नहीं मिल सकी। कृपया फोन का GPS ऑन करें।', 'error');
+        }
+      };
 
-          // Reverse geocode to exact human-readable location
-          try {
-            const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
-            setUserLocationName(locName);
-            localStorage.setItem('aether_user_city', locName);
-            showToast(`✓ लोकेशन सक्रिय: ${locName} 📍`, 'success');
-          } catch (geoErr) {
-            showToast('✓ लोकेशन एक्सेस सक्रिय! (Location Enabled)', 'success');
-          }
-        };
-
-        const onFallbackLocation = () => {
-          // Tier 2: Low-accuracy fallback (Cell tower / WiFi / IP location, 15 sec timeout)
+      const startGeolocation = () => {
+        if (typeof navigator !== 'undefined' && navigator.geolocation) {
+          // Tier 1: GPS high-accuracy (10 sec timeout)
           navigator.geolocation.getCurrentPosition(
             onLocationSuccess,
-            (err2) => {
-              console.warn('Geolocation fallback failed:', err2);
-              if (err2.code === 1) {
-                showToast('कृपया ब्राउज़र/ऐप सेटिंग्स में लोकेशन अनुमति Allow करें।', 'error');
-              } else {
-                showToast('लोकेशन अनुमति नहीं मिल सकी। कृपया फोन का GPS ऑन करें।', 'error');
-              }
+            (err) => {
+              console.warn('GPS High-accuracy timed out, falling back to network location:', err);
+              // Tier 2: Low-accuracy fallback (cell tower / WiFi, 15 sec timeout)
+              navigator.geolocation.getCurrentPosition(
+                onLocationSuccess,
+                onLocationError,
+                { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
+              );
             },
-            { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
           );
-        };
+        } else {
+          showToast('इस डिवाइस में लोकेशन समर्थित नहीं है।', 'error');
+        }
+      };
 
-        // Tier 1: Try GPS satellite precision (10 sec timeout)
-        navigator.geolocation.getCurrentPosition(
-          onLocationSuccess,
-          (err) => {
-            console.warn('GPS High-accuracy timed out, falling back to network location:', err);
-            onFallbackLocation();
-          },
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-        );
+      // FIX: React Native WebView — पहले native permission माँगो, callback मिलने पर GPS call करो
+      if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+        try {
+          // Register callback — native permission result आने पर geolocation start करो
+          window.__onLocationPermissionResult = (granted) => {
+            window.__onLocationPermissionResult = null; // cleanup
+            if (granted) {
+              startGeolocation();
+            } else {
+              showToast('लोकेशन अनुमति नहीं मिली। App Settings में Allow करें।', 'error');
+            }
+          };
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_LOCATION_PERMISSION' }));
+        } catch (e) {
+          // postMessage fail हो तो directly try करो
+          startGeolocation();
+        }
       } else {
-        showToast('इस डिवाइस में लोकेशन समर्थित नहीं है।', 'error');
+        // Browser (non-RN): directly call geolocation
+        startGeolocation();
       }
     }
   };
@@ -2189,7 +2202,7 @@ export default function App() {
     }
   };
 
-  const syncGCalViaIcalUrl = async (customUrl, isManual = false) => {
+  const syncGCalViaIcalUrl = async (customUrl, isManual = false, _retryCount = 0) => {
     const url = (customUrl || gcalIcalUrl).trim();
     if (!url || !url.startsWith('http')) {
       if (isManual) showToast('कृपया वैध Google Calendar iCal लिंक दर्ज करें (https://...)', 'error');
@@ -2207,16 +2220,28 @@ export default function App() {
       const res = await fetch(`${API_BASE}/calendar/sync-ical`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, user_email: userEmail })
+        body: JSON.stringify({ url, user_email: userEmail }),
+        signal: AbortSignal.timeout(20000),
       });
       const rawText = await res.text();
       let data = null;
       try {
         data = JSON.parse(rawText);
       } catch (jsonErr) {
+        // FIX: Server cold start — HTML page return होती है, JSON नहीं
+        // Auto-retry: 2 बार तक automatically retry करो (12 sec gap)
         console.warn('GCal sync response non-JSON (server waking up):', rawText?.slice(0, 80));
+        if (_retryCount < 2) {
+          const waitSec = (_retryCount + 1) * 12;
+          if (isManual) {
+            showToast(`सर्वर जाग रहा है... ${waitSec} सेकंड में auto-retry होगी 🔄`, 'info');
+          }
+          setIsSyncingGCal(false);
+          setTimeout(() => syncGCalViaIcalUrl(customUrl, isManual, _retryCount + 1), waitSec * 1000);
+          return;
+        }
         if (isManual) {
-          showToast('क्लाउड सर्वर वेक-अप हो रहा है, कृपया 10 सेकंड बाद पुनः प्रयास करें।', 'info');
+          showToast('सर्वर उपलब्ध नहीं है। कृपया 30 सेकंड बाद पुनः प्रयास करें।', 'error');
         }
         return;
       }
@@ -2235,6 +2260,16 @@ export default function App() {
       }
     } catch (err) {
       console.error(err);
+      // Network timeout पर भी auto-retry
+      if ((err.name === 'TimeoutError' || err.name === 'AbortError') && _retryCount < 2) {
+        const waitSec = (_retryCount + 1) * 12;
+        if (isManual) {
+          showToast(`सर्वर respond नहीं कर रहा... ${waitSec} सेकंड में retry 🔄`, 'info');
+        }
+        setIsSyncingGCal(false);
+        setTimeout(() => syncGCalViaIcalUrl(customUrl, isManual, _retryCount + 1), waitSec * 1000);
+        return;
+      }
       if (isManual) {
         showToast('Google Calendar सिंक त्रुटि: ' + err.message, 'error');
       }
@@ -5177,56 +5212,79 @@ export default function App() {
               /* ─── LIST VIEW ─── */
               <div>
                 {/* Quick Filter tabs */}
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                  <button 
-                    type="button"
-                    onClick={() => setAgendaFilter('pending')}
-                    style={{
-                      background: agendaFilter === 'pending' ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                      border: agendaFilter === 'pending' ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.1)',
-                      color: agendaFilter === 'pending' ? '#38bdf8' : '#94a3b8',
-                      padding: '6px 14px',
-                      borderRadius: '16px',
-                      fontSize: '0.8rem',
-                      fontWeight: 600,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Pending ({combinedTasks.filter(t => !t.is_completed && t.status !== 'completed').length})
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setAgendaFilter('completed')}
-                    style={{
-                      background: agendaFilter === 'completed' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                      border: agendaFilter === 'completed' ? '1px solid #10b981' : '1px solid rgba(255, 255, 255, 0.1)',
-                      color: agendaFilter === 'completed' ? '#10b981' : '#94a3b8',
-                      padding: '6px 14px',
-                      borderRadius: '16px',
-                      fontSize: '0.8rem',
-                      fontWeight: 600,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Completed ({combinedTasks.filter(t => t.is_completed || t.status === 'completed').length})
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setAgendaFilter('all')}
-                    style={{
-                      background: agendaFilter === 'all' ? 'rgba(168, 85, 247, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                      border: agendaFilter === 'all' ? '1px solid #a855f7' : '1px solid rgba(255, 255, 255, 0.1)',
-                      color: agendaFilter === 'all' ? '#a855f7' : '#94a3b8',
-                      padding: '6px 14px',
-                      borderRadius: '16px',
-                      fontSize: '0.8rem',
-                      fontWeight: 600,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    All ({combinedTasks.length})
-                  </button>
-                </div>
+                {(() => {
+                  // FIX: Smart date-aware counts — पुराने GCal events को exclude करके count करो
+                  const todayStr = formatLocalDateStr(new Date());
+                  // 7 दिन पहले की cutoff date
+                  const cutoffDate = new Date();
+                  cutoffDate.setDate(cutoffDate.getDate() - 7);
+                  const cutoffStr = formatLocalDateStr(cutoffDate);
+
+                  const isTaskDoneCount = (t) => t.is_completed || t.status === 'completed';
+                  // Relevant = non-GCal tasks + GCal tasks जो cutoff के बाद के हों
+                  const isRelevant = (t) => {
+                    if (!t.is_google_calendar) return true;
+                    const dateStr = getTaskDateStr(t);
+                    if (!dateStr) return true;
+                    return dateStr >= cutoffStr;
+                  };
+                  const relevantTasks = combinedTasks.filter(isRelevant);
+                  const pendingCount = relevantTasks.filter(t => !isTaskDoneCount(t)).length;
+                  const completedCount = combinedTasks.filter(t => isTaskDoneCount(t)).length;
+
+                  return (
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                      <button 
+                        type="button"
+                        onClick={() => setAgendaFilter('pending')}
+                        style={{
+                          background: agendaFilter === 'pending' ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                          border: agendaFilter === 'pending' ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.1)',
+                          color: agendaFilter === 'pending' ? '#38bdf8' : '#94a3b8',
+                          padding: '6px 14px',
+                          borderRadius: '16px',
+                          fontSize: '0.8rem',
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Pending ({pendingCount})
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => setAgendaFilter('completed')}
+                        style={{
+                          background: agendaFilter === 'completed' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                          border: agendaFilter === 'completed' ? '1px solid #10b981' : '1px solid rgba(255, 255, 255, 0.1)',
+                          color: agendaFilter === 'completed' ? '#10b981' : '#94a3b8',
+                          padding: '6px 14px',
+                          borderRadius: '16px',
+                          fontSize: '0.8rem',
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Completed ({completedCount})
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => setAgendaFilter('all')}
+                        style={{
+                          background: agendaFilter === 'all' ? 'rgba(168, 85, 247, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                          border: agendaFilter === 'all' ? '1px solid #a855f7' : '1px solid rgba(255, 255, 255, 0.1)',
+                          color: agendaFilter === 'all' ? '#a855f7' : '#94a3b8',
+                          padding: '6px 14px',
+                          borderRadius: '16px',
+                          fontSize: '0.8rem',
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        All ({relevantTasks.length})
+                      </button>
+                    </div>
+                  );
+                })()}
 
                 {/* Quick Add Task Form */}
                 <form 
@@ -5249,11 +5307,50 @@ export default function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
                   {(() => {
                     const isTaskDone = (t) => t.is_completed || t.status === 'completed';
+
+                    // FIX: Smart date filter — GCal के 7+ दिन पुराने events को pending में न दिखाओ
+                    const cutoffDate = new Date();
+                    cutoffDate.setDate(cutoffDate.getDate() - 7);
+                    const cutoffStr = formatLocalDateStr(cutoffDate);
+
+                    const isRelevantTask = (t) => {
+                      // Regular tasks (non-GCal) हमेशा दिखाओ
+                      if (!t.is_google_calendar) return true;
+                      // GCal events: only show last 7 days + upcoming
+                      const dateStr = getTaskDateStr(t);
+                      if (!dateStr) return true;
+                      return dateStr >= cutoffStr;
+                    };
+
                     const filtered = combinedTasks.filter(t => {
-                      if (agendaFilter === 'pending') return !isTaskDone(t);
+                      // Pending tab: non-completed + relevant (no old GCal)
+                      if (agendaFilter === 'pending') return !isTaskDone(t) && isRelevantTask(t);
                       if (agendaFilter === 'completed') return isTaskDone(t);
-                      return true;
+                      // All tab: relevant tasks only (no old GCal junk)
+                      return isRelevantTask(t);
                     });
+
+                    // Sort by date: आज/आने वाले पहले, date नहीं है तो बाद में
+                    const todayStr = formatLocalDateStr(new Date());
+                    filtered.sort((a, b) => {
+                      const dA = getTaskDateStr(a) || '9999-99-99';
+                      const dB = getTaskDateStr(b) || '9999-99-99';
+                      // Past dates को end में डालो
+                      const isPastA = dA < todayStr;
+                      const isPastB = dB < todayStr;
+                      if (isPastA && !isPastB) return 1;
+                      if (!isPastA && isPastB) return -1;
+                      return dA.localeCompare(dB);
+                    });
+
+                    // छुपे हुए पुराने GCal events की count
+                    const hiddenOldGCalCount = combinedTasks.filter(t => {
+                      if (t.is_google_calendar && !isTaskDone(t)) {
+                        const dateStr = getTaskDateStr(t);
+                        return dateStr && dateStr < cutoffStr;
+                      }
+                      return false;
+                    }).length;
 
                     if (filtered.length === 0) {
                       return (
@@ -5263,78 +5360,99 @@ export default function App() {
                       );
                     }
 
-                    return filtered.map(t => {
-                      const done = isTaskDone(t);
-                      return (
-                        <div 
-                          key={t.id} 
-                          style={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            justifyContent: 'space-between', 
-                            padding: '12px 14px', 
-                            background: 'rgba(255, 255, 255, 0.03)', 
-                            border: '1px solid rgba(255, 255, 255, 0.06)', 
-                            borderRadius: '14px',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          <div 
-                            onClick={() => !t.is_google_calendar && handleToggleTask(t.id)} 
-                            style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: t.is_google_calendar ? 'default' : 'pointer', flex: 1, textDecoration: done ? 'line-through' : 'none', opacity: done ? 0.6 : 1 }}
-                          >
-                            <div style={{ color: done ? '#10b981' : t.is_google_calendar ? '#60a5fa' : '#64748b' }}>
-                              {done ? <CheckCircle2 size={18} /> : t.is_google_calendar ? <Calendar size={18} /> : <Circle size={18} />}
-                            </div>
-                            <div>
-                              <div style={{ color: done ? '#94a3b8' : '#f1f5f9', fontSize: '0.92rem', fontWeight: done ? 400 : 500 }}>
-                                {t.title}
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px', flexWrap: 'wrap' }}>
-                                {t.reminder_time && (
-                                  <span style={{ color: '#38bdf8', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    <span>⏰</span>
-                                    <span>{t.reminder_time}</span>
-                                  </span>
-                                )}
-                                {t.due_date && (
-                                  <span style={{ color: '#94a3b8', fontSize: '0.74rem' }}>
-                                    📅 {formatLocalDateStr(t.due_date)}
-                                  </span>
-                                )}
-                                {t.is_google_calendar && (
-                                  <span style={{ fontSize: '0.65rem', background: 'rgba(66, 133, 244, 0.2)', color: '#60a5fa', padding: '1px 6px', borderRadius: '4px', fontWeight: 700 }}>
-                                    GOOGLE CALENDAR
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                          {t.is_google_calendar ? (
-                            t.htmlLink && (
-                              <button 
-                                type="button" 
-                                onClick={() => window.open(t.htmlLink, '_blank', 'noopener,noreferrer')} 
-                                style={{ background: 'rgba(66, 133, 244, 0.15)', border: '1px solid rgba(66, 133, 244, 0.3)', color: '#60a5fa', borderRadius: '8px', padding: '4px 8px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
-                                title="Open in Google Calendar"
+                    return (
+                      <>
+                        {filtered.map(t => {
+                          const done = isTaskDone(t);
+                          const taskDateStr = getTaskDateStr(t);
+                          const todayDateStr = formatLocalDateStr(new Date());
+                          const isOverdue = taskDateStr && taskDateStr < todayDateStr && !done;
+                          return (
+                            <div 
+                              key={t.id} 
+                              style={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'space-between', 
+                                padding: '12px 14px', 
+                                background: isOverdue ? 'rgba(239, 68, 68, 0.05)' : 'rgba(255, 255, 255, 0.03)', 
+                                border: isOverdue ? '1px solid rgba(239, 68, 68, 0.2)' : '1px solid rgba(255, 255, 255, 0.06)', 
+                                borderRadius: '14px',
+                                transition: 'all 0.15s ease'
+                              }}
+                            >
+                              <div 
+                                onClick={() => !t.is_google_calendar && handleToggleTask(t.id)} 
+                                style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: t.is_google_calendar ? 'default' : 'pointer', flex: 1, textDecoration: done ? 'line-through' : 'none', opacity: done ? 0.6 : 1 }}
                               >
-                                <ExternalLink size={12} />
-                                <span>Open</span>
-                              </button>
-                            )
-                          ) : (
+                                <div style={{ color: done ? '#10b981' : isOverdue ? '#f97316' : t.is_google_calendar ? '#60a5fa' : '#64748b' }}>
+                                  {done ? <CheckCircle2 size={18} /> : t.is_google_calendar ? <Calendar size={18} /> : <Circle size={18} />}
+                                </div>
+                                <div>
+                                  <div style={{ color: done ? '#94a3b8' : '#f1f5f9', fontSize: '0.92rem', fontWeight: done ? 400 : 500 }}>
+                                    {t.title}
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px', flexWrap: 'wrap' }}>
+                                    {t.reminder_time && (
+                                      <span style={{ color: '#38bdf8', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                        <span>⏰</span>
+                                        <span>{t.reminder_time}</span>
+                                      </span>
+                                    )}
+                                    {t.due_date && (
+                                      <span style={{ color: isOverdue ? '#f97316' : '#94a3b8', fontSize: '0.74rem' }}>
+                                        📅 {formatLocalDateStr(t.due_date)}
+                                        {isOverdue && <span style={{ marginLeft: '4px', fontSize: '0.68rem', color: '#f97316', fontWeight: 700 }}>· OVERDUE</span>}
+                                      </span>
+                                    )}
+                                    {t.is_google_calendar && (
+                                      <span style={{ fontSize: '0.65rem', background: 'rgba(66, 133, 244, 0.2)', color: '#60a5fa', padding: '1px 6px', borderRadius: '4px', fontWeight: 700 }}>
+                                        GOOGLE CALENDAR
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              {t.is_google_calendar ? (
+                                t.htmlLink && (
+                                  <button 
+                                    type="button" 
+                                    onClick={() => window.open(t.htmlLink, '_blank', 'noopener,noreferrer')} 
+                                    style={{ background: 'rgba(66, 133, 244, 0.15)', border: '1px solid rgba(66, 133, 244, 0.3)', color: '#60a5fa', borderRadius: '8px', padding: '4px 8px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+                                    title="Open in Google Calendar"
+                                  >
+                                    <ExternalLink size={12} />
+                                    <span>Open</span>
+                                  </button>
+                                )
+                              ) : (
+                                <button 
+                                  type="button" 
+                                  onClick={() => handleDeleteTask(t.id)} 
+                                  style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '6px' }}
+                                  title="Delete task"
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {/* पुराने GCal events का info banner */}
+                        {hiddenOldGCalCount > 0 && agendaFilter === 'pending' && (
+                          <div style={{ textAlign: 'center', padding: '10px', color: '#64748b', fontSize: '0.76rem', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                            📅 {hiddenOldGCalCount} पुराने Google Calendar events छुपाए गए हैं।{' '}
                             <button 
                               type="button" 
-                              onClick={() => handleDeleteTask(t.id)} 
-                              style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '6px' }}
-                              title="Delete task"
+                              onClick={() => setAgendaFilter('all')} 
+                              style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', fontSize: '0.76rem', fontWeight: 600, padding: 0 }}
                             >
-                              <Trash2 size={15} />
+                              All देखें →
                             </button>
-                          )}
-                        </div>
-                      );
-                    });
+                          </div>
+                        )}
+                      </>
+                    );
                   })()}
                 </div>
               </div>
