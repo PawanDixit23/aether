@@ -142,7 +142,7 @@ def get_current_time_str(client_time: Optional[str] = None, tz_name: Optional[st
         pass
     return datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
 
-def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None) -> dict:
+def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None, exclude_chat_id: Optional[int] = None) -> dict:
     if not user_email:
         return {
             "current_time": get_current_time_str(client_time, tz_name),
@@ -150,11 +150,23 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
             "total_income": 0,
             "total_expense": 0,
             "balance": 0,
-            "memories": []
+            "memories": [],
+            "recent_chat": []
         }
     tasks = db.query(Task).filter(Task.user_email == user_email, Task.status == "pending").all()
     records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).all()
     memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
+
+    # Fetch last 8 messages for conversational context
+    chat_q = db.query(ChatMessage).filter(ChatMessage.user_email == user_email)
+    if exclude_chat_id:
+        chat_q = chat_q.filter(ChatMessage.id != exclude_chat_id)
+    recent_msgs = chat_q.order_by(ChatMessage.id.desc()).limit(8).all()
+    recent_msgs = list(reversed(recent_msgs))
+    recent_chat = [
+        {"role": ("User" if m.role == "user" else "Aether"), "content": m.content}
+        for m in recent_msgs
+    ]
 
     total_income = sum(r.amount for r in records if r.type == "income")
     total_expense = sum(r.amount for r in records if r.type == "expense")
@@ -166,7 +178,8 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
         "total_income": total_income,
         "total_expense": total_expense,
         "balance": balance,
-        "memories": [{"category": m.category, "fact": m.fact} for m in memories]
+        "memories": [{"category": m.category, "fact": m.fact} for m in memories],
+        "recent_chat": recent_chat
     }
 
 # ----------------- Key Validation Engine -----------------
@@ -316,10 +329,12 @@ async def quick_capture(
 
     # Record User Message
     db_content = f"📸 {user_msg}" if req.image_data and not user_msg.startswith("📸") else user_msg
-    db.add(ChatMessage(role="user", content=db_content, user_email=eff_email))
+    user_chat = ChatMessage(role="user", content=db_content, user_email=eff_email)
+    db.add(user_chat)
     db.commit()
+    db.refresh(user_chat)
 
-    context = build_context(db, client_time=req.client_time, tz_name=req.timezone, user_email=eff_email)
+    context = build_context(db, client_time=req.client_time, tz_name=req.timezone, user_email=eff_email, exclude_chat_id=user_chat.id)
     lang = req.language or "auto"
     parsed = await parse_intent_with_llm(
         user_msg, 
@@ -336,6 +351,28 @@ async def quick_capture(
     confidence = parsed.get("confidence", 0.95)
     conf_level = parsed.get("confidence_level", "high")
     data = parsed.get("data", {})
+
+    # Safety unwrap if response accidentally has embedded JSON
+    if action == "query":
+        raw_resp = (data.get("response") or "").strip()
+        if "```json" in raw_resp or (raw_resp.startswith("{") and '"action"' in raw_resp):
+            try:
+                clean_json = re.sub(r'^```(?:json)?\s*', '', raw_resp, flags=re.IGNORECASE)
+                clean_json = re.sub(r'\s*```$', '', clean_json).strip()
+                j_match = re.search(r'\{.*\}', clean_json, re.DOTALL)
+                if j_match:
+                    inner_dict = json.loads(j_match.group(0))
+                    if inner_dict.get("action") and inner_dict.get("action") != "query":
+                        action = inner_dict.get("action")
+                        data = inner_dict.get("data", {})
+                        confidence = inner_dict.get("confidence", confidence)
+                        conf_level = inner_dict.get("confidence_level", conf_level)
+                    elif inner_dict.get("data", {}).get("response"):
+                        data["response"] = inner_dict["data"]["response"]
+                    elif inner_dict.get("explanation"):
+                        data["response"] = inner_dict.get("explanation")
+            except Exception as e:
+                print(f"[Aether Engine] Query JSON unwrap notice: {e}")
 
     executed = False
     result_message = ""
@@ -429,6 +466,19 @@ async def quick_capture(
                 r_time = r_time or extracted_time
                 due_dt = due_dt or extracted_dt
 
+        # Ensure due_date is always valid today if time exists
+        if not due_dt:
+            if r_time:
+                try:
+                    from ai_engine import parse_reminder_time
+                    _, calculated_dt = parse_reminder_time(r_time)
+                    if calculated_dt:
+                        due_dt = calculated_dt
+                except Exception:
+                    pass
+            if not due_dt:
+                due_dt = datetime.combine(datetime.now().date(), datetime.min.time())
+
         title = data.get("title") or user_msg
         try:
             from ai_engine import clean_task_title
@@ -518,6 +568,24 @@ async def translate_text(req: TranslateRequest):
             print(f"[Aether Engine] Translate error: {e}")
             
     return {"translated": req.text}
+
+# ----------------- Location Detection -----------------
+@app.get("/api/location/detect")
+def detect_user_location():
+    """Detect current geographic location and return city/coordinates."""
+    try:
+        from ai_engine import get_user_location
+    except ImportError:
+        from .ai_engine import get_user_location
+    loc = get_user_location()
+    return {
+        "status": "success",
+        "city": loc.get("city", "Jaipur"),
+        "region": loc.get("region", "Rajasthan"),
+        "latitude": loc.get("lat", 26.9136),
+        "longitude": loc.get("lon", 75.7858),
+        "display_name": f"{loc.get('city', 'Jaipur')}, {loc.get('region', 'Rajasthan')}"
+    }
 
 # ----------------- Chat History & News -----------------
 @app.get("/api/chat/history")

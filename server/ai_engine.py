@@ -4,7 +4,7 @@ import re
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta
 try:
     from zoneinfo import ZoneInfo
     DEFAULT_TZ = ZoneInfo(os.environ.get("TIMEZONE", "Asia/Kolkata"))
@@ -461,7 +461,7 @@ def parse_reminder_time(text: str) -> tuple:
 
 def clean_task_title(text: str) -> str:
     """Removes reminder boilerplate words to keep titles clean and concise."""
-    cleaned = re.sub(r'^(set\s+(?:the\s+)?reminder\s+(?:for|at|to)?|remind\s+(?:me\s+)?(?:to|for|at)?|रिमाइंडर\s+(?:सेट\s+करो|लगाओ)?|याद\s+दिलाना)\s*', '', text, flags=re.IGNORECASE)
+    cleaned = re.sub(r'^(?:let\s+at\s+the\s+reminder|let\s+at\s+the|set\s+(?:the\s+)?reminder\s*(?:for|at|to|on)?|remind\s+(?:me\s+)?(?:to|for|at)?|रिमाइंडर\s*(?:सेट\s+करो|लगाओ|बनाओ)?|याद\s+दिलाना)\s*', '', text, flags=re.IGNORECASE)
     cleaned = re.sub(r'(?:in|after|ke\s*baad)?\s*\d+(?:\.\d+)?\s*(?:hours?|hrs?|ghante|ghanta|minutes?|mins?|minute|घंटे|घंटा|मिनट)\s*(?:baad|me|mein|later|to|for|ki|ka)?', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'(?:at|on|for|by)?\s*\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|baje|बजे)?\s*(?:today|tomorrow|kal|aaj|आज|कल)?\s*(?:at|ko|par|per)?', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'^(?:at|to|for|ki|ka|par)\s+', '', cleaned.strip(), flags=re.IGNORECASE)
@@ -472,6 +472,18 @@ def build_system_prompt(context: dict = None, live_feed: str = "", language: str
     ctx_str = ""
     display_name = user_name.strip() if user_name and user_name.strip() else "Operator"
     if context:
+        recent_chat = context.get('recent_chat', [])
+        chat_history_str = ""
+        if recent_chat:
+            chat_lines = []
+            for m in recent_chat:
+                role = m.get('role', 'User')
+                text_content = str(m.get('content', '')).replace('\n', ' ').strip()
+                if len(text_content) > 250:
+                    text_content = text_content[:250] + "..."
+                chat_lines.append(f"- {role}: {text_content}")
+            chat_history_str = "\nRECENT CONVERSATION HISTORY (Previous turns in this active chat):\n" + "\n".join(chat_lines) + "\n"
+
         ctx_str = f"""
 CURRENT REAL-TIME CONTEXT:
 - Current Local Time: {context.get('current_time') or get_now_str()}
@@ -480,7 +492,7 @@ CURRENT REAL-TIME CONTEXT:
 - Pending Tasks ({len(context.get('tasks', []))}): {', '.join([t.get('title', '') for t in context.get('tasks', [])]) or 'None'}
 - Financial Balance: ₹{context.get('balance', 0):,.2f}
 - Known User Memories/Rules: {json.dumps(context.get('memories', []))}
-"""
+{chat_history_str}"""
     if live_feed:
         ctx_str += f"\nLIVE REAL-TIME DATA FEED (VERIFIED ACCURATE):\n{live_feed}\n"
 
@@ -529,11 +541,18 @@ CRITICAL REAL-TIME IMAGE / CAMERA VISION RULES:
 Your job is to analyze the user's input and return a strict JSON response.
 
 CRITICAL INSTRUCTIONS FOR TASKS & REMINDERS:
-- If the user asks to set a reminder or task (e.g. "set the reminder at 10:30AM today to go to gym"):
+- If the user asks to set a reminder or task (e.g. "set the reminder at 10:30AM today to go to gym", "Let at the reminder at 9:30 to go to market"):
   action MUST be "task".
-  "title" MUST be the clean action item (e.g. "Go to gym").
-  "reminder_time" MUST be the time string (e.g. "10:30 AM").
-  "due_date" MUST be the ISO datetime string if specified.
+  "title" MUST be the clean action item (e.g. "Go to market", "Go to gym").
+  "reminder_time" MUST be the time string (e.g. "9:30 PM", "10:30 AM").
+  "due_date" MUST be the ISO datetime string if specified or null.
+- MULTI-TURN CONVERSATION CONTINUATION (CRITICAL):
+  Look at RECENT CONVERSATION HISTORY. If the previous assistant message asked a clarification question (such as "What would you like the reminder to be for?" or "What time should I set the reminder?") and the user now responds with an answer (such as "for testing", "grocery shopping", "at 5 PM"), DO NOT treat this as a greeting or generic query!
+  IMMEDIATELY combine the previous topic and their current answer into a completed action:
+  - action: "task"
+  - title: the user's answer (e.g. "Testing" or "for testing")
+  - reminder_time: the time previously discussed (e.g. "10:00 PM")
+  - priority: "medium"
 
 CRITICAL INSTRUCTIONS FOR "query":
 - When the query is about WEATHER:
@@ -669,23 +688,45 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
                         json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
                         if json_match:
                             try:
-                                parsed = json.loads(json_match.group(0))
+                                json_str = json_match.group(0)
+                                json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
+                                parsed = json.loads(json_str)
                                 # Ensure reminder time is captured even if LLM left it out
                                 if parsed.get("action") == "task":
-                                    r_time, r_dt = parse_reminder_time(user_input)
-                                    if r_time and not parsed.get("data", {}).get("reminder_time"):
-                                        parsed["data"]["reminder_time"] = r_time
-                                        parsed["data"]["due_date"] = r_dt.isoformat() if r_dt else None
+                                    try:
+                                        r_time, r_dt = parse_reminder_time(user_input)
+                                        if r_time and not parsed.get("data", {}).get("reminder_time"):
+                                            parsed["data"]["reminder_time"] = r_time
+                                        if r_dt and not parsed.get("data", {}).get("due_date"):
+                                            parsed["data"]["due_date"] = r_dt.isoformat()
+                                    except Exception as t_err:
+                                        print(f"[Aether Engine] Reminder parse notice: {t_err}")
                                 return parsed
+                            except Exception as parse_err:
+                                print(f"[Aether Engine] JSON parse error: {parse_err}")
+
+                        # Never return raw JSON code blocks as a query response
+                        clean_resp = raw_text
+                        if "```json" in clean_resp or (clean_resp.startswith("{") and "action" in clean_resp):
+                            clean_resp = re.sub(r'^```(?:json)?\s*', '', clean_resp, flags=re.IGNORECASE)
+                            clean_resp = re.sub(r'\s*```$', '', clean_resp).strip()
+                            try:
+                                fallback_dict = json.loads(clean_resp)
+                                if fallback_dict.get("action"):
+                                    return fallback_dict
+                                if fallback_dict.get("explanation"):
+                                    clean_resp = fallback_dict.get("explanation")
+                                elif fallback_dict.get("data", {}).get("response"):
+                                    clean_resp = fallback_dict["data"]["response"]
                             except Exception:
-                                pass
+                                clean_resp = "कार्य पूरा कर लिया गया है।"
 
                         return {
                             "action": "query",
                             "confidence": 0.98,
                             "confidence_level": "high",
-                            "data": { "response": raw_text },
-                            "explanation": "Visual perception response"
+                            "data": { "response": clean_resp },
+                            "explanation": "Processed natural response"
                         }
             except Exception as e:
                 print(f"[Aether Engine] Gemini call error: {e}")

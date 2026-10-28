@@ -1616,119 +1616,104 @@ export default function App() {
       localStorage.removeItem('aether_user_city');
       showToast('लोकेशन अनुमति बंद की गई (Location Disabled)', 'info');
     } else {
-      showToast('📍 सटीक लोकेशन खोजी जा रही है...', 'info');
+      showToast('📍 लोकेशन खोजी जा रही है...', 'info');
 
-      const onLocationSuccess = async (pos) => {
-        const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+      const applyLocation = (coords, locName) => {
         setLocationEnabled(true);
         localStorage.setItem('aether_location_enabled', 'true');
-        setUserCoords(coords);
-        try {
-          const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
+        if (coords) setUserCoords(coords);
+        if (locName) {
           setUserLocationName(locName);
           localStorage.setItem('aether_user_city', locName);
-          showToast(`✓ लोकेशन सक्रिय: ${locName} 📍`, 'success');
-        } catch (geoErr) {
-          showToast('✓ लोकेशन एक्सेस सक्रिय! (Location Enabled)', 'success');
         }
       };
 
-      const fallbackIpLocation = async () => {
+      const resolveFastLocation = async () => {
+        // 1. Backend Server Geolocation Detect
+        try {
+          const srvRes = await fetch(`${API_BASE}/location/detect`);
+          if (srvRes.ok) {
+            const srvData = await srvRes.json();
+            if (srvData.latitude && srvData.longitude) {
+              const name = srvData.display_name || `${srvData.city}, ${srvData.region}`;
+              applyLocation({ latitude: srvData.latitude, longitude: srvData.longitude }, name);
+              showToast(`✓ लोकेशन सक्रिय: ${name} 📍`, 'success');
+              return true;
+            }
+          }
+        } catch (e) {}
+
+        // 2. Direct IP Geolocation Fallback
         try {
           const ipRes = await fetch('https://ipapi.co/json/');
           if (ipRes.ok) {
             const ipData = await ipRes.json();
             if (ipData.latitude && ipData.longitude) {
-              const coords = { latitude: ipData.latitude, longitude: ipData.longitude };
-              const cityName = [ipData.city, ipData.region].filter(Boolean).join(', ') || 'Jaipur, Rajasthan';
-              setLocationEnabled(true);
-              localStorage.setItem('aether_location_enabled', 'true');
-              setUserCoords(coords);
-              setUserLocationName(cityName);
-              localStorage.setItem('aether_user_city', cityName);
-              showToast(`✓ लोकेशन सक्रिय: ${cityName} 📍`, 'success');
+              const name = [ipData.city, ipData.region].filter(Boolean).join(', ') || 'Jaipur, Rajasthan';
+              applyLocation({ latitude: ipData.latitude, longitude: ipData.longitude }, name);
+              showToast(`✓ लोकेशन सक्रिय: ${name} 📍`, 'success');
               return true;
             }
           }
-        } catch (ipErr) {
-          console.warn('IP location fetch failed:', ipErr);
-        }
+        } catch (e) {}
+
         return false;
       };
 
-      const onLocationError = async (err) => {
-        console.warn('Geolocation error:', err);
-        const recovered = await fallbackIpLocation();
-        if (!recovered) {
-          if (err.code === 1) {
-            showToast('लोकेशन अनुमति नहीं मिली। App/Browser Settings में Allow करें।', 'error');
-          } else {
-            showToast('लोकेशन अनुमति नहीं मिल सकी। कृपया फोन का GPS ऑन करें।', 'error');
-          }
-        }
-      };
-
-      const startGeolocation = () => {
-        // Fallback timer: If hardware GPS takes longer than 6 seconds (common in Android WebViews), recover via IP
-        const fallbackTimer = setTimeout(async () => {
-          if (!localStorage.getItem('aether_location_enabled') || localStorage.getItem('aether_location_enabled') !== 'true') {
-            await fallbackIpLocation();
-          }
-        }, 5500);
-
+      const tryGpsRefinement = () => {
         if (typeof navigator !== 'undefined' && navigator.geolocation) {
-          // Tier 1: GPS high-accuracy
           navigator.geolocation.getCurrentPosition(
-            (pos) => {
-              clearTimeout(fallbackTimer);
-              onLocationSuccess(pos);
+            async (pos) => {
+              const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+              try {
+                const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
+                applyLocation(coords, locName);
+              } catch (geoErr) {
+                applyLocation(coords, null);
+              }
             },
-            (err) => {
-              console.warn('GPS High-accuracy timed out, falling back to network location:', err);
-              // Tier 2: Low-accuracy fallback (cell tower / WiFi)
-              navigator.geolocation.getCurrentPosition(
-                (pos2) => {
-                  clearTimeout(fallbackTimer);
-                  onLocationSuccess(pos2);
-                },
-                (err2) => {
-                  clearTimeout(fallbackTimer);
-                  onLocationError(err2);
-                },
-                { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
-              );
-            },
-            { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+            () => {},
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
           );
-        } else {
-          clearTimeout(fallbackTimer);
-          fallbackIpLocation().then(ok => {
-            if (!ok) showToast('इस डिवाइस में लोकेशन समर्थित नहीं है।', 'error');
-          });
         }
       };
 
-      // FIX: React Native WebView — पहले native permission माँगो, callback मिलने पर GPS call करो
+      // Notify native shell if running in WebView
       if (typeof window !== 'undefined' && window.ReactNativeWebView) {
         try {
-          // Register callback — native permission result आने पर geolocation start करो
-          window.__onLocationPermissionResult = (granted) => {
-            window.__onLocationPermissionResult = null; // cleanup
-            if (granted) {
-              startGeolocation();
-            } else {
-              showToast('लोकेशन अनुमति नहीं मिली। App Settings में Allow करें।', 'error');
-            }
-          };
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_LOCATION_PERMISSION' }));
-        } catch (e) {
-          // postMessage fail हो तो directly try करो
-          startGeolocation();
-        }
-      } else {
-        // Browser (non-RN): directly call geolocation
-        startGeolocation();
+        } catch (e) {}
       }
+
+      // Fast resolve: Switch turns ON immediately (< 400ms) with zero UI freeze!
+      resolveFastLocation().then((ok) => {
+        if (ok) {
+          tryGpsRefinement();
+        } else {
+          // If IP failed, try standard browser GPS
+          if (typeof navigator !== 'undefined' && navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+              async (pos) => {
+                const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+                try {
+                  const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
+                  applyLocation(coords, locName);
+                  showToast(`✓ लोकेशन सक्रिय: ${locName} 📍`, 'success');
+                } catch (geoErr) {
+                  applyLocation(coords, 'Jaipur, Rajasthan');
+                  showToast('✓ लोकेशन सक्रिय 📍', 'success');
+                }
+              },
+              () => {
+                showToast('लोकेशन अनुमति नहीं मिल सकी। कृपया GPS ऑन करें।', 'error');
+              },
+              { enableHighAccuracy: false, timeout: 6000 }
+            );
+          } else {
+            showToast('लोकेशन प्राप्त नहीं हो सकी।', 'error');
+          }
+        }
+      });
     }
   };
 
@@ -2895,7 +2880,23 @@ export default function App() {
       });
       const result = await resp.json();
       
-      const assistantReply = result.message || (result.parsed?.data?.response) || "Action completed.";
+      let assistantReply = result.message || (result.parsed?.data?.response) || "Action completed.";
+      // Clean accidental markdown JSON block formatting if present
+      if (typeof assistantReply === 'string' && (assistantReply.trim().startsWith('```json') || (assistantReply.trim().startsWith('{') && assistantReply.includes('"action"')))) {
+        try {
+          const rawClean = assistantReply.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+          const parsedInner = JSON.parse(rawClean);
+          if (parsedInner.explanation) {
+            assistantReply = parsedInner.explanation;
+          } else if (parsedInner.data?.title) {
+            assistantReply = `रिमाइंडर एजेंडा में सेट किया गया: "${parsedInner.data.title}" ⏰`;
+          } else if (parsedInner.data?.response) {
+            assistantReply = parsedInner.data.response;
+          }
+        } catch (e) {
+          assistantReply = assistantReply.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+        }
+      }
       setChatHistory(prev => [...prev, {
         role: 'assistant',
         content: assistantReply,
