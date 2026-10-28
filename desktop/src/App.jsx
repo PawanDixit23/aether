@@ -697,7 +697,17 @@ export default function App() {
   // App data states
   const [briefing, setBriefing] = useState(null);
   const [chatHistory, setChatHistory] = useState([]);
-  const [tasks, setTasks] = useState([]);
+  const [tasks, setTasks] = useState(() => {
+    try {
+      const email = localStorage.getItem('aether_user_email');
+      const cachedStr = email ? localStorage.getItem(`aether_backup_${email}`) : null;
+      if (cachedStr) {
+        const parsed = JSON.parse(cachedStr);
+        if (Array.isArray(parsed.tasks)) return parsed.tasks;
+      }
+    } catch (e) {}
+    return [];
+  });
   const combinedTasks = useMemo(() => {
     const seenIds = new Set();
     const seenTitleDate = new Set();
