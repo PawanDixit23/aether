@@ -291,6 +291,36 @@ export default function App() {
                     `);
                   } catch (e) {}
                 }
+              } else if (data.type === 'REQUEST_LOCATION_PERMISSION') {
+                if (Platform.OS === 'android') {
+                  try {
+                    const result = await PermissionsAndroid.request(
+                      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+                      {
+                        title: "Aether Location Permission",
+                        message: "Aether needs GPS/Location access for local weather, executive briefing, and smart maps.",
+                        buttonNeutral: "Ask Later",
+                        buttonNegative: "Cancel",
+                        buttonPositive: "Allow"
+                      }
+                    );
+                    const granted = result === PermissionsAndroid.RESULTS.GRANTED;
+                    webViewRef.current?.injectJavaScript(`
+                      window.__locationPermissionGranted = ${granted};
+                      if (window.__onLocationPermissionResult) window.__onLocationPermissionResult(${granted});
+                      true;
+                    `);
+                  } catch (e) {}
+                }
+              } else if (data.type === 'REQUEST_NOTIFICATION_PERMISSION') {
+                try {
+                  const { status } = await Notifications.requestPermissionsAsync();
+                  const granted = status === 'granted';
+                  webViewRef.current?.injectJavaScript(`
+                    window.__notificationPermissionGranted = ${granted};
+                    true;
+                  `);
+                } catch (e) {}
               } else if (data.type === 'PLAY_TTS_AUDIO') {
                 // Mobile TTS: inject audio playback directly into WebView context
                 const { url } = data;

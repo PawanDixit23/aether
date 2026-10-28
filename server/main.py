@@ -843,56 +843,70 @@ def sync_ical_feed(req: ICalSyncRequest, user_email: Optional[str] = Depends(get
     events = []
 
     for ev in raw_events:
-        summary = ev.get("summary", "")
-        dtstart_str = ev.get("dtstart", "")
-        dtend_str = ev.get("dtend", "")
-        rrule_str = ev.get("rrule", "")
-        uid = ev.get("uid") or f"ev_{len(events)}"
+        try:
+            summary = ev.get("summary", "")
+            dtstart_str = ev.get("dtstart", "")
+            dtend_str = ev.get("dtend", "")
+            rrule_str = ev.get("rrule", "")
+            uid = ev.get("uid") or f"ev_{len(events)}"
 
-        start_dt = parse_ics_dt(dtstart_str)
-        if not start_dt:
-            continue
+            start_dt = parse_ics_dt(dtstart_str)
+            if not start_dt:
+                continue
 
-        time_str = "All Day"
-        if "T" in dtstart_str:
-            time_str = start_dt.strftime("%I:%M %p")
+            time_str = "All Day"
+            if "T" in dtstart_str:
+                time_str = start_dt.strftime("%I:%M %p")
 
-        if rrule_str:
-            occs = generate_rrule_dates(start_dt, rrule_str, window_start, window_end)
-            for idx, occ in enumerate(occs):
-                due_date = occ.strftime("%Y-%m-%dT%H:%M:%S") if "T" in dtstart_str else occ.strftime("%Y-%m-%d")
-                events.append({
-                    "id": f"gcal_ical_{uid}_{due_date}",
-                    "title": summary,
-                    "due_date": due_date,
-                    "reminder_time": time_str,
-                    "priority": "medium",
-                    "status": "pending",
-                    "is_completed": False,
-                    "is_google_calendar": True,
-                    "created_at": due_date
-                })
-        elif dtend_str and dtend_str != dtstart_str:
-            end_dt = parse_ics_dt(dtend_str)
-            if end_dt and (end_dt.date() - start_dt.date()).days > 0:
-                curr_date = start_dt.date()
-                end_date = end_dt.date()
-                while curr_date < end_date and curr_date <= window_end.date():
-                    if curr_date >= window_start.date():
-                        curr_dt = datetime.combine(curr_date, start_dt.time())
-                        due_date = curr_dt.strftime("%Y-%m-%dT%H:%M:%S") if "T" in dtstart_str else curr_date.strftime("%Y-%m-%d")
-                        events.append({
-                            "id": f"gcal_ical_{uid}_{due_date}",
-                            "title": summary,
-                            "due_date": due_date,
-                            "reminder_time": time_str,
-                            "priority": "medium",
-                            "status": "pending",
-                            "is_completed": False,
-                            "is_google_calendar": True,
-                            "created_at": due_date
-                        })
-                    curr_date += timedelta(days=1)
+            if rrule_str:
+                occs = generate_rrule_dates(start_dt, rrule_str, window_start, window_end)
+                for idx, occ in enumerate(occs):
+                    due_date = occ.strftime("%Y-%m-%dT%H:%M:%S") if "T" in dtstart_str else occ.strftime("%Y-%m-%d")
+                    events.append({
+                        "id": f"gcal_ical_{uid}_{due_date}",
+                        "title": summary,
+                        "due_date": due_date,
+                        "reminder_time": time_str,
+                        "priority": "medium",
+                        "status": "pending",
+                        "is_completed": False,
+                        "is_google_calendar": True,
+                        "created_at": due_date
+                    })
+            elif dtend_str and dtend_str != dtstart_str:
+                end_dt = parse_ics_dt(dtend_str)
+                if end_dt and (end_dt.date() - start_dt.date()).days > 0:
+                    curr_date = start_dt.date()
+                    end_date = end_dt.date()
+                    while curr_date < end_date and curr_date <= window_end.date():
+                        if curr_date >= window_start.date():
+                            curr_dt = datetime.combine(curr_date, start_dt.time())
+                            due_date = curr_dt.strftime("%Y-%m-%dT%H:%M:%S") if "T" in dtstart_str else curr_date.strftime("%Y-%m-%d")
+                            events.append({
+                                "id": f"gcal_ical_{uid}_{due_date}",
+                                "title": summary,
+                                "due_date": due_date,
+                                "reminder_time": time_str,
+                                "priority": "medium",
+                                "status": "pending",
+                                "is_completed": False,
+                                "is_google_calendar": True,
+                                "created_at": due_date
+                            })
+                        curr_date += timedelta(days=1)
+                else:
+                    due_date = start_dt.strftime("%Y-%m-%dT%H:%M:%S") if "T" in dtstart_str else start_dt.strftime("%Y-%m-%d")
+                    events.append({
+                        "id": f"gcal_ical_{uid}_{due_date}",
+                        "title": summary,
+                        "due_date": due_date,
+                        "reminder_time": time_str,
+                        "priority": "medium",
+                        "status": "pending",
+                        "is_completed": False,
+                        "is_google_calendar": True,
+                        "created_at": due_date
+                    })
             else:
                 due_date = start_dt.strftime("%Y-%m-%dT%H:%M:%S") if "T" in dtstart_str else start_dt.strftime("%Y-%m-%d")
                 events.append({
@@ -906,19 +920,8 @@ def sync_ical_feed(req: ICalSyncRequest, user_email: Optional[str] = Depends(get
                     "is_google_calendar": True,
                     "created_at": due_date
                 })
-        else:
-            due_date = start_dt.strftime("%Y-%m-%dT%H:%M:%S") if "T" in dtstart_str else start_dt.strftime("%Y-%m-%d")
-            events.append({
-                "id": f"gcal_ical_{uid}_{due_date}",
-                "title": summary,
-                "due_date": due_date,
-                "reminder_time": time_str,
-                "priority": "medium",
-                "status": "pending",
-                "is_completed": False,
-                "is_google_calendar": True,
-                "created_at": due_date
-            })
+        except Exception as item_err:
+            continue
 
     return {"status": "ok", "count": len(events), "events": events}
 

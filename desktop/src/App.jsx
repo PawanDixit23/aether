@@ -561,10 +561,16 @@ export default function App() {
     return localStorage.getItem('aether_mic_enabled') !== 'false' && (localStorage.getItem('aether_mic_granted') === 'true' || (typeof window !== 'undefined' && Boolean(window.__micPermissionGranted)));
   });
   const [pushEnabled, setPushEnabled] = useState(() => {
-    return localStorage.getItem('aether_push_enabled') !== 'false' && (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted');
+    const saved = localStorage.getItem('aether_push_enabled');
+    if (saved === 'true') return true;
+    if (saved === 'false') return false;
+    return typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted';
   });
   const [locationEnabled, setLocationEnabled] = useState(() => {
     return localStorage.getItem('aether_location_enabled') === 'true';
+  });
+  const [userLocationName, setUserLocationName] = useState(() => {
+    return localStorage.getItem('aether_user_city') || '';
   });
   const [isMicTesting, setIsMicTesting] = useState(false);
   const [attachedMedia, setAttachedMedia] = useState(null); // { type: 'image' | 'file' | 'drive' | 'map', name: string, url?: string, size?: string }
@@ -693,9 +699,50 @@ export default function App() {
   const [chatHistory, setChatHistory] = useState([]);
   const [tasks, setTasks] = useState([]);
   const combinedTasks = useMemo(() => {
-    const existingIds = new Set(tasks.map(t => t.id));
-    const uniqueG = googleTasks.filter(gt => !existingIds.has(gt.id));
-    return [...tasks, ...uniqueG];
+    const seenIds = new Set();
+    const seenTitleDate = new Set();
+    const cleanList = [];
+
+    const getDedupKey = (t) => {
+      const cleanTitle = (t?.title || '').trim().toLowerCase();
+      let dStr = '';
+      if (t?.due_date) {
+        try { dStr = formatLocalDateStr(t.due_date); } catch (e) {}
+      }
+      const timeStr = (t?.reminder_time || '').trim().toLowerCase();
+      return `${cleanTitle}__${dStr}__${timeStr}`;
+    };
+
+    // 1. Process local/backend tasks first
+    for (const t of tasks) {
+      if (!t || !t.id) continue;
+      const idKey = String(t.id);
+      if (seenIds.has(idKey)) continue;
+      seenIds.add(idKey);
+
+      const dKey = getDedupKey(t);
+      if (dKey !== '____') {
+        if (seenTitleDate.has(dKey)) continue;
+        seenTitleDate.add(dKey);
+      }
+      cleanList.push(t);
+    }
+
+    // 2. Merge Google Tasks, ensuring no duplicate with existing DB tasks
+    for (const gt of googleTasks) {
+      if (!gt || !gt.id) continue;
+      const idKey = String(gt.id);
+      if (seenIds.has(idKey)) continue;
+
+      const dKey = getDedupKey(gt);
+      if (dKey !== '____' && seenTitleDate.has(dKey)) continue;
+
+      seenIds.add(idKey);
+      if (dKey !== '____') seenTitleDate.add(dKey);
+      cleanList.push(gt);
+    }
+
+    return cleanList;
   }, [tasks, googleTasks]);
   const [newTaskInput, setNewTaskInput] = useState('');
   const [financeRecords, setFinanceRecords] = useState([]);
@@ -1506,15 +1553,47 @@ export default function App() {
     }
   };
 
+  const reverseGeocodeLocation = async (lat, lon) => {
+    try {
+      const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+      if (res.ok) {
+        const data = await res.json();
+        const city = data.city || data.locality || data.principalSubdivision || '';
+        const state = data.principalSubdivision || '';
+        const loc = [city, state].filter(Boolean).join(', ');
+        if (loc) return loc;
+      }
+    } catch (e) {}
+
+    try {
+      const res2 = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`);
+      if (res2.ok) {
+        const d = await res2.json();
+        const addr = d.address || {};
+        const city = addr.city || addr.town || addr.village || addr.suburb || addr.state_district || '';
+        const state = addr.state || '';
+        const loc = [city, state].filter(Boolean).join(', ');
+        if (loc) return loc;
+      }
+    } catch (e) {}
+
+    return `${lat.toFixed(2)}°, ${lon.toFixed(2)}°`;
+  };
+
   const handleTogglePush = async () => {
     if (pushEnabled) {
       setPushEnabled(false);
       localStorage.setItem('aether_push_enabled', 'false');
       showToast('पुश नोटिफिकेशन्स म्यूट किए गए (Notifications Muted)', 'info');
     } else {
-      await handleRequestPushPermission();
       setPushEnabled(true);
       localStorage.setItem('aether_push_enabled', 'true');
+      if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+        try {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_NOTIFICATION_PERMISSION' }));
+        } catch (e) {}
+      }
+      await handleRequestPushPermission();
     }
   };
 
@@ -1522,28 +1601,89 @@ export default function App() {
     if (locationEnabled) {
       setLocationEnabled(false);
       localStorage.setItem('aether_location_enabled', 'false');
+      setUserCoords(null);
+      setUserLocationName('');
+      localStorage.removeItem('aether_user_city');
       showToast('लोकेशन अनुमति बंद की गई (Location Disabled)', 'info');
     } else {
+      showToast('📍 सटीक लोकेशन खोजी जा रही है...', 'info');
+
+      // 1. Notify native Android WebView if running in mobile app
+      if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+        try {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_LOCATION_PERMISSION' }));
+        } catch (e) {}
+      }
+
       if (typeof navigator !== 'undefined' && navigator.geolocation) {
-        showToast('📍 लोकेशन अनुमति जांची जा रही है...', 'info');
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            setLocationEnabled(true);
-            localStorage.setItem('aether_location_enabled', 'true');
-            setUserCoords({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+        const onLocationSuccess = async (pos) => {
+          const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+          setLocationEnabled(true);
+          localStorage.setItem('aether_location_enabled', 'true');
+          setUserCoords(coords);
+
+          // Reverse geocode to exact human-readable location
+          try {
+            const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
+            setUserLocationName(locName);
+            localStorage.setItem('aether_user_city', locName);
+            showToast(`✓ लोकेशन सक्रिय: ${locName} 📍`, 'success');
+          } catch (geoErr) {
             showToast('✓ लोकेशन एक्सेस सक्रिय! (Location Enabled)', 'success');
-          },
+          }
+        };
+
+        const onFallbackLocation = () => {
+          // Tier 2: Low-accuracy fallback (Cell tower / WiFi / IP location, 15 sec timeout)
+          navigator.geolocation.getCurrentPosition(
+            onLocationSuccess,
+            (err2) => {
+              console.warn('Geolocation fallback failed:', err2);
+              if (err2.code === 1) {
+                showToast('कृपया ब्राउज़र/ऐप सेटिंग्स में लोकेशन अनुमति Allow करें।', 'error');
+              } else {
+                showToast('लोकेशन अनुमति नहीं मिल सकी। कृपया फोन का GPS ऑन करें।', 'error');
+              }
+            },
+            { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
+          );
+        };
+
+        // Tier 1: Try GPS satellite precision (10 sec timeout)
+        navigator.geolocation.getCurrentPosition(
+          onLocationSuccess,
           (err) => {
-            console.warn('Geolocation error:', err);
-            showToast('लोकेशन अनुमति नहीं मिल सकी। GPS ऑन करें।', 'error');
+            console.warn('GPS High-accuracy timed out, falling back to network location:', err);
+            onFallbackLocation();
           },
-          { enableHighAccuracy: true, timeout: 6000 }
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
         );
       } else {
         showToast('इस डिवाइस में लोकेशन समर्थित नहीं है।', 'error');
       }
     }
   };
+
+  // Auto-refresh location if previously enabled
+  useEffect(() => {
+    if (localStorage.getItem('aether_location_enabled') === 'true' && typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+          setUserCoords(coords);
+          if (!userLocationName) {
+            const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
+            if (locName) {
+              setUserLocationName(locName);
+              localStorage.setItem('aether_user_city', locName);
+            }
+          }
+        },
+        () => {},
+        { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
+      );
+    }
+  }, []);
 
   const compressImage = (file, maxDim = 1280, quality = 0.82) => {
     return new Promise((resolve) => {
@@ -1901,12 +2041,7 @@ export default function App() {
         if (str) return str;
       } catch (e) {}
     }
-    if (t?.created_at) {
-      try {
-        const str = formatLocalDateStr(t.created_at);
-        if (str) return str;
-      } catch (e) {}
-    }
+    // Only items with an explicit due_date should be bound to calendar dates
     return null;
   };
 
@@ -2054,15 +2189,17 @@ export default function App() {
     }
   };
 
-  const syncGCalViaIcalUrl = async (customUrl) => {
+  const syncGCalViaIcalUrl = async (customUrl, isManual = false) => {
     const url = (customUrl || gcalIcalUrl).trim();
     if (!url || !url.startsWith('http')) {
-      showToast('कृपया वैध Google Calendar iCal लिंक दर्ज करें (https://...)', 'error');
+      if (isManual) showToast('कृपया वैध Google Calendar iCal लिंक दर्ज करें (https://...)', 'error');
       return;
     }
     if (url.includes('calendar.google.com/calendar/u/') || url.includes('/calendar/r')) {
-      showToast('यह Google Calendar का वेब ब्राउज़र लिंक है! कृपया नीचे "Secret address in iCal format" (.ics) लिंक डालें।', 'error');
-      setShowGCalConnectModal(true);
+      if (isManual) {
+        showToast('यह Google Calendar का वेब ब्राउज़र लिंक है! कृपया नीचे "Secret address in iCal format" (.ics) लिंक डालें।', 'error');
+        setShowGCalConnectModal(true);
+      }
       return;
     }
     setIsSyncingGCal(true);
@@ -2072,20 +2209,35 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, user_email: userEmail })
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || 'iCal sync failed');
+      const rawText = await res.text();
+      let data = null;
+      try {
+        data = JSON.parse(rawText);
+      } catch (jsonErr) {
+        console.warn('GCal sync response non-JSON (server waking up):', rawText?.slice(0, 80));
+        if (isManual) {
+          showToast('क्लाउड सर्वर वेक-अप हो रहा है, कृपया 10 सेकंड बाद पुनः प्रयास करें।', 'info');
+        }
+        return;
       }
-      const events = data.events || [];
+
+      if (!res.ok) {
+        throw new Error(data?.detail || 'iCal sync failed');
+      }
+      const events = data?.events || [];
       setGoogleTasks(events);
       localStorage.setItem('aether_gcal_events', JSON.stringify(events));
       localStorage.setItem('aether_gcal_ical_url', url);
       setGcalIcalUrl(url);
       setShowGCalConnectModal(false);
-      showToast(`Google Calendar से ${events.length} इवेंट्स और रिमाइंडर्स सिंक हुए! 📅`, 'success');
+      if (isManual) {
+        showToast(`Google Calendar से ${events.length} इवेंट्स और रिमाइंडर्स सिंक हुए! 📅`, 'success');
+      }
     } catch (err) {
       console.error(err);
-      showToast('Google Calendar सिंक त्रुटि: ' + err.message, 'error');
+      if (isManual) {
+        showToast('Google Calendar सिंक त्रुटि: ' + err.message, 'error');
+      }
     } finally {
       setIsSyncingGCal(false);
     }
@@ -2094,17 +2246,17 @@ export default function App() {
   const handleSyncGCalClick = () => {
     const savedIcal = gcalIcalUrl || localStorage.getItem('aether_gcal_ical_url');
     if (savedIcal) {
-      syncGCalViaIcalUrl(savedIcal);
+      syncGCalViaIcalUrl(savedIcal, true);
     } else {
       setShowGCalConnectModal(true);
     }
   };
 
-  // Auto-sync Google Calendar iCal feed if previously saved
+  // Auto-sync Google Calendar iCal feed in background if previously saved (silent)
   useEffect(() => {
     const savedIcal = localStorage.getItem('aether_gcal_ical_url');
     if (savedIcal) {
-      syncGCalViaIcalUrl(savedIcal).catch(() => {});
+      syncGCalViaIcalUrl(savedIcal, false).catch(() => {});
     }
   }, []);
 
@@ -3692,18 +3844,18 @@ export default function App() {
               </div>
             </div>
 
-            <div className="settings-row-item" onClick={() => setActiveSubModal('reminders')}>
-              <div className="settings-row-left">
-                <div className="settings-row-icon-box" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+            <div className="settings-row-item" onClick={() => setActiveSubModal('reminders')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+              <div className="settings-row-left" style={{ minWidth: 0, flex: 1 }}>
+                <div className="settings-row-icon-box" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', flexShrink: 0 }}>
                   <Bell size={16} />
                 </div>
-                <span>Reminders & Today's Agenda</span>
+                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Reminders & Today's Agenda</span>
               </div>
-              <div className="settings-row-right">
-                <span style={{ color: tasks.filter(t => !t.is_completed && t.status !== 'completed').length > 0 ? '#38bdf8' : '#94a3b8', fontWeight: 600 }}>
+              <div className="settings-row-right" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+                <span style={{ color: tasks.filter(t => !t.is_completed && t.status !== 'completed').length > 0 ? '#38bdf8' : '#94a3b8', fontWeight: 600, whiteSpace: 'nowrap', fontSize: '0.84rem' }}>
                   {tasks.filter(t => !t.is_completed && t.status !== 'completed').length} pending
                 </span>
-                <ChevronRight size={16} />
+                <ChevronRight size={16} style={{ flexShrink: 0 }} />
               </div>
             </div>
 
@@ -6042,8 +6194,20 @@ export default function App() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ color: '#fff', fontSize: '0.92rem', fontWeight: 600 }}>Location & Live Maps</span>
                       {locationEnabled && (
-                        <span style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: 700 }}>
-                          Active 📍
+                        <span style={{ 
+                          fontSize: '0.68rem', 
+                          color: '#34d399', 
+                          fontWeight: 700, 
+                          background: 'rgba(16, 185, 129, 0.12)', 
+                          border: '1px solid rgba(16, 185, 129, 0.25)', 
+                          padding: '2px 8px', 
+                          borderRadius: '8px',
+                          maxWidth: '140px',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }} title={userLocationName || 'Active'}>
+                          {userLocationName ? `📍 ${userLocationName}` : 'Active 📍'}
                         </span>
                       )}
                     </div>

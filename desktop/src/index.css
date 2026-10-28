@@ -1682,6 +1682,14 @@ body.in-mobile-app .unified-app-container {
   color: #e2e8f0;
   font-size: 0.92rem;
   font-weight: 500;
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-row-left span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-row-icon-box {
@@ -1693,6 +1701,7 @@ body.in-mobile-app .unified-app-container {
   align-items: center;
   justify-content: center;
   color: #94a3b8;
+  flex-shrink: 0;
 }
 
 .settings-row-right {
@@ -1701,6 +1710,13 @@ body.in-mobile-app .unified-app-container {
   gap: 8px;
   color: #94a3b8;
   font-size: 0.86rem;
+  flex-shrink: 0;
+  white-space: nowrap;
+  margin-left: 8px;
+}
+
+.settings-row-right span {
+  white-space: nowrap;
 }
 
 .settings-subtext-note {
