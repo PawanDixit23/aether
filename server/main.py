@@ -208,11 +208,11 @@ def record_user_login(req: AuthRecordRequest, db: Session = Depends(get_db)):
     email = req.email.strip().lower()
     try:
         # Migrate any previously unassigned records to this authenticated user
-        db.query(Task).filter(Task.user_email == None).update({Task.user_email: email})
-        db.query(FinancialRecord).filter(FinancialRecord.user_email == None).update({FinancialRecord.user_email: email})
-        db.query(MemoryItem).filter(MemoryItem.user_email == None).update({MemoryItem.user_email: email})
-        db.query(ChatMessage).filter(ChatMessage.user_email == None).update({ChatMessage.user_email: email})
-        db.query(AuditLog).filter(AuditLog.user_email == None).update({AuditLog.user_email: email})
+        db.query(Task).filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai")).update({Task.user_email: email})
+        db.query(FinancialRecord).filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == "") | (FinancialRecord.user_email == "operator@aether.ai")).update({FinancialRecord.user_email: email})
+        db.query(MemoryItem).filter((MemoryItem.user_email == None) | (MemoryItem.user_email == "") | (MemoryItem.user_email == "operator@aether.ai")).update({MemoryItem.user_email: email})
+        db.query(ChatMessage).filter((ChatMessage.user_email == None) | (ChatMessage.user_email == "") | (ChatMessage.user_email == "operator@aether.ai")).update({ChatMessage.user_email: email})
+        db.query(AuditLog).filter((AuditLog.user_email == None) | (AuditLog.user_email == "") | (AuditLog.user_email == "operator@aether.ai")).update({AuditLog.user_email: email})
         db.commit()
     except Exception as e:
         print(f"[Record Login Auto-claim Note] {e}")
@@ -571,20 +571,53 @@ async def translate_text(req: TranslateRequest):
 
 # ----------------- Location Detection -----------------
 @app.get("/api/location/detect")
-def detect_user_location():
-    """Detect current geographic location and return city/coordinates."""
+def detect_user_location(request: Request):
+    """Detect client geographic location from client IP header."""
+    client_ip = ""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        client_ip = xff.split(",")[0].strip()
+    
+    # If no public client IP or local, return default India location
+    if not client_ip or client_ip.startswith("127.") or client_ip.startswith("10.") or client_ip.startswith("192.168."):
+        return {
+            "status": "success",
+            "city": "Jaipur",
+            "region": "Rajasthan",
+            "latitude": 26.9136,
+            "longitude": 75.7858,
+            "display_name": "Jaipur, Rajasthan"
+        }
+    
     try:
-        from ai_engine import get_user_location
-    except ImportError:
-        from .ai_engine import get_user_location
-    loc = get_user_location()
+        req = urllib.request.Request(f"http://ip-api.com/json/{client_ip}", headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+            if data.get("status") == "success":
+                city = data.get("city", "Jaipur")
+                region = data.get("regionName", "Rajasthan")
+                # Safety: If geo service returned Singapore or foreign datacenter IP, default to Jaipur
+                if "singapore" in city.lower() or "singapore" in region.lower():
+                    city = "Jaipur"
+                    region = "Rajasthan"
+                return {
+                    "status": "success",
+                    "city": city,
+                    "region": region,
+                    "latitude": data.get("lat", 26.9136),
+                    "longitude": data.get("lon", 75.7858),
+                    "display_name": f"{city}, {region}"
+                }
+    except Exception as e:
+        print(f"[Aether Engine] IP Location lookup error: {e}")
+    
     return {
         "status": "success",
-        "city": loc.get("city", "Jaipur"),
-        "region": loc.get("region", "Rajasthan"),
-        "latitude": loc.get("lat", 26.9136),
-        "longitude": loc.get("lon", 75.7858),
-        "display_name": f"{loc.get('city', 'Jaipur')}, {loc.get('region', 'Rajasthan')}"
+        "city": "Jaipur",
+        "region": "Rajasthan",
+        "latitude": 26.9136,
+        "longitude": 75.7858,
+        "display_name": "Jaipur, Rajasthan"
     }
 
 # ----------------- Chat History & News -----------------
@@ -694,9 +727,17 @@ def list_tasks(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    if not user_email:
-        return []
-    query = db.query(Task).filter(Task.user_email == user_email)
+    eff_email = (user_email or "").strip().lower()
+    if eff_email:
+        # Migrate any unassigned tasks to this active user
+        try:
+            db.query(Task).filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai")).update({Task.user_email: eff_email})
+            db.commit()
+        except Exception:
+            db.rollback()
+        query = db.query(Task).filter(Task.user_email == eff_email)
+    else:
+        query = db.query(Task).filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai"))
     if status:
         query = query.filter(Task.status == status)
     return [serialize_task(t) for t in query.order_by(Task.created_at.desc()).all()]

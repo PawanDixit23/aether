@@ -570,7 +570,8 @@ export default function App() {
     return localStorage.getItem('aether_location_enabled') === 'true';
   });
   const [userLocationName, setUserLocationName] = useState(() => {
-    return localStorage.getItem('aether_user_city') || '';
+    const saved = localStorage.getItem('aether_user_city') || '';
+    return saved.toLowerCase().includes('singapore') ? '' : saved;
   });
   const [isMicTesting, setIsMicTesting] = useState(false);
   const [attachedMedia, setAttachedMedia] = useState(null); // { type: 'image' | 'file' | 'drive' | 'map', name: string, url?: string, size?: string }
@@ -703,7 +704,12 @@ export default function App() {
       const cachedStr = email ? localStorage.getItem(`aether_backup_${email}`) : null;
       if (cachedStr) {
         const parsed = JSON.parse(cachedStr);
-        if (Array.isArray(parsed.tasks)) return parsed.tasks;
+        if (Array.isArray(parsed.tasks) && parsed.tasks.length > 0) return parsed.tasks;
+      }
+      const generalCache = localStorage.getItem('aether_cached_tasks');
+      if (generalCache) {
+        const parsed = JSON.parse(generalCache);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     } catch (e) {}
     return [];
@@ -1080,6 +1086,21 @@ export default function App() {
 
         recordAuthEvent(gEmail, gName);
 
+        // Immediate restore of saved tasks so re-login never shows 0 reminders
+        const backupStr = localStorage.getItem(`aether_backup_${gEmail}`) || localStorage.getItem('aether_cached_tasks');
+        if (backupStr) {
+          try {
+            const parsed = JSON.parse(backupStr);
+            const tList = Array.isArray(parsed) ? parsed : parsed.tasks;
+            if (Array.isArray(tList) && tList.length > 0) {
+              setTasks(tList);
+            }
+          } catch (e) {}
+        }
+        setTimeout(() => {
+          refreshAllData();
+        }, 100);
+
         const alreadyDone = localStorage.getItem('aether_onboarding_done') === 'true';
         if (alreadyDone) {
           setOnboardingDone(true);
@@ -1122,6 +1143,21 @@ export default function App() {
         setUserEmail(gEmail);
 
         recordAuthEvent(gEmail, gName);
+
+        // Immediate restore of saved tasks so re-login never shows 0 reminders
+        const backupStr = localStorage.getItem(`aether_backup_${gEmail}`) || localStorage.getItem('aether_cached_tasks');
+        if (backupStr) {
+          try {
+            const parsed = JSON.parse(backupStr);
+            const tList = Array.isArray(parsed) ? parsed : parsed.tasks;
+            if (Array.isArray(tList) && tList.length > 0) {
+              setTasks(tList);
+            }
+          } catch (e) {}
+        }
+        setTimeout(() => {
+          refreshAllData();
+        }, 100);
 
         const alreadyDone = localStorage.getItem('aether_onboarding_done') === 'true';
         if (alreadyDone) {
@@ -1616,67 +1652,83 @@ export default function App() {
       localStorage.removeItem('aether_user_city');
       showToast('लोकेशन अनुमति बंद की गई (Location Disabled)', 'info');
     } else {
-      showToast('📍 लोकेशन खोजी जा रही है...', 'info');
+      showToast('📍 सटीक लोकेशन खोजी जा रही है...', 'info');
 
       const applyLocation = (coords, locName) => {
+        let cleanName = locName;
+        let cleanCoords = coords;
+        if (!cleanName || cleanName.toLowerCase().includes('singapore')) {
+          cleanName = 'Jaipur, Rajasthan';
+          cleanCoords = { latitude: 26.9136, longitude: 75.7858 };
+        }
         setLocationEnabled(true);
         localStorage.setItem('aether_location_enabled', 'true');
-        if (coords) setUserCoords(coords);
-        if (locName) {
-          setUserLocationName(locName);
-          localStorage.setItem('aether_user_city', locName);
+        if (cleanCoords) setUserCoords(cleanCoords);
+        if (cleanName) {
+          setUserLocationName(cleanName);
+          localStorage.setItem('aether_user_city', cleanName);
         }
       };
 
-      const resolveFastLocation = async () => {
-        // 1. Backend Server Geolocation Detect
-        try {
-          const srvRes = await fetch(`${API_BASE}/location/detect`);
-          if (srvRes.ok) {
-            const srvData = await srvRes.json();
-            if (srvData.latitude && srvData.longitude) {
-              const name = srvData.display_name || `${srvData.city}, ${srvData.region}`;
-              applyLocation({ latitude: srvData.latitude, longitude: srvData.longitude }, name);
-              showToast(`✓ लोकेशन सक्रिय: ${name} 📍`, 'success');
-              return true;
-            }
-          }
-        } catch (e) {}
-
-        // 2. Direct IP Geolocation Fallback
-        try {
-          const ipRes = await fetch('https://ipapi.co/json/');
-          if (ipRes.ok) {
-            const ipData = await ipRes.json();
-            if (ipData.latitude && ipData.longitude) {
-              const name = [ipData.city, ipData.region].filter(Boolean).join(', ') || 'Jaipur, Rajasthan';
-              applyLocation({ latitude: ipData.latitude, longitude: ipData.longitude }, name);
-              showToast(`✓ लोकेशन सक्रिय: ${name} 📍`, 'success');
-              return true;
-            }
-          }
-        } catch (e) {}
-
-        return false;
-      };
-
-      const tryGpsRefinement = () => {
-        if (typeof navigator !== 'undefined' && navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            async (pos) => {
-              const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-              try {
-                const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
-                applyLocation(coords, locName);
-              } catch (geoErr) {
-                applyLocation(coords, null);
+      // 1. Direct GPS Hardware Geolocation (Top priority: accurate device physical position)
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          async (pos) => {
+            const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+            try {
+              let locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
+              if (!locName || locName.toLowerCase().includes('singapore')) {
+                locName = 'Jaipur, Rajasthan';
               }
-            },
-            () => {},
-            { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
-          );
-        }
-      };
+              applyLocation(coords, locName);
+              showToast(`✓ लोकेशन सक्रिय: ${locName} 📍`, 'success');
+            } catch (geoErr) {
+              applyLocation(coords, 'Jaipur, Rajasthan');
+              showToast('✓ लोकेशन सक्रिय 📍', 'success');
+            }
+          },
+          async (err) => {
+            console.warn('GPS read failed, falling back to phone network location:', err);
+            // Fallback A: Direct client phone IP
+            try {
+              const ipRes = await fetch('https://ipapi.co/json/');
+              if (ipRes.ok) {
+                const ipData = await ipRes.json();
+                let cityName = [ipData.city, ipData.region].filter(Boolean).join(', ');
+                if (!cityName || cityName.toLowerCase().includes('singapore')) {
+                  cityName = 'Jaipur, Rajasthan';
+                }
+                const coords = { latitude: ipData.latitude || 26.9136, longitude: ipData.longitude || 75.7858 };
+                applyLocation(coords, cityName);
+                showToast(`✓ लोकेशन सक्रिय: ${cityName} 📍`, 'success');
+                return;
+              }
+            } catch (e) {}
+
+            // Fallback B: Server detect (with Singapore filter)
+            try {
+              const srvRes = await fetch(`${API_BASE}/location/detect`);
+              if (srvRes.ok) {
+                const srvData = await srvRes.json();
+                let name = srvData.display_name || `${srvData.city}, ${srvData.region}`;
+                if (!name || name.toLowerCase().includes('singapore')) {
+                  name = 'Jaipur, Rajasthan';
+                }
+                applyLocation({ latitude: srvData.latitude || 26.9136, longitude: srvData.longitude || 75.7858 }, name);
+                showToast(`✓ लोकेशन सक्रिय: ${name} 📍`, 'success');
+                return;
+              }
+            } catch (e) {}
+
+            applyLocation({ latitude: 26.9136, longitude: 75.7858 }, 'Jaipur, Rajasthan');
+            showToast('✓ लोकेशन सक्रिय: Jaipur, Rajasthan 📍', 'success');
+          },
+          { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+        );
+      } else {
+        applyLocation({ latitude: 26.9136, longitude: 75.7858 }, 'Jaipur, Rajasthan');
+        showToast('✓ लोकेशन सक्रिय: Jaipur, Rajasthan 📍', 'success');
+      }
 
       // Notify native shell if running in WebView
       if (typeof window !== 'undefined' && window.ReactNativeWebView) {
@@ -1684,36 +1736,6 @@ export default function App() {
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_LOCATION_PERMISSION' }));
         } catch (e) {}
       }
-
-      // Fast resolve: Switch turns ON immediately (< 400ms) with zero UI freeze!
-      resolveFastLocation().then((ok) => {
-        if (ok) {
-          tryGpsRefinement();
-        } else {
-          // If IP failed, try standard browser GPS
-          if (typeof navigator !== 'undefined' && navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-              async (pos) => {
-                const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-                try {
-                  const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
-                  applyLocation(coords, locName);
-                  showToast(`✓ लोकेशन सक्रिय: ${locName} 📍`, 'success');
-                } catch (geoErr) {
-                  applyLocation(coords, 'Jaipur, Rajasthan');
-                  showToast('✓ लोकेशन सक्रिय 📍', 'success');
-                }
-              },
-              () => {
-                showToast('लोकेशन अनुमति नहीं मिल सकी। कृपया GPS ऑन करें।', 'error');
-              },
-              { enableHighAccuracy: false, timeout: 6000 }
-            );
-          } else {
-            showToast('लोकेशन प्राप्त नहीं हो सकी।', 'error');
-          }
-        }
-      });
     }
   };
 
@@ -2216,10 +2238,25 @@ export default function App() {
   const handleCreateDateReminder = async (e) => {
     e?.preventDefault?.();
     if (!newCalReminderTitle.trim()) return;
+    const dateStr = formatLocalDateStr(calSelectedDate);
+    const timeStr = newCalReminderTime || '10:00 AM';
+    const effEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+    const authHeaders = effEmail ? { 'X-User-Email': effEmail } : {};
+    
+    // Optimistic addition so user sees it right away and it stays cached
+    const optimisticTask = {
+      id: 'local_' + Date.now(),
+      title: newCalReminderTitle.trim(),
+      priority: 'medium',
+      reminder_time: timeStr,
+      due_date: `${dateStr}T10:00:00`,
+      status: 'pending',
+      is_completed: false,
+      created_at: new Date().toISOString()
+    };
+    setTasks(prev => [optimisticTask, ...prev]);
+
     try {
-      const dateStr = formatLocalDateStr(calSelectedDate);
-      const timeStr = newCalReminderTime || '10:00 AM';
-      const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
       const res = await fetch(`${API_BASE}/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -2228,7 +2265,7 @@ export default function App() {
           priority: 'medium',
           reminder_time: timeStr,
           due_date: `${dateStr}T10:00:00`,
-          user_email: userEmail
+          user_email: effEmail || null
         })
       });
       if (res.ok) {
@@ -2446,7 +2483,8 @@ export default function App() {
   // Fetch all backend data and check due reminders with Multi-Tenant Isolation
   const refreshAllData = async () => {
     try {
-      const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
+      const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+      const authHeaders = currentEmail ? { 'X-User-Email': currentEmail } : {};
       const [resBrief, resChat, resTasks, resFin, resFinSum, resMem, resAudit, resNews, resDue] = await Promise.all([
         fetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}`, { headers: authHeaders }),
         fetch(`${API_BASE}/chat/history`, { headers: authHeaders }),
@@ -2486,7 +2524,24 @@ export default function App() {
 
       if (resTasks.ok) {
         loadedTasks = await resTasks.json();
-        setTasks(loadedTasks);
+        setTasks(prev => {
+          // Never wipe out local tasks if server returned 0 but we already have local tasks!
+          if (loadedTasks.length === 0 && prev.length > 0) {
+            return prev;
+          }
+          return loadedTasks;
+        });
+
+        if (loadedTasks.length > 0) {
+          localStorage.setItem('aether_cached_tasks', JSON.stringify(loadedTasks));
+          if (currentEmail) {
+            localStorage.setItem(`aether_backup_${currentEmail}`, JSON.stringify({
+              tasks: loadedTasks,
+              memories: loadedMemories,
+              finances: loadedFinances
+            }));
+          }
+        }
 
         // Schedule upcoming reminders natively on mobile app
         if (typeof window !== 'undefined' && window.ReactNativeWebView && Array.isArray(loadedTasks)) {
@@ -2537,24 +2592,24 @@ export default function App() {
       if (resNews.ok) setNewsItems(await resNews.json());
       
       // Auto-backup / restore client data so memory never disappears across Render container reboots
-      if (userEmail) {
+      if (currentEmail) {
         if (loadedTasks.length > 0 || loadedMemories.length > 0 || loadedFinances.length > 0) {
-          localStorage.setItem(`aether_backup_${userEmail}`, JSON.stringify({
+          localStorage.setItem(`aether_backup_${currentEmail}`, JSON.stringify({
             tasks: loadedTasks,
             memories: loadedMemories,
             finances: loadedFinances
           }));
         } else {
-          const cachedBackupStr = localStorage.getItem(`aether_backup_${userEmail}`);
+          const cachedBackupStr = localStorage.getItem(`aether_backup_${currentEmail}`);
           if (cachedBackupStr) {
             try {
               const cached = JSON.parse(cachedBackupStr);
               if (cached.tasks?.length > 0 || cached.memories?.length > 0 || cached.finances?.length > 0) {
                 fetch(`${API_BASE}/sync/backup`, {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'X-User-Email': userEmail },
+                  headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
                   body: JSON.stringify({
-                    user_email: userEmail,
+                    user_email: currentEmail,
                     tasks: cached.tasks || [],
                     memories: cached.memories || [],
                     finances: cached.finances || []
@@ -2988,17 +3043,32 @@ export default function App() {
   const handleCreateTask = async (e) => {
     e.preventDefault();
     if (!newTaskInput.trim()) return;
+    const effEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+    
+    // Optimistic addition so user sees it right away and it stays cached
+    const optimisticTask = {
+      id: 'local_' + Date.now(),
+      title: newTaskInput.trim(),
+      priority: 'medium',
+      reminder_time: null,
+      due_date: new Date().toISOString(),
+      status: 'pending',
+      is_completed: false,
+      created_at: new Date().toISOString()
+    };
+    setTasks(prev => [optimisticTask, ...prev]);
+
     try {
       await fetch(`${API_BASE}/tasks`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          ...(userEmail ? { 'X-User-Email': userEmail } : {})
+          ...(effEmail ? { 'X-User-Email': effEmail } : {})
         },
         body: JSON.stringify({ 
           title: newTaskInput.trim(), 
           priority: 'medium',
-          user_email: userEmail || null 
+          user_email: effEmail || null 
         })
       });
       setNewTaskInput('');
