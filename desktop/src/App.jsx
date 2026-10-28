@@ -1545,38 +1545,72 @@ export default function App() {
     }
   };
 
-  const handleCameraFileChange = (e) => {
+  const compressImage = (file, maxDim = 1280, quality = 0.82) => {
+    return new Promise((resolve) => {
+      if (!file) return resolve(null);
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new window.Image();
+        img.onload = () => {
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+          resolve(compressedDataUrl);
+        };
+        img.onerror = () => resolve(e.target.result);
+        img.src = e.target.result;
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleCameraFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
+      showToast('📸 फ़ोटो प्रोसेस हो रही है...', 'info');
+      const compressedUrl = await compressImage(file);
+      if (compressedUrl) {
         setAttachedMedia({
           type: 'image',
-          name: file.name || 'Camera_Photo.jpg',
-          url: event.target.result,
-          size: file.size
+          name: file.name || `Camera_${Date.now()}.jpg`,
+          url: compressedUrl,
+          size: Math.round((compressedUrl.length * 3) / 4)
         });
-        showToast('📸 फ़ोटो कैप्चर की गई! (Photo Captured)', 'success');
-      };
-      reader.readAsDataURL(file);
+        showToast('📸 फ़ोटो तैयार है! अपना सवाल पूछें।', 'success');
+      }
     }
     e.target.value = '';
   };
 
-  const handlePhotosFileChange = (e) => {
+  const handlePhotosFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
+      showToast('🖼️ फ़ोटो प्रोसेस हो रही है...', 'info');
+      const compressedUrl = await compressImage(file);
+      if (compressedUrl) {
         setAttachedMedia({
           type: 'image',
-          name: file.name,
-          url: event.target.result,
-          size: file.size
+          name: file.name || `Photo_${Date.now()}.jpg`,
+          url: compressedUrl,
+          size: Math.round((compressedUrl.length * 3) / 4)
         });
-        showToast('🖼️ फ़ोटो जोड़ी गई! (Photo Attached)', 'success');
-      };
-      reader.readAsDataURL(file);
+        showToast('🖼️ फ़ोटो जोड़ी गई! अपना सवाल पूछें।', 'success');
+      }
     }
     e.target.value = '';
   };
@@ -1655,7 +1689,7 @@ export default function App() {
     canvas.height = video.videoHeight || 480;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
 
     setAttachedMedia({
       type: 'image',
@@ -1668,7 +1702,7 @@ export default function App() {
       cameraStreamRef.current = null;
     }
     setIsCameraModalOpen(false);
-    showToast('📸 फ़ोटो कैप्चर कर ली गई!', 'success');
+    showToast('📸 फ़ोटो कैप्चर कर ली गई! अपना सवाल पूछें।', 'success');
   };
 
   const handleAttachDriveFromModal = (e) => {
@@ -2551,9 +2585,11 @@ export default function App() {
     if (isProcessing) return;
 
     let prompt = rawPrompt;
+    let sendingImageUrl = null;
     if (attachedMedia) {
       if (attachedMedia.type === 'image') {
-        prompt = `[Attached Photo: ${attachedMedia.name}] ${rawPrompt || 'Please inspect this photo.'}`;
+        sendingImageUrl = attachedMedia.url;
+        prompt = rawPrompt || 'कृपया इस फ़ोटो को देखकर विस्तार से बताएं कि इसमें क्या है और महत्वपूर्ण जानकारी समझाइए।';
       } else if (attachedMedia.type === 'file') {
         prompt = `[Attached File: ${attachedMedia.name} (${attachedMedia.size || ''})] ${rawPrompt || 'Review this file.'}`;
       } else if (attachedMedia.type === 'drive') {
@@ -2565,7 +2601,12 @@ export default function App() {
     }
 
     userScrolledUpRef.current = false;
-    setChatHistory(prev => [...prev, { role: 'user', content: prompt, created_at: new Date().toISOString() }]);
+    setChatHistory(prev => [...prev, { 
+      role: 'user', 
+      content: prompt, 
+      image_url: sendingImageUrl,
+      created_at: new Date().toISOString() 
+    }]);
     setInputText('');
     setIsProcessing(true);
     setShowConversation(true);
@@ -2573,6 +2614,7 @@ export default function App() {
     try {
       const payload = {
         input_text: prompt,
+        image_data: sendingImageUrl || null,
         latitude: userCoords?.latitude || null,
         longitude: userCoords?.longitude || null,
         language: selectedLang,
@@ -3911,6 +3953,23 @@ export default function App() {
                       key={idx} 
                       className={msg.role === 'user' ? 'gemini-msg-user' : 'gemini-msg-assistant'}
                     >
+                      {msg.image_url && (
+                        <div style={{ marginBottom: '8px' }}>
+                          <img 
+                            src={msg.image_url} 
+                            alt="Attached" 
+                            style={{ 
+                              maxWidth: '100%', 
+                              maxHeight: '220px', 
+                              borderRadius: '12px', 
+                              objectFit: 'cover',
+                              boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+                              border: '1px solid rgba(255,255,255,0.12)',
+                              display: 'block'
+                            }} 
+                          />
+                        </div>
+                      )}
                       <FormattedMessage text={msg.content} />
                     </div>
                   ))}
@@ -4120,14 +4179,14 @@ export default function App() {
                   <input 
                     type="text" 
                     className="gemini-input-field"
-                    placeholder={ROTATING_PROMPTS[promptPlaceholderIndex]}
+                    placeholder={attachedMedia?.type === 'image' ? "इस फ़ोटो के बारे में सवाल पूछें..." : ROTATING_PROMPTS[promptPlaceholderIndex]}
                     value={inputText}
                     onChange={(e) => setInputText(e.target.value)}
                     autoFocus
                   />
 
-                  {inputText.trim() ? (
-                    /* Send Arrow Button — shown when user has typed text */
+                  {(inputText.trim() || attachedMedia) ? (
+                    /* Send Arrow Button — shown when user has typed text or attached media */
                     <button 
                       type="submit" 
                       className="gemini-prompt-btn send-btn"
@@ -6117,6 +6176,15 @@ export default function App() {
                   <div style={{ fontSize: '0.72rem', color: msg.role === 'user' ? 'var(--accent-cyan)' : '#a855f7', fontWeight: 700, marginBottom: '3px' }}>
                     {msg.role === 'user' ? (userName || 'You') : 'Aether'}
                   </div>
+                  {msg.image_url && (
+                    <div style={{ marginBottom: '6px' }}>
+                      <img 
+                        src={msg.image_url} 
+                        alt="Attachment" 
+                        style={{ maxWidth: '100%', maxHeight: '140px', borderRadius: '8px', objectFit: 'cover' }} 
+                      />
+                    </div>
+                  )}
                   <div style={{ fontSize: '0.86rem', color: '#ffffff', lineHeight: '1.4' }}>
                     <FormattedMessage text={msg.content} />
                   </div>

@@ -78,7 +78,8 @@ class KeyValidationRequest(BaseModel):
     api_key: str
 
 class QuickCaptureRequest(BaseModel):
-    input_text: str
+    input_text: str = ""
+    image_data: Optional[str] = None
     user_email: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
@@ -305,14 +306,17 @@ async def quick_capture(
     db: Session = Depends(get_db)
 ):
     """Core Smart Action Engine with Multi-Tenant Isolation & Conversational History."""
-    user_msg = req.input_text.strip()
-    if not user_msg:
+    user_msg = (req.input_text or "").strip()
+    if not user_msg and not req.image_data:
         raise HTTPException(status_code=400, detail="Empty input")
+    if not user_msg and req.image_data:
+        user_msg = "कृपया इस फ़ोटो को देखकर विस्तार से बताएं कि इसमें क्या है और महत्वपूर्ण जानकारी समझाइए।"
 
     eff_email = (req.user_email or user_email or "").strip().lower() or None
 
     # Record User Message
-    db.add(ChatMessage(role="user", content=user_msg, user_email=eff_email))
+    db_content = f"📸 {user_msg}" if req.image_data and not user_msg.startswith("📸") else user_msg
+    db.add(ChatMessage(role="user", content=db_content, user_email=eff_email))
     db.commit()
 
     context = build_context(db, client_time=req.client_time, tz_name=req.timezone, user_email=eff_email)
@@ -324,7 +328,8 @@ async def quick_capture(
         user_lon=req.longitude, 
         language=lang,
         api_key=req.api_key,
-        user_name=req.user_name or "Operator"
+        user_name=req.user_name or "Operator",
+        image_data=req.image_data
     )
     
     action = parsed.get("action", "query")

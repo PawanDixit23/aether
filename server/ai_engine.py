@@ -23,6 +23,9 @@ import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
+env_path = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(env_path):
+    load_dotenv(env_path)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
@@ -413,7 +416,7 @@ def clean_task_title(text: str) -> str:
     cleaned = cleaned.strip(" ?.,!:\n")
     return cleaned if len(cleaned) > 2 else text.strip(" ?.,!:\n")
 
-def build_system_prompt(context: dict = None, live_feed: str = "", language: str = "auto", user_name: str = "Operator", user_query: str = "") -> str:
+def build_system_prompt(context: dict = None, live_feed: str = "", language: str = "auto", user_name: str = "Operator", user_query: str = "", has_image: bool = False) -> str:
     ctx_str = ""
     display_name = user_name.strip() if user_name and user_name.strip() else "Operator"
     if context:
@@ -438,7 +441,7 @@ CURRENT REAL-TIME CONTEXT:
 CRITICAL LANGUAGE INSTRUCTION:
 The user has requested or set language to HINDI (हिन्दी).
 YOU MUST RESPOND 100% IN NATURAL, POLITE, FLUENT HINDI (हिन्दी देवनागरी लिपि).
-All explanations, responses, weather summaries, news, match results, and reminders MUST be in Hindi.
+All explanations, responses, visual analysis, weather summaries, news, match results, and reminders MUST be in Hindi.
 """
     elif language == "hinglish":
         lang_rules = """
@@ -453,9 +456,24 @@ Default language is English. Respond in clear, professional English.
 CRITICAL OVERRIDE: If the user explicitly asks for another language (e.g. "in hindi", "hindi me batao", "translate to hindi"), YOU MUST HONOR THAT REQUEST AND RESPOND IN HINDI. Never refuse a language request.
 """
 
+    image_rules = ""
+    if has_image:
+        image_rules = """
+CRITICAL REAL-TIME IMAGE / CAMERA VISION RULES:
+- The user has attached or captured a real-time photo or picture from their camera/gallery.
+- You have direct multimodal visual perception of this image.
+- THOROUGHLY inspect all visual elements: objects, people, scenes, handwritten notes, printed documents, receipts, bills, brands, colors, surroundings, and quality.
+- If the user asks a question about the photo (e.g. "what is this", "ये क्या है", "फोटो में क्या दिख रहा है", "explain this image", "is bill me kitna amount hai", "summarize this receipt"):
+  Provide a comprehensive, accurate, and helpful response answering their exact question.
+- Action MUST be "query" (unless it is explicitly an expense receipt and the user specifically requests logging it, in which case use "expense").
+- Place your full, well-crafted, articulate explanation in "data.response".
+- Strictly respect the language instruction above (e.g. respond in beautiful, fluent Hindi when language is Hindi).
+"""
+
     return f"""You are Aether ⚡, an Autonomous Personal AI Executive & Wealth Intelligence Assistant for {display_name}.
 {ctx_str}
 {lang_rules}
+{image_rules}
 Your job is to analyze the user's input and return a strict JSON response.
 
 CRITICAL INSTRUCTIONS FOR TASKS & REMINDERS:
@@ -504,8 +522,8 @@ Output Format (strictly valid JSON with no markdown wrapping):
 }}
 """
 
-async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat: float = None, user_lon: float = None, language: str = "auto", api_key: str = None, user_name: str = "Operator") -> dict:
-    """Parse intent with live weather for user's actual location or requested city, news with links, match results, and language control."""
+async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat: float = None, user_lon: float = None, language: str = "auto", api_key: str = None, user_name: str = "Operator", image_data: str = None) -> dict:
+    """Parse intent with live weather for user's actual location or requested city, news with links, match results, image/vision analysis, and language control."""
     user_lower = user_input.lower().strip()
     
     # Detect language requirement in user prompt
@@ -540,13 +558,35 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
             heading = "RECENT MATCH RESULTS & SPORTS SCORES" if is_match_query else ("TODAY'S LIVE REAL-TIME SPORTS HEADLINES" if is_sports_query else "LIVE VERIFIED NEWS HEADLINES")
             live_feed += f"[{heading}]:\n{news_items}\n"
 
-    sys_prompt = build_system_prompt(context, live_feed, language=effective_lang, user_name=user_name, user_query=user_input)
+    has_image = bool(image_data and image_data.strip())
+    sys_prompt = build_system_prompt(context, live_feed, language=effective_lang, user_name=user_name, user_query=user_input, has_image=has_image)
     
     # Prioritize user's personal API key, otherwise fallback to server's GEMINI_API_KEY
     active_gemini_key = (api_key.strip() if api_key and api_key.strip() else None) or (GEMINI_API_KEY.strip() if GEMINI_API_KEY and GEMINI_API_KEY.strip() else None)
 
-    # Try Gemini API with Google Search Grounding and seamless model failover
+    # Try Gemini API with multimodal vision support and seamless model failover
     if active_gemini_key:
+        user_parts = [{"text": f"{sys_prompt}\n\nUser Input: {user_input}"}]
+        if has_image:
+            raw_b64 = image_data.strip()
+            mime_type = "image/jpeg"
+            if "," in raw_b64:
+                header, raw_b64 = raw_b64.split(",", 1)
+                if "image/png" in header:
+                    mime_type = "image/png"
+                elif "image/webp" in header:
+                    mime_type = "image/webp"
+                elif "image/gif" in header:
+                    mime_type = "image/gif"
+                elif "image/heic" in header:
+                    mime_type = "image/heic"
+            user_parts.append({
+                "inline_data": {
+                    "mime_type": mime_type,
+                    "data": raw_b64.strip()
+                }
+            })
+
         models_to_try = [
             "gemini-2.5-flash",
             "gemini-2.5-pro",
@@ -562,13 +602,13 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={active_gemini_key}"
                 payload = {
                     "contents": [
-                        {"role": "user", "parts": [{"text": f"{sys_prompt}\n\nUser Input: {user_input}"}]}
+                        {"role": "user", "parts": user_parts}
                     ],
                     "generationConfig": {
                         "temperature": 0.2
                     }
                 }
-                async with httpx.AsyncClient(timeout=25.0) as client:
+                async with httpx.AsyncClient(timeout=30.0) as client:
                     resp = await client.post(url, json=payload)
                     if resp.status_code == 200:
                         data = resp.json()
@@ -576,24 +616,38 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
                         
                         json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
                         if json_match:
-                            parsed = json.loads(json_match.group(0))
-                            # Ensure reminder time is captured even if LLM left it out
-                            if parsed.get("action") == "task":
-                                r_time, r_dt = parse_reminder_time(user_input)
-                                if r_time and not parsed.get("data", {}).get("reminder_time"):
-                                    parsed["data"]["reminder_time"] = r_time
-                                    parsed["data"]["due_date"] = r_dt.isoformat() if r_dt else None
-                            return parsed
-                        else:
-                            return {
-                                "action": "query",
-                                "confidence": 0.98,
-                                "confidence_level": "high",
-                                "data": { "response": raw_text },
-                                "explanation": "Grounded search response"
-                            }
+                            try:
+                                parsed = json.loads(json_match.group(0))
+                                # Ensure reminder time is captured even if LLM left it out
+                                if parsed.get("action") == "task":
+                                    r_time, r_dt = parse_reminder_time(user_input)
+                                    if r_time and not parsed.get("data", {}).get("reminder_time"):
+                                        parsed["data"]["reminder_time"] = r_time
+                                        parsed["data"]["due_date"] = r_dt.isoformat() if r_dt else None
+                                return parsed
+                            except Exception:
+                                pass
+
+                        return {
+                            "action": "query",
+                            "confidence": 0.98,
+                            "confidence_level": "high",
+                            "data": { "response": raw_text },
+                            "explanation": "Visual perception response"
+                        }
             except Exception as e:
                 print(f"[Aether Engine] Gemini call error: {e}")
+
+    if has_image:
+        return {
+            "action": "query",
+            "confidence": 0.9,
+            "confidence_level": "medium",
+            "data": { 
+                "response": "क्षमा करें, आपकी फ़ोटो का विश्लेषण करने के लिए Gemini Vision सेवा उपलब्ध नहीं हो सकी। कृपया इंटरनेट कनेक्शन या अपनी Gemini API Key जांचें।"
+            },
+            "explanation": "Visual API failover"
+        }
 
     # Fallback to direct weather/news if LLM call failed
     if is_weather_query:
