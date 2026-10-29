@@ -28,7 +28,7 @@ if os.path.exists(env_path):
     load_dotenv(env_path)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3:8b")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini")
@@ -758,11 +758,11 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
             })
 
         models_to_try = [
+            GEMINI_MODEL,
+            "gemini-3.1-flash-lite",
+            "gemini-3-flash-preview",
             "gemini-2.5-flash",
-            "gemini-flash-latest",
-            "gemini-2.5-flash-lite",
-            "gemini-2.5-pro",
-            "gemini-flash-lite-latest"
+            "gemini-flash-latest"
         ]
         unique_models = list(dict.fromkeys(models_to_try))
 
