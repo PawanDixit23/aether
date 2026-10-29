@@ -779,7 +779,16 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
                     resp = await client.post(url, json=payload)
                     if resp.status_code == 200:
                         data = resp.json()
-                        raw_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                        candidates = data.get("candidates", [])
+                        raw_text = ""
+                        if candidates:
+                            content = candidates[0].get("content", {})
+                            for p in content.get("parts", []):
+                                if "text" in p and p["text"].strip():
+                                    raw_text = p["text"].strip()
+                                    break
+                        if not raw_text:
+                            continue
                         
                         json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
                         if json_match:

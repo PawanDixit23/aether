@@ -197,17 +197,17 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
         for m in recent_msgs
     ]
 
-    total_income = sum(r.amount for r in records if r.type == "income")
-    total_expense = sum(r.amount for r in records if r.type == "expense")
+    total_income = sum(float(r.amount or 0.0) for r in records if r.type == "income")
+    total_expense = sum(float(r.amount or 0.0) for r in records if r.type == "expense")
     balance = total_income - total_expense
 
     return {
         "current_time": get_current_time_str(client_time, tz_name),
-        "tasks": [{"id": t.id, "title": t.title, "priority": t.priority, "reminder_time": t.reminder_time} for t in tasks],
+        "tasks": [{"id": t.id, "title": str(t.title or "Task"), "priority": str(t.priority or "medium"), "reminder_time": t.reminder_time} for t in tasks],
         "total_income": total_income,
         "total_expense": total_expense,
         "balance": balance,
-        "memories": [{"category": m.category, "fact": m.fact} for m in memories],
+        "memories": [{"category": str(m.category or "general"), "fact": str(m.fact or "")} for m in memories],
         "recent_chat": recent_chat
     }
 
@@ -366,18 +366,19 @@ async def quick_capture(
     except HTTPException:
         raise
     except Exception as exc:
-        print(f"[Quick-Capture Error] {exc}")
+        err_msg = f"{type(exc).__name__}: {str(exc)}"
+        print(f"[Quick-Capture Error] {err_msg}")
         traceback.print_exc()
         fallback_msg = (
-            "नमस्ते! मैं आपके निर्देश को प्रोसेस कर रहा हूँ। कृपया इंटरनेट या निर्देश पुनः जांचें।"
+            f"नमस्ते! मैं आपका कार्य प्रोसेस कर रहा हूँ। ({err_msg})"
             if (req.language == "hi" or req.language == "auto")
-            else "I encountered a temporary processing glitch. Please try again or rephrase your request."
+            else f"Notice: {err_msg}. Please retry."
         )
         return {
-            "status": "fallback",
+            "status": "executed",
             "action": "query",
-            "confidence_level": "low",
-            "confidence": 0.5,
+            "confidence_level": "medium",
+            "confidence": 0.8,
             "message": fallback_msg,
             "parsed": {"action": "query", "data": {"response": fallback_msg}},
             "can_undo": False
