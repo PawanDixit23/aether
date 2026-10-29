@@ -1,4 +1,11 @@
 import os
+import sys
+
+# Ensure server module directory is in sys.path regardless of execution root
+_SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SERVER_DIR not in sys.path:
+    sys.path.insert(0, _SERVER_DIR)
+
 import json
 from datetime import datetime, timedelta
 from typing import Optional, List
@@ -36,13 +43,18 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
 # ──────────────────────────────────────────────────────────────────────────────
 
 try:
-    from .database import engine, Base, get_db, ensure_schema_migrations
-    from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
-    from .ai_engine import parse_intent_with_llm
-except ImportError:
     from database import engine, Base, get_db, ensure_schema_migrations
     from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
     from ai_engine import parse_intent_with_llm
+except ImportError:
+    try:
+        from server.database import engine, Base, get_db, ensure_schema_migrations
+        from server.models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
+        from server.ai_engine import parse_intent_with_llm
+    except ImportError:
+        from .database import engine, Base, get_db, ensure_schema_migrations
+        from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
+        from .ai_engine import parse_intent_with_llm
 
 # Initialize tables & run automated schema migrations
 Base.metadata.create_all(bind=engine)
