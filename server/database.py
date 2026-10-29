@@ -9,9 +9,13 @@ if not DATABASE_URL:
     DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "aether.db"))
     DATABASE_URL = f"sqlite:///{DB_PATH}"
 
-# SQLAlchemy requires postgresql:// instead of postgres://
+# Normalize PostgreSQL URL for SQLAlchemy:
+# SQLAlchemy 2 defaults postgresql:// to psycopg (v3). To guarantee compatibility with
+# both psycopg2 and psycopg v3 drivers without errors:
 if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
+elif DATABASE_URL.startswith("postgresql://") and not DATABASE_URL.startswith("postgresql+"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
