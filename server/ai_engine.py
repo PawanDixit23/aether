@@ -679,7 +679,7 @@ Output Format (strictly valid JSON with no markdown wrapping):
     "due_date": "ISO string or null",
     "recurrence": "daily" | "weekdays" | "weekly_monday" | null,
     "subtasks": ["Subtask 1", "Subtask 2"] | null,
-    "multi_tasks": [{"title": "Task 1", "reminder_time": "11:00 AM", "due_date": "ISO string", "priority": "medium"}] | null,
+    "multi_tasks": [{{"title": "Task 1", "reminder_time": "11:00 AM", "due_date": "ISO string", "priority": "medium"}}] | null,
     "amount": float,
     "currency": "INR",
     "category": "string",

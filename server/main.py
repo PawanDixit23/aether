@@ -366,13 +366,12 @@ async def quick_capture(
     except HTTPException:
         raise
     except Exception as exc:
-        err_msg = f"{type(exc).__name__}: {str(exc)}"
-        print(f"[Quick-Capture Error] {err_msg}")
+        print(f"[Quick-Capture Error] {exc}")
         traceback.print_exc()
         fallback_msg = (
-            f"नमस्ते! मैं आपका कार्य प्रोसेस कर रहा हूँ। ({err_msg})"
+            "नमस्ते! मैं आपका कार्य प्रोसेस कर रहा हूँ। कृपया पुनः प्रयास करें।"
             if (req.language == "hi" or req.language == "auto")
-            else f"Notice: {err_msg}. Please retry."
+            else "I am ready. Please re-state your request."
         )
         return {
             "status": "executed",
