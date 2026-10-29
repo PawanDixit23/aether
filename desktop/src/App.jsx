@@ -1325,6 +1325,8 @@ export default function App() {
         console.error('Supabase Google OAuth error:', error);
         setGoogleError(error.message);
         setShowGoogleModal(true);
+      } else if (data?.url) {
+        window.location.href = data.url;
       }
     } catch (err) {
       console.error('Google Sign In err:', err);
@@ -3562,6 +3564,40 @@ export default function App() {
                   <GoogleIcon />
                 )}
                 <span>{userEmail ? `Continue as ${userName || userEmail.split('@')[0]}` : 'Continue with Google'}</span>
+              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '14px 0 6px', width: '100%' }}>
+                <div style={{ flex: 1, height: '1px', background: 'rgba(255, 255, 255, 0.1)' }} />
+                <span style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>या (OR)</span>
+                <div style={{ flex: 1, height: '1px', background: 'rgba(255, 255, 255, 0.1)' }} />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setGoogleCustomEmail(userEmail || '');
+                  setGoogleCustomName(userName || '');
+                  setShowGoogleModal(true);
+                }}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  borderRadius: '12px',
+                  padding: '10px 16px',
+                  color: '#38bdf8',
+                  fontSize: '0.84rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  width: '100%',
+                  marginTop: '4px',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <span>✉️ Enter Name & Email (1-Click Login)</span>
               </button>
 
               {userEmail && (
