@@ -280,33 +280,46 @@ const resolveSpeechVoice = (voiceId, lang = 'en') => {
 
   const isHindi = lang && (lang.startsWith('hi') || lang === 'hi-IN');
   if (isHindi) {
-    const hiVoice = voices.find(v => v.lang && (v.lang.toLowerCase().startsWith('hi') || /hindi/i.test(v.name)));
+    // Priority: hi-IN voices first, then any Hindi-named voice
+    const hiVoice = voices.find(v => v.lang === 'hi-IN')
+      || voices.find(v => v.lang && v.lang.toLowerCase().startsWith('hi'))
+      || voices.find(v => /hindi/i.test(v.name));
     if (hiVoice) return hiVoice;
+    // Fallback: any available voice
+    return voices[0] || null;
   }
+
+  // For English — prefer Indian English (en-IN) voices for sharp & clear output
+  const enINVoices = voices.filter(v => v.lang === 'en-IN');
+  const enGBVoices = voices.filter(v => v.lang === 'en-GB');
+  const enUSVoices = voices.filter(v => v.lang === 'en-US' || (v.lang && v.lang.toLowerCase().startsWith('en')));
 
   const voiceMeta = AETHER_VOICES.find(v => v.id === voiceId) || AETHER_VOICES[0];
   const isFemale = voiceMeta.gender === 'female' || voiceId === 'kore' || voiceId === 'aoede';
 
-  const enVoices = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith('en'));
-  const pool = enVoices.length > 0 ? enVoices : voices;
+  // Prefer Indian English first
+  const candidatePool = enINVoices.length > 0 ? enINVoices : (enGBVoices.length > 0 ? enGBVoices : enUSVoices);
+  const fallbackPool = enUSVoices.length > 0 ? enUSVoices : voices;
 
   if (isFemale) {
-    // Search for known female browser voices (Samantha, Victoria, Karen, Moira, Tessa, Fiona, Zira, Google UK/US Female)
-    const femaleMatch = pool.find(v => 
+    const femaleMatch = candidatePool.find(v =>
       /female|woman|samantha|victoria|karen|moira|tessa|fiona|veena|zira|susan|kathy|princess|alva|alice|serena|stephanie|ava|allison|zoe/i.test(v.name)
-    ) || pool.find(v => 
+    ) || candidatePool.find(v =>
       !/male|man|alex|daniel|david|fred|george|oliver|rishi|lee|tom|bruce|ralph|junior|albert|aaron|guy/i.test(v.name)
+    ) || fallbackPool.find(v =>
+      /female|woman|samantha|victoria|karen|veena|zira/i.test(v.name)
     );
     if (femaleMatch) return femaleMatch;
   } else if (voiceMeta.gender === 'male') {
-    // Search for known male voices
-    const maleMatch = pool.find(v => 
-      /male|man|alex|daniel|david|fred|george|oliver|rishi|lee|tom|bruce|ralph|junior|albert|aaron|guy/i.test(v.name)
+    const maleMatch = candidatePool.find(v =>
+      /male|man|alex|daniel|david|rishi|oliver|lee|tom|george/i.test(v.name)
+    ) || fallbackPool.find(v =>
+      /male|man|alex|daniel|david|rishi/i.test(v.name)
     );
     if (maleMatch) return maleMatch;
   }
 
-  return pool.find(v => v.default) || pool[0] || null;
+  return candidatePool.find(v => v.default) || candidatePool[0] || fallbackPool[0] || voices[0] || null;
 };
 
 const AETHER_MODELS = [
@@ -877,6 +890,24 @@ export default function App() {
   };
 
   const isTaskPending = (t) => !(t.is_completed === true || t.completed === true || t.status === 'completed');
+
+  // Today-only pending tasks count for bell badge
+  const getTodayPendingCount = () => {
+    const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    return (tasks || []).filter(t => {
+      if (!isTaskPending(t)) return false;
+      if (!t.due_date) {
+        // Tasks with no due_date — check if created today (treat as today's)
+        return true;
+      }
+      try {
+        const taskDay = new Date(t.due_date).toISOString().slice(0, 10);
+        return taskDay === todayStr;
+      } catch (e) {
+        return false;
+      }
+    }).length;
+  };
 
   // Dynamic Executive Subtitles list tailored to real-time context & time of day
   const getDynamicSubheadingList = () => {
@@ -2819,44 +2850,73 @@ export default function App() {
 
   // Text to Speech with Mobile WebView Audio Streaming Fallback
   const speakText = (text) => {
+    // STRICT: No voice if permission is off
     if (!voiceOutputEnabled) return;
-    const cleanText = text.replace(/\[.*?\]\(.*?\)/g, '').replace(/[*_#`🔗]/g, '');
-    const activeVoice = AETHER_VOICES.find(v => v.id === selectedVoice);
+    if (!text || !text.trim()) return;
+
+    // Clean markdown artifacts from text before speaking
+    const cleanText = text
+      .replace(/\[.*?\]\(.*?\)/g, '')   // remove markdown links
+      .replace(/[*_#`🔗]/g, '')          // remove markdown symbols
+      .replace(/```[\s\S]*?```/g, '')    // remove code blocks
+      .replace(/\n+/g, ' ')             // flatten newlines
+      .trim();
+
+    if (!cleanText) return;
+
+    const activeVoice = AETHER_VOICES.find(v => v.id === selectedVoice) || AETHER_VOICES[0];
     const hasDevanagari = /[\u0900-\u097F]/.test(cleanText);
-    const lang = (selectedLang === 'hi' || hasDevanagari) ? 'hi' : 'en';
+    const isHindi = selectedLang === 'hi' || hasDevanagari;
+    const lang = isHindi ? 'hi' : 'en';
+    const bcp47 = isHindi ? 'hi-IN' : 'en-IN';  // Always Indian locale
+
+    // Cancel any ongoing speech
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
 
     let spoken = false;
+
+    // Try browser SpeechSynthesis (Desktop & some mobile browsers)
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const voices = window.speechSynthesis.getVoices();
       if (voices && voices.length > 0) {
         try {
-          window.speechSynthesis.cancel();
           const utterance = new SpeechSynthesisUtterance(cleanText);
-          utterance.rate = (activeVoice ? activeVoice.rate : 1.05) * speechRate;
-          utterance.pitch = activeVoice ? activeVoice.pitch : 1.0;
-          utterance.lang = lang === 'hi' ? 'hi-IN' : 'en-IN';
-          
-          const matchedVoice = resolveSpeechVoice(selectedVoice, utterance.lang);
+          // Sharp & clear settings: slightly faster rate, neutral pitch
+          utterance.rate = (activeVoice ? activeVoice.rate : 1.0) * speechRate;
+          utterance.pitch = isHindi ? 1.0 : (activeVoice ? activeVoice.pitch : 1.0);
+          utterance.volume = 1.0;
+          utterance.lang = bcp47;
+
+          const matchedVoice = resolveSpeechVoice(selectedVoice, bcp47);
           if (matchedVoice) {
             utterance.voice = matchedVoice;
           }
-          
+
           setIsSpeaking(true);
           utterance.onend = () => setIsSpeaking(false);
-          utterance.onerror = () => setIsSpeaking(false);
+          utterance.onerror = (e) => {
+            console.warn('[Aether TTS] SpeechSynthesis error:', e);
+            setIsSpeaking(false);
+            // Fallback to server TTS if browser speech fails
+            if (!spoken) playStreamAudio(cleanText, selectedVoice, lang);
+          };
           window.speechSynthesis.speak(utterance);
           spoken = true;
         } catch (e) {
+          console.warn('[Aether TTS] SpeechSynthesis exception:', e);
           spoken = false;
         }
       }
     }
 
-    // Stream server-side audio on mobile WebViews where speechSynthesis has no voices
+    // Fallback: stream server-side TTS (always works on mobile WebViews)
     if (!spoken) {
       playStreamAudio(cleanText, selectedVoice, lang);
+      setIsSpeaking(true);
+      setTimeout(() => setIsSpeaking(false), Math.min(cleanText.length * 60, 8000));
     }
-    showToast("🔊 Aether बोल रहा है...", "info");
   };
 
   // Translate Message to Hindi
@@ -4031,8 +4091,8 @@ export default function App() {
                 <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Reminders & Today's Agenda</span>
               </div>
               <div className="settings-row-right" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
-                <span style={{ color: tasks.filter(t => !t.is_completed && t.status !== 'completed').length > 0 ? '#38bdf8' : '#94a3b8', fontWeight: 600, whiteSpace: 'nowrap', fontSize: '0.84rem' }}>
-                  {tasks.filter(t => !t.is_completed && t.status !== 'completed').length} pending
+                <span style={{ color: getTodayPendingCount() > 0 ? '#38bdf8' : '#94a3b8', fontWeight: 600, whiteSpace: 'nowrap', fontSize: '0.84rem' }}>
+                  {getTodayPendingCount()} today
                 </span>
                 <ChevronRight size={16} style={{ flexShrink: 0 }} />
               </div>
@@ -4215,9 +4275,9 @@ export default function App() {
                     style={{ position: 'relative' }}
                   >
                     <Bell size={20} />
-                    {tasks.filter(t => !t.is_completed && t.status !== 'completed').length > 0 && (
+                    {getTodayPendingCount() > 0 && (
                       <span className="gemini-bell-badge">
-                        {tasks.filter(t => !t.is_completed && t.status !== 'completed').length}
+                        {getTodayPendingCount()}
                       </span>
                     )}
                   </button>
@@ -6331,268 +6391,150 @@ export default function App() {
 
       {/* 8. App Permissions & Access Modal */}
       {activeSubModal === 'permissions' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(14px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '440px', maxHeight: '88vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8', fontWeight: 700, fontSize: '1.05rem' }}>
-                <ShieldCheck size={20} />
-                <span>APP PERMISSIONS & ACCESS</span>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', backdropFilter: 'blur(18px)', zIndex: 120, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          <div style={{ background: 'linear-gradient(180deg, #0f1b2d 0%, #0a1220 100%)', borderRadius: '28px 28px 0 0', padding: '28px 24px 40px', width: '100%', maxWidth: '480px', maxHeight: '92vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', boxShadow: '0 -8px 40px rgba(0,0,0,0.6)' }}>
+
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(56,189,248,0.15)', border: '1px solid rgba(56,189,248,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8' }}>
+                  <ShieldCheck size={18} />
+                </div>
+                <div>
+                  <div style={{ color: '#fff', fontWeight: 700, fontSize: '1.05rem', letterSpacing: '0.01em' }}>Permissions & Access</div>
+                  <div style={{ color: '#64748b', fontSize: '0.72rem', marginTop: '1px' }}>Control what Aether can access</div>
+                </div>
               </div>
-              <button 
-                type="button" 
-                onClick={() => setActiveSubModal(null)} 
-                style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}
-              >
-                ✕
-              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSubModal(null)}
+                style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: '34px', height: '34px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '1.1rem', cursor: 'pointer', flexShrink: 0 }}
+              >✕</button>
             </div>
 
-            <p style={{ color: '#94a3b8', fontSize: '0.8rem', lineHeight: '1.4', marginBottom: '18px' }}>
-              Manage system permissions required for real-time voice mode, automated reminders, and zero-latency executive alerts.
-            </p>
+            {/* Drag handle visual */}
+            <div style={{ width: '40px', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.12)', margin: '12px auto 24px' }} />
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {/* Permission Item 1: Microphone Access */}
-              <div style={{
-                background: 'rgba(255, 255, 255, 0.03)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: '16px',
-                padding: '14px 16px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: '12px'
-              }}>
-                <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', flexShrink: 0 }}>
-                    <Mic size={20} />
+            {/* Permission Cards */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+              {/* 1: Microphone */}
+              <div style={{ background: 'rgba(56,189,248,0.06)', border: micEnabled ? '1.5px solid rgba(56,189,248,0.35)' : '1.5px solid rgba(255,255,255,0.06)', borderRadius: '20px', padding: '20px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', transition: 'border 0.2s' }}>
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: micEnabled ? 'rgba(56,189,248,0.2)' : 'rgba(255,255,255,0.06)', border: micEnabled ? '1px solid rgba(56,189,248,0.4)' : '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: micEnabled ? '#38bdf8' : '#64748b', flexShrink: 0, transition: 'all 0.2s' }}>
+                    <Mic size={22} />
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ color: '#fff', fontSize: '0.92rem', fontWeight: 600 }}>Microphone Access</span>
-                      {micEnabled && (
-                        <button
-                          type="button"
-                          onClick={handleTestMic}
-                          disabled={isMicTesting}
-                          style={{
-                            background: 'rgba(56, 189, 248, 0.15)',
-                            border: '1px solid rgba(56, 189, 248, 0.3)',
-                            color: '#38bdf8',
-                            padding: '2px 8px',
-                            borderRadius: '8px',
-                            fontSize: '0.7rem',
-                            fontWeight: 600,
-                            cursor: 'pointer'
-                          }}
-                        >
-                          {isMicTesting ? 'Testing...' : 'Test 🎙️'}
-                        </button>
-                      )}
-                    </div>
-                    <span style={{ color: '#94a3b8', fontSize: '0.75rem', lineHeight: '1.3' }}>
-                      Real-time voice prompts & zero-latency listening
-                    </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>Microphone</div>
+                    <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>Voice prompts & real-time listening</div>
+                    {micEnabled && (
+                      <button type="button" onClick={handleTestMic} disabled={isMicTesting}
+                        style={{ marginTop: '8px', background: 'rgba(56,189,248,0.12)', border: '1px solid rgba(56,189,248,0.3)', color: '#38bdf8', padding: '4px 12px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}>
+                        {isMicTesting ? '🎙️ Testing...' : '🎙️ Test Mic'}
+                      </button>
+                    )}
                   </div>
                 </div>
-
-                <div 
-                  className={`permission-toggle-switch ${micEnabled ? 'active' : ''}`}
-                  onClick={handleToggleMic}
-                  role="button"
-                  tabIndex={0}
-                  title={micEnabled ? 'Click to disable microphone' : 'Click to enable microphone'}
-                >
+                <div className={`permission-toggle-switch ${micEnabled ? 'active' : ''}`} onClick={handleToggleMic} role="button" tabIndex={0}>
                   <div className="permission-toggle-thumb" />
                 </div>
               </div>
 
-              {/* Permission Item 2: Push Notifications */}
-              <div style={{
-                background: 'rgba(255, 255, 255, 0.03)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: '16px',
-                padding: '14px 16px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: '12px'
-              }}>
-                <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(245, 158, 11, 0.15)', border: '1px solid rgba(245, 158, 11, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fbbf24', flexShrink: 0 }}>
-                    <Bell size={20} />
+              {/* 2: Push Notifications */}
+              <div style={{ background: 'rgba(245,158,11,0.06)', border: pushEnabled ? '1.5px solid rgba(245,158,11,0.35)' : '1.5px solid rgba(255,255,255,0.06)', borderRadius: '20px', padding: '20px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', transition: 'border 0.2s' }}>
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: pushEnabled ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.06)', border: pushEnabled ? '1px solid rgba(245,158,11,0.4)' : '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: pushEnabled ? '#fbbf24' : '#64748b', flexShrink: 0, transition: 'all 0.2s' }}>
+                    <Bell size={22} />
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ color: '#fff', fontSize: '0.92rem', fontWeight: 600 }}>Push Notifications & Alerts</span>
-                      {pushEnabled && (
-                        <button
-                          type="button"
-                          onClick={handleSendTestPush}
-                          style={{
-                            background: 'rgba(245, 158, 11, 0.15)',
-                            border: '1px solid rgba(245, 158, 11, 0.3)',
-                            color: '#fbbf24',
-                            padding: '2px 8px',
-                            borderRadius: '8px',
-                            fontSize: '0.7rem',
-                            fontWeight: 600,
-                            cursor: 'pointer'
-                          }}
-                        >
-                          Test 📲
-                        </button>
-                      )}
-                    </div>
-                    <span style={{ color: '#94a3b8', fontSize: '0.75rem', lineHeight: '1.3' }}>
-                      8:00 AM briefing & background task reminders
-                    </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>Push Notifications</div>
+                    <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>8 AM briefing & task reminders</div>
+                    {pushEnabled && (
+                      <button type="button" onClick={handleSendTestPush}
+                        style={{ marginTop: '8px', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '4px 12px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}>
+                        📲 Send Test
+                      </button>
+                    )}
                   </div>
                 </div>
-
-                <div 
-                  className={`permission-toggle-switch ${pushEnabled ? 'active' : ''}`}
-                  onClick={handleTogglePush}
-                  role="button"
-                  tabIndex={0}
-                  title={pushEnabled ? 'Click to disable notifications' : 'Click to enable notifications'}
-                >
+                <div className={`permission-toggle-switch ${pushEnabled ? 'active' : ''}`} onClick={handleTogglePush} role="button" tabIndex={0}>
                   <div className="permission-toggle-thumb" />
                 </div>
               </div>
 
-              {/* Permission Item 3: Location & Maps (GPS) */}
-              <div style={{
-                background: 'rgba(255, 255, 255, 0.03)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: '16px',
-                padding: '14px 16px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: '12px'
-              }}>
-                <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(244, 63, 94, 0.15)', border: '1px solid rgba(244, 63, 94, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fb7185', flexShrink: 0 }}>
-                    <MapPin size={20} />
+              {/* 3: Location */}
+              <div style={{ background: 'rgba(244,63,94,0.06)', border: locationEnabled ? '1.5px solid rgba(244,63,94,0.35)' : '1.5px solid rgba(255,255,255,0.06)', borderRadius: '20px', padding: '20px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', transition: 'border 0.2s' }}>
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: locationEnabled ? 'rgba(244,63,94,0.2)' : 'rgba(255,255,255,0.06)', border: locationEnabled ? '1px solid rgba(244,63,94,0.4)' : '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: locationEnabled ? '#fb7185' : '#64748b', flexShrink: 0, transition: 'all 0.2s' }}>
+                    <MapPin size={22} />
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ color: '#fff', fontSize: '0.92rem', fontWeight: 600 }}>Location & Live Maps</span>
-                      {locationEnabled && (
-                        <span style={{ 
-                          fontSize: '0.68rem', 
-                          color: '#34d399', 
-                          fontWeight: 700, 
-                          background: 'rgba(16, 185, 129, 0.12)', 
-                          border: '1px solid rgba(16, 185, 129, 0.25)', 
-                          padding: '2px 8px', 
-                          borderRadius: '8px',
-                          maxWidth: '140px',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap'
-                        }} title={userLocationName || 'Active'}>
-                          {userLocationName ? `📍 ${userLocationName}` : 'Active 📍'}
-                        </span>
-                      )}
-                    </div>
-                    <span style={{ color: '#94a3b8', fontSize: '0.75rem', lineHeight: '1.3' }}>
-                      Local weather, city briefing, and location sharing
-                    </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>Location & Maps</div>
+                    <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>Local weather & city briefing</div>
+                    {locationEnabled && userLocationName && (
+                      <div style={{ marginTop: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: '8px', padding: '3px 10px', color: '#34d399', fontSize: '0.72rem', fontWeight: 600, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        📍 {userLocationName}
+                      </div>
+                    )}
                   </div>
                 </div>
-
-                <div 
-                  className={`permission-toggle-switch ${locationEnabled ? 'active' : ''}`}
-                  onClick={handleToggleLocation}
-                  role="button"
-                  tabIndex={0}
-                  title={locationEnabled ? 'Click to disable location' : 'Click to enable location'}
-                >
+                <div className={`permission-toggle-switch ${locationEnabled ? 'active' : ''}`} onClick={handleToggleLocation} role="button" tabIndex={0}>
                   <div className="permission-toggle-thumb" />
                 </div>
               </div>
 
-              {/* Permission Item 4: Audio Playback & Voice Readout */}
-              <div style={{
-                background: 'rgba(255, 255, 255, 0.03)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: '16px',
-                padding: '14px 16px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: '12px'
-              }}>
-                <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(168, 85, 247, 0.15)', border: '1px solid rgba(168, 85, 247, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#c084fc', flexShrink: 0 }}>
-                    <Volume2 size={20} />
+              {/* 4: Audio Playback */}
+              <div style={{ background: 'rgba(168,85,247,0.06)', border: voiceOutputEnabled ? '1.5px solid rgba(168,85,247,0.35)' : '1.5px solid rgba(255,255,255,0.06)', borderRadius: '20px', padding: '20px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', transition: 'border 0.2s' }}>
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: voiceOutputEnabled ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.06)', border: voiceOutputEnabled ? '1px solid rgba(168,85,247,0.4)' : '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: voiceOutputEnabled ? '#c084fc' : '#64748b', flexShrink: 0, transition: 'all 0.2s' }}>
+                    <Volume2 size={22} />
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                    <span style={{ color: '#fff', fontSize: '0.92rem', fontWeight: 600 }}>Audio Playback & Chimes</span>
-                    <span style={{ color: '#94a3b8', fontSize: '0.75rem', lineHeight: '1.3' }}>
-                      Spoken AI responses & executive chimes
-                    </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>Voice Responses</div>
+                    <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>
+                      {voiceOutputEnabled ? 'Spoken AI replies in Indian English / Hindi' : 'Text-only responses (voice muted)'}
+                    </div>
                   </div>
                 </div>
-
-                <div 
+                <div
                   className={`permission-toggle-switch ${voiceOutputEnabled ? 'active' : ''}`}
                   onClick={() => {
                     const nextVal = !voiceOutputEnabled;
                     setVoiceOutputEnabled(nextVal);
                     localStorage.setItem('aether_voice_output', String(nextVal));
-                    showToast(nextVal ? 'वॉयस आउटपुट चालू' : 'वॉयस आउटपुट म्यूट', 'info');
+                    showToast(nextVal ? '🔊 आवाज़ चालू — Indian English/Hindi' : '🔇 आवाज़ बंद — सिर्फ़ टेक्स्ट', 'info');
                   }}
                   role="button"
                   tabIndex={0}
-                  title={voiceOutputEnabled ? 'Click to mute AI voice' : 'Click to enable AI voice'}
                 >
                   <div className="permission-toggle-thumb" />
                 </div>
               </div>
 
-              {/* Permission Item 5: Background Cloud Sync */}
-              <div style={{
-                background: 'rgba(255, 255, 255, 0.03)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: '16px',
-                padding: '14px 16px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: '12px'
-              }}>
-                <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                  <div style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399', flexShrink: 0 }}>
-                    <Sparkles size={20} />
+              {/* 5: Background Cloud Sync */}
+              <div style={{ background: 'rgba(16,185,129,0.06)', border: '1.5px solid rgba(16,185,129,0.2)', borderRadius: '20px', padding: '20px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: 'rgba(16,185,129,0.2)', border: '1px solid rgba(16,185,129,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399', flexShrink: 0 }}>
+                    <Sparkles size={22} />
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                    <span style={{ color: '#fff', fontSize: '0.92rem', fontWeight: 600 }}>Background Cloud Sync</span>
-                    <span style={{ color: '#94a3b8', fontSize: '0.75rem', lineHeight: '1.3' }}>
-                      8-min ping & automated push monitoring
-                    </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>Background Cloud Sync</div>
+                    <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>Auto-sync every 8 min • Always on</div>
                   </div>
                 </div>
-                <span style={{
-                  fontSize: '0.74rem',
-                  fontWeight: 700,
-                  padding: '4px 10px',
-                  borderRadius: '12px',
-                  background: 'rgba(16, 185, 129, 0.15)',
-                  color: '#34d399',
-                  border: '1px solid rgba(16, 185, 129, 0.3)',
-                  whiteSpace: 'nowrap'
-                }}>
-                  ● 24/7 Active
+                <span style={{ fontSize: '0.74rem', fontWeight: 700, padding: '5px 12px', borderRadius: '12px', background: 'rgba(16,185,129,0.15)', color: '#34d399', border: '1px solid rgba(16,185,129,0.3)', whiteSpace: 'nowrap' }}>
+                  ● Active
                 </span>
               </div>
+
             </div>
 
-            <div style={{ marginTop: '18px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: '12px', padding: '12px', fontSize: '0.74rem', color: '#64748b', lineHeight: '1.4' }}>
-              🔒 <b>Enterprise Privacy:</b> Microphone is only engaged when speaking or in active voice sessions. No passive room listening.
+            {/* Privacy note */}
+            <div style={{ marginTop: '24px', background: 'rgba(255,255,255,0.03)', borderRadius: '14px', padding: '14px 16px', fontSize: '0.74rem', color: '#475569', lineHeight: '1.5', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+              <span style={{ fontSize: '1rem', flexShrink: 0 }}>🔒</span>
+              <span><b style={{ color: '#64748b' }}>Enterprise Privacy:</b> Microphone only activates during voice sessions. No passive listening. All data encrypted end-to-end.</span>
             </div>
+
           </div>
         </div>
       )}
