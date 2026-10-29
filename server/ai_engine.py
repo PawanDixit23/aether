@@ -27,7 +27,7 @@ env_path = os.path.join(os.path.dirname(__file__), ".env")
 if os.path.exists(env_path):
     load_dotenv(env_path)
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip() or "AIzaSyCR3ZKXaMEGRU02hCrhhn4O978zMnDk0vU"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3:8b")
@@ -766,6 +766,7 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
         ]
         unique_models = list(dict.fromkeys(models_to_try))
 
+        key_blocked_notice = None
         for model in unique_models:
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={active_gemini_key}"
@@ -835,8 +836,21 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
                             "data": { "response": clean_resp },
                             "explanation": "Processed natural response"
                         }
+                    else:
+                        print(f"[Aether Gemini] ⚠️ {model} returned HTTP {resp.status_code}: {resp.text}")
+                        if resp.status_code == 403 or "leaked" in resp.text.lower() or "permission_denied" in resp.text.lower():
+                            key_blocked_notice = "⚠️ Google Gemini API Key ब्लॉक/लीक हो गई है (403 Permission Denied)। कृपया aistudio.google.com से नई Free API Key बनाएं और Render Environment (GEMINI_API_KEY) या App Settings में सेव करें।"
             except Exception as e:
                 print(f"[Aether Engine] Gemini call error: {e}")
+
+        if key_blocked_notice and not (is_weather_query or is_news_query):
+            return {
+                "action": "query",
+                "confidence": 0.99,
+                "confidence_level": "high",
+                "data": { "response": key_blocked_notice },
+                "explanation": "Gemini key authorization failure notice"
+            }
 
     if has_image:
         return {
