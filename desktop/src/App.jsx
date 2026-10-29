@@ -41,6 +41,7 @@ import {
   EyeOff,
   Key,
   Play,
+  Pause,
   Settings,
   Shield,
   User,
@@ -939,9 +940,175 @@ export default function App() {
     }
   };
 
-  // 2-Minute Executive Morning Briefing State & Handler
+  // 2-Minute Executive Morning Briefing State & Handlers
   const [isBriefingLoading, setIsBriefingLoading] = useState(false);
   const [isBriefingPlaying, setIsBriefingPlaying] = useState(false);
+  const [showBriefingModal, setShowBriefingModal] = useState(false);
+  const [executiveBriefingData, setExecutiveBriefingData] = useState(null);
+
+  // Wealth Section State & Handlers
+  const [editingFinanceRecord, setEditingFinanceRecord] = useState(null);
+  const [isAddingExpense, setIsAddingExpense] = useState(false);
+  const [newExpenseForm, setNewExpenseForm] = useState({
+    type: 'expense',
+    category: 'fuel',
+    amount: '',
+    note: '',
+    payment_mode: 'upi'
+  });
+
+  const getCategoryIcon = (cat) => {
+    const c = (cat || '').toLowerCase();
+    if (c.includes('fuel') || c.includes('petrol') || c.includes('diesel')) return '⛽';
+    if (c.includes('food') || c.includes('dinner') || c.includes('lunch') || c.includes('swiggy') || c.includes('zomato') || c.includes('chai') || c.includes('tea') || c.includes('restaurant')) return '🍔';
+    if (c.includes('shop') || c.includes('market') || c.includes('mall') || c.includes('amazon') || c.includes('flipkart') || c.includes('cloth') || c.includes('grocery')) return '🛒';
+    if (c.includes('cab') || c.includes('uber') || c.includes('ola') || c.includes('travel') || c.includes('auto') || c.includes('train') || c.includes('flight')) return '🚗';
+    if (c.includes('rent') || c.includes('home') || c.includes('house') || c.includes('room') || c.includes('flat')) return '🏠';
+    if (c.includes('bill') || c.includes('electric') || c.includes('recharge') || c.includes('wifi') || c.includes('mobile')) return '⚡';
+    if (c.includes('medical') || c.includes('doctor') || c.includes('medicine') || c.includes('hospital') || c.includes('health')) return '💊';
+    if (c.includes('salary') || c.includes('client') || c.includes('income') || c.includes('profit') || c.includes('dividend')) return '💰';
+    return '🏷️';
+  };
+
+  const handleDeleteFinanceRecord = async (id) => {
+    if (!window.confirm("क्या आप इस खर्च/आय रिकॉर्ड को हटाना चाहते हैं?")) return;
+    try {
+      const resp = await fetch(`${API_BASE}/finance/records/${id}`, {
+        method: 'DELETE',
+        headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
+      });
+      if (resp.ok) {
+        const deleted = financeRecords.find(r => r.id === id);
+        setFinanceRecords(prev => prev.filter(r => r.id !== id));
+        if (deleted) {
+          const amt = Number(deleted.amount || 0);
+          const isExp = (deleted.type === 'expense' || deleted.record_type === 'expense' || !deleted.type);
+          setFinanceSummary(prev => ({
+            ...prev,
+            total_expense: isExp ? Math.max(0, prev.total_expense - amt) : prev.total_expense,
+            total_income: !isExp ? Math.max(0, prev.total_income - amt) : prev.total_income,
+            balance: isExp ? prev.balance + amt : prev.balance - amt,
+            record_count: Math.max(0, (prev.record_count || 1) - 1)
+          }));
+        }
+        showToast("रिकॉर्ड हटा दिया गया", "success");
+      } else {
+        showToast("रिकॉर्ड हटाने में समस्या आई", "error");
+      }
+    } catch (e) {
+      showToast("नेटवर्क त्रुटि", "error");
+    }
+  };
+
+  const handleSaveFinanceEdit = async () => {
+    if (!editingFinanceRecord || !editingFinanceRecord.id) return;
+    try {
+      const resp = await fetch(`${API_BASE}/finance/records/${editingFinanceRecord.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(userEmail ? { 'X-User-Email': userEmail } : {})
+        },
+        body: JSON.stringify({
+          amount: parseFloat(editingFinanceRecord.amount) || 0,
+          category: editingFinanceRecord.category,
+          note: editingFinanceRecord.note,
+          type: editingFinanceRecord.type
+        })
+      });
+      if (resp.ok) {
+        setFinanceRecords(prev => prev.map(r => r.id === editingFinanceRecord.id ? { 
+          ...r, 
+          ...editingFinanceRecord, 
+          amount: parseFloat(editingFinanceRecord.amount) || 0 
+        } : r));
+        setEditingFinanceRecord(null);
+        showToast("खर्च अपडेट हो गया!", "success");
+        fetch(`${API_BASE}/finance/summary`, { headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) } })
+          .then(r => r.json())
+          .then(data => setFinanceSummary(data))
+          .catch(() => {});
+      } else {
+        showToast("अपडेट विफल रहा", "error");
+      }
+    } catch (e) {
+      showToast("नेटवर्क त्रुटि", "error");
+    }
+  };
+
+  const stopBriefingAudio = () => {
+    if (currentAudioRef.current) {
+      try { currentAudioRef.current.pause(); } catch (e) {}
+      currentAudioRef.current = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+    setIsSpeaking(false);
+    setIsBriefingPlaying(false);
+  };
+
+  const speakBriefingAudio = (text) => {
+    if (!text) return;
+    stopBriefingAudio();
+    setIsBriefingPlaying(true);
+    setIsSpeaking(true);
+
+    const cleanText = text
+      .replace(/\[.*?\]\(.*?\)/g, '')
+      .replace(/[*_#`🔗]/g, '')
+      .replace(/\n+/g, ' ')
+      .trim();
+
+    let spoken = false;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+        utterance.lang = 'hi-IN';
+        utterance.onend = () => {
+          setIsSpeaking(false);
+          setIsBriefingPlaying(false);
+        };
+        utterance.onerror = () => {
+          setIsSpeaking(false);
+          setIsBriefingPlaying(false);
+        };
+        window.speechSynthesis.speak(utterance);
+        spoken = true;
+      } catch (e) {
+        spoken = false;
+      }
+    }
+
+    if (!spoken || (typeof window !== 'undefined' && !!window.ReactNativeWebView)) {
+      try {
+        const ttsUrl = `${API_BASE}/tts?text=${encodeURIComponent(cleanText.slice(0, 350))}&voice=zephyr&lang=hi`;
+        const audio = new Audio(ttsUrl);
+        currentAudioRef.current = audio;
+        audio.onended = () => {
+          setIsSpeaking(false);
+          setIsBriefingPlaying(false);
+          currentAudioRef.current = null;
+        };
+        audio.onerror = () => {
+          setIsSpeaking(false);
+          setIsBriefingPlaying(false);
+          currentAudioRef.current = null;
+        };
+        audio.play().catch(err => {
+          console.warn("Briefing audio play failed:", err);
+          setIsSpeaking(false);
+          setIsBriefingPlaying(false);
+        });
+      } catch (err) {
+        setIsSpeaking(false);
+        setIsBriefingPlaying(false);
+      }
+    }
+  };
 
   useEffect(() => {
     if (!isSpeaking && isBriefingPlaying) {
@@ -950,42 +1117,26 @@ export default function App() {
   }, [isSpeaking, isBriefingPlaying]);
 
   const handlePlayExecutiveBriefing = async () => {
+    setShowBriefingModal(true);
     if (isBriefingPlaying) {
-      if (currentAudioRef.current) {
-        try { currentAudioRef.current.pause(); } catch (e) {}
-        currentAudioRef.current = null;
-      }
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        try { window.speechSynthesis.cancel(); } catch (e) {}
-      }
-      setIsSpeaking(false);
-      setIsBriefingPlaying(false);
-      showToast("ब्रीफिंग रोकी गई (Briefing Paused)", "info");
+      stopBriefingAudio();
       return;
     }
 
     try {
       setIsBriefingLoading(true);
-      showToast("दैनिक ब्रीफिंग तैयार की जा रही है...", "info");
       const resp = await fetch(`${API_BASE}/briefing/executive`, {
         headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
       });
       const data = await resp.json();
       setIsBriefingLoading(false);
       if (data?.text) {
-        setIsBriefingPlaying(true);
-        speakText(data.text);
-        showToast("⚡ Executive Briefing चालू है", "success");
-        setChatHistory(prev => [...prev, {
-          role: 'assistant',
-          content: `🎙️ **Daily Executive Briefing:**\n\n${data.text}`,
-          created_at: new Date().toISOString()
-        }]);
+        setExecutiveBriefingData(data);
+        speakBriefingAudio(data.text);
       }
     } catch (e) {
       console.error(e);
       setIsBriefingLoading(false);
-      setIsBriefingPlaying(false);
       showToast("ब्रीफिंग लोड करने में समस्या आई", "error");
     }
   };
@@ -6422,16 +6573,16 @@ export default function App() {
       {/* 3. Executive Finance & Ledger Modal */}
       {activeSubModal === 'finance' && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '500px', maxHeight: '85vh', overflowY: 'auto' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '520px', maxHeight: '85vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#10b981', fontWeight: 700 }}>
                 <Wallet size={18} />
                 <span>EXECUTIVE WEALTH & LEDGER</span>
               </div>
-              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+              <button type="button" onClick={() => { setActiveSubModal(null); setEditingFinanceRecord(null); setIsAddingExpense(false); }} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
               <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: '14px', padding: '14px' }}>
                 <div style={{ fontSize: '0.74rem', color: '#94a3b8' }}>TOTAL BALANCE</div>
                 <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#10b981', marginTop: '4px' }}>₹{financeSummary.balance.toLocaleString('en-IN')}</div>
@@ -6442,27 +6593,376 @@ export default function App() {
               </div>
             </div>
 
-            <h4 style={{ fontSize: '0.85rem', color: '#cbd5e1', marginBottom: '10px' }}>Recent Financial Entries</h4>
-            {financeRecords.length === 0 ? (
-              <div style={{ color: '#64748b', fontSize: '0.82rem', textAlign: 'center', padding: '20px 0' }}>No records yet. Tell Aether: "Spent 500 on dinner"</div>
-            ) : (
-              financeRecords.map(rec => (
-                <div key={rec.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
+            {/* Header + Add Expense Toggle */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h4 style={{ fontSize: '0.85rem', color: '#cbd5e1', margin: 0 }}>Recent Financial Entries ({financeRecords.length})</h4>
+              <button 
+                type="button"
+                onClick={() => setIsAddingExpense(!isAddingExpense)}
+                style={{
+                  background: isAddingExpense ? 'rgba(239, 68, 68, 0.15)' : 'rgba(56, 189, 248, 0.15)',
+                  border: isAddingExpense ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(56, 189, 248, 0.3)',
+                  color: isAddingExpense ? '#ef4444' : '#38bdf8',
+                  borderRadius: '10px',
+                  padding: '4px 10px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                {isAddingExpense ? <X size={13} /> : <Plus size={13} />}
+                {isAddingExpense ? 'रद्द करें' : 'नया खर्च'}
+              </button>
+            </div>
+
+            {/* Quick Add Form */}
+            {isAddingExpense && (
+              <div style={{ background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(56, 189, 248, 0.25)', borderRadius: '14px', padding: '14px', marginBottom: '16px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
                   <div>
-                    <div style={{ color: '#ffffff', fontSize: '0.88rem' }}>{rec.description}</div>
-                    <div style={{ color: '#64748b', fontSize: '0.74rem' }}>{new Date(rec.date).toLocaleDateString()}</div>
+                    <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Type</label>
+                    <select 
+                      value={newExpenseForm.type}
+                      onChange={e => setNewExpenseForm({ ...newExpenseForm, type: e.target.value })}
+                      style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '8px', padding: '6px 8px', fontSize: '0.8rem' }}
+                    >
+                      <option value="expense">Expense (खर्च)</option>
+                      <option value="income">Income (आय)</option>
+                    </select>
                   </div>
-                  <div style={{ color: rec.record_type === 'expense' ? '#ef4444' : '#10b981', fontWeight: 700, fontSize: '0.95rem' }}>
-                    {rec.record_type === 'expense' ? '-' : '+'}₹{rec.amount.toLocaleString('en-IN')}
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Category</label>
+                    <select 
+                      value={newExpenseForm.category}
+                      onChange={e => setNewExpenseForm({ ...newExpenseForm, category: e.target.value })}
+                      style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '8px', padding: '6px 8px', fontSize: '0.8rem' }}
+                    >
+                      <option value="fuel">⛽ Petrol / Fuel</option>
+                      <option value="food">🍔 Food / Dining</option>
+                      <option value="shopping">🛒 Shopping</option>
+                      <option value="travel">🚗 Travel / Cab</option>
+                      <option value="rent">🏠 Rent / Home</option>
+                      <option value="bills">⚡ Bills / Recharge</option>
+                      <option value="medical">💊 Medical</option>
+                      <option value="general">🏷️ Other / General</option>
+                    </select>
                   </div>
                 </div>
-              ))
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '8px', marginBottom: '10px' }}>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Amount (₹)</label>
+                    <input 
+                      type="number" 
+                      placeholder="500"
+                      value={newExpenseForm.amount}
+                      onChange={e => setNewExpenseForm({ ...newExpenseForm, amount: e.target.value })}
+                      style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '8px', padding: '6px 8px', fontSize: '0.82rem' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Note / Detail</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. पेट्रोल डलवाया, ग्रॉसरी..."
+                      value={newExpenseForm.note}
+                      onChange={e => setNewExpenseForm({ ...newExpenseForm, note: e.target.value })}
+                      style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '8px', padding: '6px 8px', fontSize: '0.82rem' }}
+                    />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!newExpenseForm.amount) {
+                      showToast("कृपया राशि दर्ज करें", "info");
+                      return;
+                    }
+                    try {
+                      const resp = await fetch(`${API_BASE}/action/quick-capture`, {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          ...(userEmail ? { 'X-User-Email': userEmail } : {})
+                        },
+                        body: JSON.stringify({
+                          text: `${newExpenseForm.amount} rupees ${newExpenseForm.type === 'expense' ? 'spent on' : 'received for'} ${newExpenseForm.note || newExpenseForm.category}`,
+                          capture_type: 'text'
+                        })
+                      });
+                      setIsAddingExpense(false);
+                      setNewExpenseForm({ type: 'expense', category: 'fuel', amount: '', note: '', payment_mode: 'upi' });
+                      showToast("नया रिकॉर्ड दर्ज किया गया!", "success");
+                      refreshAllData();
+                    } catch (err) {
+                      showToast("जोड़ने में समस्या आई", "error");
+                    }
+                  }}
+                  style={{ width: '100%', background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px', borderRadius: '8px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}
+                >
+                  सेव करें (Save Record)
+                </button>
+              </div>
+            )}
+
+            {/* List of Entries */}
+            {financeRecords.length === 0 ? (
+              <div style={{ color: '#64748b', fontSize: '0.82rem', textAlign: 'center', padding: '30px 0' }}>कोई रिकॉर्ड नहीं है। WhatsApp पर या ऊपर '+ नया खर्च' से जोड़ें।</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {financeRecords.map(rec => {
+                  const isExp = (rec.type === 'expense' || rec.record_type === 'expense' || !rec.type);
+                  const isEditingThis = editingFinanceRecord && editingFinanceRecord.id === rec.id;
+
+                  if (isEditingThis) {
+                    return (
+                      <div key={rec.id} style={{ background: 'rgba(56, 189, 248, 0.08)', border: '1px solid rgba(56, 189, 248, 0.3)', borderRadius: '12px', padding: '12px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+                          <select
+                            value={editingFinanceRecord.category}
+                            onChange={e => setEditingFinanceRecord({ ...editingFinanceRecord, category: e.target.value })}
+                            style={{ background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', borderRadius: '8px', padding: '5px', fontSize: '0.78rem' }}
+                          >
+                            <option value="fuel">⛽ Petrol</option>
+                            <option value="food">🍔 Food</option>
+                            <option value="shopping">🛒 Shopping</option>
+                            <option value="travel">🚗 Travel</option>
+                            <option value="rent">🏠 Rent</option>
+                            <option value="bills">⚡ Bills</option>
+                            <option value="medical">💊 Medical</option>
+                            <option value="general">🏷️ General</option>
+                          </select>
+                          <input 
+                            type="number"
+                            value={editingFinanceRecord.amount}
+                            onChange={e => setEditingFinanceRecord({ ...editingFinanceRecord, amount: e.target.value })}
+                            style={{ background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', borderRadius: '8px', padding: '5px 8px', fontSize: '0.8rem' }}
+                          />
+                        </div>
+                        <input 
+                          type="text"
+                          value={editingFinanceRecord.note || ''}
+                          onChange={e => setEditingFinanceRecord({ ...editingFinanceRecord, note: e.target.value })}
+                          placeholder="विवरण (Note)"
+                          style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', borderRadius: '8px', padding: '5px 8px', fontSize: '0.8rem', marginBottom: '8px' }}
+                        />
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                          <button 
+                            type="button" 
+                            onClick={() => setEditingFinanceRecord(null)}
+                            style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', padding: '4px 8px' }}
+                          >
+                            रद्द करें
+                          </button>
+                          <button 
+                            type="button" 
+                            onClick={handleSaveFinanceEdit}
+                            style={{ background: '#10b981', border: 'none', color: '#fff', borderRadius: '6px', padding: '5px 12px', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}
+                          >
+                            अपडेट करें
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div 
+                      key={rec.id} 
+                      style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'center', 
+                        padding: '10px 12px', 
+                        background: 'rgba(255, 255, 255, 0.03)', 
+                        border: '1px solid rgba(255, 255, 255, 0.06)',
+                        borderRadius: '12px'
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0, paddingRight: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+                          <span style={{ fontSize: '0.95rem' }}>{getCategoryIcon(rec.category)}</span>
+                          <span style={{ 
+                            fontSize: '0.7rem', 
+                            padding: '1px 6px', 
+                            borderRadius: '4px', 
+                            background: 'rgba(56, 189, 248, 0.1)', 
+                            color: '#38bdf8',
+                            textTransform: 'capitalize',
+                            fontWeight: 600
+                          }}>
+                            {rec.category || 'General'}
+                          </span>
+                          <span style={{ color: '#ffffff', fontSize: '0.84rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {rec.note || rec.description || rec.category || 'खर्च'}
+                          </span>
+                        </div>
+                        <div style={{ color: '#64748b', fontSize: '0.72rem', display: 'flex', gap: '8px' }}>
+                          <span>{new Date(rec.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                          {rec.payment_mode && (
+                            <span style={{ textTransform: 'uppercase', color: '#94a3b8' }}>• {rec.payment_mode}</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ color: isExp ? '#ef4444' : '#10b981', fontWeight: 700, fontSize: '0.95rem' }}>
+                          {isExp ? '-' : '+'}₹{Number(rec.amount || 0).toLocaleString('en-IN')}
+                        </div>
+                        <button
+                          type="button"
+                          title="Edit expense"
+                          onClick={() => setEditingFinanceRecord({
+                            id: rec.id,
+                            amount: rec.amount,
+                            note: rec.note || rec.description || '',
+                            category: rec.category || 'general',
+                            type: rec.type || 'expense'
+                          })}
+                          style={{
+                            background: 'rgba(255, 255, 255, 0.05)',
+                            border: '1px solid rgba(255, 255, 255, 0.1)',
+                            borderRadius: '6px',
+                            color: '#94a3b8',
+                            padding: '4px 6px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center'
+                          }}
+                        >
+                          <Edit3 size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          title="Delete expense"
+                          onClick={() => handleDeleteFinanceRecord(rec.id)}
+                          style={{
+                            background: 'rgba(239, 68, 68, 0.1)',
+                            border: '1px solid rgba(239, 68, 68, 0.2)',
+                            borderRadius: '6px',
+                            color: '#ef4444',
+                            padding: '4px 6px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center'
+                          }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>
       )}
 
-      {/* 4. Actions & Audit Trail Modal */}
+      {/* 4. Dedicated Executive Briefing Modal (Compact & Never Auto-Disappears) */}
+      {showBriefingModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(56, 189, 248, 0.3)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '500px', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 20px 50px rgba(0,0,0,0.7)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8', fontWeight: 700, fontSize: '0.92rem' }}>
+                <Radio size={18} className={isBriefingPlaying ? 'animate-pulse' : ''} />
+                <span>EXECUTIVE BRIEFING</span>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  stopBriefingAudio();
+                  setShowBriefingModal(false);
+                }} 
+                style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.3rem', cursor: 'pointer', padding: '4px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {isBriefingLoading ? (
+              <div style={{ textAlign: 'center', padding: '36px 0', color: '#94a3b8' }}>
+                <div style={{ fontSize: '1.6rem', marginBottom: '10px' }}>🎙️</div>
+                <div style={{ fontSize: '0.88rem', color: '#e2e8f0', fontWeight: 600 }}>दैनिक ब्रीफिंग तैयार की जा रही है...</div>
+                <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '4px' }}>मौसम व आज के एजेंडा का लाइव विश्लेषण</div>
+              </div>
+            ) : executiveBriefingData ? (
+              <div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                  <span style={{ fontSize: '0.72rem', background: 'rgba(56, 189, 248, 0.12)', color: '#38bdf8', padding: '3px 8px', borderRadius: '10px', border: '1px solid rgba(56, 189, 248, 0.25)' }}>
+                    📍 Jaipur
+                  </span>
+                  <span style={{ fontSize: '0.72rem', background: 'rgba(16, 185, 129, 0.12)', color: '#10b981', padding: '3px 8px', borderRadius: '10px', border: '1px solid rgba(16, 185, 129, 0.25)' }}>
+                    📋 {executiveBriefingData.task_count || 0} कार्य आज
+                  </span>
+                </div>
+
+                <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '14px', padding: '16px', color: '#f1f5f9', fontSize: '0.88rem', lineHeight: '1.6', marginBottom: '18px' }}>
+                  {executiveBriefingData.text}
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isBriefingPlaying) {
+                        stopBriefingAudio();
+                      } else {
+                        speakBriefingAudio(executiveBriefingData.text);
+                      }
+                    }}
+                    style={{
+                      flex: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      background: isBriefingPlaying ? 'rgba(239, 68, 68, 0.2)' : 'linear-gradient(135deg, #38bdf8 0%, #2563eb 100%)',
+                      color: isBriefingPlaying ? '#ef4444' : '#080c16',
+                      border: isBriefingPlaying ? '1px solid #ef4444' : 'none',
+                      borderRadius: '12px',
+                      padding: '11px',
+                      fontWeight: 700,
+                      fontSize: '0.88rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {isBriefingPlaying ? <Pause size={16} /> : <Play size={16} />}
+                    {isBriefingPlaying ? 'रोकें (Pause)' : 'सुनें (Listen)'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopBriefingAudio();
+                      setShowBriefingModal(false);
+                    }}
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.06)',
+                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      color: '#cbd5e1',
+                      borderRadius: '12px',
+                      padding: '11px 16px',
+                      fontSize: '0.85rem',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    बंद करें
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '30px 0', color: '#64748b' }}>
+                कोई ब्रीफिंग उपलब्ध नहीं है।
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 5. Actions & Audit Trail Modal */}
       {activeSubModal === 'audit' && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
           <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '520px', maxHeight: '85vh', overflowY: 'auto' }}>

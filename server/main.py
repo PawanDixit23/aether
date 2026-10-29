@@ -129,6 +129,13 @@ class FinancialRecordCreate(BaseModel):
     payment_mode: Optional[str] = "upi"
     note: Optional[str] = None
 
+class FinancialRecordUpdate(BaseModel):
+    type: Optional[str] = None
+    category: Optional[str] = None
+    amount: Optional[float] = None
+    note: Optional[str] = None
+    payment_mode: Optional[str] = None
+
 class MemoryCreate(BaseModel):
     fact: str
     user_email: Optional[str] = None
@@ -1362,6 +1369,57 @@ def get_finance_summary(
         "balance": balance,
         "record_count": len(records)
     }
+
+@app.delete("/api/finance/records/{record_id}")
+def delete_finance_record(
+    record_id: int,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    rec = db.query(FinancialRecord).filter(FinancialRecord.id == record_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Financial record not found")
+    eff_email = (user_email or "").strip().lower()
+    if eff_email and rec.user_email and rec.user_email.strip().lower() != eff_email:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this record")
+    db.delete(rec)
+    db.commit()
+    return {"status": "success", "deleted_id": record_id}
+
+@app.put("/api/finance/records/{record_id}")
+def update_finance_record(
+    record_id: int,
+    req: FinancialRecordUpdate,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    rec = db.query(FinancialRecord).filter(FinancialRecord.id == record_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Financial record not found")
+    eff_email = (user_email or "").strip().lower()
+    if eff_email and rec.user_email and rec.user_email.strip().lower() != eff_email:
+        raise HTTPException(status_code=403, detail="Not authorized to edit this record")
+    if req.type is not None:
+        rec.type = req.type
+    if req.category is not None:
+        rec.category = req.category
+    if req.amount is not None:
+        rec.amount = req.amount
+    if req.note is not None:
+        rec.note = req.note
+    if req.payment_mode is not None:
+        rec.payment_mode = req.payment_mode
+    db.commit()
+    db.refresh(rec)
+    return {"status": "success", "record": {
+        "id": rec.id,
+        "type": rec.type,
+        "category": rec.category,
+        "amount": rec.amount,
+        "note": rec.note,
+        "payment_mode": rec.payment_mode,
+        "date": rec.date.isoformat() if rec.date else None
+    }}
 
 # ----------------- Memory Vault Endpoints -----------------
 @app.get("/api/memory")
