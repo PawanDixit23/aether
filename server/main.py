@@ -17,6 +17,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 import httpx
+import re
+import traceback
 
 # ─── Web Push (VAPID) Setup ────────────────────────────────────────────────────
 VAPID_PUBLIC_KEY  = os.environ.get("VAPID_PUBLIC_KEY",  "FKhfDseDfQYLoVS-DYrQKtfyIhniBxzPfE2akQQ2oM3lJxakx2Ft_qE-HLnecc4UP6sSTxOLibFELDxorXiMKA")
@@ -359,6 +361,33 @@ async def quick_capture(
     db: Session = Depends(get_db)
 ):
     """Core Smart Action Engine with Multi-Tenant Isolation & Conversational History."""
+    try:
+        return await _execute_quick_capture(req, user_email, db)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[Quick-Capture Error] {exc}")
+        traceback.print_exc()
+        fallback_msg = (
+            "नमस्ते! मैं आपके निर्देश को प्रोसेस कर रहा हूँ। कृपया इंटरनेट या निर्देश पुनः जांचें।"
+            if (req.language == "hi" or req.language == "auto")
+            else "I encountered a temporary processing glitch. Please try again or rephrase your request."
+        )
+        return {
+            "status": "fallback",
+            "action": "query",
+            "confidence_level": "low",
+            "confidence": 0.5,
+            "message": fallback_msg,
+            "parsed": {"action": "query", "data": {"response": fallback_msg}},
+            "can_undo": False
+        }
+
+async def _execute_quick_capture(
+    req: QuickCaptureRequest, 
+    user_email: Optional[str],
+    db: Session
+):
     user_msg = (req.input_text or "").strip()
     if not user_msg and not req.image_data:
         raise HTTPException(status_code=400, detail="Empty input")

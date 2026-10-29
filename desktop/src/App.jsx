@@ -4653,31 +4653,6 @@ export default function App() {
                 </div>
 
                 <div className="gemini-top-right">
-                  {/* Sleek, Minimal Executive Briefing Pill */}
-                  <button 
-                    type="button" 
-                    onClick={handlePlayExecutiveBriefing}
-                    title="Play 2-Minute Executive Briefing"
-                    style={{
-                      background: isBriefingPlaying ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255, 255, 255, 0.05)',
-                      border: isBriefingPlaying ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.12)',
-                      borderRadius: '20px',
-                      padding: '5px 12px',
-                      color: isBriefingPlaying ? '#38bdf8' : '#e2e8f0',
-                      fontSize: '0.74rem',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      transition: 'all 0.2s ease',
-                      outline: 'none'
-                    }}
-                  >
-                    <Radio size={13} color={isBriefingPlaying ? '#38bdf8' : '#94a3b8'} />
-                    <span>{isBriefingLoading ? 'Loading...' : isBriefingPlaying ? 'Stop' : 'Briefing'}</span>
-                  </button>
-
                   <button 
                     type="button" 
                     className="gemini-icon-btn" 
@@ -4964,24 +4939,24 @@ export default function App() {
                             <span className="gemini-plus-item-title">Files</span>
                           </button>
 
-                          {/* 4. Drive */}
+                          {/* 4. Executive Briefing (replaces Drive for neat and compact UI) */}
                           <button 
                             type="button"
                             className="gemini-plus-item"
                             onClick={() => {
                               setIsPlusMenuOpen(false);
-                              setIsDriveModalOpen(true);
+                              handlePlayExecutiveBriefing();
                             }}
-                            title="Google Drive"
+                            title="Daily Executive Briefing"
                           >
                             <div className="gemini-plus-icon-box" style={{ 
-                              background: 'radial-gradient(circle at 35% 35%, rgba(52, 211, 153, 0.28), rgba(16, 185, 129, 0.12))', 
-                              border: '1px solid rgba(52, 211, 153, 0.35)', 
-                              color: '#34d399' 
+                              background: 'radial-gradient(circle at 35% 35%, rgba(56, 189, 248, 0.28), rgba(14, 165, 233, 0.12))', 
+                              border: '1px solid rgba(56, 189, 248, 0.35)', 
+                              color: '#38bdf8' 
                             }}>
-                              <HardDrive size={20} />
+                              <Radio size={20} />
                             </div>
-                            <span className="gemini-plus-item-title">Drive</span>
+                            <span className="gemini-plus-item-title">Briefing</span>
                           </button>
 
                           {/* 5. Map */}
