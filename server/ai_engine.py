@@ -27,7 +27,7 @@ env_path = os.path.join(os.path.dirname(__file__), ".env")
 if os.path.exists(env_path):
     load_dotenv(env_path)
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip() or "AIzaSyCR3ZKXaMEGRU02hCrhhn4O978zMnDk0vU"
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3:8b")
@@ -758,9 +758,11 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
             })
 
         models_to_try = [
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro"
+            "gemini-2.5-flash",
+            "gemini-flash-latest",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-pro",
+            "gemini-flash-lite-latest"
         ]
         unique_models = list(dict.fromkeys(models_to_try))
 
@@ -1093,14 +1095,33 @@ def rule_based_fallback(text: str, context: dict = None) -> dict:
             "explanation": "Rule-based detection identified personal memory fact"
         }
 
-    # Task & Reminder detection
+    # Task & Reminder detection (Strict: only if time or task keywords are present!)
+    reminder_time_str, due_dt = parse_reminder_time(text)
+    has_task_intent = bool(reminder_time_str) or any(w in text_lower for w in [
+        "remind", "reminder", "task", "रिमाइंडर", "टास्क", "karna hai", "karni hai", 
+        "bhejna hai", "bhejna", "call karni", "call karna", "jana hai", "lana hai", 
+        "khareedna", "schedule", "meeting", "do this", "complete", "finish", "water", "pani",
+        "work", "urgent", "todo"
+    ])
+
+    if not has_task_intent:
+        # Do not create random tasks for general queries (like 'Capital of india')!
+        return {
+            "action": "query",
+            "confidence": 0.90,
+            "confidence_level": "medium",
+            "data": {
+                "response": f"मैं आपके सवाल '{text}' के लिए जानकारी तैयार कर रहा हूँ। कृपया इंटरनेट या Gemini API कुंजी सक्रिय रखें।"
+            },
+            "explanation": "Conversational fallback rather than creating unwanted task"
+        }
+
     priority = "medium"
     if any(w in text_lower for w in ["urgent", "zaroori", "important", "asap", "turant"]):
         priority = "urgent"
     elif any(w in text_lower for w in ["high", "pehli priority"]):
         priority = "high"
 
-    reminder_time_str, due_dt = parse_reminder_time(text)
     clean_title = clean_task_title(text)
     is_daily = any(w in text_lower for w in ["daily", "everyday", "every day", "har din", "roz", "rozaana", "रोज", "रोजाना", "प्रतिदिन"])
     rec_val = None
