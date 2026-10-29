@@ -585,16 +585,20 @@ async def _execute_quick_capture(
             result_message = f"⏰ **{len(created_tasks)} कार्य एजेंडा में दर्ज किए गए:**\n\n" + "\n".join(lines) + "\n\nसभी रिमाइंडर्स निर्धारित समय पर एक्टिव रहेंगे! ✅"
             undo_payload = json.dumps({"table": "tasks", "ids": [ct.id for ct in created_tasks]})
             
-            ai_chat = ChatMessage(
-                user_email=eff_email,
-                role="aether",
-                content=result_message,
-                action_type=action,
-                action_data=json.dumps(data) if data else None,
-                confidence=confidence
-            )
-            db.add(ai_chat)
-            db.commit()
+            try:
+                ai_chat = ChatMessage(
+                    user_email=eff_email,
+                    role="assistant",
+                    content=result_message,
+                    action_type=action,
+                    action_data=json.dumps(data) if data else None,
+                    confidence=confidence
+                )
+                db.add(ai_chat)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                print(f"[Multi-task Chat Record Note] {e}")
             return {
                 "status": "success",
                 "action": action,
@@ -763,29 +767,33 @@ async def _execute_quick_capture(
                 result_message = f"{prefix} एजेंडा में सेट किया गया{time_part}: \"{task.title}\" ⏰{repeat_tag} [{task.priority.upper()}]"
             undo_payload = json.dumps({"table": "tasks", "id": task.id})
 
-    # Record AI Response in Chat History
-    ai_chat = ChatMessage(
-        user_email=eff_email,
-        role="aether",
-        content=result_message,
-        action_type=action,
-        action_data=json.dumps(data) if data else None,
-        confidence=confidence
-    )
-    db.add(ai_chat)
-
-    # Log to Audit Log if real action was taken
-    if executed and action != "query":
-        audit = AuditLog(
+    # Record AI Response in Chat History (resilient to schema constraints)
+    try:
+        ai_chat = ChatMessage(
             user_email=eff_email,
-            action_type=f"auto_{action}",
-            details=result_message,
-            confidence_score=confidence,
-            undo_payload=undo_payload
+            role="assistant",
+            content=result_message or "कार्य पूरा किया गया।",
+            action_type=action,
+            action_data=json.dumps(data) if data else None,
+            confidence=confidence
         )
-        db.add(audit)
-    
-    db.commit()
+        db.add(ai_chat)
+
+        # Log to Audit Log if real action was taken
+        if executed and action != "query":
+            audit = AuditLog(
+                user_email=eff_email,
+                action_type=f"auto_{action}",
+                details=result_message,
+                confidence_score=confidence,
+                undo_payload=undo_payload
+            )
+            db.add(audit)
+        
+        db.commit()
+    except Exception as chat_db_err:
+        db.rollback()
+        print(f"[Aether Chat Record Note] {chat_db_err}")
 
     return {
         "status": "executed",
