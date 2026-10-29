@@ -379,7 +379,11 @@ async def quick_capture(
     undo_payload = None
 
     if action == "query":
-        fallback_greeting = f"नमस्ते {req.user_name or 'साथी'}! मैं आपकी सहायता के लिए तैयार हूँ।"
+        fallback_greeting = (
+            f"नमस्ते {req.user_name or 'साथी'}! मैं तैयार हूँ। बताइए, अभी आपके किस काम में मदद करूँ?"
+            if lang == "hi"
+            else f"Hello {req.user_name or 'Pawan'}! Systems operational. What work or tasks can I handle for you right now?"
+        )
         result_message = data.get("response", fallback_greeting)
         executed = True
         

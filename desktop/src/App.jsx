@@ -873,6 +873,48 @@ export default function App() {
     }
   }, []);
 
+  // Proactive Spoken Greeting on App Open (Only if Voice Responses permission is ON)
+  const hasSpokenWelcomeRef = useRef(false);
+  useEffect(() => {
+    if (hasSpokenWelcomeRef.current) return;
+
+    // Strict guard: ONLY speak if voice output permission is enabled
+    const voiceAllowed = localStorage.getItem('aether_voice_output') !== 'false' && voiceOutputEnabled;
+    if (!voiceAllowed) return;
+
+    const timer = setTimeout(() => {
+      if (hasSpokenWelcomeRef.current) return;
+      hasSpokenWelcomeRef.current = true;
+
+      const hour = new Date().getHours();
+      const firstName = (userName && userName !== 'Operator') ? userName.split(' ')[0] : 'Pawan';
+      const isHindi = selectedLang === 'hi' || (typeof navigator !== 'undefined' && navigator.language?.toLowerCase().startsWith('hi'));
+
+      let spokenGreeting = '';
+      if (isHindi) {
+        if (hour >= 5 && hour < 12) {
+          spokenGreeting = `नमस्ते ${firstName}! सुप्रभात। आज मैं आपके लिए क्या काम करूँ?`;
+        } else if (hour >= 12 && hour < 17) {
+          spokenGreeting = `नमस्ते ${firstName}! बताइए, अभी आपके किस काम में मदद करूँ?`;
+        } else {
+          spokenGreeting = `नमस्ते ${firstName}! बताइए, आज मैं आपके क्या-क्या काम सँभालूँ?`;
+        }
+      } else {
+        if (hour >= 5 && hour < 12) {
+          spokenGreeting = `Good morning, ${firstName}! What work can I handle for you today?`;
+        } else if (hour >= 12 && hour < 17) {
+          spokenGreeting = `Hello ${firstName}! What can I take off your plate right now?`;
+        } else {
+          spokenGreeting = `Hello ${firstName}! What work can I do for you tonight?`;
+        }
+      }
+
+      speakText(spokenGreeting);
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [voiceOutputEnabled, userName, selectedLang]);
+
   // Dynamic Executive Greeting based on standard time of day
   const getDynamicGreeting = () => {
     const hour = currentTime ? currentTime.getHours() : new Date().getHours();
@@ -956,12 +998,18 @@ export default function App() {
       list.push("Your agenda is completely clear. Ask Aether to organize new goals.");
     }
 
-    // 2. Wealth / Ledger Intelligence
+    // 2. Comprehensive Work & Productivity Intelligence
+    list.push("Try: 'Write a professional email / report for my project'");
+    list.push("Try: 'Help me debug this code or write an automation script'");
+    list.push("Ask: 'Research the best strategy and summarize key points'");
+    list.push("Try: 'Break down my upcoming goal into action milestones'");
+
+    // 3. Wealth / Ledger Intelligence
     if (balanceStr) {
       list.push(`Net Ledger Balance: ${balanceStr} • Ask: "Log expense" or "Show wealth report"`);
     }
 
-    // 3. Time-specific Prompt Suggestions
+    // 4. Time-specific Prompt Suggestions
     if (hour >= 5 && hour < 12) {
       list.push("Ask: 'What is my schedule and briefing for today?'");
       list.push("Try: 'Add priority task: Client sync at 11 AM'");
@@ -976,9 +1024,9 @@ export default function App() {
       list.push("Working late? Ask Aether to organize tomorrow's morning schedule.");
     }
 
-    // 4. Acoustic Voice & Assistant Prompt
+    // 5. Acoustic Voice & Complete Work Partner
     list.push("Tap the Æ orb or microphone to speak naturally in real time");
-    list.push(`What would you like to accomplish next, ${userName && userName !== 'Operator' ? userName.split(' ')[0] : 'Pawan'}?`);
+    list.push(`I am ready to handle your work, ${userName && userName !== 'Operator' ? userName.split(' ')[0] : 'Pawan'}. What should we do?`);
 
     return list;
   };
@@ -6260,7 +6308,9 @@ export default function App() {
               ) : (
                 memories.map(mem => (
                   <div key={mem.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '10px' }}>
-                    <div style={{ color: '#e2e8f0', fontSize: '0.84rem', flex: 1, paddingRight: '10px' }}>{mem.content}</div>
+                    <div style={{ color: '#e2e8f0', fontSize: '0.86rem', flex: 1, paddingRight: '10px', lineHeight: '1.4' }}>
+                      {mem.fact || mem.content || mem.text}
+                    </div>
                     <button
                       type="button"
                       onClick={() => handleDeleteMemory(mem.id)}
