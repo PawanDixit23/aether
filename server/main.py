@@ -1224,30 +1224,35 @@ def undo_action(log_id: int, db: Session = Depends(get_db)):
     return {"message": "Action successfully reversed (Undone)"}
 
 # ----------------- Audio & TTS Streaming for Mobile WebViews -----------------
-@app.get("/api/tts")
-def text_to_speech(text: str, voice: str = "kore", lang: str = "en"):
+@app.api_route("/api/tts", methods=["GET", "HEAD"])
+def text_to_speech(request: Request, text: str = "", voice: str = "zephyr", lang: str = "en"):
     """
     High-fidelity audio streaming endpoint for 100% reliable voice synthesis on mobile WebViews
-    where window.speechSynthesis is not available.
+    with natural Indian English (en-IN) and clear Hindi (hi) pronunciation.
+    Supports both GET and HEAD requests for mobile audio players.
     """
+    from fastapi.responses import Response
+
+    headers = {
+        "Content-Type": "audio/mpeg",
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "public, max-age=86400",
+        "Access-Control-Allow-Origin": "*"
+    }
+
+    if request.method == "HEAD":
+        return Response(status_code=200, headers=headers)
+
     import urllib.request
     import urllib.parse
-    from fastapi.responses import Response
 
     clean_text = text.strip()[:350]
     if not clean_text:
         raise HTTPException(status_code=400, detail="Text required")
 
-    voice_locales = {
-        "puck": "en-GB",
-        "charon": "en-US",
-        "kore": "en-GB",
-        "fenrir": "en-US",
-        "aoede": "en-AU",
-        "zephyr": "en-IN"
-    }
     has_devanagari = any('\u0900' <= c <= '\u097f' for c in clean_text)
-    tl = "hi" if (lang.startswith("hi") or has_devanagari) else voice_locales.get(voice, "en-US")
+    # Always use authentic Indian English (en-IN) or Hindi (hi) as requested
+    tl = "hi" if (lang.startswith("hi") or has_devanagari) else "en-IN"
     
     encoded_text = urllib.parse.quote(clean_text)
     tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl={tl}&q={encoded_text}"
@@ -1259,7 +1264,7 @@ def text_to_speech(text: str, voice: str = "kore", lang: str = "en"):
         )
         with urllib.request.urlopen(req, timeout=6) as resp:
             audio_data = resp.read()
-            return Response(content=audio_data, media_type="audio/mpeg", headers={"Cache-Control": "public, max-age=86400"})
+            return Response(content=audio_data, media_type="audio/mpeg", headers=headers)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS synthesis error: {str(e)}")
 

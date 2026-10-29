@@ -804,17 +804,38 @@ export default function App() {
   const playStreamAudio = (text, voiceId, lang) => {
     try {
       if (currentAudioRef.current) {
-        currentAudioRef.current.pause();
+        try { currentAudioRef.current.pause(); } catch (e) {}
         currentAudioRef.current = null;
       }
-      const ttsUrl = `${API_BASE}/tts?text=${encodeURIComponent(text.slice(0, 300))}&voice=${voiceId}&lang=${lang || 'en'}`;
+      const ttsUrl = `${API_BASE}/tts?text=${encodeURIComponent(text.slice(0, 350))}&voice=${voiceId}&lang=${lang || 'en'}`;
 
-      // Check if running inside React Native WebView (mobile app)
-      const isInReactNativeWebView = typeof window !== 'undefined' && !!window.ReactNativeWebView;
+      // 1. Direct Web Audio element (handles playback directly within browser/webview)
+      const audio = new Audio(ttsUrl);
+      audio.volume = 1.0;
+      currentAudioRef.current = audio;
+      setIsSpeaking(true);
 
-      if (isInReactNativeWebView) {
-        // Mobile: Send TTS URL to native layer via postMessage bridge
-        // Native App.tsx will inject audio playback back into WebView context
+      audio.onended = () => {
+        setIsSpeaking(false);
+        setAudioSamplePlaying(null);
+        currentAudioRef.current = null;
+      };
+      audio.onerror = (e) => {
+        console.warn('Audio stream playback error:', e);
+        setIsSpeaking(false);
+        setAudioSamplePlaying(null);
+        currentAudioRef.current = null;
+      };
+
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(e => {
+          console.warn('Direct audio play error:', e);
+        });
+      }
+
+      // 2. Also send to native React Native layer if running in mobile app
+      if (typeof window !== 'undefined' && window.ReactNativeWebView) {
         try {
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type: 'PLAY_TTS_AUDIO',
@@ -823,33 +844,9 @@ export default function App() {
         } catch (e) {
           console.warn('RN postMessage TTS error:', e);
         }
-        setIsSpeaking(true);
-        // Auto-reset speaking state after estimated duration
-        setTimeout(() => {
-          setIsSpeaking(false);
-          setAudioSamplePlaying(null);
-        }, 4000);
-        return;
       }
-
-      // Desktop / standard browser: use Audio element directly
-      const audio = new Audio(ttsUrl);
-      currentAudioRef.current = audio;
-      setIsSpeaking(true);
-      audio.onended = () => {
-        setIsSpeaking(false);
-        setAudioSamplePlaying(null);
-      };
-      audio.onerror = () => {
-        setIsSpeaking(false);
-        setAudioSamplePlaying(null);
-      };
-      audio.play().catch(e => {
-        console.warn('Audio stream playback error:', e);
-        setIsSpeaking(false);
-        setAudioSamplePlaying(null);
-      });
     } catch (e) {
+      console.warn('playStreamAudio exception:', e);
       setIsSpeaking(false);
       setAudioSamplePlaying(null);
     }
@@ -889,23 +886,43 @@ export default function App() {
     }
   };
 
+  // Helper to format date into local YYYY-MM-DD
+  const formatLocalDateStr = (d) => {
+    if (!d) return '';
+    if (typeof d === 'string') {
+      const match = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (match && !d.includes('Z')) {
+        return `${match[1]}-${match[2]}-${match[3]}`;
+      }
+    }
+    const dateObj = (d instanceof Date) ? d : new Date(d);
+    if (isNaN(dateObj.getTime())) return '';
+    const y = dateObj.getFullYear();
+    const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
   const isTaskPending = (t) => !(t.is_completed === true || t.completed === true || t.status === 'completed');
 
   // Today-only pending tasks count for bell badge
   const getTodayPendingCount = () => {
-    const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    return (tasks || []).filter(t => {
+    const todayStr = formatLocalDateStr(new Date());
+    const list = (combinedTasks && combinedTasks.length > 0) ? combinedTasks : (tasks || []);
+    return list.filter(t => {
       if (!isTaskPending(t)) return false;
-      if (!t.due_date) {
-        // Tasks with no due_date — check if created today (treat as today's)
-        return true;
-      }
-      try {
-        const taskDay = new Date(t.due_date).toISOString().slice(0, 10);
+      // 1. Explicit due_date check (must strictly match today's local date)
+      if (t.due_date) {
+        const taskDay = formatLocalDateStr(t.due_date);
         return taskDay === todayStr;
-      } catch (e) {
-        return false;
       }
+      // 2. If no due_date, only tasks created today count as today's tasks
+      if (t.created_at) {
+        const createdDay = formatLocalDateStr(t.created_at);
+        return createdDay === todayStr;
+      }
+      // Older undated backlog reminders do NOT pollute today's badge count
+      return false;
     }).length;
   };
 
@@ -2124,22 +2141,6 @@ export default function App() {
   // ─────────────────────────────────────────────────────────────────────────────
 
   // Calendar & Reminders Helpers
-  const formatLocalDateStr = (d) => {
-    if (!d) return '';
-    if (typeof d === 'string') {
-      const match = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      if (match && !d.includes('Z')) {
-        return `${match[1]}-${match[2]}-${match[3]}`;
-      }
-    }
-    const dateObj = (d instanceof Date) ? d : new Date(d);
-    if (isNaN(dateObj.getTime())) return '';
-    const y = dateObj.getFullYear();
-    const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const day = String(dateObj.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  };
-
   const getTaskDateStr = (t) => {
     if (t?.due_date) {
       try {
@@ -2875,9 +2876,19 @@ export default function App() {
       window.speechSynthesis.cancel();
     }
 
+    // Check if running on mobile device (Android/iOS WebView or mobile browser)
+    const isMobileDevice = (typeof window !== 'undefined' && !!window.ReactNativeWebView) || 
+      (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
+
+    if (isMobileDevice) {
+      // Mobile: Always use server streaming TTS (/api/tts) for guaranteed crisp Indian English / Hindi audio
+      playStreamAudio(cleanText, selectedVoice, lang);
+      return;
+    }
+
     let spoken = false;
 
-    // Try browser SpeechSynthesis (Desktop & some mobile browsers)
+    // Try browser SpeechSynthesis (Desktop only)
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const voices = window.speechSynthesis.getVoices();
       if (voices && voices.length > 0) {
