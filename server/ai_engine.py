@@ -731,11 +731,24 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
     has_image = bool(image_data and image_data.strip())
     sys_prompt = build_system_prompt(context, live_feed, language=effective_lang, user_name=user_name, user_query=user_input, has_image=has_image)
     
-    # Prioritize user's personal API key, otherwise fallback to server's GEMINI_API_KEY
-    active_gemini_key = (api_key.strip() if api_key and api_key.strip() else None) or (GEMINI_API_KEY.strip() if GEMINI_API_KEY and GEMINI_API_KEY.strip() else None)
+    # Candidate keys in priority order:
+    # 1. Server's GEMINI_API_KEY (configured in Render environment / .env)
+    # 2. Client-provided api_key (from request, if different and not known revoked)
+    KNOWN_REVOKED_KEYS = {
+        "AIzaSyCR3ZKXaMEGRU02hCrhhn4O978zMnDk0vU"
+    }
+
+    candidate_keys = []
+    server_key = os.getenv("GEMINI_API_KEY", "").strip() or (GEMINI_API_KEY.strip() if GEMINI_API_KEY else "")
+    if server_key and server_key not in KNOWN_REVOKED_KEYS:
+        candidate_keys.append(server_key)
+
+    client_key = api_key.strip() if api_key else ""
+    if client_key and client_key not in KNOWN_REVOKED_KEYS and client_key not in candidate_keys:
+        candidate_keys.append(client_key)
 
     # Try Gemini API with multimodal vision support and seamless model failover
-    if active_gemini_key:
+    if candidate_keys:
         user_parts = [{"text": f"{sys_prompt}\n\nUser Input: {user_input}"}]
         if has_image:
             raw_b64 = image_data.strip()
@@ -767,81 +780,87 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
         unique_models = list(dict.fromkeys(models_to_try))
 
         key_blocked_notice = None
-        for model in unique_models:
-            try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={active_gemini_key}"
-                payload = {
-                    "contents": [
-                        {"role": "user", "parts": user_parts}
-                    ],
-                    "generationConfig": {
-                        "temperature": 0.2
-                    }
-                }
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.post(url, json=payload)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        candidates = data.get("candidates", [])
-                        raw_text = ""
-                        if candidates:
-                            content = candidates[0].get("content", {})
-                            for p in content.get("parts", []):
-                                if "text" in p and p["text"].strip():
-                                    raw_text = p["text"].strip()
-                                    break
-                        if not raw_text:
-                            continue
-                        
-                        json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-                        if json_match:
-                            try:
-                                json_str = json_match.group(0)
-                                json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
-                                parsed = json.loads(json_str)
-                                # Ensure reminder time is captured even if LLM left it out
-                                if parsed.get("action") == "task":
-                                    try:
-                                        r_time, r_dt = parse_reminder_time(user_input)
-                                        if r_time and not parsed.get("data", {}).get("reminder_time"):
-                                            parsed["data"]["reminder_time"] = r_time
-                                        if r_dt and not parsed.get("data", {}).get("due_date"):
-                                            parsed["data"]["due_date"] = r_dt.isoformat()
-                                    except Exception as t_err:
-                                        print(f"[Aether Engine] Reminder parse notice: {t_err}")
-                                return parsed
-                            except Exception as parse_err:
-                                print(f"[Aether Engine] JSON parse error: {parse_err}")
-
-                        # Never return raw JSON code blocks as a query response
-                        clean_resp = raw_text
-                        if "```json" in clean_resp or (clean_resp.startswith("{") and "action" in clean_resp):
-                            clean_resp = re.sub(r'^```(?:json)?\s*', '', clean_resp, flags=re.IGNORECASE)
-                            clean_resp = re.sub(r'\s*```$', '', clean_resp).strip()
-                            try:
-                                fallback_dict = json.loads(clean_resp)
-                                if fallback_dict.get("action"):
-                                    return fallback_dict
-                                if fallback_dict.get("explanation"):
-                                    clean_resp = fallback_dict.get("explanation")
-                                elif fallback_dict.get("data", {}).get("response"):
-                                    clean_resp = fallback_dict["data"]["response"]
-                            except Exception:
-                                clean_resp = "कार्य पूरा कर लिया गया है।"
-
-                        return {
-                            "action": "query",
-                            "confidence": 0.98,
-                            "confidence_level": "high",
-                            "data": { "response": clean_resp },
-                            "explanation": "Processed natural response"
+        for active_gemini_key in candidate_keys:
+            key_had_auth_error = False
+            for model in unique_models:
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={active_gemini_key}"
+                    payload = {
+                        "contents": [
+                            {"role": "user", "parts": user_parts}
+                        ],
+                        "generationConfig": {
+                            "temperature": 0.2
                         }
-                    else:
-                        print(f"[Aether Gemini] ⚠️ {model} returned HTTP {resp.status_code}: {resp.text}")
-                        if resp.status_code == 403 or "leaked" in resp.text.lower() or "permission_denied" in resp.text.lower():
-                            key_blocked_notice = "⚠️ Google Gemini API Key ब्लॉक/लीक हो गई है (403 Permission Denied)। कृपया aistudio.google.com से नई Free API Key बनाएं और Render Environment (GEMINI_API_KEY) या App Settings में सेव करें।"
-            except Exception as e:
-                print(f"[Aether Engine] Gemini call error: {e}")
+                    }
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        resp = await client.post(url, json=payload)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            candidates = data.get("candidates", [])
+                            raw_text = ""
+                            if candidates:
+                                content = candidates[0].get("content", {})
+                                for p in content.get("parts", []):
+                                    if "text" in p and p["text"].strip():
+                                        raw_text = p["text"].strip()
+                                        break
+                            if not raw_text:
+                                continue
+                            
+                            json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+                            if json_match:
+                                try:
+                                    json_str = json_match.group(0)
+                                    json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
+                                    parsed = json.loads(json_str)
+                                    # Ensure reminder time is captured even if LLM left it out
+                                    if parsed.get("action") == "task":
+                                        try:
+                                            r_time, r_dt = parse_reminder_time(user_input)
+                                            if r_time and not parsed.get("data", {}).get("reminder_time"):
+                                                parsed["data"]["reminder_time"] = r_time
+                                            if r_dt and not parsed.get("data", {}).get("due_date"):
+                                                parsed["data"]["due_date"] = r_dt.isoformat()
+                                        except Exception as t_err:
+                                            print(f"[Aether Engine] Reminder parse notice: {t_err}")
+                                    return parsed
+                                except Exception as parse_err:
+                                    print(f"[Aether Engine] JSON parse error: {parse_err}")
+
+                            # Never return raw JSON code blocks as a query response
+                            clean_resp = raw_text
+                            if "```json" in clean_resp or (clean_resp.startswith("{") and "action" in clean_resp):
+                                clean_resp = re.sub(r'^```(?:json)?\s*', '', clean_resp, flags=re.IGNORECASE)
+                                clean_resp = re.sub(r'\s*```$', '', clean_resp).strip()
+                                try:
+                                    fallback_dict = json.loads(clean_resp)
+                                    if fallback_dict.get("action"):
+                                        return fallback_dict
+                                    if fallback_dict.get("explanation"):
+                                        clean_resp = fallback_dict.get("explanation")
+                                    elif fallback_dict.get("data", {}).get("response"):
+                                        clean_resp = fallback_dict["data"]["response"]
+                                except Exception:
+                                    clean_resp = "कार्य पूरा कर लिया गया है।"
+
+                            return {
+                                "action": "query",
+                                "confidence": 0.98,
+                                "confidence_level": "high",
+                                "data": { "response": clean_resp },
+                                "explanation": "Processed natural response"
+                            }
+                        else:
+                            print(f"[Aether Gemini] ⚠️ {model} returned HTTP {resp.status_code}: {resp.text}")
+                            if resp.status_code == 403 or "leaked" in resp.text.lower() or "permission_denied" in resp.text.lower():
+                                key_had_auth_error = True
+                                key_blocked_notice = "⚠️ Google Gemini API Key ब्लॉक/लीक हो गई है (403 Permission Denied)। कृपया aistudio.google.com से नई Free API Key बनाएं और Render Environment (GEMINI_API_KEY) या App Settings में सेव करें।"
+                                break
+                except Exception as e:
+                    print(f"[Aether Engine] Gemini call error: {e}")
+            if not key_had_auth_error:
+                break
 
         if key_blocked_notice and not (is_weather_query or is_news_query):
             return {

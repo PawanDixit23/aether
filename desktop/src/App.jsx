@@ -553,7 +553,18 @@ export default function App() {
   );
   const [onboardingStep, setOnboardingStep] = useState(1);
   const [userName, setUserName] = useState(() => localStorage.getItem('aether_user_name') || '');
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('aether_gemini_key') || '');
+  const [apiKey, setApiKey] = useState(() => {
+    try {
+      const k = localStorage.getItem('aether_gemini_key') || '';
+      if (k.includes('AIzaSyCR3ZKXaMEGRU02hCrhhn4O978zMnDk0vU')) {
+        localStorage.removeItem('aether_gemini_key');
+        return '';
+      }
+      return k;
+    } catch {
+      return '';
+    }
+  });
 
   // Main Jarvis Spec UI States
   const [activeTab, setActiveTab] = useState('aether'); // 'aether' | 'today' | 'memory'
@@ -3344,7 +3355,10 @@ export default function App() {
         language: selectedLang,
         client_time: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
-        api_key: localStorage.getItem('aether_gemini_key') || '',
+        api_key: (() => {
+          const k = localStorage.getItem('aether_gemini_key') || '';
+          return k.includes('AIzaSyCR3ZKXaMEGRU02hCrhhn4O978zMnDk0vU') ? '' : k;
+        })(),
         user_name: localStorage.getItem('aether_user_name') || userName || 'Operator',
         user_email: userEmail || null
       };
@@ -3375,6 +3389,12 @@ export default function App() {
         } catch (e) {
           assistantReply = assistantReply.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
         }
+      }
+      if (assistantReply.includes('ब्लॉक/लीक') || assistantReply.includes('Permission Denied')) {
+        try {
+          localStorage.removeItem('aether_gemini_key');
+          setApiKey('');
+        } catch (e) {}
       }
       setChatHistory(prev => [...prev, {
         role: 'assistant',
