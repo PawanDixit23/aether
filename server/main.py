@@ -1936,7 +1936,7 @@ async def _send_whatsapp_message(to_number: str, message_body: str, phone_id: st
     if not phone_id or not access_token:
         print("[WhatsApp] WHATSAPP_PHONE_ID or WHATSAPP_TOKEN missing in environment variables.")
         return
-    url = f"https://graph.facebook.com/v19.0/{phone_id}/messages"
+    url = f"https://graph.facebook.com/v21.0/{phone_id}/messages"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
@@ -1949,9 +1949,62 @@ async def _send_whatsapp_message(to_number: str, message_body: str, phone_id: st
     }
     try:
         async with httpx.AsyncClient() as client:
-            await client.post(url, json=payload, headers=headers, timeout=10)
+            resp = await client.post(url, json=payload, headers=headers, timeout=10)
+            print(f"[WhatsApp Outgoing Response] Status: {resp.status_code}, Body: {resp.text}")
     except Exception as e:
         print(f"[WhatsApp Outgoing Error] {e}")
+
+@app.get("/api/whatsapp/sync-waba")
+async def sync_whatsapp_waba(db: Session = Depends(get_db)):
+    """Subscribes WABA to the app and sends a direct test ping."""
+    token = os.environ.get("WHATSAPP_TOKEN", "").strip()
+    phone_id = os.environ.get("WHATSAPP_PHONE_ID", "1432995866556035").strip()
+    waba_id = "1095690750105581"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    
+    # Pre-pair the user's phone with their account
+    user_phone = "918741838653"
+    user_email = "e.pawandixit@gmail.com"
+    link_mem = db.query(MemoryItem).filter(
+        MemoryItem.category == "whatsapp_pairing",
+        MemoryItem.fact.like(f"{user_phone}:%")
+    ).first()
+    if link_mem:
+        link_mem.fact = f"{user_phone}:{user_email}"
+    else:
+        db.add(MemoryItem(user_email=user_email, category="whatsapp_pairing", fact=f"{user_phone}:{user_email}"))
+    db.commit()
+
+    results = {"pairing": f"{user_phone} -> {user_email}"}
+    async with httpx.AsyncClient() as client:
+        # 1. Subscribe WABA
+        sub_resp = await client.post(
+            f"https://graph.facebook.com/v21.0/{waba_id}/subscribed_apps",
+            headers=headers
+        )
+        results["waba_subscribe"] = {"status": sub_resp.status_code, "body": sub_resp.text}
+        
+        # 2. Check Subscribed Apps
+        check_resp = await client.get(
+            f"https://graph.facebook.com/v21.0/{waba_id}/subscribed_apps",
+            headers=headers
+        )
+        results["waba_check"] = {"status": check_resp.status_code, "body": check_resp.text}
+
+        # 3. Direct Test Ping to user's phone
+        test_msg = await client.post(
+            f"https://graph.facebook.com/v21.0/{phone_id}/messages",
+            headers=headers,
+            json={
+                "messaging_product": "whatsapp",
+                "to": user_phone,
+                "type": "text",
+                "text": {"body": "⚡ *Aether Connected!*\n\nनमस्ते! आपका Aether WhatsApp बॉट सफलतापूर्वक सक्रिय हो चुका है।\n\nअब आप मुझे यहाँ कोई भी काम बोल सकते हैं, जैसे:\n• 'कल सुबह 10 बजे मीटिंग का रिमाइंडर लगाओ'\n• '500 रुपये पेट्रोल में खर्च हुए'"}
+            }
+        )
+        results["test_message_send"] = {"status": test_msg.status_code, "body": test_msg.text}
+    
+    return results
 
 @app.get("/api/whatsapp/webhook")
 def whatsapp_verify(request: Request):
