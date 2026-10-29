@@ -11,6 +11,7 @@ import {
   StatusBar as RNStatusBar,
   Linking
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -341,6 +342,10 @@ export default function App() {
                     true;
                   `);
                 }
+              } else if (data.type === 'STORE_NATIVE_BACKUP') {
+                if (data.payload) {
+                  AsyncStorage.setItem('aether_offline_backup', JSON.stringify(data.payload)).catch(() => {});
+                }
               }
             } catch (err) {
               console.warn('WebView onMessage error:', err);
@@ -350,8 +355,21 @@ export default function App() {
             setIsLoading(true);
             setHasError(false);
           }}
-          onLoadEnd={() => {
+          onLoadEnd={async () => {
             setIsLoading(false);
+            try {
+              const backup = await AsyncStorage.getItem('aether_offline_backup');
+              if (backup) {
+                const escaped = JSON.stringify(backup);
+                webViewRef.current?.injectJavaScript(`
+                  try {
+                    window.__nativeBackup = ${escaped};
+                    window.dispatchEvent(new CustomEvent('aether-native-backup-ready'));
+                  } catch(e) {}
+                  true;
+                `);
+              }
+            } catch (e) {}
           }}
           onError={(syntheticEvent) => {
             const { nativeEvent } = syntheticEvent;

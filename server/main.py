@@ -233,18 +233,24 @@ def record_user_login(req: AuthRecordRequest, db: Session = Depends(get_db)):
 # ----------------- Client Sync & Resilience Engine -----------------
 @app.post("/api/sync/backup")
 def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
-    """Restore client local persistent cache if Render container restarts or resets SQLite."""
+    """Intelligently restore and merge client persistent cache into the database with zero duplication."""
     email = req.user_email.strip().lower()
     if not email:
         return {"status": "skipped", "message": "No email provided"}
     
     restored_counts = {"tasks": 0, "memories": 0, "finances": 0}
     
-    # Restore tasks if DB has zero for this user
-    existing_tasks = db.query(Task).filter(Task.user_email == email).count()
-    if existing_tasks == 0 and req.tasks:
+    # Existing task titles for this user to avoid duplicate insertions
+    existing_tasks = db.query(Task).filter(Task.user_email == email).all()
+    existing_titles = {t.title.strip().lower() for t in existing_tasks if t.title}
+    
+    if req.tasks:
         for t in req.tasks:
             try:
+                title = (t.get("title") or "").strip()
+                if not title or title.lower() in existing_titles:
+                    continue
+
                 due_dt = None
                 if t.get("due_date"):
                     try:
@@ -263,7 +269,7 @@ def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
 
                 db.add(Task(
                     user_email=email,
-                    title=t.get("title", ""),
+                    title=title,
                     priority=t.get("priority", "medium"),
                     status=t.get("status", "pending"),
                     reminder_time=t.get("reminder_time"),
@@ -271,21 +277,28 @@ def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
                     created_at=created_dt or datetime.utcnow(),
                     notified=t.get("notified", False)
                 ))
+                existing_titles.add(title.lower())
                 restored_counts["tasks"] += 1
             except Exception:
                 pass
         db.commit()
 
-    # Restore memories if DB has zero for this user
-    existing_mem = db.query(MemoryItem).filter(MemoryItem.user_email == email).count()
-    if existing_mem == 0 and req.memories:
+    # Existing memories for this user
+    existing_mems = db.query(MemoryItem).filter(MemoryItem.user_email == email).all()
+    existing_facts = {m.fact.strip().lower() for m in existing_mems if m.fact}
+    if req.memories:
         for m in req.memories:
             try:
+                fact_text = (m.get("fact") or m.get("content") or "").strip()
+                if not fact_text or fact_text.lower() in existing_facts:
+                    continue
+
                 db.add(MemoryItem(
                     user_email=email,
                     category=m.get("category", "preference"),
-                    fact=m.get("fact", "")
+                    fact=fact_text
                 ))
+                existing_facts.add(fact_text.lower())
                 restored_counts["memories"] += 1
             except Exception:
                 pass

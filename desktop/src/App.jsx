@@ -2679,28 +2679,54 @@ export default function App() {
             memories: loadedMemories,
             finances: loadedFinances
           }));
-        } else {
-          const cachedBackupStr = localStorage.getItem(`aether_backup_${currentEmail}`);
-          if (cachedBackupStr) {
+          localStorage.setItem('aether_cached_tasks', JSON.stringify(loadedTasks));
+
+          // Also persist in mobile device native AsyncStorage via bridge
+          if (typeof window !== 'undefined' && window.ReactNativeWebView) {
             try {
-              const cached = JSON.parse(cachedBackupStr);
-              if (cached.tasks?.length > 0 || cached.memories?.length > 0 || cached.finances?.length > 0) {
-                fetch(`${API_BASE}/sync/backup`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
-                  body: JSON.stringify({
-                    user_email: currentEmail,
-                    tasks: cached.tasks || [],
-                    memories: cached.memories || [],
-                    finances: cached.finances || []
-                  })
-                }).then(() => {
-                  if (cached.tasks) setTasks(cached.tasks);
-                  if (cached.memories) setMemories(cached.memories);
-                  if (cached.finances) setFinanceRecords(cached.finances);
-                }).catch(() => {});
-              }
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'STORE_NATIVE_BACKUP',
+                payload: {
+                  email: currentEmail,
+                  tasks: loadedTasks,
+                  memories: loadedMemories,
+                  finances: loadedFinances
+                }
+              }));
             } catch (e) {}
+          }
+        } else {
+          // If server returned 0 records, try restoring from local backup or native bridge backup
+          let backupData = null;
+          const cachedBackupStr = localStorage.getItem(`aether_backup_${currentEmail}`) || localStorage.getItem('aether_cached_tasks');
+          if (cachedBackupStr) {
+            try { backupData = JSON.parse(cachedBackupStr); } catch (e) {}
+          }
+          if (!backupData && typeof window !== 'undefined' && window.__nativeBackup) {
+            try { backupData = JSON.parse(window.__nativeBackup); } catch (e) {}
+          }
+
+          if (backupData) {
+            const bTasks = Array.isArray(backupData) ? backupData : (backupData.tasks || []);
+            const bMems = backupData.memories || [];
+            const bFin = backupData.finances || [];
+
+            if (bTasks.length > 0 || bMems.length > 0 || bFin.length > 0) {
+              fetch(`${API_BASE}/sync/backup`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
+                body: JSON.stringify({
+                  user_email: currentEmail,
+                  tasks: bTasks,
+                  memories: bMems,
+                  finances: bFin
+                })
+              }).then(() => {
+                if (bTasks.length > 0) setTasks(bTasks);
+                if (bMems.length > 0) setMemories(bMems);
+                if (bFin.length > 0) setFinanceRecords(bFin);
+              }).catch(() => {});
+            }
           }
         }
       }
