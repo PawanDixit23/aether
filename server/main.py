@@ -2072,6 +2072,12 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
                     f"• *सवाल*: कोई भी जानकारी या सवाल\n\n"
                     f"Aether तुरंत आपके ऐप में सिंक कर देगा! 🚀"
                 )
+                try:
+                    db.add(ChatMessage(user_email=target_email, role="user", content=f"📱 {user_text}", action_type="query"))
+                    db.add(ChatMessage(user_email=target_email, role="aether", content=reply_text, action_type="query"))
+                    db.commit()
+                except Exception:
+                    pass
             else:
                 reply_text = (
                     f"⚡ *Aether WhatsApp Executive*\n\n"
@@ -2140,6 +2146,14 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             reply_text = f"🧾 *खर्च दर्ज किया गया!*\n\n• *राशि*: ₹{rec.amount:,.2f}\n• *श्रेणी*: {rec.category.title()}\n• *विवरण*: {rec.note}"
         else:
             reply_text = data_inner.get("response", "कार्य पूरा किया गया।")
+
+        # Record WhatsApp conversation into unified Chat History for Aether App
+        try:
+            db.add(ChatMessage(user_email=user_email, role="user", content=f"📱 {user_text}", action_type=action))
+            db.add(ChatMessage(user_email=user_email, role="aether", content=reply_text, action_type=action, action_data=json.dumps(data_inner) if data_inner else None))
+            db.commit()
+        except Exception as e_chat:
+            print(f"[WhatsApp ChatMessage Sync Error] {e_chat}")
 
         await _send_whatsapp_message(sender, reply_text, wa_phone_id, wa_token)
         return {"status": "ok"}
