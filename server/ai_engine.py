@@ -629,6 +629,25 @@ CRITICAL INSTRUCTIONS FOR TASKS & REMINDERS:
   - If user mentions creating a parent task with subtasks but DOES NOT provide the subtasks:
     action MUST be "query". Ask: "What subtasks would you like to include under the parent task?"
 
+- MULTI-TASK & VOICE MEMO EXTRACTION:
+  - If the user dictates or enters multiple tasks/reminders in a single statement (e.g. 'कल सुबह 11 बजे राजेश को कोटेशन भेजना है और परसों शाम 5 बजे फॉलोअप कॉल करनी है'):
+    action MUST be "task".
+    "multi_tasks": array of task objects, each containing:
+      [
+        {{"title": "राजेश को कोटेशन भेजना", "reminder_time": "11:00 AM", "priority": "medium", "due_date": "ISO string for tomorrow"}},
+        {{"title": "फॉलोअप कॉल", "reminder_time": "05:00 PM", "priority": "medium", "due_date": "ISO string for day after tomorrow"}}
+      ]
+    "title": Name of the first task.
+
+- BANK SMS & UPI TRANSACTION TEXT EXTRACTION:
+  - If the user pastes or enters a Bank SMS, netbanking alert, or UPI transaction text (e.g. 'A/c XX1234 debited for Rs 450.00 on 29-Oct-26 at Indian Oil UPI', 'Paid Rs. 350 to Swiggy via PhonePe', 'INR 25,000 credited to your account'):
+    - If debited / paid / sent / spent: action MUST be "expense".
+    - If credited / received / deposited: action MUST be "income".
+    - "amount": exact numeric value (e.g. 450.0).
+    - "category": categorize accurately ('fuel' for Indian Oil/HPCL/BPCL/Petrol, 'food' for Swiggy/Zomato/Restaurant/Cafe, 'shopping' for Amazon/Flipkart/Mall, 'travel' for Uber/Ola/IRCTC/Cab, 'groceries' for Blinkit/Zepto/Instamart, 'bills' for Jio/Airtel/Electricity, 'medical' for Apollo/Hospital/Pharma, 'general').
+    - "payment_mode": "upi" | "card" | "bank" | "cash".
+    - "note": extract merchant / payee name (e.g. 'Indian Oil Petrol', 'Swiggy Dinner').
+
 CRITICAL INSTRUCTIONS FOR "query":
 - When the query is about WEATHER:
   Deliver the exact live weather report from the live feed for the detected city or requested location.
@@ -658,6 +677,7 @@ Output Format (strictly valid JSON with no markdown wrapping):
     "due_date": "ISO string or null",
     "recurrence": "daily" | "weekdays" | "weekly_monday" | null,
     "subtasks": ["Subtask 1", "Subtask 2"] | null,
+    "multi_tasks": [{"title": "Task 1", "reminder_time": "11:00 AM", "due_date": "ISO string", "priority": "medium"}] | null,
     "amount": float,
     "currency": "INR",
     "category": "string",

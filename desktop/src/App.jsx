@@ -6593,6 +6593,46 @@ export default function App() {
               </div>
             </div>
 
+            {/* Monthly Budget Tracking (Feature 4) */}
+            <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '16px', padding: '14px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <span style={{ fontSize: '0.76rem', color: '#cbd5e1', fontWeight: 600 }}>मासिक बजट स्थिति (Monthly Budgets)</span>
+                <span style={{ fontSize: '0.7rem', color: '#38bdf8' }}>ऑटो-अलर्ट सक्रिय</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {[
+                  { cat: 'fuel', name: '⛽ Petrol / Fuel', limit: 4000 },
+                  { cat: 'food', name: '🍔 Food & Dining', limit: 5000 },
+                  { cat: 'shopping', name: '🛒 Shopping', limit: 10000 }
+                ].map(b => {
+                  const spent = financeRecords
+                    .filter(r => (r.category || '').toLowerCase().includes(b.cat) && (r.type === 'expense' || r.record_type === 'expense' || !r.type))
+                    .reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
+                  const pct = Math.min(100, Math.round((spent / b.limit) * 100));
+                  const isWarning = pct >= 80;
+                  return (
+                    <div key={b.cat}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', marginBottom: '3px' }}>
+                        <span style={{ color: '#e2e8f0' }}>{b.name}</span>
+                        <span style={{ color: isWarning ? '#ef4444' : '#94a3b8', fontWeight: isWarning ? 700 : 400 }}>
+                          ₹{spent.toLocaleString('en-IN')} / ₹{b.limit.toLocaleString('en-IN')} ({pct}%)
+                        </span>
+                      </div>
+                      <div style={{ height: '4px', background: 'rgba(255, 255, 255, 0.08)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ 
+                          height: '100%', 
+                          width: `${pct}%`, 
+                          background: isWarning ? 'linear-gradient(90deg, #f59e0b, #ef4444)' : 'linear-gradient(90deg, #10b981, #38bdf8)',
+                          borderRadius: '4px',
+                          transition: 'width 0.4s ease'
+                        }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Header + Add Expense Toggle */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <h4 style={{ fontSize: '0.85rem', color: '#cbd5e1', margin: 0 }}>Recent Financial Entries ({financeRecords.length})</h4>

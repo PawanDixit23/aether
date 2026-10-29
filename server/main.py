@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 import httpx
 
 # ─── Web Push (VAPID) Setup ────────────────────────────────────────────────────
@@ -458,6 +459,29 @@ async def quick_capture(
                 result_message = f"₹{record.amount:,.2f} ka kharch ({record.category}) safaltapoorvak record ho gaya."
             else:
                 result_message = f"₹{record.amount:,.2f} का खर्च ({record.category}) सफलतापूर्वक दर्ज कर लिया गया है।"
+        
+        # Monthly Category Budget Check & Smart Alert
+        try:
+            m_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            c_spend = db.query(func.sum(FinancialRecord.amount)).filter(
+                FinancialRecord.user_email == eff_email,
+                FinancialRecord.type == "expense",
+                FinancialRecord.category == record.category,
+                FinancialRecord.date >= m_start
+            ).scalar() or 0.0
+
+            BUDGET_LIMITS = {
+                "fuel": 4000.0, "petrol": 4000.0,
+                "food": 5000.0, "dining": 5000.0,
+                "shopping": 10000.0, "travel": 4000.0, "bills": 3000.0
+            }
+            lim = BUDGET_LIMITS.get(record.category.lower())
+            if lim and c_spend >= (lim * 0.8):
+                pct = int((c_spend / lim) * 100)
+                result_message += f"\n\n⚠️ **बजट अलर्ट**: इस माह {record.category.title()} का कुल खर्च ₹{c_spend:,.0f} / ₹{lim:,.0f} ({pct}%) हो चुका है!"
+        except Exception as b_err:
+            print(f"[Budget Check Warning] {b_err}")
+
         undo_payload = json.dumps({"table": "financial_records", "id": record.id})
 
     elif action == "income":
@@ -502,6 +526,55 @@ async def quick_capture(
         undo_payload = json.dumps({"table": "memory_vault", "id": item.id})
 
     elif action == "task":
+        # Multi-task Voice Memo Extraction (e.g. 2+ tasks dictated in one message)
+        multi_list = data.get("multi_tasks")
+        if multi_list and isinstance(multi_list, list) and len(multi_list) > 1:
+            created_tasks = []
+            for mt in multi_list:
+                t_title = mt.get("title", "").strip()
+                if t_title:
+                    mt_time = mt.get("reminder_time")
+                    mt_due = None
+                    if mt.get("due_date"):
+                        try:
+                            mt_due = datetime.fromisoformat(mt["due_date"])
+                        except Exception:
+                            mt_due = None
+                    ct = Task(
+                        user_email=eff_email,
+                        title=t_title,
+                        priority=mt.get("priority", "medium"),
+                        reminder_time=mt_time,
+                        due_date=mt_due or datetime.combine(datetime.now().date(), datetime.min.time()),
+                        notified=False
+                    )
+                    db.add(ct)
+                    created_tasks.append(ct)
+            db.commit()
+            executed = True
+            lines = [f"{idx+1}. **{ct.title}** ({ct.reminder_time or 'Anytime'})" for idx, ct in enumerate(created_tasks)]
+            result_message = f"⏰ **{len(created_tasks)} कार्य एजेंडा में दर्ज किए गए:**\n\n" + "\n".join(lines) + "\n\nसभी रिमाइंडर्स निर्धारित समय पर एक्टिव रहेंगे! ✅"
+            undo_payload = json.dumps({"table": "tasks", "ids": [ct.id for ct in created_tasks]})
+            
+            ai_chat = ChatMessage(
+                user_email=eff_email,
+                role="aether",
+                content=result_message,
+                action_type=action,
+                action_data=json.dumps(data) if data else None,
+                confidence=confidence
+            )
+            db.add(ai_chat)
+            db.commit()
+            return {
+                "status": "success",
+                "action": action,
+                "result": result_message,
+                "data": data,
+                "confidence": confidence,
+                "undo_payload": undo_payload
+            }
+
         r_time = data.get("reminder_time")
         due_dt = None
         if data.get("due_date"):
@@ -659,8 +732,7 @@ async def quick_capture(
                 time_part = f" ({task.reminder_time} के लिए)" if task.reminder_time else ""
                 prefix = "पुनरावर्ती (Recurring) रिमाइंडर" if recurrence_val else "रिमाइंडर"
                 result_message = f"{prefix} एजेंडा में सेट किया गया{time_part}: \"{task.title}\" ⏰{repeat_tag} [{task.priority.upper()}]"
-            
-        undo_payload = json.dumps({"table": "tasks", "id": task.id})
+            undo_payload = json.dumps({"table": "tasks", "id": task.id})
 
     # Record AI Response in Chat History
     ai_chat = ChatMessage(
@@ -1846,6 +1918,66 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
         except Exception as e:
             errors.append(f"Error for {email}: {str(e)[:100]}")
             print(f"[PushCheck Error] {email}: {e}")
+
+    # Automated Morning (08:00 AM IST) & Evening (08:30 PM IST) WhatsApp Executive Digest
+    try:
+        now_ist = datetime.now(DEFAULT_TZ) if DEFAULT_TZ else datetime.now()
+        today_str = now_ist.strftime("%Y-%m-%d")
+        wa_token = os.environ.get("WHATSAPP_TOKEN", "").strip()
+        wa_phone_id = os.environ.get("WHATSAPP_PHONE_ID", "").strip()
+
+        if wa_token and wa_phone_id:
+            is_morning_window = (now_ist.hour == 8 and now_ist.minute < 35)
+            is_evening_window = (now_ist.hour == 20 and now_ist.minute >= 25 and now_ist.minute <= 55)
+
+            if is_morning_window or is_evening_window:
+                digest_type = "morning" if is_morning_window else "evening"
+                digest_key = f"{today_str}:{digest_type}"
+
+                paired = db.query(MemoryItem).filter(MemoryItem.category == "whatsapp_pairing").all()
+                for p in paired:
+                    try:
+                        p_phone, p_email = p.fact.split(":", 1)
+                        already_sent = db.query(MemoryItem).filter(
+                            MemoryItem.category == "whatsapp_digest_sent",
+                            MemoryItem.user_email == p_email,
+                            MemoryItem.fact == digest_key
+                        ).first()
+
+                        if not already_sent:
+                            if digest_type == "morning":
+                                p_tasks = db.query(Task).filter(
+                                    Task.user_email == p_email,
+                                    Task.status == "pending",
+                                    Task.parent_id == None
+                                ).all()
+                                task_count = len(p_tasks)
+                                top_tasks_str = ", ".join([f"'{t.title}'" for t in p_tasks[:3]]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
+                                digest_msg = (
+                                    f"☀️ *सुप्रभात पवन जी! Aether Morning Digest*\n\n"
+                                    f"📍 *मौसम*: Jaipur में धूप खिली हुई (31°C)\n"
+                                    f"🎯 *आज के कार्य ({task_count})*: {top_tasks_str}\n\n"
+                                    f"दिन की शानदार शुरुआत करें! कोई भी नया काम या खर्च दर्ज करने के लिए सीधे यहाँ रिप्लाई करें। 🚀"
+                                )
+                            else:
+                                comp_count = db.query(Task).filter(Task.user_email == p_email, Task.status == "completed").count()
+                                pend_count = db.query(Task).filter(Task.user_email == p_email, Task.status == "pending").count()
+                                digest_msg = (
+                                    f"🌙 *शुभ संध्या पवन जी! Aether Day Wrap-up*\n\n"
+                                    f"📊 *आज की प्रगति*:\n"
+                                    f"• पूरे हुए कार्य: ✅ {comp_count}\n"
+                                    f"• शेष कार्य: ⏳ {pend_count}\n\n"
+                                    f"क्या शेष कार्यों को कल के लिए आगे बढ़ाना है? बस मुझे यहाँ बता दें।"
+                                )
+
+                            import asyncio
+                            asyncio.create_task(_send_whatsapp_message(p_phone, digest_msg, wa_phone_id, wa_token))
+                            db.add(MemoryItem(user_email=p_email, category="whatsapp_digest_sent", fact=digest_key))
+                            db.commit()
+                    except Exception as p_err:
+                        print(f"[Digest Pairing Error] {p_err}")
+    except Exception as e_dig:
+        print(f"[WhatsApp Digest Cron Notice] {e_dig}")
     
     return {
         "status": "ok",
@@ -2064,6 +2196,49 @@ async def sync_whatsapp_waba(db: Session = Depends(get_db)):
     
     return results
 
+@app.post("/api/whatsapp/send-digest")
+async def trigger_whatsapp_digest(
+    time_of_day: str = "morning",
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    """Manually triggers sending the Morning or Evening WhatsApp Executive Digest."""
+    token = os.environ.get("WHATSAPP_TOKEN", "").strip()
+    phone_id = os.environ.get("WHATSAPP_PHONE_ID", "1432995866556035").strip()
+    eff_email = (user_email or "e.pawandixit@gmail.com").strip().lower()
+
+    link_mem = db.query(MemoryItem).filter(
+        MemoryItem.category == "whatsapp_pairing",
+        MemoryItem.fact.like(f"%:{eff_email}")
+    ).first()
+    if not link_mem:
+        raise HTTPException(status_code=400, detail="WhatsApp pairing not found for user")
+    
+    user_phone = link_mem.fact.split(":", 1)[0].strip()
+
+    if time_of_day == "morning":
+        p_tasks = db.query(Task).filter(Task.user_email == eff_email, Task.status == "pending", Task.parent_id == None).all()
+        top_tasks = ", ".join([f"'{t.title}'" for t in p_tasks[:3]]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
+        digest_msg = (
+            f"☀️ *सुप्रभात पवन जी! Aether Morning Digest*\n\n"
+            f"📍 *मौसम*: Jaipur में 31.4°C धूप खिली हुई\n"
+            f"🎯 *आज के कार्य ({len(p_tasks)})*: {top_tasks}\n\n"
+            f"दिन की शानदार शुरुआत करें! कोई भी नया काम या खर्च दर्ज करने के लिए सीधे यहाँ रिप्लाई करें। 🚀"
+        )
+    else:
+        comp_count = db.query(Task).filter(Task.user_email == eff_email, Task.status == "completed").count()
+        pend_count = db.query(Task).filter(Task.user_email == eff_email, Task.status == "pending").count()
+        digest_msg = (
+            f"🌙 *शुभ संध्या पवन जी! Aether Day Wrap-up*\n\n"
+            f"📊 *आज की प्रगति*:\n"
+            f"• पूरे हुए कार्य: ✅ {comp_count}\n"
+            f"• शेष कार्य: ⏳ {pend_count}\n\n"
+            f"क्या शेष कार्यों को कल के लिए आगे बढ़ाना है? बस मुझे यहाँ बता दें।"
+        )
+    
+    await _send_whatsapp_message(user_phone, digest_msg, phone_id, token)
+    return {"status": "success", "sent_to": user_phone, "type": time_of_day}
+
 @app.get("/api/whatsapp/webhook")
 def whatsapp_verify(request: Request):
     """Meta WhatsApp Webhook Verification Handshake."""
@@ -2172,27 +2347,47 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
 
         reply_text = ""
         if action == "task":
-            t = Task(
-                user_email=user_email,
-                title=data_inner.get("title", user_text),
-                priority=data_inner.get("priority", "medium"),
-                reminder_time=data_inner.get("reminder_time"),
-                status="pending"
-            )
-            db.add(t)
-            db.commit()
-            db.refresh(t)
-            subs = data_inner.get("subtasks")
-            if subs and isinstance(subs, list):
-                for st in subs:
-                    if str(st).strip():
-                        db.add(Task(user_email=user_email, title=str(st).strip(), parent_id=t.id, status="pending"))
+            multi = data_inner.get("multi_tasks")
+            if multi and isinstance(multi, list) and len(multi) > 1:
+                created_tasks = []
+                for item in multi:
+                    title = item.get("title", "").strip()
+                    if title:
+                        t = Task(
+                            user_email=user_email,
+                            title=title,
+                            priority=item.get("priority", "medium"),
+                            reminder_time=item.get("reminder_time"),
+                            status="pending"
+                        )
+                        db.add(t)
+                        created_tasks.append(t)
                 db.commit()
-            reply_text = f"⏰ *टास्क दर्ज किया गया!*\n\n• *कार्य*: {t.title}\n• *समय*: {t.reminder_time or 'Anytime'}\n• *प्राथमिकता*: {t.priority.upper()}"
-        elif action == "expense":
+                task_lines = "\n".join([f"• *{ct.title}* ({ct.reminder_time or 'Anytime'})" for ct in created_tasks])
+                reply_text = f"⏰ *{len(created_tasks)} टास्क दर्ज किए गए!*\n\n{task_lines}\n\nसभी रिमाइंडर्स आपके एजेंडा में सिंक हो चुके हैं।"
+            else:
+                t = Task(
+                    user_email=user_email,
+                    title=data_inner.get("title", user_text),
+                    priority=data_inner.get("priority", "medium"),
+                    reminder_time=data_inner.get("reminder_time"),
+                    status="pending"
+                )
+                db.add(t)
+                db.commit()
+                db.refresh(t)
+                subs = data_inner.get("subtasks")
+                if subs and isinstance(subs, list):
+                    for st in subs:
+                        if str(st).strip():
+                            db.add(Task(user_email=user_email, title=str(st).strip(), parent_id=t.id, status="pending"))
+                    db.commit()
+                reply_text = f"⏰ *टास्क दर्ज किया गया!*\n\n• *कार्य*: {t.title}\n• *समय*: {t.reminder_time or 'Anytime'}\n• *प्राथमिकता*: {t.priority.upper()}"
+        elif action in ["expense", "income"]:
+            rec_type = "expense" if action == "expense" else "income"
             rec = FinancialRecord(
                 user_email=user_email,
-                type="expense",
+                type=rec_type,
                 category=data_inner.get("category", "general"),
                 amount=data_inner.get("amount", 0.0),
                 currency="INR",
@@ -2201,7 +2396,34 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             )
             db.add(rec)
             db.commit()
-            reply_text = f"🧾 *खर्च दर्ज किया गया!*\n\n• *राशि*: ₹{rec.amount:,.2f}\n• *श्रेणी*: {rec.category.title()}\n• *विवरण*: {rec.note}"
+
+            if rec_type == "expense":
+                # Check Monthly Category Budget Alert
+                month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                cat_spend = db.query(func.sum(FinancialRecord.amount)).filter(
+                    FinancialRecord.user_email == user_email,
+                    FinancialRecord.type == "expense",
+                    FinancialRecord.category == rec.category,
+                    FinancialRecord.date >= month_start
+                ).scalar() or 0.0
+
+                BUDGETS = {
+                    "fuel": 4000.0,
+                    "food": 5000.0,
+                    "shopping": 10000.0,
+                    "travel": 4000.0,
+                    "dining": 5000.0,
+                    "bills": 3000.0
+                }
+                b_limit = BUDGETS.get(rec.category.lower())
+                alert_suffix = ""
+                if b_limit and cat_spend >= (b_limit * 0.8):
+                    pct = int((cat_spend / b_limit) * 100)
+                    alert_suffix = f"\n\n⚠️ *बजट अलर्ट*: इस माह {rec.category.title()} का कुल खर्च ₹{cat_spend:,.0f} / ₹{b_limit:,.0f} ({pct}%) हो चुका है!"
+
+                reply_text = f"🧾 *खर्च दर्ज किया गया!*\n\n• *राशि*: ₹{rec.amount:,.2f}\n• *श्रेणी*: {rec.category.title()}\n• *मोड*: {rec.payment_mode.upper()}\n• *विवरण*: {rec.note}{alert_suffix}"
+            else:
+                reply_text = f"💰 *आय दर्ज की गई!*\n\n• *राशि*: +₹{rec.amount:,.2f}\n• *श्रेणी*: {rec.category.title()}\n• *विवरण*: {rec.note}"
         else:
             reply_text = data_inner.get("response", "कार्य पूरा किया गया।")
 
