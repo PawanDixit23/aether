@@ -67,6 +67,16 @@ import {
   Radio
 } from 'lucide-react';
 import { supabase } from './supabase';
+import { FormattedMessage } from './components/chat/FormattedMessage';
+import { AetherParticleSphere } from './components/chat/AetherParticleSphere';
+import { HistoryModal } from './components/modals/HistoryModal';
+import { CameraModal } from './components/modals/CameraModal';
+import { DriveModal } from './components/modals/DriveModal';
+import { FinanceModal } from './components/modals/FinanceModal';
+import { BriefingModal } from './components/modals/BriefingModal';
+import { AuditModal } from './components/modals/AuditModal';
+import { PermissionsModal } from './components/modals/PermissionsModal';
+import { SettingsSubModals } from './components/modals/SettingsSubModals';
 
 const API_BASE = typeof window !== 'undefined' && window.location.port === '5173'
   ? `http://${window.location.hostname}:8000/api`
@@ -339,213 +349,6 @@ const GoogleIcon = () => (
   </svg>
 );
 
-// Lightweight Markdown & Links message formatter with multiline link healing
-const FormattedMessage = ({ text }) => {
-  if (!text) return null;
-
-  // 1. Heal links where Gemini or line breaks separated ] and ( or wrapped URLs
-  const healedText = text
-    .replace(/\]\s*\n+\s*\(/g, '](')
-    .replace(/\[\s*\n+/g, '[')
-    .replace(/\n+\s*\]/g, ']')
-    .replace(/\(\s*\n+\s*(https?:\/\/)/g, '($1');
-
-  const lines = healedText.split('\n');
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-      {lines.map((line, idx) => {
-        if (!line.trim()) return <div key={idx} style={{ height: '4px' }} />;
-
-        // Match markdown links [title](url), bold **text**, or standalone (https://...) / https://...
-        const regex = /(\[[^\]]+\]\(https?:\/\/[^\s)]+\)|\*\*.*?\*\*|\(?https?:\/\/[^\s)]+\)?)/g;
-        const parts = line.split(regex);
-
-        return (
-          <div key={idx} style={{ lineHeight: '1.55', wordBreak: 'break-word' }}>
-            {parts.map((part, pIdx) => {
-              if (!part) return null;
-
-              // Check [title](url)
-              const linkMatch = part.match(/^\[(.*?)\]\((https?:\/\/[^\s)]+)\)$/);
-              if (linkMatch) {
-                return (
-                  <a
-                    key={pIdx}
-                    href={linkMatch[2]}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      color: 'var(--accent-cyan)',
-                      fontWeight: 600,
-                      textDecoration: 'underline',
-                      wordBreak: 'break-word'
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {linkMatch[1]} ↗
-                  </a>
-                );
-              }
-
-              // Check standalone or wrapped URL: (https://...) or https://...
-              const rawUrlMatch = part.match(/^\(?(https?:\/\/[^\s)]+)\)?$/);
-              if (rawUrlMatch) {
-                const url = rawUrlMatch[1];
-                return (
-                  <a
-                    key={pIdx}
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      color: 'var(--accent-cyan)',
-                      fontWeight: 600,
-                      textDecoration: 'underline',
-                      background: 'rgba(56, 189, 248, 0.12)',
-                      padding: '2px 8px',
-                      borderRadius: '6px',
-                      margin: '2px 0',
-                      fontSize: '0.8rem',
-                      verticalAlign: 'middle'
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    🔗 स्रोत पढ़ें ↗ (Read Source)
-                  </a>
-                );
-              }
-
-              // Check **bold**
-              const boldMatch = part.match(/^\*\*(.*?)\*\*$/);
-              if (boldMatch) {
-                return <strong key={pIdx} style={{ color: '#ffffff', fontWeight: 700 }}>{boldMatch[1]}</strong>;
-              }
-
-              return <span key={pIdx}>{part}</span>;
-            })}
-          </div>
-        );
-      })}
-    </div>
-  );
-};
-
-// 3D Fibonacci Particle Sphere Visual for Aether Core
-const AetherParticleSphere = ({ isListening, isSpeaking, onClick }) => {
-  const canvasRef = useRef(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    let animationFrameId;
-
-    const width = 280;
-    const height = 280;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.scale(dpr, dpr);
-
-    const numParticles = 240;
-    const particles = [];
-    const baseRadius = 88;
-
-    const phi = Math.PI * (3 - Math.sqrt(5));
-    for (let i = 0; i < numParticles; i++) {
-      const y = 1 - (i / (numParticles - 1)) * 2;
-      const radiusAtY = Math.sqrt(1 - y * y);
-      const theta = phi * i;
-      const x = Math.cos(theta) * radiusAtY;
-      const z = Math.sin(theta) * radiusAtY;
-      particles.push({ x, y, z });
-    }
-
-    let angleX = 0;
-    let angleY = 0;
-    let pulseTime = 0;
-
-    const render = () => {
-      ctx.clearRect(0, 0, width, height);
-
-      pulseTime += 0.05;
-      const pulseMultiplier = isListening 
-        ? 1 + 0.14 * Math.sin(pulseTime * 3.5) 
-        : isSpeaking 
-          ? 1 + 0.18 * Math.sin(pulseTime * 4.5) 
-          : 1 + 0.03 * Math.sin(pulseTime * 1.5);
-
-      const r = baseRadius * pulseMultiplier;
-      angleX += 0.0035;
-      angleY += 0.007;
-
-      const cosX = Math.cos(angleX);
-      const sinX = Math.sin(angleX);
-      const cosY = Math.cos(angleY);
-      const sinY = Math.sin(angleY);
-
-      const projected = particles.map(p => {
-        let x1 = p.x * cosY - p.z * sinY;
-        let z1 = p.z * cosY + p.x * sinY;
-        let y2 = p.y * cosX - z1 * sinX;
-        let z2 = z1 * cosX + p.y * sinX;
-
-        const fov = 320;
-        const scale = fov / (fov + z2 * r);
-        const screenX = width / 2 + x1 * r * scale;
-        const screenY = height / 2 + y2 * r * scale;
-        const alpha = Math.max(0.12, Math.min(1, (z2 + 1.2) / 2.2));
-
-        return { screenX, screenY, scale, alpha, z: z2 };
-      });
-
-      projected.sort((a, b) => a.z - b.z);
-
-      projected.forEach(p => {
-        ctx.beginPath();
-        const dotSize = Math.max(0.9, 1.8 * p.scale);
-        ctx.arc(p.screenX, p.screenY, dotSize, 0, Math.PI * 2);
-        
-        if (isListening) {
-          ctx.fillStyle = `rgba(56, 189, 248, ${p.alpha})`;
-          ctx.shadowColor = '#38bdf8';
-          ctx.shadowBlur = 7;
-        } else if (isSpeaking) {
-          ctx.fillStyle = `rgba(168, 85, 247, ${p.alpha})`;
-          ctx.shadowColor = '#a855f7';
-          ctx.shadowBlur = 9;
-        } else {
-          ctx.fillStyle = `rgba(240, 246, 255, ${p.alpha * 0.95})`;
-          ctx.shadowColor = 'rgba(255, 255, 255, 0.4)';
-          ctx.shadowBlur = 3;
-        }
-        ctx.fill();
-      });
-
-      animationFrameId = requestAnimationFrame(render);
-    };
-
-    render();
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [isListening, isSpeaking]);
-
-  return (
-    <div 
-      onClick={onClick}
-      className="jarvis-sphere-container"
-      style={{ position: 'relative', width: '280px', height: '280px', margin: '0 auto', cursor: 'pointer' }}
-      title="Tap to speak with Aether / माइक शुरू करें"
-    >
-      {isListening && <div className="jarvis-listening-pulse" />}
-      <canvas ref={canvasRef} style={{ width: '280px', height: '280px' }} />
-    </div>
-  );
-};
-
 export default function App() {
   // Onboarding & BYOK Intelligence Configuration
   const [onboardingDone, setOnboardingDone] = useState(() => 
@@ -599,6 +402,10 @@ export default function App() {
     return saved.toLowerCase().includes('singapore') ? '' : saved;
   });
   const [isMicTesting, setIsMicTesting] = useState(false);
+  const [wakeWordEnabled, setWakeWordEnabled] = useState(() => {
+    return localStorage.getItem('aether_wake_word_enabled') === 'true';
+  });
+  const wakeWordRecognitionRef = useRef(null);
   const [attachedMedia, setAttachedMedia] = useState(null); // { type: 'image' | 'file' | 'drive' | 'map', name: string, url?: string, size?: string }
 
   const [isDriveModalOpen, setIsDriveModalOpen] = useState(false);
@@ -1944,6 +1751,18 @@ export default function App() {
     }
   };
 
+  const handleToggleWakeWord = () => {
+    const nextVal = !wakeWordEnabled;
+    setWakeWordEnabled(nextVal);
+    localStorage.setItem('aether_wake_word_enabled', String(nextVal));
+    showToast(
+      nextVal 
+        ? '🎙️ "Hey Aether" वेक-वर्ड चालू! बोलें "Hey Aether"' 
+        : '🔇 "Hey Aether" वेक-वर्ड बंद', 
+      'info'
+    );
+  };
+
   const reverseGeocodeLocation = async (lat, lon) => {
     try {
       const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
@@ -3208,6 +3027,93 @@ export default function App() {
   };
 
   const toggleListening = toggleVoiceRecognition;
+
+  // Background "Hey Aether" Wake Word Detection
+  useEffect(() => {
+    if (!onboardingDone || !micEnabled || !wakeWordEnabled) {
+      if (wakeWordRecognitionRef.current) {
+        try { wakeWordRecognitionRef.current.stop(); } catch (e) {}
+        wakeWordRecognitionRef.current = null;
+      }
+      return;
+    }
+
+    // Do not run background wake-word listener while active listening, speaking, or processing
+    if (isListening || isSpeaking || isProcessing) {
+      if (wakeWordRecognitionRef.current) {
+        try { wakeWordRecognitionRef.current.stop(); } catch (e) {}
+        wakeWordRecognitionRef.current = null;
+      }
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    let isDestroyed = false;
+    let wakeRec = null;
+
+    try {
+      wakeRec = new SpeechRecognition();
+      wakeWordRecognitionRef.current = wakeRec;
+      wakeRec.continuous = true;
+      wakeRec.interimResults = true;
+      wakeRec.lang = selectedLang === 'hi' ? 'hi-IN' : 'en-IN';
+
+      wakeRec.onresult = (event) => {
+        if (isDestroyed) return;
+        const transcript = Array.from(event.results)
+          .map(r => r[0].transcript)
+          .join('')
+          .toLowerCase();
+
+        // Check for wake words: "hey aether", "aether", "ok aether", "हे ईथर", "ईथर", "सुनो ईथर"
+        const wakeWordRegex = /\b(hey\s*aether|ok\s*aether|okay\s*aether|aether|हे\s*ईथर|ईथर|सुनो\s*ईथर)\b/i;
+        const match = transcript.match(wakeWordRegex);
+
+        if (match) {
+          console.log("[Wake Word Detected]:", transcript);
+          showToast("⚡ 'Hey Aether' पहचाना गया! बोलिए...", "info");
+          
+          try { wakeRec.stop(); } catch (e) {}
+          wakeWordRecognitionRef.current = null;
+
+          // Extract any query following the wake word
+          const queryPart = transcript.slice(match.index + match[0].length).trim();
+          if (queryPart.length > 3) {
+            handleSendPrompt(queryPart);
+          } else {
+            // Trigger active speech recognition
+            setTimeout(() => {
+              toggleVoiceRecognition();
+            }, 300);
+          }
+        }
+      };
+
+      wakeRec.onerror = () => {
+        // Ignored in passive mode
+      };
+
+      wakeRec.onend = () => {
+        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing) {
+          try { wakeRec.start(); } catch (e) {}
+        }
+      };
+
+      wakeRec.start();
+    } catch (e) {
+      console.warn("Wake word listener start error:", e);
+    }
+
+    return () => {
+      isDestroyed = true;
+      if (wakeRec) {
+        try { wakeRec.stop(); } catch (e) {}
+      }
+      wakeWordRecognitionRef.current = null;
+    };
+  }, [wakeWordEnabled, micEnabled, onboardingDone, isListening, isSpeaking, isProcessing, selectedLang]);
 
   // Text to Speech with Mobile WebView Audio Streaming Fallback
   const speakText = (text) => {
@@ -5024,6 +4930,29 @@ export default function App() {
                   ) : (
                     /* Mic + Waveform — shown when input is empty */
                     <>
+                      {wakeWordEnabled && (
+                        <span
+                          onClick={() => setActiveSubModal('permissions')}
+                          title="'Hey Aether' Wake Word Active (Click to manage)"
+                          style={{
+                            fontSize: '0.66rem',
+                            color: '#38bdf8',
+                            background: 'rgba(56, 189, 248, 0.12)',
+                            border: '1px solid rgba(56, 189, 248, 0.3)',
+                            borderRadius: '20px',
+                            padding: '3px 8px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            cursor: 'pointer',
+                            marginRight: '4px',
+                            userSelect: 'none'
+                          }}
+                        >
+                          <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 6px #38bdf8' }} />
+                          Hey Aether
+                        </span>
+                      )}
                       <button 
                         type="button" 
                         className={`gemini-prompt-btn mic ${isListening ? 'listening' : ''}`}
@@ -6492,1445 +6421,134 @@ export default function App() {
         </div>
       )}
 
-      {/* 1. Profile Name Editor Modal */}
-      {activeSubModal === 'profile-name' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.78)', backdropFilter: 'blur(10px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0f172a', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '20px', padding: '24px', width: '100%', maxWidth: '380px' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>Your Preferred Name</h3>
-            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '16px' }}>How Aether greets you on the main screen.</p>
-            <input
-              type="text"
-              value={tempPreferredName}
-              onChange={(e) => setTempPreferredName(e.target.value)}
-              placeholder="e.g. Raja or Pawan"
-              style={{ width: '100%', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '12px', padding: '10px 14px', color: '#fff', marginBottom: '18px', boxSizing: 'border-box' }}
-            />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', padding: '8px 14px', cursor: 'pointer' }}>Cancel</button>
-              <button 
-                type="button" 
-                onClick={() => {
-                  const val = tempPreferredName.trim() || 'Raja';
-                  setUserPreferredName(val);
-                  localStorage.setItem('aether_preferred_name', val);
-                  setActiveSubModal(null);
-                  showToast(`Name saved: ${val}`, 'success');
-                }}
-                style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 18px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}
-              >
-                Save Name
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 2. Gemini API Key BYOK Modal */}
-      {activeSubModal === 'key' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.78)', backdropFilter: 'blur(10px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0f172a', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '20px', padding: '24px', width: '100%', maxWidth: '420px' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>Google Gemini API Key</h3>
-            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '14px' }}>BYOK direct validation with Google AI Studio models.</p>
-            <input
-              type="text"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="AIzaSy..."
-              style={{ width: '100%', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '12px', padding: '10px 14px', color: '#fff', marginBottom: '12px', boxSizing: 'border-box' }}
-            />
-            {keyError && <div style={{ color: '#ef4444', fontSize: '0.8rem', marginBottom: '12px' }}>{keyError}</div>}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <button 
-                type="button" 
-                onClick={handleValidateApiKey} 
-                disabled={keyValidating}
-                style={{ background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.3)', color: 'var(--accent-cyan)', padding: '8px 14px', borderRadius: '10px', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}
-              >
-                {keyValidating ? 'Testing...' : 'Test & Verify Key'}
-              </button>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', padding: '8px 12px', cursor: 'pointer' }}>Close</button>
-                <button 
-                  type="button" 
-                  onClick={() => {
-                    localStorage.setItem('aether_gemini_key', apiKey.trim());
-                    setActiveSubModal(null);
-                    showToast('Key saved to local storage', 'success');
-                  }}
-                  style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 16px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 3. Executive Finance & Ledger Modal */}
-      {activeSubModal === 'finance' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '520px', maxHeight: '85vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#10b981', fontWeight: 700 }}>
-                <Wallet size={18} />
-                <span>EXECUTIVE WEALTH & LEDGER</span>
-              </div>
-              <button type="button" onClick={() => { setActiveSubModal(null); setEditingFinanceRecord(null); setIsAddingExpense(false); }} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
-            </div>
+      <FinanceModal
+        isOpen={activeSubModal === 'finance'}
+        onClose={() => { setActiveSubModal(null); setEditingFinanceRecord(null); setIsAddingExpense(false); }}
+        financeSummary={financeSummary}
+        financeRecords={financeRecords}
+        isAddingExpense={isAddingExpense}
+        setIsAddingExpense={setIsAddingExpense}
+        newExpenseForm={newExpenseForm}
+        setNewExpenseForm={setNewExpenseForm}
+        editingFinanceRecord={editingFinanceRecord}
+        setEditingFinanceRecord={setEditingFinanceRecord}
+        handleSaveFinanceEdit={handleSaveFinanceEdit}
+        handleDeleteFinanceRecord={handleDeleteFinanceRecord}
+        showToast={showToast}
+        refreshAllData={refreshAllData}
+        userEmail={userEmail}
+        API_BASE={API_BASE}
+      />
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-              <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: '14px', padding: '14px' }}>
-                <div style={{ fontSize: '0.74rem', color: '#94a3b8' }}>TOTAL BALANCE</div>
-                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#10b981', marginTop: '4px' }}>₹{financeSummary.balance.toLocaleString('en-IN')}</div>
-              </div>
-              <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: '14px', padding: '14px' }}>
-                <div style={{ fontSize: '0.74rem', color: '#94a3b8' }}>TOTAL EXPENSES</div>
-                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#ef4444', marginTop: '4px' }}>₹{financeSummary.total_expense.toLocaleString('en-IN')}</div>
-              </div>
-            </div>
-
-            {/* Monthly Budget Tracking (Feature 4) */}
-            <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '16px', padding: '14px', marginBottom: '16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <span style={{ fontSize: '0.76rem', color: '#cbd5e1', fontWeight: 600 }}>मासिक बजट स्थिति (Monthly Budgets)</span>
-                <span style={{ fontSize: '0.7rem', color: '#38bdf8' }}>ऑटो-अलर्ट सक्रिय</span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {[
-                  { cat: 'fuel', name: '⛽ Petrol / Fuel', limit: 4000 },
-                  { cat: 'food', name: '🍔 Food & Dining', limit: 5000 },
-                  { cat: 'shopping', name: '🛒 Shopping', limit: 10000 }
-                ].map(b => {
-                  const spent = financeRecords
-                    .filter(r => (r.category || '').toLowerCase().includes(b.cat) && (r.type === 'expense' || r.record_type === 'expense' || !r.type))
-                    .reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
-                  const pct = Math.min(100, Math.round((spent / b.limit) * 100));
-                  const isWarning = pct >= 80;
-                  return (
-                    <div key={b.cat}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', marginBottom: '3px' }}>
-                        <span style={{ color: '#e2e8f0' }}>{b.name}</span>
-                        <span style={{ color: isWarning ? '#ef4444' : '#94a3b8', fontWeight: isWarning ? 700 : 400 }}>
-                          ₹{spent.toLocaleString('en-IN')} / ₹{b.limit.toLocaleString('en-IN')} ({pct}%)
-                        </span>
-                      </div>
-                      <div style={{ height: '4px', background: 'rgba(255, 255, 255, 0.08)', borderRadius: '4px', overflow: 'hidden' }}>
-                        <div style={{ 
-                          height: '100%', 
-                          width: `${pct}%`, 
-                          background: isWarning ? 'linear-gradient(90deg, #f59e0b, #ef4444)' : 'linear-gradient(90deg, #10b981, #38bdf8)',
-                          borderRadius: '4px',
-                          transition: 'width 0.4s ease'
-                        }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Header + Add Expense Toggle */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h4 style={{ fontSize: '0.85rem', color: '#cbd5e1', margin: 0 }}>Recent Financial Entries ({financeRecords.length})</h4>
-              <button 
-                type="button"
-                onClick={() => setIsAddingExpense(!isAddingExpense)}
-                style={{
-                  background: isAddingExpense ? 'rgba(239, 68, 68, 0.15)' : 'rgba(56, 189, 248, 0.15)',
-                  border: isAddingExpense ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(56, 189, 248, 0.3)',
-                  color: isAddingExpense ? '#ef4444' : '#38bdf8',
-                  borderRadius: '10px',
-                  padding: '4px 10px',
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}
-              >
-                {isAddingExpense ? <X size={13} /> : <Plus size={13} />}
-                {isAddingExpense ? 'रद्द करें' : 'नया खर्च'}
-              </button>
-            </div>
-
-            {/* Quick Add Form */}
-            {isAddingExpense && (
-              <div style={{ background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(56, 189, 248, 0.25)', borderRadius: '14px', padding: '14px', marginBottom: '16px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-                  <div>
-                    <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Type</label>
-                    <select 
-                      value={newExpenseForm.type}
-                      onChange={e => setNewExpenseForm({ ...newExpenseForm, type: e.target.value })}
-                      style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '8px', padding: '6px 8px', fontSize: '0.8rem' }}
-                    >
-                      <option value="expense">Expense (खर्च)</option>
-                      <option value="income">Income (आय)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Category</label>
-                    <select 
-                      value={newExpenseForm.category}
-                      onChange={e => setNewExpenseForm({ ...newExpenseForm, category: e.target.value })}
-                      style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '8px', padding: '6px 8px', fontSize: '0.8rem' }}
-                    >
-                      <option value="fuel">⛽ Petrol / Fuel</option>
-                      <option value="food">🍔 Food / Dining</option>
-                      <option value="shopping">🛒 Shopping</option>
-                      <option value="travel">🚗 Travel / Cab</option>
-                      <option value="rent">🏠 Rent / Home</option>
-                      <option value="bills">⚡ Bills / Recharge</option>
-                      <option value="medical">💊 Medical</option>
-                      <option value="general">🏷️ Other / General</option>
-                    </select>
-                  </div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '8px', marginBottom: '10px' }}>
-                  <div>
-                    <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Amount (₹)</label>
-                    <input 
-                      type="number" 
-                      placeholder="500"
-                      value={newExpenseForm.amount}
-                      onChange={e => setNewExpenseForm({ ...newExpenseForm, amount: e.target.value })}
-                      style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '8px', padding: '6px 8px', fontSize: '0.82rem' }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Note / Detail</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. पेट्रोल डलवाया, ग्रॉसरी..."
-                      value={newExpenseForm.note}
-                      onChange={e => setNewExpenseForm({ ...newExpenseForm, note: e.target.value })}
-                      style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '8px', padding: '6px 8px', fontSize: '0.82rem' }}
-                    />
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (!newExpenseForm.amount) {
-                      showToast("कृपया राशि दर्ज करें", "info");
-                      return;
-                    }
-                    try {
-                      const resp = await fetch(`${API_BASE}/action/quick-capture`, {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          ...(userEmail ? { 'X-User-Email': userEmail } : {})
-                        },
-                        body: JSON.stringify({
-                          text: `${newExpenseForm.amount} rupees ${newExpenseForm.type === 'expense' ? 'spent on' : 'received for'} ${newExpenseForm.note || newExpenseForm.category}`,
-                          capture_type: 'text'
-                        })
-                      });
-                      setIsAddingExpense(false);
-                      setNewExpenseForm({ type: 'expense', category: 'fuel', amount: '', note: '', payment_mode: 'upi' });
-                      showToast("नया रिकॉर्ड दर्ज किया गया!", "success");
-                      refreshAllData();
-                    } catch (err) {
-                      showToast("जोड़ने में समस्या आई", "error");
-                    }
-                  }}
-                  style={{ width: '100%', background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px', borderRadius: '8px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}
-                >
-                  सेव करें (Save Record)
-                </button>
-              </div>
-            )}
-
-            {/* List of Entries */}
-            {financeRecords.length === 0 ? (
-              <div style={{ color: '#64748b', fontSize: '0.82rem', textAlign: 'center', padding: '30px 0' }}>कोई रिकॉर्ड नहीं है। WhatsApp पर या ऊपर '+ नया खर्च' से जोड़ें।</div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {financeRecords.map(rec => {
-                  const isExp = (rec.type === 'expense' || rec.record_type === 'expense' || !rec.type);
-                  const isEditingThis = editingFinanceRecord && editingFinanceRecord.id === rec.id;
-
-                  if (isEditingThis) {
-                    return (
-                      <div key={rec.id} style={{ background: 'rgba(56, 189, 248, 0.08)', border: '1px solid rgba(56, 189, 248, 0.3)', borderRadius: '12px', padding: '12px' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-                          <select
-                            value={editingFinanceRecord.category}
-                            onChange={e => setEditingFinanceRecord({ ...editingFinanceRecord, category: e.target.value })}
-                            style={{ background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', borderRadius: '8px', padding: '5px', fontSize: '0.78rem' }}
-                          >
-                            <option value="fuel">⛽ Petrol</option>
-                            <option value="food">🍔 Food</option>
-                            <option value="shopping">🛒 Shopping</option>
-                            <option value="travel">🚗 Travel</option>
-                            <option value="rent">🏠 Rent</option>
-                            <option value="bills">⚡ Bills</option>
-                            <option value="medical">💊 Medical</option>
-                            <option value="general">🏷️ General</option>
-                          </select>
-                          <input 
-                            type="number"
-                            value={editingFinanceRecord.amount}
-                            onChange={e => setEditingFinanceRecord({ ...editingFinanceRecord, amount: e.target.value })}
-                            style={{ background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', borderRadius: '8px', padding: '5px 8px', fontSize: '0.8rem' }}
-                          />
-                        </div>
-                        <input 
-                          type="text"
-                          value={editingFinanceRecord.note || ''}
-                          onChange={e => setEditingFinanceRecord({ ...editingFinanceRecord, note: e.target.value })}
-                          placeholder="विवरण (Note)"
-                          style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', borderRadius: '8px', padding: '5px 8px', fontSize: '0.8rem', marginBottom: '8px' }}
-                        />
-                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                          <button 
-                            type="button" 
-                            onClick={() => setEditingFinanceRecord(null)}
-                            style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', padding: '4px 8px' }}
-                          >
-                            रद्द करें
-                          </button>
-                          <button 
-                            type="button" 
-                            onClick={handleSaveFinanceEdit}
-                            style={{ background: '#10b981', border: 'none', color: '#fff', borderRadius: '6px', padding: '5px 12px', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}
-                          >
-                            अपडेट करें
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div 
-                      key={rec.id} 
-                      style={{ 
-                        display: 'flex', 
-                        justifyContent: 'space-between', 
-                        alignItems: 'center', 
-                        padding: '10px 12px', 
-                        background: 'rgba(255, 255, 255, 0.03)', 
-                        border: '1px solid rgba(255, 255, 255, 0.06)',
-                        borderRadius: '12px'
-                      }}
-                    >
-                      <div style={{ flex: 1, minWidth: 0, paddingRight: '8px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-                          <span style={{ fontSize: '0.95rem' }}>{getCategoryIcon(rec.category)}</span>
-                          <span style={{ 
-                            fontSize: '0.7rem', 
-                            padding: '1px 6px', 
-                            borderRadius: '4px', 
-                            background: 'rgba(56, 189, 248, 0.1)', 
-                            color: '#38bdf8',
-                            textTransform: 'capitalize',
-                            fontWeight: 600
-                          }}>
-                            {rec.category || 'General'}
-                          </span>
-                          <span style={{ color: '#ffffff', fontSize: '0.84rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {rec.note || rec.description || rec.category || 'खर्च'}
-                          </span>
-                        </div>
-                        <div style={{ color: '#64748b', fontSize: '0.72rem', display: 'flex', gap: '8px' }}>
-                          <span>{new Date(rec.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-                          {rec.payment_mode && (
-                            <span style={{ textTransform: 'uppercase', color: '#94a3b8' }}>• {rec.payment_mode}</span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div style={{ color: isExp ? '#ef4444' : '#10b981', fontWeight: 700, fontSize: '0.95rem' }}>
-                          {isExp ? '-' : '+'}₹{Number(rec.amount || 0).toLocaleString('en-IN')}
-                        </div>
-                        <button
-                          type="button"
-                          title="Edit expense"
-                          onClick={() => setEditingFinanceRecord({
-                            id: rec.id,
-                            amount: rec.amount,
-                            note: rec.note || rec.description || '',
-                            category: rec.category || 'general',
-                            type: rec.type || 'expense'
-                          })}
-                          style={{
-                            background: 'rgba(255, 255, 255, 0.05)',
-                            border: '1px solid rgba(255, 255, 255, 0.1)',
-                            borderRadius: '6px',
-                            color: '#94a3b8',
-                            padding: '4px 6px',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center'
-                          }}
-                        >
-                          <Edit3 size={13} />
-                        </button>
-                        <button
-                          type="button"
-                          title="Delete expense"
-                          onClick={() => handleDeleteFinanceRecord(rec.id)}
-                          style={{
-                            background: 'rgba(239, 68, 68, 0.1)',
-                            border: '1px solid rgba(239, 68, 68, 0.2)',
-                            borderRadius: '6px',
-                            color: '#ef4444',
-                            padding: '4px 6px',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center'
-                          }}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 4. Dedicated Executive Briefing Modal (Compact & Never Auto-Disappears) */}
-      {showBriefingModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(56, 189, 248, 0.3)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '500px', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 20px 50px rgba(0,0,0,0.7)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8', fontWeight: 700, fontSize: '0.92rem' }}>
-                <Radio size={18} className={isBriefingPlaying ? 'animate-pulse' : ''} />
-                <span>EXECUTIVE BRIEFING</span>
-              </div>
-              <button 
-                type="button" 
-                onClick={() => {
-                  stopBriefingAudio();
-                  setShowBriefingModal(false);
-                }} 
-                style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.3rem', cursor: 'pointer', padding: '4px' }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {isBriefingLoading ? (
-              <div style={{ textAlign: 'center', padding: '36px 0', color: '#94a3b8' }}>
-                <div style={{ fontSize: '1.6rem', marginBottom: '10px' }}>🎙️</div>
-                <div style={{ fontSize: '0.88rem', color: '#e2e8f0', fontWeight: 600 }}>दैनिक ब्रीफिंग तैयार की जा रही है...</div>
-                <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '4px' }}>मौसम व आज के एजेंडा का लाइव विश्लेषण</div>
-              </div>
-            ) : executiveBriefingData ? (
-              <div>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
-                  <span style={{ fontSize: '0.72rem', background: 'rgba(56, 189, 248, 0.12)', color: '#38bdf8', padding: '3px 8px', borderRadius: '10px', border: '1px solid rgba(56, 189, 248, 0.25)' }}>
-                    📍 Jaipur
-                  </span>
-                  <span style={{ fontSize: '0.72rem', background: 'rgba(16, 185, 129, 0.12)', color: '#10b981', padding: '3px 8px', borderRadius: '10px', border: '1px solid rgba(16, 185, 129, 0.25)' }}>
-                    📋 {executiveBriefingData.task_count || 0} कार्य आज
-                  </span>
-                </div>
-
-                <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '14px', padding: '16px', color: '#f1f5f9', fontSize: '0.88rem', lineHeight: '1.6', marginBottom: '18px' }}>
-                  {executiveBriefingData.text}
-                </div>
-
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isBriefingPlaying) {
-                        stopBriefingAudio();
-                      } else {
-                        speakBriefingAudio(executiveBriefingData.text);
-                      }
-                    }}
-                    style={{
-                      flex: 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      background: isBriefingPlaying ? 'rgba(239, 68, 68, 0.2)' : 'linear-gradient(135deg, #38bdf8 0%, #2563eb 100%)',
-                      color: isBriefingPlaying ? '#ef4444' : '#080c16',
-                      border: isBriefingPlaying ? '1px solid #ef4444' : 'none',
-                      borderRadius: '12px',
-                      padding: '11px',
-                      fontWeight: 700,
-                      fontSize: '0.88rem',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {isBriefingPlaying ? <Pause size={16} /> : <Play size={16} />}
-                    {isBriefingPlaying ? 'रोकें (Pause)' : 'सुनें (Listen)'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      stopBriefingAudio();
-                      setShowBriefingModal(false);
-                    }}
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.06)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      color: '#cbd5e1',
-                      borderRadius: '12px',
-                      padding: '11px 16px',
-                      fontSize: '0.85rem',
-                      fontWeight: 600,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    बंद करें
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div style={{ textAlign: 'center', padding: '30px 0', color: '#64748b' }}>
-                कोई ब्रीफिंग उपलब्ध नहीं है।
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* 4. Dedicated Executive Briefing Modal */}
+      <BriefingModal
+        isOpen={showBriefingModal}
+        onClose={() => setShowBriefingModal(false)}
+        isBriefingLoading={isBriefingLoading}
+        executiveBriefingData={executiveBriefingData}
+        isBriefingPlaying={isBriefingPlaying}
+        stopBriefingAudio={stopBriefingAudio}
+        speakBriefingAudio={speakBriefingAudio}
+      />
 
       {/* 5. Actions & Audit Trail Modal */}
-      {activeSubModal === 'audit' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '520px', maxHeight: '85vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent-cyan)', fontWeight: 700 }}>
-                <Shield size={18} />
-                <span>ACTIONS & AUDIT TRAIL</span>
-              </div>
-              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
-            </div>
+      <AuditModal
+        isOpen={activeSubModal === 'audit'}
+        onClose={() => setActiveSubModal(null)}
+        auditLogs={auditLogs}
+        handleUndo={handleUndo}
+      />
 
-            {auditLogs.length === 0 ? (
-              <div style={{ color: '#64748b', fontSize: '0.84rem', textAlign: 'center', padding: '20px 0' }}>No actions logged yet.</div>
-            ) : (
-              auditLogs.map(log => (
-                <div key={log.id} style={{ padding: '12px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--accent-cyan)', fontWeight: 700, textTransform: 'uppercase' }}>{log.action_type}</span>
-                    <span style={{ fontSize: '0.72rem', color: '#64748b' }}>{new Date(log.executed_at).toLocaleTimeString()}</span>
-                  </div>
-                  <div style={{ color: '#ffffff', fontSize: '0.84rem', lineHeight: '1.4' }}>{log.details}</div>
-                  {log.undo_payload && !log.is_undone && (
-                    <button
-                      type="button"
-                      onClick={() => handleUndo(log.id)}
-                      style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444', padding: '3px 10px', borderRadius: '6px', fontSize: '0.72rem', marginTop: '6px', cursor: 'pointer' }}
-                    >
-                      Undo Action
-                    </button>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 5. Phone Assistant Setup Guide Modal */}
-      {activeSubModal === 'assistant-setup' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '400px' }}>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff', marginBottom: '10px' }}>Phone Assistant Integration</h3>
-            <p style={{ fontSize: '0.82rem', color: '#cbd5e1', lineHeight: '1.5', marginBottom: '16px' }}>
-              On Android, go to <b>Settings → Apps → Default Apps → Digital Assistant App</b> and select <b>Aether</b>.
-            </p>
-            <div style={{ background: 'rgba(255, 255, 255, 0.04)', borderRadius: '12px', padding: '14px', fontSize: '0.78rem', color: '#94a3b8', lineHeight: '1.4', marginBottom: '18px' }}>
-              ⚡ You will be able to hold the power button or swipe from bottom corners to talk to Aether instantly from any application!
-            </div>
-            <button 
-              type="button" 
-              onClick={() => setActiveSubModal(null)} 
-              style={{ width: '100%', background: '#38bdf8', border: 'none', color: '#080c16', padding: '10px', borderRadius: '12px', fontWeight: 700, cursor: 'pointer' }}
-            >
-              Got it
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 6. Assistant Voice Selector Modal */}
-      {activeSubModal === 'assistant' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '420px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>Choose Assistant Personality</h3>
-              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
-              {AETHER_VOICES.map(voice => (
-                <div
-                  key={voice.id}
-                  onClick={() => {
-                    setSelectedVoice(voice.id);
-                    localStorage.setItem('aether_selected_voice', voice.id);
-                    setActiveSubModal(null);
-                    showToast(`Voice set to ${voice.name}`, 'info');
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '12px 14px',
-                    borderRadius: '12px',
-                    background: selectedVoice === voice.id ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${selectedVoice === voice.id ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.08)'}`,
-                    cursor: 'pointer'
-                  }}
-                >
-                  <div>
-                    <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.92rem' }}>{voice.name}</div>
-                    <div style={{ color: '#94a3b8', fontSize: '0.78rem' }}>{voice.desc}</div>
-                  </div>
-                  {selectedVoice === voice.id && <Check size={18} color="var(--accent-cyan)" />}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-            {/* 8. Appearance & Theme Modal */}
-      {activeSubModal === 'appearance' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '400px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>Appearance & Theme</h3>
-              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {[
-                { id: 'obsidian', name: 'Obsidian Dark (Default)', desc: 'Classic deep obsidian with electric cyan accents', color: '#00e5ff' },
-                { id: 'sapphire', name: 'Midnight Sapphire', desc: 'Cosmic indigo with radiant purple aura', color: '#818cf8' },
-                { id: 'oled', name: 'OLED Pure Black', desc: 'Pitch black background optimized for battery', color: '#38bdf8' }
-              ].map(themeItem => (
-                <div
-                  key={themeItem.id}
-                  onClick={() => {
-                    setAppTheme(themeItem.id);
-                    localStorage.setItem('aether_theme', themeItem.id);
-                    document.body.className = `theme-${themeItem.id}`;
-                    showToast(`Theme applied: ${themeItem.name}`, 'success');
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '12px 14px',
-                    borderRadius: '12px',
-                    background: appTheme === themeItem.id ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${appTheme === themeItem.id ? themeItem.color : 'rgba(255, 255, 255, 0.08)'}`,
-                    cursor: 'pointer'
-                  }}
-                >
-                  <div>
-                    <div style={{ color: '#fff', fontWeight: 600, fontSize: '0.9rem' }}>{themeItem.name}</div>
-                    <div style={{ color: '#94a3b8', fontSize: '0.76rem' }}>{themeItem.desc}</div>
-                  </div>
-                  {appTheme === themeItem.id && <Check size={18} color={themeItem.color} />}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 9. Sound & Haptics Modal */}
-      {activeSubModal === 'sound' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '400px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>Sound & Haptics</h3>
-              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
-            </div>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                <div>
-                  <div style={{ color: '#fff', fontSize: '0.9rem', fontWeight: 600 }}>AI Voice Readout</div>
-                  <div style={{ color: '#94a3b8', fontSize: '0.76rem' }}>Speak assistant answers aloud automatically</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextVal = !voiceOutputEnabled;
-                    setVoiceOutputEnabled(nextVal);
-                    localStorage.setItem('aether_voice_output', String(nextVal));
-                    showToast(nextVal ? 'Voice output enabled' : 'Voice output muted', 'info');
-                  }}
-                  style={{
-                    background: voiceOutputEnabled ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.15)',
-                    border: 'none',
-                    color: voiceOutputEnabled ? '#080c16' : '#94a3b8',
-                    padding: '6px 14px',
-                    borderRadius: '20px',
-                    fontWeight: 700,
-                    fontSize: '0.78rem',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {voiceOutputEnabled ? 'ON' : 'OFF'}
-                </button>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                <div>
-                  <div style={{ color: '#fff', fontSize: '0.9rem', fontWeight: 600 }}>Audio Chimes & Tones</div>
-                  <div style={{ color: '#94a3b8', fontSize: '0.76rem' }}>Executive reminder sound effects</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextVal = !chimesEnabled;
-                    setChimesEnabled(nextVal);
-                    localStorage.setItem('aether_chimes', String(nextVal));
-                    if (nextVal) playReminderChime();
-                    showToast(nextVal ? 'Chimes enabled' : 'Chimes muted', 'info');
-                  }}
-                  style={{
-                    background: chimesEnabled ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.15)',
-                    border: 'none',
-                    color: chimesEnabled ? '#080c16' : '#94a3b8',
-                    padding: '6px 14px',
-                    borderRadius: '20px',
-                    fontWeight: 700,
-                    fontSize: '0.78rem',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {chimesEnabled ? 'ON' : 'OFF'}
-                </button>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0' }}>
-                <div>
-                  <div style={{ color: '#fff', fontSize: '0.9rem', fontWeight: 600 }}>Speech Speed</div>
-                  <div style={{ color: '#94a3b8', fontSize: '0.76rem' }}>Speaking pace for responses</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextVal = speechRate >= 1.2 ? 1.0 : 1.2;
-                    setSpeechRate(nextVal);
-                    localStorage.setItem('aether_speech_rate', String(nextVal));
-                    showToast(`Speech rate: ${nextVal}x`, 'info');
-                  }}
-                  style={{
-                    background: 'rgba(56, 189, 248, 0.15)',
-                    border: '1px solid rgba(56, 189, 248, 0.3)',
-                    color: 'var(--accent-cyan)',
-                    padding: '6px 14px',
-                    borderRadius: '10px',
-                    fontWeight: 700,
-                    fontSize: '0.78rem',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {speechRate}x Pace
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 10. Language Selection Modal */}
-      {activeSubModal === 'language' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '380px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>
-                {effectiveLang === 'en' ? 'Preferred Language' : effectiveLang === 'hinglish' ? 'Preferred Language' : 'पसंदीदा भाषा'}
-              </h3>
-              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {[
-                { code: 'auto', label: effectiveLang === 'en' ? 'Follow Phone (Auto)' : effectiveLang === 'hinglish' ? 'Follow Phone (Auto)' : 'फ़ोन के अनुसार (स्वचालित)', icon: '🌐' },
-                { code: 'hi', label: 'हिन्दी (Hindi)', icon: '🇮🇳' },
-                { code: 'en', label: 'English', icon: '🇬🇧' },
-                { code: 'hinglish', label: 'Hinglish (हिंग्लिश)', icon: '🇮🇳' }
-              ].map(lang => (
-                <div
-                  key={lang.code}
-                  onClick={() => {
-                    setSelectedLang(lang.code);
-                    localStorage.setItem('aether_language', lang.code);
-                    setActiveSubModal(null);
-                    showToast(
-                      lang.code === 'en' ? `Language set to: ${lang.label}` : lang.code === 'hinglish' ? `Language set ho gayi: ${lang.label}` : `भाषा सेट की गई: ${lang.label}`,
-                      'success'
-                    );
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '12px 14px',
-                    borderRadius: '12px',
-                    background: selectedLang === lang.code ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${selectedLang === lang.code ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.08)'}`,
-                    cursor: 'pointer'
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span>{lang.icon}</span>
-                    <span style={{ color: '#fff', fontWeight: 600, fontSize: '0.92rem' }}>{lang.label}</span>
-                  </div>
-                  {selectedLang === lang.code && <Check size={18} color="var(--accent-cyan)" />}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 11. Memory Vault Manager Modal */}
-      {activeSubModal === 'memory' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '480px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8', fontWeight: 700 }}>
-                <Database size={18} />
-                <span>EXECUTIVE MEMORY VAULT</span>
-              </div>
-              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
-            </div>
-            
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              if (newMemoryText.trim()) {
-                handleSendPrompt("Remember that: " + newMemoryText.trim());
-                setNewMemoryText('');
-                showToast(
-                  effectiveLang === 'en' ? "Fact added to memory" : effectiveLang === 'hinglish' ? "Memory me add ho gaya" : "नया तथ्य स्मृति में जोड़ा गया",
-                  'success'
-                );
-              }
-            }} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-              <input
-                type="text"
-                placeholder={effectiveLang === 'en' ? "Add a new fact to remember..." : effectiveLang === 'hinglish' ? "Nayi memory ya fact likhein..." : "नई मेमोरी या तथ्य जोड़ें..."}
-                value={newMemoryText}
-                onChange={(e) => setNewMemoryText(e.target.value)}
-                style={{ flex: 1, background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.84rem' }}
-              />
-              <button type="submit" style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 14px', borderRadius: '10px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}>
-                {effectiveLang === 'en' ? '+ Add' : effectiveLang === 'hinglish' ? '+ Add' : '+ जोड़ें'}
-              </button>
-            </form>
-
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {memories.length === 0 ? (
-                <div style={{ color: '#64748b', fontSize: '0.84rem', textAlign: 'center', padding: '30px 0' }}>
-                  {effectiveLang === 'en' ? 'No facts recorded yet.' : effectiveLang === 'hinglish' ? 'Abhi koi memory saved nahi hai.' : 'अभी कोई मेमोरी दर्ज नहीं है।'}
-                </div>
-              ) : (
-                memories.map(mem => (
-                  <div key={mem.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '10px' }}>
-                    <div style={{ color: '#e2e8f0', fontSize: '0.86rem', flex: 1, paddingRight: '10px', lineHeight: '1.4' }}>
-                      {mem.fact || mem.content || mem.text}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteMemory(mem.id)}
-                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem', padding: '2px 6px' }}
-                      title="Delete this fact"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 12. Custom Username Editor Modal */}
-      {activeSubModal === 'username' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '380px' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>
-              {effectiveLang === 'en' ? 'Executive Username' : effectiveLang === 'hinglish' ? 'Executive Username' : 'एग्जीक्यूटिव यूज़रनेम'}
-            </h3>
-            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '16px' }}>
-              {effectiveLang === 'en' ? 'Your unique @handle across Aether networks.' : effectiveLang === 'hinglish' ? 'Aapka unique @handle Aether ke liye.' : 'Aether पर आपकी पहचान के लिए विशिष्ट @हैंडल।'}
-            </p>
-            <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '12px', padding: '0 12px', marginBottom: '18px' }}>
-              <span style={{ color: 'var(--accent-cyan)', fontWeight: 700 }}>@</span>
-              <input
-                type="text"
-                value={customUsername || userPreferredName.toLowerCase().replace(/\s+/g, '')}
-                onChange={(e) => setCustomUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
-                placeholder="username"
-                style={{ width: '100%', background: 'transparent', border: 'none', padding: '10px 8px', color: '#fff', outline: 'none' }}
-              />
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', padding: '8px 14px', cursor: 'pointer' }}>
-                {effectiveLang === 'en' ? 'Cancel' : effectiveLang === 'hinglish' ? 'Cancel' : 'रद्द करें'}
-              </button>
-              <button 
-                type="button" 
-                onClick={() => {
-                  const val = customUsername.trim() || userPreferredName.toLowerCase().replace(/\s+/g, '');
-                  setCustomUsername(val);
-                  localStorage.setItem('aether_username', val);
-                  setActiveSubModal(null);
-                  showToast(
-                    effectiveLang === 'en' ? `Username updated: @${val}` : effectiveLang === 'hinglish' ? `Username update ho gaya: @${val}` : `यूज़रनेम अपडेट हुआ: @${val}`,
-                    'success'
-                  );
-                }}
-                style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 18px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}
-              >
-                {effectiveLang === 'en' ? 'Save' : effectiveLang === 'hinglish' ? 'Save' : 'सेव करें'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 13. Delete Account Custom Modal */}
-      {activeSubModal === 'delete-account' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.88)', backdropFilter: 'blur(14px)', zIndex: 130, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '380px', textAlign: 'center' }}>
-            <div style={{ width: '50px', height: '50px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
-              <Shield size={24} color="#ef4444" />
-            </div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>
-              {effectiveLang === 'en' 
-                ? 'Reset Account & Data?' 
-                : effectiveLang === 'hinglish' 
-                ? 'Account aur Data Reset Karein?' 
-                : 'खाता और डेटा रीसेट करें?'}
-            </h3>
-            <p style={{ fontSize: '0.82rem', color: '#94a3b8', lineHeight: '1.45', marginBottom: '20px' }}>
-              {effectiveLang === 'en' 
-                ? 'This will clear your local session, private keys, authentication data, and reset the app.' 
-                : effectiveLang === 'hinglish' 
-                ? 'Yeh aapka local session, private keys aur login data delete kar dega.' 
-                : 'यह आपके स्थानीय सत्र, निजी चाबियाँ और प्रमाणीकरण डेटा को हटा देगा।'}
-            </p>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button 
-                type="button" 
-                onClick={() => setActiveSubModal(null)} 
-                style={{ flex: 1, background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#fff', padding: '10px', borderRadius: '12px', fontWeight: 600, cursor: 'pointer' }}
-              >
-                {effectiveLang === 'en' ? 'Cancel' : effectiveLang === 'hinglish' ? 'Cancel' : 'रद्द करें'}
-              </button>
-              <button 
-                type="button" 
-                onClick={handleConfirmAccountReset} 
-                style={{ flex: 1, background: '#ef4444', border: 'none', color: '#fff', padding: '10px', borderRadius: '12px', fontWeight: 700, cursor: 'pointer' }}
-              >
-                {effectiveLang === 'en' ? 'Yes, Reset' : effectiveLang === 'hinglish' ? 'Haan, Reset Karein' : 'हां, रीसेट करें'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 7. Database Core & Sync Modal */}
-      {activeSubModal === 'db' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '420px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>Database Core & Sync</h3>
-              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.86rem', color: '#cbd5e1' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                <span>Server Status</span>
-                <span style={{ color: serverOnline ? '#10b981' : '#ef4444', fontWeight: 700 }}>{serverOnline ? '● Online (Port 8000)' : '● Offline'}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                <span>Tasks in SQLite</span>
-                <span>{tasks.length} items</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                <span>Memories in Vault</span>
-                <span>{memories.length} items</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                <span>Audit Log Records</span>
-                <span>{auditLogs.length} entries</span>
-              </div>
-            </div>
-            <button 
-              type="button" 
-              onClick={() => { refreshAllData(); showToast('Data re-synchronized with core', 'success'); }}
-              style={{ width: '100%', marginTop: '20px', background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.3)', color: 'var(--accent-cyan)', padding: '10px', borderRadius: '12px', fontWeight: 700, cursor: 'pointer' }}
-            >
-              🔄 Refresh & Sync Core Now
-            </button>
-          </div>
-        </div>
-      )}
+      {/* 5. Settings Sub-Modals */}
+      <SettingsSubModals
+        activeSubModal={activeSubModal}
+        setActiveSubModal={setActiveSubModal}
+        tempPreferredName={tempPreferredName}
+        setTempPreferredName={setTempPreferredName}
+        setUserPreferredName={setUserPreferredName}
+        userPreferredName={userPreferredName}
+        showToast={showToast}
+        apiKey={apiKey}
+        setApiKey={setApiKey}
+        keyError={keyError}
+        keyValidating={keyValidating}
+        handleValidateApiKey={handleValidateApiKey}
+        selectedVoice={selectedVoice}
+        setSelectedVoice={setSelectedVoice}
+        appTheme={appTheme}
+        setAppTheme={setAppTheme}
+        voiceOutputEnabled={voiceOutputEnabled}
+        setVoiceOutputEnabled={setVoiceOutputEnabled}
+        chimesEnabled={chimesEnabled}
+        setChimesEnabled={setChimesEnabled}
+        playReminderChime={playReminderChime}
+        speechRate={speechRate}
+        setSpeechRate={setSpeechRate}
+        effectiveLang={effectiveLang}
+        selectedLang={selectedLang}
+        setSelectedLang={setSelectedLang}
+        newMemoryText={newMemoryText}
+        setNewMemoryText={setNewMemoryText}
+        handleSendPrompt={handleSendPrompt}
+        memories={memories}
+        handleDeleteMemory={handleDeleteMemory}
+        customUsername={customUsername}
+        setCustomUsername={setCustomUsername}
+        handleConfirmAccountReset={handleConfirmAccountReset}
+        serverOnline={serverOnline}
+        tasks={tasks}
+        auditLogs={auditLogs}
+        refreshAllData={refreshAllData}
+      />
 
       {/* 8. App Permissions & Access Modal */}
-      {activeSubModal === 'permissions' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', backdropFilter: 'blur(18px)', zIndex: 120, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-          <div style={{ background: 'linear-gradient(180deg, #0f1b2d 0%, #0a1220 100%)', borderRadius: '28px 28px 0 0', padding: '28px 24px 40px', width: '100%', maxWidth: '480px', maxHeight: '92vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', boxShadow: '0 -8px 40px rgba(0,0,0,0.6)' }}>
+      <PermissionsModal
+        isOpen={activeSubModal === 'permissions'}
+        onClose={() => setActiveSubModal(null)}
+        micEnabled={micEnabled}
+        handleToggleMic={handleToggleMic}
+        handleTestMic={handleTestMic}
+        isMicTesting={isMicTesting}
+        pushEnabled={pushEnabled}
+        handleTogglePush={handleTogglePush}
+        handleSendTestPush={handleSendTestPush}
+        locationEnabled={locationEnabled}
+        handleToggleLocation={handleToggleLocation}
+        userLocationName={userLocationName}
+        voiceOutputEnabled={voiceOutputEnabled}
+        setVoiceOutputEnabled={setVoiceOutputEnabled}
+        wakeWordEnabled={wakeWordEnabled}
+        handleToggleWakeWord={handleToggleWakeWord}
+        showToast={showToast}
+      />
 
-            {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(56,189,248,0.15)', border: '1px solid rgba(56,189,248,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8' }}>
-                  <ShieldCheck size={18} />
-                </div>
-                <div>
-                  <div style={{ color: '#fff', fontWeight: 700, fontSize: '1.05rem', letterSpacing: '0.01em' }}>Permissions & Access</div>
-                  <div style={{ color: '#64748b', fontSize: '0.72rem', marginTop: '1px' }}>Control what Aether can access</div>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setActiveSubModal(null)}
-                style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: '34px', height: '34px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '1.1rem', cursor: 'pointer', flexShrink: 0 }}
-              >✕</button>
-            </div>
+      {/* 8. Modals */}
+      <HistoryModal
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        chatHistory={chatHistory}
+        userName={userName}
+        handleStartNewChat={handleStartNewChat}
+      />
 
-            {/* Drag handle visual */}
-            <div style={{ width: '40px', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.12)', margin: '12px auto 24px' }} />
+      <CameraModal
+        isOpen={isCameraModalOpen}
+        onClose={() => setIsCameraModalOpen(false)}
+        cameraVideoRef={cameraVideoRef}
+        cameraInputRef={cameraInputRef}
+        handleCaptureCameraSnapshot={handleCaptureCameraSnapshot}
+      />
 
-            {/* Permission Cards */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-
-              {/* 1: Microphone */}
-              <div style={{ background: 'rgba(56,189,248,0.06)', border: micEnabled ? '1.5px solid rgba(56,189,248,0.35)' : '1.5px solid rgba(255,255,255,0.06)', borderRadius: '20px', padding: '20px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', transition: 'border 0.2s' }}>
-                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: micEnabled ? 'rgba(56,189,248,0.2)' : 'rgba(255,255,255,0.06)', border: micEnabled ? '1px solid rgba(56,189,248,0.4)' : '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: micEnabled ? '#38bdf8' : '#64748b', flexShrink: 0, transition: 'all 0.2s' }}>
-                    <Mic size={22} />
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>Microphone</div>
-                    <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>Voice prompts & real-time listening</div>
-                    {micEnabled && (
-                      <button type="button" onClick={handleTestMic} disabled={isMicTesting}
-                        style={{ marginTop: '8px', background: 'rgba(56,189,248,0.12)', border: '1px solid rgba(56,189,248,0.3)', color: '#38bdf8', padding: '4px 12px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}>
-                        {isMicTesting ? '🎙️ Testing...' : '🎙️ Test Mic'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className={`permission-toggle-switch ${micEnabled ? 'active' : ''}`} onClick={handleToggleMic} role="button" tabIndex={0}>
-                  <div className="permission-toggle-thumb" />
-                </div>
-              </div>
-
-              {/* 2: Push Notifications */}
-              <div style={{ background: 'rgba(245,158,11,0.06)', border: pushEnabled ? '1.5px solid rgba(245,158,11,0.35)' : '1.5px solid rgba(255,255,255,0.06)', borderRadius: '20px', padding: '20px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', transition: 'border 0.2s' }}>
-                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: pushEnabled ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.06)', border: pushEnabled ? '1px solid rgba(245,158,11,0.4)' : '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: pushEnabled ? '#fbbf24' : '#64748b', flexShrink: 0, transition: 'all 0.2s' }}>
-                    <Bell size={22} />
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>Push Notifications</div>
-                    <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>8 AM briefing & task reminders</div>
-                    {pushEnabled && (
-                      <button type="button" onClick={handleSendTestPush}
-                        style={{ marginTop: '8px', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '4px 12px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}>
-                        📲 Send Test
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className={`permission-toggle-switch ${pushEnabled ? 'active' : ''}`} onClick={handleTogglePush} role="button" tabIndex={0}>
-                  <div className="permission-toggle-thumb" />
-                </div>
-              </div>
-
-              {/* 3: Location */}
-              <div style={{ background: 'rgba(244,63,94,0.06)', border: locationEnabled ? '1.5px solid rgba(244,63,94,0.35)' : '1.5px solid rgba(255,255,255,0.06)', borderRadius: '20px', padding: '20px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', transition: 'border 0.2s' }}>
-                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: locationEnabled ? 'rgba(244,63,94,0.2)' : 'rgba(255,255,255,0.06)', border: locationEnabled ? '1px solid rgba(244,63,94,0.4)' : '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: locationEnabled ? '#fb7185' : '#64748b', flexShrink: 0, transition: 'all 0.2s' }}>
-                    <MapPin size={22} />
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>Location & Maps</div>
-                    <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>Local weather & city briefing</div>
-                    {locationEnabled && userLocationName && (
-                      <div style={{ marginTop: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: '8px', padding: '3px 10px', color: '#34d399', fontSize: '0.72rem', fontWeight: 600, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        📍 {userLocationName}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className={`permission-toggle-switch ${locationEnabled ? 'active' : ''}`} onClick={handleToggleLocation} role="button" tabIndex={0}>
-                  <div className="permission-toggle-thumb" />
-                </div>
-              </div>
-
-              {/* 4: Audio Playback */}
-              <div style={{ background: 'rgba(168,85,247,0.06)', border: voiceOutputEnabled ? '1.5px solid rgba(168,85,247,0.35)' : '1.5px solid rgba(255,255,255,0.06)', borderRadius: '20px', padding: '20px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', transition: 'border 0.2s' }}>
-                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: voiceOutputEnabled ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.06)', border: voiceOutputEnabled ? '1px solid rgba(168,85,247,0.4)' : '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: voiceOutputEnabled ? '#c084fc' : '#64748b', flexShrink: 0, transition: 'all 0.2s' }}>
-                    <Volume2 size={22} />
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>Voice Responses</div>
-                    <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>
-                      {voiceOutputEnabled ? 'Spoken AI replies in Indian English / Hindi' : 'Text-only responses (voice muted)'}
-                    </div>
-                  </div>
-                </div>
-                <div
-                  className={`permission-toggle-switch ${voiceOutputEnabled ? 'active' : ''}`}
-                  onClick={() => {
-                    const nextVal = !voiceOutputEnabled;
-                    setVoiceOutputEnabled(nextVal);
-                    localStorage.setItem('aether_voice_output', String(nextVal));
-                    showToast(nextVal ? '🔊 आवाज़ चालू — Indian English/Hindi' : '🔇 आवाज़ बंद — सिर्फ़ टेक्स्ट', 'info');
-                  }}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <div className="permission-toggle-thumb" />
-                </div>
-              </div>
-
-              {/* 5: Background Cloud Sync */}
-              <div style={{ background: 'rgba(16,185,129,0.06)', border: '1.5px solid rgba(16,185,129,0.2)', borderRadius: '20px', padding: '20px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
-                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: 'rgba(16,185,129,0.2)', border: '1px solid rgba(16,185,129,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399', flexShrink: 0 }}>
-                    <Sparkles size={22} />
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>Background Cloud Sync</div>
-                    <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>Auto-sync every 8 min • Always on</div>
-                  </div>
-                </div>
-                <span style={{ fontSize: '0.74rem', fontWeight: 700, padding: '5px 12px', borderRadius: '12px', background: 'rgba(16,185,129,0.15)', color: '#34d399', border: '1px solid rgba(16,185,129,0.3)', whiteSpace: 'nowrap' }}>
-                  ● Active
-                </span>
-              </div>
-
-            </div>
-
-            {/* Privacy note */}
-            <div style={{ marginTop: '24px', background: 'rgba(255,255,255,0.03)', borderRadius: '14px', padding: '14px 16px', fontSize: '0.74rem', color: '#475569', lineHeight: '1.5', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-              <span style={{ fontSize: '1rem', flexShrink: 0 }}>🔒</span>
-              <span><b style={{ color: '#64748b' }}>Enterprise Privacy:</b> Microphone only activates during voice sessions. No passive listening. All data encrypted end-to-end.</span>
-            </div>
-
-          </div>
-        </div>
-      )}
-
-      {/* 8. Interaction History Transcript Modal */}
-      {isHistoryOpen && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '480px', maxHeight: '80vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#ffffff', fontWeight: 700 }}>
-                <Clock size={18} color="var(--accent-cyan)" />
-                <span>INTERACTION TRANSCRIPT</span>
-              </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button 
-                  type="button" 
-                  onClick={handleStartNewChat} 
-                  style={{ background: 'rgba(239, 68, 68, 0.15)', border: 'none', color: '#ef4444', padding: '4px 10px', borderRadius: '8px', fontSize: '0.74rem', cursor: 'pointer' }}
-                >
-                  Clear
-                </button>
-                <button type="button" onClick={() => setIsHistoryOpen(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
-              </div>
-            </div>
-
-            {chatHistory.length === 0 ? (
-              <div style={{ color: '#64748b', fontSize: '0.84rem', textAlign: 'center', padding: '24px 0' }}>No recent chats. Speak to Aether to begin!</div>
-            ) : (
-              chatHistory.map((msg, i) => (
-                <div key={i} style={{ marginBottom: '12px', padding: '10px 14px', borderRadius: '12px', background: msg.role === 'user' ? 'rgba(56, 189, 248, 0.1)' : 'rgba(255, 255, 255, 0.04)', textAlign: 'left' }}>
-                  <div style={{ fontSize: '0.72rem', color: msg.role === 'user' ? 'var(--accent-cyan)' : '#a855f7', fontWeight: 700, marginBottom: '3px' }}>
-                    {msg.role === 'user' ? (userName || 'You') : 'Aether'}
-                  </div>
-                  {msg.image_url && (
-                    <div style={{ marginBottom: '6px' }}>
-                      <img 
-                        src={msg.image_url} 
-                        alt="Attachment" 
-                        style={{ maxWidth: '100%', maxHeight: '140px', borderRadius: '8px', objectFit: 'cover' }} 
-                      />
-                    </div>
-                  )}
-                  <div style={{ fontSize: '0.86rem', color: '#ffffff', lineHeight: '1.4' }}>
-                    <FormattedMessage text={msg.content} />
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Live Camera Viewfinder Modal (Desktop & Web) */}
-      {isCameraModalOpen && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0, 0, 0, 0.88)',
-          backdropFilter: 'blur(16px)',
-          zIndex: 115,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '20px'
-        }}>
-          <div style={{
-            background: '#0d1527',
-            border: '1px solid rgba(255, 255, 255, 0.16)',
-            borderRadius: '24px',
-            padding: '22px',
-            width: '100%',
-            maxWidth: '520px',
-            boxShadow: '0 24px 60px rgba(0, 0, 0, 0.8)'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#ffffff', fontWeight: 700, fontSize: '0.95rem' }}>
-                <Camera size={20} color="#38bdf8" />
-                <span>CAMERA VIEWFINDER</span>
-              </div>
-              <button 
-                type="button" 
-                onClick={() => setIsCameraModalOpen(false)} 
-                style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div style={{ position: 'relative', width: '100%', height: '300px', background: '#020617', borderRadius: '16px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <video 
-                ref={cameraVideoRef} 
-                autoPlay 
-                playsInline 
-                muted 
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-              />
-              <div style={{ position: 'absolute', bottom: '12px', left: '12px', background: 'rgba(0, 0, 0, 0.6)', padding: '4px 10px', borderRadius: '12px', fontSize: '0.72rem', color: '#38bdf8' }}>
-                ● Live Feed
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '14px', marginTop: '18px' }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsCameraModalOpen(false);
-                  cameraInputRef.current?.click();
-                }}
-                style={{
-                  background: 'rgba(255, 255, 255, 0.06)',
-                  border: '1px solid rgba(255, 255, 255, 0.12)',
-                  color: '#cbd5e1',
-                  padding: '10px 18px',
-                  borderRadius: '14px',
-                  fontSize: '0.84rem',
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
-              >
-                Choose Existing File
-              </button>
-              <button
-                type="button"
-                onClick={handleCaptureCameraSnapshot}
-                style={{
-                  background: 'linear-gradient(135deg, #0284c7, #38bdf8)',
-                  border: 'none',
-                  color: '#ffffff',
-                  padding: '10px 22px',
-                  borderRadius: '14px',
-                  fontSize: '0.86rem',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  boxShadow: '0 4px 16px rgba(56, 189, 248, 0.4)'
-                }}
-              >
-                <Camera size={18} />
-                Snap Photo
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* In-App Google Drive Attachment Modal */}
-      {isDriveModalOpen && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0, 0, 0, 0.88)',
-          backdropFilter: 'blur(16px)',
-          zIndex: 115,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '20px'
-        }}>
-          <div style={{
-            background: '#0d1527',
-            border: '1px solid rgba(255, 255, 255, 0.16)',
-            borderRadius: '24px',
-            padding: '24px',
-            width: '100%',
-            maxWidth: '460px',
-            boxShadow: '0 24px 60px rgba(0, 0, 0, 0.8)'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#ffffff', fontWeight: 700, fontSize: '0.98rem' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(52, 211, 153, 0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399' }}>
-                  <HardDrive size={18} />
-                </div>
-                <span>GOOGLE DRIVE ATTACHMENT</span>
-              </div>
-              <button 
-                type="button" 
-                onClick={() => setIsDriveModalOpen(false)} 
-                style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <p style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '16px', lineHeight: '1.4' }}>
-              Aether से Google Drive फ़ाइल या डॉक्यूमेंट जोड़ें ताकि AI उसका विश्लेषण कर सके:
-            </p>
-
-            {/* Quick Presets */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '16px' }}>
-              {[
-                { label: 'Google Doc', icon: '📄', prefix: 'https://docs.google.com/document/d/' },
-                { label: 'Google Sheet', icon: '📊', prefix: 'https://docs.google.com/spreadsheets/d/' },
-                { label: 'Google Slides', icon: '📽️', prefix: 'https://docs.google.com/presentation/d/' },
-                { label: 'Shared Folder', icon: '📁', prefix: 'https://drive.google.com/drive/folders/' },
-              ].map(preset => (
-                <button
-                  key={preset.label}
-                  type="button"
-                  onClick={() => {
-                    setDriveDocName(preset.label);
-                    if (!driveInputUrl) setDriveInputUrl(preset.prefix);
-                  }}
-                  style={{
-                    background: driveDocName === preset.label ? 'rgba(52, 211, 153, 0.15)' : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${driveDocName === preset.label ? '#34d399' : 'rgba(255, 255, 255, 0.08)'}`,
-                    borderRadius: '12px',
-                    padding: '8px 10px',
-                    color: driveDocName === preset.label ? '#34d399' : '#cbd5e1',
-                    fontSize: '0.8rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px'
-                  }}
-                >
-                  <span>{preset.icon}</span>
-                  <span>{preset.label}</span>
-                </button>
-              ))}
-            </div>
-
-            <form onSubmit={handleAttachDriveFromModal}>
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ display: 'block', fontSize: '0.74rem', color: '#94a3b8', marginBottom: '6px', fontWeight: 600 }}>
-                  फ़ाइल का नाम (Document Title):
-                </label>
-                <input
-                  type="text"
-                  placeholder="उदा. Project_Quarterly_Report"
-                  value={driveDocName}
-                  onChange={(e) => setDriveDocName(e.target.value)}
-                  style={{
-                    width: '100%',
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
-                    borderRadius: '12px',
-                    padding: '10px 14px',
-                    color: '#ffffff',
-                    fontSize: '0.86rem',
-                    outline: 'none'
-                  }}
-                />
-              </div>
-
-              <div style={{ marginBottom: '18px' }}>
-                <label style={{ display: 'block', fontSize: '0.74rem', color: '#94a3b8', marginBottom: '6px', fontWeight: 600 }}>
-                  Google Drive लिंक (URL):
-                </label>
-                <input
-                  type="url"
-                  placeholder="https://drive.google.com/file/d/..."
-                  value={driveInputUrl}
-                  onChange={(e) => setDriveInputUrl(e.target.value)}
-                  style={{
-                    width: '100%',
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
-                    borderRadius: '12px',
-                    padding: '10px 14px',
-                    color: '#ffffff',
-                    fontSize: '0.86rem',
-                    outline: 'none'
-                  }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                <button
-                  type="button"
-                  onClick={() => setIsDriveModalOpen(false)}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#94a3b8',
-                    padding: '10px 16px',
-                    fontSize: '0.84rem',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  style={{
-                    background: 'linear-gradient(135deg, #10b981, #34d399)',
-                    border: 'none',
-                    color: '#022c22',
-                    padding: '10px 20px',
-                    borderRadius: '12px',
-                    fontSize: '0.86rem',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    boxShadow: '0 4px 16px rgba(16, 185, 129, 0.35)'
-                  }}
-                >
-                  Attach to Chat
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <DriveModal
+        isOpen={isDriveModalOpen}
+        onClose={() => setIsDriveModalOpen(false)}
+        driveDocName={driveDocName}
+        setDriveDocName={setDriveDocName}
+        driveInputUrl={driveInputUrl}
+        setDriveInputUrl={setDriveInputUrl}
+        handleAttachDriveFromModal={handleAttachDriveFromModal}
+      />
 
       {/* Floating Toast Notification */}
       {toast && (
