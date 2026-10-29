@@ -62,7 +62,8 @@ import {
   HardDrive,
   MapPin,
   RefreshCw,
-  Upload
+  Upload,
+  Radio
 } from 'lucide-react';
 import { supabase } from './supabase';
 
@@ -935,6 +936,57 @@ export default function App() {
       return `Good afternoon, ${firstName}`;
     } else {
       return `Good evening, ${firstName}`;
+    }
+  };
+
+  // 2-Minute Executive Morning Briefing State & Handler
+  const [isBriefingLoading, setIsBriefingLoading] = useState(false);
+  const [isBriefingPlaying, setIsBriefingPlaying] = useState(false);
+
+  useEffect(() => {
+    if (!isSpeaking && isBriefingPlaying) {
+      setIsBriefingPlaying(false);
+    }
+  }, [isSpeaking, isBriefingPlaying]);
+
+  const handlePlayExecutiveBriefing = async () => {
+    if (isBriefingPlaying) {
+      if (currentAudioRef.current) {
+        try { currentAudioRef.current.pause(); } catch (e) {}
+        currentAudioRef.current = null;
+      }
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        try { window.speechSynthesis.cancel(); } catch (e) {}
+      }
+      setIsSpeaking(false);
+      setIsBriefingPlaying(false);
+      showToast("ब्रीफिंग रोकी गई (Briefing Paused)", "info");
+      return;
+    }
+
+    try {
+      setIsBriefingLoading(true);
+      showToast("दैनिक ब्रीफिंग तैयार की जा रही है...", "info");
+      const resp = await fetch(`${API_BASE}/briefing/executive`, {
+        headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
+      });
+      const data = await resp.json();
+      setIsBriefingLoading(false);
+      if (data?.text) {
+        setIsBriefingPlaying(true);
+        speakText(data.text);
+        showToast("⚡ Executive Briefing चालू है", "success");
+        setChatHistory(prev => [...prev, {
+          role: 'assistant',
+          content: `🎙️ **Daily Executive Briefing:**\n\n${data.text}`,
+          created_at: new Date().toISOString()
+        }]);
+      }
+    } catch (e) {
+      console.error(e);
+      setIsBriefingLoading(false);
+      setIsBriefingPlaying(false);
+      showToast("ब्रीफिंग लोड करने में समस्या आई", "error");
     }
   };
 
@@ -4448,6 +4500,31 @@ export default function App() {
                 </div>
 
                 <div className="gemini-top-right">
+                  {/* Sleek, Minimal Executive Briefing Pill */}
+                  <button 
+                    type="button" 
+                    onClick={handlePlayExecutiveBriefing}
+                    title="Play 2-Minute Executive Briefing"
+                    style={{
+                      background: isBriefingPlaying ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255, 255, 255, 0.05)',
+                      border: isBriefingPlaying ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.12)',
+                      borderRadius: '20px',
+                      padding: '5px 12px',
+                      color: isBriefingPlaying ? '#38bdf8' : '#e2e8f0',
+                      fontSize: '0.74rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      transition: 'all 0.2s ease',
+                      outline: 'none'
+                    }}
+                  >
+                    <Radio size={13} color={isBriefingPlaying ? '#38bdf8' : '#94a3b8'} />
+                    <span>{isBriefingLoading ? 'Loading...' : isBriefingPlaying ? 'Stop' : 'Briefing'}</span>
+                  </button>
+
                   <button 
                     type="button" 
                     className="gemini-icon-btn" 

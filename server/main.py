@@ -355,7 +355,7 @@ async def quick_capture(
     if not user_msg and not req.image_data:
         raise HTTPException(status_code=400, detail="Empty input")
     if not user_msg and req.image_data:
-        user_msg = "कृपया इस फ़ोटो को देखकर विस्तार से बताएं कि इसमें क्या है और महत्वपूर्ण जानकारी समझाइए।"
+        user_msg = "कृपया इस फ़ोटो का विश्लेषण करें (यदि यह बिल/रसीद/खर्च है तो राशि और विवरण दर्ज करें, अन्यथा सामान्य जानकारी दें)।"
 
     eff_email = (req.user_email or user_email or "").strip().lower() or None
 
@@ -420,6 +420,7 @@ async def quick_capture(
         executed = True
         
     elif action == "expense":
+        merchant_or_note = data.get("note") or user_msg
         record = FinancialRecord(
             user_email=eff_email,
             type="expense",
@@ -427,18 +428,29 @@ async def quick_capture(
             amount=data.get("amount", 0.0),
             currency=data.get("currency", "INR"),
             payment_mode=data.get("payment_mode", "upi"),
-            note=data.get("note", user_msg)
+            note=merchant_or_note
         )
         db.add(record)
         db.commit()
         db.refresh(record)
         executed = True
-        if lang == "en":
-            result_message = f"Expense of ₹{record.amount:,.2f} ({record.category}) logged successfully."
-        elif lang == "hinglish":
-            result_message = f"₹{record.amount:,.2f} ka kharch ({record.category}) safaltapoorvak record ho gaya."
+        
+        is_scanned_receipt = bool(req.image_data)
+        if is_scanned_receipt:
+            clean_merchant = data.get("note") or record.category.title()
+            if lang == "en":
+                result_message = f"🧾 **Receipt Scanned & Logged:**\n• **Merchant**: {clean_merchant}\n• **Amount**: ₹{record.amount:,.2f}\n• **Category**: {record.category.title()} ({record.payment_mode.upper()})\n\nSaved to your financial records! ✅"
+            elif lang == "hinglish":
+                result_message = f"🧾 **Receipt Scan Ho Gayi:**\n• **Merchant**: {clean_merchant}\n• **Amount**: ₹{record.amount:,.2f}\n• **Category**: {record.category.title()} ({record.payment_mode.upper()})\n\nYeh kharch financial records me jud gaya hai! ✅"
+            else:
+                result_message = f"🧾 **रसीद सफलतापूर्वक स्कैन हुई:**\n• **दुकान/व्यापारी**: {clean_merchant}\n• **राशि**: ₹{record.amount:,.2f}\n• **श्रेणी**: {record.category.title()} ({record.payment_mode.upper()})\n\nयह खर्च आपके वित्तीय रिकॉर्ड में दर्ज कर लिया गया है! ✅"
         else:
-            result_message = f"₹{record.amount:,.2f} का खर्च ({record.category}) सफलतापूर्वक दर्ज कर लिया गया है।"
+            if lang == "en":
+                result_message = f"Expense of ₹{record.amount:,.2f} ({record.category}) logged successfully."
+            elif lang == "hinglish":
+                result_message = f"₹{record.amount:,.2f} ka kharch ({record.category}) safaltapoorvak record ho gaya."
+            else:
+                result_message = f"₹{record.amount:,.2f} का खर्च ({record.category}) सफलतापूर्वक दर्ज कर लिया गया है।"
         undo_payload = json.dumps({"table": "financial_records", "id": record.id})
 
     elif action == "income":
@@ -1466,6 +1478,64 @@ def get_executive_briefing(
     _BRIEFING_CACHE[user_email or "guest"] = {"data": response_data, "ts": _briefing_time.time()}
     return response_data
 
+# ----------------- 2-Minute Executive Audio Briefing -----------------
+@app.get("/api/briefing/executive")
+def get_executive_briefing(
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    """Generates an articulate, crisp 90-second executive audio briefing."""
+    eff_email = (user_email or "").strip().lower() or None
+    now = datetime.now()
+    today_date = now.date()
+    
+    # 1. Weather
+    try:
+        from ai_engine import get_live_weather_data
+    except ImportError:
+        from .ai_engine import get_live_weather_data
+    live_w = get_live_weather_data()
+    temp = live_w.get("temp", 31)
+    cond = live_w.get("condition_hi", "साफ मौसम")
+    city = live_w.get("city_hi", "Jaipur")
+    
+    # 2. Today's pending tasks & reminders
+    auto_advance_recurring_tasks(db, eff_email)
+    task_query = db.query(Task).filter(Task.status == "pending", (Task.parent_id == None) | (Task.parent_id == 0))
+    if eff_email:
+        task_query = task_query.filter(Task.user_email == eff_email)
+    else:
+        task_query = task_query.filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai"))
+    
+    all_pending = task_query.all()
+    today_tasks = []
+    for t in all_pending:
+        t_due = t.due_date.date() if t.due_date else None
+        if t_due == today_date or t.recurrence == "daily" or (t.recurrence == "weekdays" and today_date.weekday() < 5) or not t.due_date:
+            time_part = f" at {t.reminder_time}" if t.reminder_time else ""
+            today_tasks.append(f"{t.title}{time_part}")
+
+    task_count = len(today_tasks)
+    sample_tasks = ", ".join(today_tasks[:3]) if today_tasks else "कोई विशेष टास्क पेंडिंग नहीं है"
+    
+    hour = now.hour
+    greeting_word = "सुप्रभात" if 5 <= hour < 12 else ("शुभ दोपहर" if 12 <= hour < 17 else "शुभ संध्या")
+    
+    briefing_text = (
+        f"{greeting_word} पवन! Aether एग्जीक्यूटिव ब्रीफिंग में आपका स्वागत है। "
+        f"आज {city} में {temp}°C तापमान के साथ {cond} बना हुआ है। "
+        f"आज आपके एजेंडा में {task_count} कार्य हैं, जिनमें मुख्य रूप से: {sample_tasks} शामिल हैं। "
+        f"दिन की शानदार शुरुआत करें, Aether आपके सभी कार्यों के समन्वय के लिए तत्पर है!"
+    )
+    
+    return {
+        "status": "success",
+        "greeting": greeting_word,
+        "date": today_date.isoformat(),
+        "task_count": task_count,
+        "text": briefing_text
+    }
+
 # ----------------- Audit Logs & Undo -----------------
 @app.get("/api/audit-logs")
 def list_audit_logs(
@@ -1726,6 +1796,354 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
         "errors": errors,
         "timestamp": now.isoformat()
     }
+
+# ----------------- Telegram Executive Bot Webhook -----------------
+@app.post("/api/telegram/webhook")
+async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
+    """Receives and processes real-time Telegram messages from user to Aether."""
+    try:
+        data = await req.json()
+        message = data.get("message") or data.get("edited_message")
+        if not message:
+            return {"status": "ignored"}
+
+        chat_id = message.get("chat", {}).get("id")
+        text = (message.get("text") or "").strip()
+        from_user = message.get("from", {})
+        first_name = from_user.get("first_name", "Operator")
+
+        # Check paired email from MemoryItem
+        link_mem = db.query(MemoryItem).filter(
+            MemoryItem.category == "telegram_pairing", 
+            MemoryItem.fact.like(f"{chat_id}:%")
+        ).first()
+        user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
+
+        bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+
+        # Handle pairing command: /start email or /login email
+        if text.startswith("/start") or text.startswith("/login"):
+            parts = text.split(maxsplit=1)
+            if len(parts) > 1 and "@" in parts[1]:
+                target_email = parts[1].strip().lower()
+                if link_mem:
+                    link_mem.fact = f"{chat_id}:{target_email}"
+                else:
+                    db.add(MemoryItem(user_email=target_email, category="telegram_pairing", fact=f"{chat_id}:{target_email}"))
+                db.commit()
+                welcome_reply = (
+                    f"⚡ *Aether Connected!*\n\n"
+                    f"नमस्ते {first_name}! आपका Telegram `{target_email}` से लिंक हो गया है।\n\n"
+                    f"अब आप यहाँ सीधे बोलकर या लिखकर:\n"
+                    f"• *रिमाइंडर*: 'कल सुबह 10 बजे मीटिंग'\n"
+                    f"• *खर्च*: '500 रुपये पेट्रोल में खर्च हुए'\n"
+                    f"• *सवाल*: कोई भी सवाल या जानकारी\n\n"
+                    f"Aether तुरंत आपके ऐप में सिंक कर देगा! 🚀"
+                )
+            else:
+                welcome_reply = (
+                    f"⚡ *Aether Executive Telegram Bot*\n\n"
+                    f"नमस्ते {first_name}! अपने Aether अकाउंट से लिंक करने के लिए नीचे दिए गए फॉर्मेट में कमांड भेजें:\n\n"
+                    f"`/login your-email@gmail.com`\n\n"
+                    f"(अपना सही Aether ईमेल लिखें ताकि आपके टास्क्स और खर्च तुरंत सिंक हो सकें)"
+                )
+            if bot_token:
+                async with httpx.AsyncClient() as client:
+                    await client.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={
+                        "chat_id": chat_id,
+                        "text": welcome_reply,
+                        "parse_mode": "Markdown"
+                    })
+            return {"status": "paired"}
+
+        if not user_email:
+            # Guide user to pair first
+            if bot_token:
+                async with httpx.AsyncClient() as client:
+                    await client.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={
+                        "chat_id": chat_id,
+                        "text": "⚠️ *खाता लिंक नहीं है*\n\nकृपया पहले अपना Aether ईमेल भेजें:\n`/login your-email@gmail.com`",
+                        "parse_mode": "Markdown"
+                    })
+            return {"status": "unpaired"}
+
+        # Process message through Aether AI engine
+        context = build_context(db, user_email=user_email)
+        try:
+            from ai_engine import parse_intent_with_llm
+        except ImportError:
+            from .ai_engine import parse_intent_with_llm
+            
+        parsed = await parse_intent_with_llm(
+            text,
+            context=context,
+            user_name=first_name,
+            language="hi"
+        )
+        action = parsed.get("action", "query")
+        data_inner = parsed.get("data", {})
+        
+        reply_text = ""
+        if action == "task":
+            t = Task(
+                user_email=user_email,
+                title=data_inner.get("title", text),
+                priority=data_inner.get("priority", "medium"),
+                reminder_time=data_inner.get("reminder_time"),
+                status="pending"
+            )
+            db.add(t)
+            db.commit()
+            db.refresh(t)
+            subs = data_inner.get("subtasks")
+            if subs and isinstance(subs, list):
+                for st in subs:
+                    if str(st).strip():
+                        db.add(Task(user_email=user_email, title=str(st).strip(), parent_id=t.id, status="pending"))
+                db.commit()
+            reply_text = f"⏰ *टास्क दर्ज किया गया!*\n\n• **कार्य**: {t.title}\n• **समय**: {t.reminder_time or 'Anytime'}\n• **प्राथमिकता**: {t.priority.upper()}"
+        elif action == "expense":
+            rec = FinancialRecord(
+                user_email=user_email,
+                type="expense",
+                category=data_inner.get("category", "general"),
+                amount=data_inner.get("amount", 0.0),
+                currency="INR",
+                payment_mode=data_inner.get("payment_mode", "upi"),
+                note=data_inner.get("note", text)
+            )
+            db.add(rec)
+            db.commit()
+            reply_text = f"🧾 *खर्च दर्ज किया गया!*\n\n• **राशि**: ₹{rec.amount:,.2f}\n• **श्रेणी**: {rec.category.title()}\n• **विवरण**: {rec.note}"
+        else:
+            reply_text = data_inner.get("response", "कार्य पूरा किया गया।")
+
+        if bot_token:
+            async with httpx.AsyncClient() as client:
+                await client.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={
+                    "chat_id": chat_id,
+                    "text": reply_text,
+                    "parse_mode": "Markdown"
+                })
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"[Telegram Webhook Error] {e}")
+        return {"status": "error", "detail": str(e)}
+
+# ----------------- WhatsApp Executive Assistant Webhook (Meta Cloud API & Twilio) -----------------
+async def _send_whatsapp_message(to_number: str, message_body: str, phone_id: str, access_token: str):
+    """Sends outgoing message via Meta WhatsApp Cloud API."""
+    if not phone_id or not access_token:
+        print("[WhatsApp] WHATSAPP_PHONE_ID or WHATSAPP_TOKEN missing in environment variables.")
+        return
+    url = f"https://graph.facebook.com/v19.0/{phone_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_number,
+        "type": "text",
+        "text": {"body": message_body}
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(url, json=payload, headers=headers, timeout=10)
+    except Exception as e:
+        print(f"[WhatsApp Outgoing Error] {e}")
+
+@app.get("/api/whatsapp/webhook")
+def whatsapp_verify(request: Request):
+    """Meta WhatsApp Webhook Verification Handshake."""
+    params = dict(request.query_params)
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge")
+    expected_token = os.environ.get("WHATSAPP_VERIFY_TOKEN", "aether_secure_token")
+    if mode == "subscribe" and token == expected_token:
+        try:
+            return int(challenge)
+        except (ValueError, TypeError):
+            return challenge
+    raise HTTPException(status_code=403, detail="Verification token mismatch")
+
+@app.post("/api/whatsapp/webhook")
+async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
+    """Receives and processes incoming WhatsApp messages from Meta Cloud API."""
+    try:
+        payload = await req.json()
+        entry = payload.get("entry", [{}])[0]
+        changes = entry.get("changes", [{}])[0]
+        value = changes.get("value", {})
+        messages = value.get("messages", [])
+        if not messages:
+            return {"status": "ok", "message": "no incoming messages"}
+
+        msg = messages[0]
+        sender = msg.get("from")  # e.g., '919876543210'
+        msg_type = msg.get("type")
+        user_text = ""
+
+        if msg_type == "text":
+            user_text = msg.get("text", {}).get("body", "").strip()
+        else:
+            user_text = "Hello Aether"
+
+        # Check paired email from MemoryItem
+        link_mem = db.query(MemoryItem).filter(
+            MemoryItem.category == "whatsapp_pairing",
+            MemoryItem.fact.like(f"{sender}:%")
+        ).first()
+        user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
+
+        wa_token = os.environ.get("WHATSAPP_TOKEN", "").strip()
+        wa_phone_id = os.environ.get("WHATSAPP_PHONE_ID", "").strip()
+
+        # Pairing command: /login user@gmail.com
+        if user_text.lower().startswith("/login") or user_text.lower().startswith("/start") or ("@" in user_text and len(user_text.split()) == 1):
+            parts = user_text.split()
+            target_email = parts[-1].strip().lower()
+            if "@" in target_email:
+                if link_mem:
+                    link_mem.fact = f"{sender}:{target_email}"
+                else:
+                    db.add(MemoryItem(user_email=target_email, category="whatsapp_pairing", fact=f"{sender}:{target_email}"))
+                db.commit()
+                reply_text = (
+                    f"⚡ *Aether Connected!*\n\n"
+                    f"नमस्ते! आपका WhatsApp नंबर `{target_email}` से लिंक हो गया है।\n\n"
+                    f"अब आप यहाँ सीधे बोलकर या लिखकर:\n"
+                    f"• *रिमाइंडर*: 'कल सुबह 10 बजे मीटिंग'\n"
+                    f"• *खर्च*: '500 रुपये पेट्रोल में खर्च हुए'\n"
+                    f"• *सवाल*: कोई भी जानकारी या सवाल\n\n"
+                    f"Aether तुरंत आपके ऐप में सिंक कर देगा! 🚀"
+                )
+            else:
+                reply_text = (
+                    f"⚡ *Aether WhatsApp Executive*\n\n"
+                    f"अपने Aether खाते से लिंक करने के लिए नीचे दिए गए फॉर्मेट में अपना ईमेल भेजें:\n\n"
+                    f"`/login your-email@gmail.com`"
+                )
+            await _send_whatsapp_message(sender, reply_text, wa_phone_id, wa_token)
+            return {"status": "paired"}
+
+        if not user_email:
+            reply_text = (
+                f"⚠️ *Aether खाता लिंक नहीं है*\n\n"
+                f"कृपया पहले अपना Aether ईमेल भेजकर लिंक करें:\n"
+                f"`/login your-email@gmail.com`"
+            )
+            await _send_whatsapp_message(sender, reply_text, wa_phone_id, wa_token)
+            return {"status": "unpaired"}
+
+        # Process through Aether AI engine
+        context = build_context(db, user_email=user_email)
+        try:
+            from ai_engine import parse_intent_with_llm
+        except ImportError:
+            from .ai_engine import parse_intent_with_llm
+
+        parsed = await parse_intent_with_llm(
+            user_text,
+            context=context,
+            user_name="Pawan",
+            language="hi"
+        )
+        action = parsed.get("action", "query")
+        data_inner = parsed.get("data", {})
+
+        reply_text = ""
+        if action == "task":
+            t = Task(
+                user_email=user_email,
+                title=data_inner.get("title", user_text),
+                priority=data_inner.get("priority", "medium"),
+                reminder_time=data_inner.get("reminder_time"),
+                status="pending"
+            )
+            db.add(t)
+            db.commit()
+            db.refresh(t)
+            subs = data_inner.get("subtasks")
+            if subs and isinstance(subs, list):
+                for st in subs:
+                    if str(st).strip():
+                        db.add(Task(user_email=user_email, title=str(st).strip(), parent_id=t.id, status="pending"))
+                db.commit()
+            reply_text = f"⏰ *टास्क दर्ज किया गया!*\n\n• *कार्य*: {t.title}\n• *समय*: {t.reminder_time or 'Anytime'}\n• *प्राथमिकता*: {t.priority.upper()}"
+        elif action == "expense":
+            rec = FinancialRecord(
+                user_email=user_email,
+                type="expense",
+                category=data_inner.get("category", "general"),
+                amount=data_inner.get("amount", 0.0),
+                currency="INR",
+                payment_mode=data_inner.get("payment_mode", "upi"),
+                note=data_inner.get("note", user_text)
+            )
+            db.add(rec)
+            db.commit()
+            reply_text = f"🧾 *खर्च दर्ज किया गया!*\n\n• *राशि*: ₹{rec.amount:,.2f}\n• *श्रेणी*: {rec.category.title()}\n• *विवरण*: {rec.note}"
+        else:
+            reply_text = data_inner.get("response", "कार्य पूरा किया गया।")
+
+        await _send_whatsapp_message(sender, reply_text, wa_phone_id, wa_token)
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"[WhatsApp Webhook Error] {e}")
+        return {"status": "error", "detail": str(e)}
+
+# ----------------- Twilio WhatsApp Sandbox Webhook Support -----------------
+@app.post("/api/whatsapp/twilio")
+async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
+    """Receives and processes incoming WhatsApp messages from Twilio Sandbox."""
+    try:
+        form = await req.form()
+        sender_full = form.get("From", "")  # e.g. "whatsapp:+919876543210"
+        sender = sender_full.replace("whatsapp:", "").strip()
+        body = form.get("Body", "").strip()
+
+        link_mem = db.query(MemoryItem).filter(
+            MemoryItem.category == "whatsapp_pairing",
+            MemoryItem.fact.like(f"{sender}:%")
+        ).first()
+        user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
+
+        if body.lower().startswith("/login") or ("@" in body and len(body.split()) == 1):
+            target_email = body.split()[-1].strip().lower()
+            if link_mem:
+                link_mem.fact = f"{sender}:{target_email}"
+            else:
+                db.add(MemoryItem(user_email=target_email, category="whatsapp_pairing", fact=f"{sender}:{target_email}"))
+            db.commit()
+            reply = f"⚡ Aether WhatsApp Linked with {target_email}! Ab aap reminders aur kharch direct WhatsApp par bhej sakte hain."
+        elif not user_email:
+            reply = "⚠️ Please link your email first by sending: /login your-email@gmail.com"
+        else:
+            from ai_engine import parse_intent_with_llm
+            parsed = await parse_intent_with_llm(body, user_name="Pawan", language="hi")
+            action = parsed.get("action", "query")
+            data_inner = parsed.get("data", {})
+            if action == "task":
+                t = Task(user_email=user_email, title=data_inner.get("title", body), reminder_time=data_inner.get("reminder_time"), status="pending")
+                db.add(t)
+                db.commit()
+                reply = f"⏰ Task saved: {t.title} (Time: {t.reminder_time or 'Anytime'})"
+            elif action == "expense":
+                rec = FinancialRecord(user_email=user_email, type="expense", category=data_inner.get("category", "general"), amount=data_inner.get("amount", 0.0), currency="INR", note=data_inner.get("note", body))
+                db.add(rec)
+                db.commit()
+                reply = f"🧾 Kharch saved: ₹{rec.amount:,.2f} ({rec.category})"
+            else:
+                reply = data_inner.get("response", "Done.")
+
+        twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{reply}</Message></Response>'
+        from fastapi.responses import Response
+        return Response(content=twiml, media_type="application/xml")
+    except Exception as e:
+        print(f"[Twilio WA Error] {e}")
+        return Response(content='<Response><Message>Error processing</Message></Response>', media_type="application/xml")
 
 # ----------------- Static Frontend Hosting (Single-Service Cloud Deployment) -----------------
 DIST_DIR = os.path.join(os.path.dirname(__file__), "..", "desktop", "dist")
