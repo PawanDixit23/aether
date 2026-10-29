@@ -3206,12 +3206,14 @@ export default function App() {
     if (!voiceOutputEnabled) return;
     if (!text || !text.trim()) return;
 
-    // Clean markdown artifacts from text before speaking
+    // Clean markdown artifacts from text before speaking (preserve link text / headlines!)
     const cleanText = text
-      .replace(/\[.*?\]\(.*?\)/g, '')   // remove markdown links
-      .replace(/[*_#`🔗]/g, '')          // remove markdown symbols
-      .replace(/```[\s\S]*?```/g, '')    // remove code blocks
-      .replace(/\n+/g, ' ')             // flatten newlines
+      .replace(/\[(.*?)\]\([^)]*\)/g, '$1')   // preserve headline text from markdown links
+      .replace(/https?:\/\/[^\s]+/g, '')      // remove raw URLs
+      .replace(/Link:\s*(?:स्रोत पढ़ें|Read Source)?/gi, '') // clean link labels
+      .replace(/[*_#`🔗🏆📰•]/g, '')          // remove markdown formatting & symbols
+      .replace(/```[\s\S]*?```/g, '')         // remove code blocks
+      .replace(/\s+/g, ' ')                  // normalize whitespace
       .trim();
 
     if (!cleanText) return;

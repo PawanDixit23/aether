@@ -1728,26 +1728,54 @@ def text_to_speech(request: Request, text: str = "", voice: str = "zephyr", lang
 
     import urllib.request
     import urllib.parse
+    import re
 
-    clean_text = text.strip()[:350]
+    clean_text = text.strip()[:600]
     if not clean_text:
         raise HTTPException(status_code=400, detail="Text required")
 
     has_devanagari = any('\u0900' <= c <= '\u097f' for c in clean_text)
     # Always use authentic Indian English (en-IN) or Hindi (hi) as requested
     tl = "hi" if (lang.startswith("hi") or has_devanagari) else "en-IN"
-    
-    encoded_text = urllib.parse.quote(clean_text)
-    tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl={tl}&q={encoded_text}"
-    
+
+    # Chunk text into ~150 char pieces on sentence/word boundaries so Google TTS tw-ob never 404s
+    chunks = []
+    if len(clean_text) <= 160:
+        chunks = [clean_text]
+    else:
+        words = clean_text.split()
+        current_chunk = []
+        current_len = 0
+        for w in words:
+            if current_len + len(w) + 1 > 150 and current_chunk:
+                chunks.append(" ".join(current_chunk))
+                current_chunk = [w]
+                current_len = len(w)
+            else:
+                current_chunk.append(w)
+                current_len += len(w) + 1
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
+
+    audio_bytes_list = []
     try:
-        req = urllib.request.Request(
-            tts_url, 
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        )
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            audio_data = resp.read()
-            return Response(content=audio_data, media_type="audio/mpeg", headers=headers)
+        for chunk in chunks[:4]:  # max 4 chunks (~600 chars) for responsive streaming
+            if not chunk.strip():
+                continue
+            encoded_text = urllib.parse.quote(chunk.strip())
+            tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl={tl}&q={encoded_text}"
+            req = urllib.request.Request(
+                tts_url, 
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                audio_bytes_list.append(resp.read())
+
+        if not audio_bytes_list:
+            raise Exception("No audio generated")
+
+        full_audio = b"".join(audio_bytes_list)
+        return Response(content=full_audio, media_type="audio/mpeg", headers=headers)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS synthesis error: {str(e)}")
 

@@ -169,7 +169,7 @@ def get_live_weather_data(lat: float = None, lon: float = None) -> dict:
             # 429 check on response status
             if resp.status == 429:
                 WEATHER_BACKOFF_UNTIL = now_ts + WEATHER_429_BACKOFF
-                print(f"[Aether Engine] ⚠️ Weather API 429 — backing off for {WEATHER_429_BACKOFF//60} min")
+                print(f"[Aether Engine] ℹ️ Weather API rate-limited (429) — gracefully serving cached weather for Jaipur ({WEATHER_429_BACKOFF//60} min backoff)")
                 if coord_entry and coord_entry.get("data"):
                     return coord_entry["data"]
                 if WEATHER_CACHE["data"]:
@@ -223,7 +223,7 @@ def get_live_weather_data(lat: float = None, lon: float = None) -> dict:
         # 429 urllib error
         if "429" in err_str or "Too Many Requests" in err_str:
             WEATHER_BACKOFF_UNTIL = now_ts + WEATHER_429_BACKOFF
-            print(f"[Aether Engine] ⚠️ Weather API 429 — backing off for {WEATHER_429_BACKOFF//60} min")
+            print(f"[Aether Engine] ℹ️ Weather API rate-limited (429) — gracefully serving cached weather for Jaipur ({WEATHER_429_BACKOFF//60} min backoff)")
         else:
             print(f"[Aether Engine] Live weather fetch error: {e}")
         # Stale cache से serve करो (any age)
@@ -301,21 +301,23 @@ def fetch_live_news_items(query: str = "", limit: int = 5, lang: str = "en") -> 
         is_tech = any(w in q_lower for w in ["tech", "technology", "ai", "software", "gadget", "apple", "google", "meta", "nvidia"])
         is_business = any(w in q_lower for w in ["business", "finance", "market", "stock", "nifty", "sensex", "economy", "crypto", "bitcoin"])
 
-        if is_match_or_result:
-            clean_q = query.replace("in hindi", "").replace("hindi me", "").replace("in english", "").strip()
-            search_query = f"{clean_q} sports match score result" if not any(w in clean_q.lower() for w in ["cricket", "football", "sports", "match"]) else clean_q
+        clean_q = (
+            query.replace("in hindi", "").replace("hindi me", "").replace("hindi mein", "")
+            .replace("in english", "").replace("english me", "").replace("give me", "")
+            .replace("batao", "").replace("latest", "").replace("today", "")
+            .replace("ताज़ा", "").replace("खबरें", "").replace("समाचार", "").strip()
+        )
+        if is_match_or_result or any(w in clean_q.lower() for w in ["cricket", "football", "ipl", "tennis", "hockey", "badminton", "f1", "sports", "sport", "khel"]):
+            search_query = f"{clean_q} sports" if ("sport" not in clean_q.lower() and "cricket" not in clean_q.lower()) else clean_q
             url = f"https://news.google.com/rss/search?q={urllib.parse.quote(search_query)}&hl={hl}&gl={gl}&ceid={ceid}"
-        elif wants_hindi:
-            if is_sports:
-                url = f"https://news.google.com/rss/headlines/section/topic/SPORTS?hl=hi&gl=IN&ceid=IN:hi"
-            else:
-                url = f"https://news.google.com/rss?hl=hi&gl=IN&ceid=IN:hi"
         elif is_sports:
-            url = f"https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-IN&gl=IN&ceid=IN:en"
+            url = f"https://news.google.com/rss/headlines/section/topic/SPORTS?hl={hl}&gl={gl}&ceid={ceid}"
         elif is_tech:
-            url = f"https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-IN&gl=IN&ceid=IN:en"
+            url = f"https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl={hl}&gl={gl}&ceid={ceid}"
         elif is_business:
-            url = f"https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-IN&gl=IN&ceid=IN:en"
+            url = f"https://news.google.com/rss/headlines/section/topic/BUSINESS?hl={hl}&gl={gl}&ceid={ceid}"
+        elif wants_hindi:
+            url = f"https://news.google.com/rss?hl=hi&gl=IN&ceid=IN:hi"
         else:
             url = f"https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
 
