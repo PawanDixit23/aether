@@ -547,8 +547,7 @@ const AetherParticleSphere = ({ isListening, isSpeaking, onClick }) => {
 export default function App() {
   // Onboarding & BYOK Intelligence Configuration
   const [onboardingDone, setOnboardingDone] = useState(() => 
-    localStorage.getItem('aether_onboarding_done') === 'true' || 
-    Boolean(localStorage.getItem('aether_user_email'))
+    localStorage.getItem('aether_onboarding_done') === 'true'
   );
   const [onboardingStep, setOnboardingStep] = useState(1);
   const [userName, setUserName] = useState(() => localStorage.getItem('aether_user_name') || '');
@@ -776,7 +775,10 @@ export default function App() {
   const [newTaskInput, setNewTaskInput] = useState('');
   const [expandedTaskIds, setExpandedTaskIds] = useState({});
   const toggleSubtasksExpand = (taskId) => {
-    setExpandedTaskIds(prev => ({ ...prev, [taskId]: !prev[taskId] }));
+    setExpandedTaskIds(prev => ({
+      ...prev,
+      [taskId]: prev[taskId] === false ? true : false
+    }));
   };
   const renderRecurrenceBadge = (rec) => {
     if (!rec) return null;
@@ -850,18 +852,6 @@ export default function App() {
           console.warn('Direct audio play error:', e);
         });
       }
-
-      // 2. Also send to native React Native layer if running in mobile app
-      if (typeof window !== 'undefined' && window.ReactNativeWebView) {
-        try {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'PLAY_TTS_AUDIO',
-            url: ttsUrl
-          }));
-        } catch (e) {
-          console.warn('RN postMessage TTS error:', e);
-        }
-      }
     } catch (e) {
       console.warn('playStreamAudio exception:', e);
       setIsSpeaking(false);
@@ -890,9 +880,11 @@ export default function App() {
     }
   }, []);
 
-  // Proactive Spoken Greeting on App Open (Only if Voice Responses permission is ON)
+  // Proactive Spoken Greeting on App Open (Only if Voice Responses permission is ON AND onboarding is completed)
   const hasSpokenWelcomeRef = useRef(false);
   useEffect(() => {
+    // STRICT GUARD: NEVER speak on onboarding screens, during login steps, or before onboarding is done!
+    if (!onboardingDone) return;
     if (hasSpokenWelcomeRef.current) return;
 
     // Strict guard: ONLY speak if voice output permission is enabled
@@ -900,6 +892,7 @@ export default function App() {
     if (!voiceAllowed) return;
 
     const timer = setTimeout(() => {
+      if (!onboardingDone) return;
       if (hasSpokenWelcomeRef.current) return;
       hasSpokenWelcomeRef.current = true;
 
@@ -930,7 +923,7 @@ export default function App() {
     }, 1500);
 
     return () => clearTimeout(timer);
-  }, [voiceOutputEnabled, userName, selectedLang]);
+  }, [onboardingDone, voiceOutputEnabled, userName, selectedLang]);
 
   // Dynamic Executive Greeting based on standard time of day
   const getDynamicGreeting = () => {
@@ -1466,6 +1459,21 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
+    // 1. Immediately kill any active audio or speech synthesis
+    if (currentAudioRef.current) {
+      try {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.currentTime = 0;
+      } catch (e) {}
+      currentAudioRef.current = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+    setIsSpeaking(false);
+    setAudioSamplePlaying(null);
+    hasSpokenWelcomeRef.current = true; // Never trigger proactive welcome speech on logout!
+
     try {
       await supabase.auth.signOut();
     } catch (err) {
@@ -2989,6 +2997,8 @@ export default function App() {
 
   // Text to Speech with Mobile WebView Audio Streaming Fallback
   const speakText = (text) => {
+    // STRICT GUARD: If onboarding is not completed, NEVER speak or play TTS!
+    if (!onboardingDone) return;
     // STRICT: No voice if permission is off
     if (!voiceOutputEnabled) return;
     if (!text || !text.trim()) return;
@@ -3210,6 +3220,22 @@ export default function App() {
           status: willBeDone ? 'completed' : 'pending'
         };
       }
+      if (t.subtasks && t.subtasks.some(s => s.id === taskId)) {
+        return {
+          ...t,
+          subtasks: t.subtasks.map(s => {
+            if (s.id === taskId) {
+              const willBeDone = !(s.is_completed || s.status === 'completed');
+              return {
+                ...s,
+                is_completed: willBeDone,
+                status: willBeDone ? 'completed' : 'pending'
+              };
+            }
+            return s;
+          })
+        };
+      }
       return t;
     }));
 
@@ -3237,6 +3263,14 @@ export default function App() {
   };
 
   const handleDeleteTask = async (taskId) => {
+    // Optimistically remove from local state
+    setTasks(prev => prev.filter(t => t.id !== taskId).map(t => {
+      if (t.subtasks && t.subtasks.some(s => s.id === taskId)) {
+        return { ...t, subtasks: t.subtasks.filter(s => s.id !== taskId) };
+      }
+      return t;
+    }));
+
     try {
       await fetch(`${API_BASE}/tasks/${taskId}`, { 
         method: 'DELETE',
@@ -3246,6 +3280,7 @@ export default function App() {
       showToast("कार्य हटा दिया गया", 'info');
     } catch (err) {
       console.error(err);
+      refreshAllData();
     }
   };
 
@@ -4871,9 +4906,9 @@ export default function App() {
                                     style={{ background: 'rgba(192, 132, 252, 0.1)', border: '1px solid rgba(192, 132, 252, 0.25)', color: '#c084fc', padding: '2px 8px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
                                   >
                                     <span>📁 {task.subtasks.filter(s => s.is_completed || s.status === 'completed').length}/{task.subtasks.length} Subtasks</span>
-                                    <span>{expandedTaskIds[task.id] ? '▲' : '▼'}</span>
+                                    <span>{expandedTaskIds[task.id] !== false ? '▲' : '▼'}</span>
                                   </button>
-                                  {expandedTaskIds[task.id] && (
+                                  {expandedTaskIds[task.id] !== false && (
                                     <div style={{ marginTop: '6px', paddingLeft: '8px', borderLeft: '2px solid rgba(192, 132, 252, 0.3)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                       {task.subtasks.map(st => {
                                         const stDone = st.is_completed || st.status === 'completed';
@@ -4956,9 +4991,9 @@ export default function App() {
                                       style={{ background: 'rgba(192, 132, 252, 0.1)', border: '1px solid rgba(192, 132, 252, 0.25)', color: '#c084fc', padding: '2px 8px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
                                     >
                                       <span>📁 {task.subtasks.filter(s => s.is_completed || s.status === 'completed').length}/{task.subtasks.length} Subtasks</span>
-                                      <span>{expandedTaskIds[task.id] ? '▲' : '▼'}</span>
+                                      <span>{expandedTaskIds[task.id] !== false ? '▲' : '▼'}</span>
                                     </button>
-                                    {expandedTaskIds[task.id] && (
+                                    {expandedTaskIds[task.id] !== false && (
                                       <div style={{ marginTop: '6px', paddingLeft: '8px', borderLeft: '2px solid rgba(192, 132, 252, 0.3)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                                         {task.subtasks.map(st => {
                                           const stDone = st.is_completed || st.status === 'completed';
@@ -5572,9 +5607,8 @@ export default function App() {
                               key={t.id}
                               style={{
                                 display: 'flex',
-                                alignItems: 'flex-start',
-                                justifyContent: 'space-between',
-                                gap: '10px',
+                                flexDirection: 'column',
+                                gap: '8px',
                                 padding: '12px',
                                 borderRadius: '14px',
                                 background: done ? 'rgba(255, 255, 255, 0.02)' : 'rgba(255, 255, 255, 0.05)',
@@ -5583,120 +5617,203 @@ export default function App() {
                                 transition: 'all 0.15s ease'
                               }}
                             >
-                              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', flex: 1, minWidth: 0 }}>
-                                <div 
-                                  onClick={() => !t.is_google_calendar && handleToggleTask(t.id)}
-                                  style={{
-                                    width: '22px',
-                                    height: '22px',
-                                    borderRadius: '7px',
-                                    border: done ? '1px solid #10b981' : t.is_google_calendar ? '1px solid #60a5fa' : '1px solid rgba(255, 255, 255, 0.35)',
-                                    background: done ? '#10b981' : 'rgba(255, 255, 255, 0.03)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    cursor: t.is_google_calendar ? 'default' : 'pointer',
-                                    color: '#022c22',
-                                    flexShrink: 0,
-                                    marginTop: '1px'
-                                  }}
-                                >
-                                  {done && <Check size={14} />}
-                                  {!done && t.is_google_calendar && <Calendar size={12} color="#60a5fa" />}
-                                </div>
-
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minWidth: 0 }}>
-                                  <div style={{ color: done ? '#64748b' : '#ffffff', fontSize: '0.90rem', fontWeight: 600, lineHeight: 1.35, wordBreak: 'break-word', textDecoration: done ? 'line-through' : 'none' }}>
-                                    {t.title}
+                              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px', width: '100%' }}>
+                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', flex: 1, minWidth: 0 }}>
+                                  <div 
+                                    onClick={() => !t.is_google_calendar && handleToggleTask(t.id)}
+                                    style={{
+                                      width: '22px',
+                                      height: '22px',
+                                      borderRadius: '7px',
+                                      border: done ? '1px solid #10b981' : t.is_google_calendar ? '1px solid #60a5fa' : '1px solid rgba(255, 255, 255, 0.35)',
+                                      background: done ? '#10b981' : 'rgba(255, 255, 255, 0.03)',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      cursor: t.is_google_calendar ? 'default' : 'pointer',
+                                      color: '#022c22',
+                                      flexShrink: 0,
+                                      marginTop: '1px'
+                                    }}
+                                  >
+                                    {done && <Check size={14} />}
+                                    {!done && t.is_google_calendar && <Calendar size={12} color="#60a5fa" />}
                                   </div>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '2px' }}>
-                                    {t.reminder_time && (
-                                      <span style={{ fontSize: '0.70rem', color: '#38bdf8', background: 'rgba(56, 189, 248, 0.12)', border: '1px solid rgba(56, 189, 248, 0.25)', padding: '2px 7px', borderRadius: '6px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                                        ⏰ {t.reminder_time}
+
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minWidth: 0 }}>
+                                    <div style={{ color: done ? '#64748b' : '#ffffff', fontSize: '0.90rem', fontWeight: 600, lineHeight: 1.35, wordBreak: 'break-word', textDecoration: done ? 'line-through' : 'none' }}>
+                                      {t.title}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '2px' }}>
+                                      {t.reminder_time && (
+                                        <span style={{ fontSize: '0.70rem', color: '#38bdf8', background: 'rgba(56, 189, 248, 0.12)', border: '1px solid rgba(56, 189, 248, 0.25)', padding: '2px 7px', borderRadius: '6px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                          ⏰ {t.reminder_time}
+                                        </span>
+                                      )}
+                                      {renderRecurrenceBadge(t.recurrence)}
+                                      <span style={{
+                                        fontSize: '0.65rem',
+                                        fontWeight: 700,
+                                        padding: '2px 6px',
+                                        borderRadius: '6px',
+                                        textTransform: 'uppercase',
+                                        background: t.is_google_calendar ? 'rgba(66, 133, 244, 0.2)' : t.priority === 'urgent' ? 'rgba(244, 63, 94, 0.2)' : t.priority === 'high' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(148, 163, 184, 0.15)',
+                                        color: t.is_google_calendar ? '#60a5fa' : t.priority === 'urgent' ? '#fb7185' : t.priority === 'high' ? '#fbbf24' : '#94a3b8'
+                                      }}>
+                                        {t.is_google_calendar ? 'Google Calendar' : t.priority}
                                       </span>
-                                    )}
-                                    {renderRecurrenceBadge(t.recurrence)}
-                                    <span style={{
-                                      fontSize: '0.65rem',
-                                      fontWeight: 700,
-                                      padding: '2px 6px',
-                                      borderRadius: '6px',
-                                      textTransform: 'uppercase',
-                                      background: t.is_google_calendar ? 'rgba(66, 133, 244, 0.2)' : t.priority === 'urgent' ? 'rgba(244, 63, 94, 0.2)' : t.priority === 'high' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(148, 163, 184, 0.15)',
-                                      color: t.is_google_calendar ? '#60a5fa' : t.priority === 'urgent' ? '#fb7185' : t.priority === 'high' ? '#fbbf24' : '#94a3b8'
-                                    }}>
-                                      {t.is_google_calendar ? 'Google Calendar' : t.priority}
-                                    </span>
+                                    </div>
                                   </div>
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, marginTop: '1px' }}>
+                                  {t.is_google_calendar ? (
+                                    t.htmlLink && (
+                                      <button
+                                        type="button"
+                                        onClick={() => window.open(t.htmlLink, '_blank', 'noopener,noreferrer')}
+                                        style={{
+                                          background: 'rgba(66, 133, 244, 0.15)',
+                                          border: '1px solid rgba(66, 133, 244, 0.3)',
+                                          color: '#60a5fa',
+                                          padding: '4px 8px',
+                                          borderRadius: '8px',
+                                          fontSize: '0.70rem',
+                                          fontWeight: 600,
+                                          cursor: 'pointer',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: '3px'
+                                        }}
+                                        title="Open event in Google Calendar"
+                                      >
+                                        <ExternalLink size={12} />
+                                        <span>Open</span>
+                                      </button>
+                                    )
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => openTaskInGoogleCalendar(t)}
+                                        style={{
+                                          background: 'rgba(56, 189, 248, 0.12)',
+                                          border: '1px solid rgba(56, 189, 248, 0.25)',
+                                          color: '#38bdf8',
+                                          padding: '4px 8px',
+                                          borderRadius: '8px',
+                                          fontSize: '0.70rem',
+                                          fontWeight: 600,
+                                          cursor: 'pointer',
+                                          whiteSpace: 'nowrap'
+                                        }}
+                                        title="Sync to Google Calendar"
+                                      >
+                                        + GCal
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteTask(t.id)}
+                                        style={{
+                                          background: 'rgba(239, 68, 68, 0.08)',
+                                          border: '1px solid rgba(239, 68, 68, 0.15)',
+                                          color: '#94a3b8',
+                                          padding: '4px 6px',
+                                          borderRadius: '8px',
+                                          cursor: 'pointer',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center'
+                                        }}
+                                        title="Delete reminder"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </>
+                                  )}
                                 </div>
                               </div>
 
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, marginTop: '1px' }}>
-                                {t.is_google_calendar ? (
-                                  t.htmlLink && (
-                                    <button
-                                      type="button"
-                                      onClick={() => window.open(t.htmlLink, '_blank', 'noopener,noreferrer')}
-                                      style={{
-                                        background: 'rgba(66, 133, 244, 0.15)',
-                                        border: '1px solid rgba(66, 133, 244, 0.3)',
-                                        color: '#60a5fa',
-                                        padding: '4px 8px',
-                                        borderRadius: '8px',
-                                        fontSize: '0.70rem',
-                                        fontWeight: 600,
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '3px'
-                                      }}
-                                      title="Open event in Google Calendar"
-                                    >
-                                      <ExternalLink size={12} />
-                                      <span>Open</span>
-                                    </button>
-                                  )
-                                ) : (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => openTaskInGoogleCalendar(t)}
-                                      style={{
-                                        background: 'rgba(56, 189, 248, 0.12)',
-                                        border: '1px solid rgba(56, 189, 248, 0.25)',
-                                        color: '#38bdf8',
-                                        padding: '4px 8px',
-                                        borderRadius: '8px',
-                                        fontSize: '0.70rem',
-                                        fontWeight: 600,
-                                        cursor: 'pointer',
-                                        whiteSpace: 'nowrap'
-                                      }}
-                                      title="Sync to Google Calendar"
-                                    >
-                                      + GCal
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteTask(t.id)}
-                                      style={{
-                                        background: 'rgba(239, 68, 68, 0.08)',
-                                        border: '1px solid rgba(239, 68, 68, 0.15)',
-                                        color: '#94a3b8',
-                                        padding: '4px 6px',
-                                        borderRadius: '8px',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center'
-                                      }}
-                                      title="Delete reminder"
-                                    >
-                                      <Trash2 size={13} />
-                                    </button>
-                                  </>
-                                )}
-                              </div>
+                              {/* SUBTASKS BLOCK in Calendar View */}
+                              {t.subtasks && t.subtasks.length > 0 && (
+                                <div style={{ marginTop: '4px', paddingTop: '8px', borderTop: '1px solid rgba(255, 255, 255, 0.06)', width: '100%' }}>
+                                  <button 
+                                    type="button" 
+                                    onClick={(e) => { e.stopPropagation(); toggleSubtasksExpand(t.id); }}
+                                    style={{
+                                      background: 'rgba(192, 132, 252, 0.12)',
+                                      border: '1px solid rgba(192, 132, 252, 0.3)',
+                                      color: '#c084fc',
+                                      padding: '2px 8px',
+                                      borderRadius: '6px',
+                                      fontSize: '0.70rem',
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      fontWeight: 600,
+                                      marginBottom: expandedTaskIds[t.id] !== false ? '6px' : '0'
+                                    }}
+                                  >
+                                    <span>📁 {t.subtasks.filter(s => s.is_completed || s.status === 'completed').length}/{t.subtasks.length} Subtasks</span>
+                                    <span>{expandedTaskIds[t.id] !== false ? '▲' : '▼'}</span>
+                                  </button>
+
+                                  {expandedTaskIds[t.id] !== false && (
+                                    <div style={{ paddingLeft: '8px', borderLeft: '2px solid rgba(192, 132, 252, 0.35)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                      {t.subtasks.map(st => {
+                                        const stDone = st.is_completed || st.status === 'completed';
+                                        return (
+                                          <div 
+                                            key={st.id} 
+                                            onClick={(e) => { e.stopPropagation(); handleToggleTask(st.id); }}
+                                            style={{
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'space-between',
+                                              padding: '3px 4px',
+                                              borderRadius: '5px',
+                                              cursor: 'pointer'
+                                            }}
+                                          >
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '7px', flex: 1, minWidth: 0 }}>
+                                              <div style={{
+                                                width: '15px',
+                                                height: '15px',
+                                                borderRadius: '4px',
+                                                border: stDone ? '1px solid #10b981' : '1px solid rgba(255, 255, 255, 0.3)',
+                                                background: stDone ? '#10b981' : 'transparent',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                color: '#022c22',
+                                                flexShrink: 0
+                                              }}>
+                                                {stDone && <Check size={10} />}
+                                              </div>
+                                              <span style={{
+                                                fontSize: '0.78rem',
+                                                color: stDone ? '#64748b' : '#e2e8f0',
+                                                textDecoration: stDone ? 'line-through' : 'none'
+                                              }}>
+                                                {st.title}
+                                              </span>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => { e.stopPropagation(); handleDeleteTask(st.id); }}
+                                              style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.5, cursor: 'pointer', padding: '2px' }}
+                                              title="Delete subtask"
+                                            >
+                                              <Trash2 size={11} />
+                                            </button>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -5869,8 +5986,7 @@ export default function App() {
                               key={t.id} 
                               style={{ 
                                 display: 'flex', 
-                                alignItems: 'center', 
-                                justifyContent: 'space-between', 
+                                flexDirection: 'column', 
                                 padding: '12px 14px', 
                                 background: isOverdue ? 'rgba(239, 68, 68, 0.05)' : 'rgba(255, 255, 255, 0.03)', 
                                 border: isOverdue ? '1px solid rgba(239, 68, 68, 0.2)' : '1px solid rgba(255, 255, 255, 0.06)', 
@@ -5878,64 +5994,149 @@ export default function App() {
                                 transition: 'all 0.15s ease'
                               }}
                             >
-                              <div 
-                                onClick={() => !t.is_google_calendar && handleToggleTask(t.id)} 
-                                style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: t.is_google_calendar ? 'default' : 'pointer', flex: 1, textDecoration: done ? 'line-through' : 'none', opacity: done ? 0.6 : 1 }}
-                              >
-                                <div style={{ color: done ? '#10b981' : isOverdue ? '#f97316' : t.is_google_calendar ? '#60a5fa' : '#64748b' }}>
-                                  {done ? <CheckCircle2 size={18} /> : t.is_google_calendar ? <Calendar size={18} /> : <Circle size={18} />}
-                                </div>
-                                <div>
-                                  <div style={{ color: done ? '#94a3b8' : '#f1f5f9', fontSize: '0.92rem', fontWeight: done ? 400 : 500 }}>
-                                    {t.title}
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                                <div 
+                                  onClick={() => !t.is_google_calendar && handleToggleTask(t.id)} 
+                                  style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: t.is_google_calendar ? 'default' : 'pointer', flex: 1, textDecoration: done ? 'line-through' : 'none', opacity: done ? 0.6 : 1 }}
+                                >
+                                  <div style={{ color: done ? '#10b981' : isOverdue ? '#f97316' : t.is_google_calendar ? '#60a5fa' : '#64748b' }}>
+                                    {done ? <CheckCircle2 size={18} /> : t.is_google_calendar ? <Calendar size={18} /> : <Circle size={18} />}
                                   </div>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px', flexWrap: 'wrap' }}>
-                                    {t.reminder_time && (
-                                      <span style={{ color: '#38bdf8', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                        <span>⏰</span>
-                                        <span>{t.reminder_time}</span>
-                                      </span>
-                                    )}
-                                    {t.recurrence === 'daily' && (
-                                      <span style={{ fontSize: '0.68rem', color: '#c084fc', background: 'rgba(192, 132, 252, 0.15)', border: '1px solid rgba(192, 132, 252, 0.3)', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
-                                        🔁 Daily
-                                      </span>
-                                    )}
-                                    {t.due_date && (
-                                      <span style={{ color: isOverdue ? '#f97316' : '#94a3b8', fontSize: '0.74rem' }}>
-                                        📅 {formatLocalDateStr(t.due_date)}
-                                        {isOverdue && <span style={{ marginLeft: '4px', fontSize: '0.68rem', color: '#f97316', fontWeight: 700 }}>· OVERDUE</span>}
-                                      </span>
-                                    )}
-                                    {t.is_google_calendar && (
-                                      <span style={{ fontSize: '0.65rem', background: 'rgba(66, 133, 244, 0.2)', color: '#60a5fa', padding: '1px 6px', borderRadius: '4px', fontWeight: 700 }}>
-                                        GOOGLE CALENDAR
-                                      </span>
-                                    )}
+                                  <div>
+                                    <div style={{ color: done ? '#94a3b8' : '#f1f5f9', fontSize: '0.92rem', fontWeight: done ? 400 : 500 }}>
+                                      {t.title}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px', flexWrap: 'wrap' }}>
+                                      {t.reminder_time && (
+                                        <span style={{ color: '#38bdf8', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                          <span>⏰</span>
+                                          <span>{t.reminder_time}</span>
+                                        </span>
+                                      )}
+                                      {t.recurrence === 'daily' && (
+                                        <span style={{ fontSize: '0.68rem', color: '#c084fc', background: 'rgba(192, 132, 252, 0.15)', border: '1px solid rgba(192, 132, 252, 0.3)', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                                          🔁 Daily
+                                        </span>
+                                      )}
+                                      {t.due_date && (
+                                        <span style={{ color: isOverdue ? '#f97316' : '#94a3b8', fontSize: '0.74rem' }}>
+                                          📅 {formatLocalDateStr(t.due_date)}
+                                          {isOverdue && <span style={{ marginLeft: '4px', fontSize: '0.68rem', color: '#f97316', fontWeight: 700 }}>· OVERDUE</span>}
+                                        </span>
+                                      )}
+                                      {t.is_google_calendar && (
+                                        <span style={{ fontSize: '0.65rem', background: 'rgba(66, 133, 244, 0.2)', color: '#60a5fa', padding: '1px 6px', borderRadius: '4px', fontWeight: 700 }}>
+                                          GOOGLE CALENDAR
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                              {t.is_google_calendar ? (
-                                t.htmlLink && (
+                                {t.is_google_calendar ? (
+                                  t.htmlLink && (
+                                    <button 
+                                      type="button" 
+                                      onClick={() => window.open(t.htmlLink, '_blank', 'noopener,noreferrer')} 
+                                      style={{ background: 'rgba(66, 133, 244, 0.15)', border: '1px solid rgba(66, 133, 244, 0.3)', color: '#60a5fa', borderRadius: '8px', padding: '4px 8px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+                                      title="Open in Google Calendar"
+                                    >
+                                      <ExternalLink size={12} />
+                                      <span>Open</span>
+                                    </button>
+                                  )
+                                ) : (
                                   <button 
                                     type="button" 
-                                    onClick={() => window.open(t.htmlLink, '_blank', 'noopener,noreferrer')} 
-                                    style={{ background: 'rgba(66, 133, 244, 0.15)', border: '1px solid rgba(66, 133, 244, 0.3)', color: '#60a5fa', borderRadius: '8px', padding: '4px 8px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
-                                    title="Open in Google Calendar"
+                                    onClick={() => handleDeleteTask(t.id)} 
+                                    style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '6px' }}
+                                    title="Delete task"
                                   >
-                                    <ExternalLink size={12} />
-                                    <span>Open</span>
+                                    <Trash2 size={15} />
                                   </button>
-                                )
-                              ) : (
-                                <button 
-                                  type="button" 
-                                  onClick={() => handleDeleteTask(t.id)} 
-                                  style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '6px' }}
-                                  title="Delete task"
-                                >
-                                  <Trash2 size={15} />
-                                </button>
+                                )}
+                              </div>
+
+                              {/* SUBTASKS BLOCK in Reminders List View */}
+                              {t.subtasks && t.subtasks.length > 0 && (
+                                <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid rgba(255, 255, 255, 0.06)', width: '100%' }}>
+                                  <button 
+                                    type="button" 
+                                    onClick={(e) => { e.stopPropagation(); toggleSubtasksExpand(t.id); }}
+                                    style={{
+                                      background: 'rgba(192, 132, 252, 0.12)',
+                                      border: '1px solid rgba(192, 132, 252, 0.3)',
+                                      color: '#c084fc',
+                                      padding: '3px 8px',
+                                      borderRadius: '6px',
+                                      fontSize: '0.72rem',
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '5px',
+                                      fontWeight: 600,
+                                      marginBottom: expandedTaskIds[t.id] !== false ? '8px' : '0'
+                                    }}
+                                  >
+                                    <span>📁 {t.subtasks.filter(s => s.is_completed || s.status === 'completed').length}/{t.subtasks.length} Subtasks</span>
+                                    <span>{expandedTaskIds[t.id] !== false ? '▲' : '▼'}</span>
+                                  </button>
+
+                                  {expandedTaskIds[t.id] !== false && (
+                                    <div style={{ paddingLeft: '10px', borderLeft: '2px solid rgba(192, 132, 252, 0.35)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                      {t.subtasks.map(st => {
+                                        const stDone = st.is_completed || st.status === 'completed';
+                                        return (
+                                          <div 
+                                            key={st.id} 
+                                            onClick={(e) => { e.stopPropagation(); handleToggleTask(st.id); }}
+                                            style={{
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'space-between',
+                                              padding: '4px 6px',
+                                              borderRadius: '6px',
+                                              background: stDone ? 'transparent' : 'rgba(255, 255, 255, 0.02)',
+                                              cursor: 'pointer'
+                                            }}
+                                          >
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+                                              <div style={{
+                                                width: '16px',
+                                                height: '16px',
+                                                borderRadius: '4px',
+                                                border: stDone ? '1px solid #10b981' : '1px solid rgba(255, 255, 255, 0.3)',
+                                                background: stDone ? '#10b981' : 'transparent',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                color: '#022c22',
+                                                flexShrink: 0
+                                              }}>
+                                                {stDone && <Check size={11} />}
+                                              </div>
+                                              <span style={{
+                                                fontSize: '0.82rem',
+                                                color: stDone ? '#64748b' : '#e2e8f0',
+                                                textDecoration: stDone ? 'line-through' : 'none',
+                                                fontWeight: stDone ? 400 : 500
+                                              }}>
+                                                {st.title}
+                                              </span>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => { e.stopPropagation(); handleDeleteTask(st.id); }}
+                                              style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.5, cursor: 'pointer', padding: '2px 4px' }}
+                                              title="Delete subtask"
+                                            >
+                                              <Trash2 size={12} />
+                                            </button>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
                               )}
                             </div>
                           );

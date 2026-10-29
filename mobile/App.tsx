@@ -324,25 +324,8 @@ export default function App() {
                   `);
                 } catch (e) {}
               } else if (data.type === 'PLAY_TTS_AUDIO') {
-                // Mobile TTS: inject audio playback directly into WebView context
-                const { url } = data;
-                if (url) {
-                  webViewRef.current?.injectJavaScript(`
-                    (function() {
-                      try {
-                        if (window.__aetherAudio) {
-                          window.__aetherAudio.pause();
-                          window.__aetherAudio = null;
-                        }
-                        var audio = new Audio('${url}');
-                        audio.volume = 1.0;
-                        window.__aetherAudio = audio;
-                        audio.play().catch(function(e) { console.warn('TTS play error:', e); });
-                      } catch(e) { console.warn('TTS inject error:', e); }
-                    })();
-                    true;
-                  `);
-                }
+                // Audio is handled natively and cleanly directly within the webview Audio element
+                // No duplicate injection needed to prevent 2 audio streams playing simultaneously
               } else if (data.type === 'STORE_NATIVE_BACKUP') {
                 if (data.payload) {
                   AsyncStorage.setItem('aether_offline_backup', JSON.stringify(data.payload)).catch(() => {});
