@@ -5572,59 +5572,58 @@ export default function App() {
                               key={t.id}
                               style={{
                                 display: 'flex',
-                                alignItems: 'center',
+                                alignItems: 'flex-start',
                                 justifyContent: 'space-between',
-                                padding: '10px 12px',
-                                borderRadius: '12px',
+                                gap: '10px',
+                                padding: '12px',
+                                borderRadius: '14px',
                                 background: done ? 'rgba(255, 255, 255, 0.02)' : 'rgba(255, 255, 255, 0.05)',
                                 border: '1px solid rgba(255, 255, 255, 0.07)',
-                                opacity: done ? 0.6 : 1
+                                opacity: done ? 0.6 : 1,
+                                transition: 'all 0.15s ease'
                               }}
                             >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', flex: 1, minWidth: 0 }}>
                                 <div 
                                   onClick={() => !t.is_google_calendar && handleToggleTask(t.id)}
                                   style={{
-                                    width: '20px',
-                                    height: '20px',
-                                    borderRadius: '6px',
-                                    border: done ? '1px solid #10b981' : t.is_google_calendar ? '1px solid #60a5fa' : '1px solid rgba(255, 255, 255, 0.3)',
-                                    background: done ? '#10b981' : 'transparent',
+                                    width: '22px',
+                                    height: '22px',
+                                    borderRadius: '7px',
+                                    border: done ? '1px solid #10b981' : t.is_google_calendar ? '1px solid #60a5fa' : '1px solid rgba(255, 255, 255, 0.35)',
+                                    background: done ? '#10b981' : 'rgba(255, 255, 255, 0.03)',
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',
                                     cursor: t.is_google_calendar ? 'default' : 'pointer',
                                     color: '#022c22',
-                                    flexShrink: 0
+                                    flexShrink: 0,
+                                    marginTop: '1px'
                                   }}
                                 >
                                   {done && <Check size={14} />}
                                   {!done && t.is_google_calendar && <Calendar size={12} color="#60a5fa" />}
                                 </div>
 
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                                  <span style={{ color: done ? '#64748b' : '#ffffff', fontSize: '0.86rem', fontWeight: 500, textDecoration: done ? 'line-through' : 'none' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minWidth: 0 }}>
+                                  <div style={{ color: done ? '#64748b' : '#ffffff', fontSize: '0.90rem', fontWeight: 600, lineHeight: 1.35, wordBreak: 'break-word', textDecoration: done ? 'line-through' : 'none' }}>
                                     {t.title}
-                                  </span>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '2px' }}>
                                     {t.reminder_time && (
-                                      <span style={{ fontSize: '0.72rem', color: '#38bdf8', fontWeight: 600 }}>
+                                      <span style={{ fontSize: '0.70rem', color: '#38bdf8', background: 'rgba(56, 189, 248, 0.12)', border: '1px solid rgba(56, 189, 248, 0.25)', padding: '2px 7px', borderRadius: '6px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
                                         ⏰ {t.reminder_time}
                                       </span>
                                     )}
-                                    {t.recurrence === 'daily' && (
-                                      <span style={{ fontSize: '0.65rem', color: '#c084fc', background: 'rgba(192, 132, 252, 0.15)', border: '1px solid rgba(192, 132, 252, 0.3)', padding: '1px 5px', borderRadius: '4px', fontWeight: 600 }}>
-                                        🔁 Daily
-                                      </span>
-                                    )}
+                                    {renderRecurrenceBadge(t.recurrence)}
                                     <span style={{
                                       fontSize: '0.65rem',
                                       fontWeight: 700,
-                                      padding: '1px 6px',
+                                      padding: '2px 6px',
                                       borderRadius: '6px',
                                       textTransform: 'uppercase',
-                                      background: t.is_google_calendar ? 'rgba(66, 133, 244, 0.2)' : t.priority === 'urgent' ? 'rgba(244, 63, 94, 0.2)' : t.priority === 'high' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(56, 189, 248, 0.2)',
-                                      color: t.is_google_calendar ? '#60a5fa' : t.priority === 'urgent' ? '#fb7185' : t.priority === 'high' ? '#fbbf24' : '#38bdf8'
+                                      background: t.is_google_calendar ? 'rgba(66, 133, 244, 0.2)' : t.priority === 'urgent' ? 'rgba(244, 63, 94, 0.2)' : t.priority === 'high' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(148, 163, 184, 0.15)',
+                                      color: t.is_google_calendar ? '#60a5fa' : t.priority === 'urgent' ? '#fb7185' : t.priority === 'high' ? '#fbbf24' : '#94a3b8'
                                     }}>
                                       {t.is_google_calendar ? 'Google Calendar' : t.priority}
                                     </span>
@@ -5632,7 +5631,7 @@ export default function App() {
                                 </div>
                               </div>
 
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, marginTop: '1px' }}>
                                 {t.is_google_calendar ? (
                                   t.htmlLink && (
                                     <button
@@ -5644,7 +5643,7 @@ export default function App() {
                                         color: '#60a5fa',
                                         padding: '4px 8px',
                                         borderRadius: '8px',
-                                        fontSize: '0.72rem',
+                                        fontSize: '0.70rem',
                                         fontWeight: 600,
                                         cursor: 'pointer',
                                         display: 'flex',
@@ -5668,9 +5667,10 @@ export default function App() {
                                         color: '#38bdf8',
                                         padding: '4px 8px',
                                         borderRadius: '8px',
-                                        fontSize: '0.72rem',
+                                        fontSize: '0.70rem',
                                         fontWeight: 600,
-                                        cursor: 'pointer'
+                                        cursor: 'pointer',
+                                        whiteSpace: 'nowrap'
                                       }}
                                       title="Sync to Google Calendar"
                                     >
@@ -5680,15 +5680,19 @@ export default function App() {
                                       type="button"
                                       onClick={() => handleDeleteTask(t.id)}
                                       style={{
-                                        background: 'none',
-                                        border: 'none',
-                                        color: '#64748b',
-                                        padding: '4px',
-                                        cursor: 'pointer'
+                                        background: 'rgba(239, 68, 68, 0.08)',
+                                        border: '1px solid rgba(239, 68, 68, 0.15)',
+                                        color: '#94a3b8',
+                                        padding: '4px 6px',
+                                        borderRadius: '8px',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
                                       }}
                                       title="Delete reminder"
                                     >
-                                      <Trash2 size={15} />
+                                      <Trash2 size={13} />
                                     </button>
                                   </>
                                 )}

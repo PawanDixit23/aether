@@ -484,6 +484,8 @@ def clean_task_title(text: str) -> str:
     cleaned = re.sub(r'(?:at|on|for|by|around|ko|par)?\s*\d{1,2}:\d{2}\s*(?:am|pm|a\.m\.|p\.m\.|baje|बजे)?', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'(?:at|on|for|by|around|ko|par)?\s*\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.|baje|बजे|o\'clock)', '', cleaned, flags=re.IGNORECASE)
     # Remove recurrence keywords
+    cleaned = re.sub(r'(?:^|\s+)(?:on\s+)?(?:monday\s+to\s+friday|mon\s+to\s+fri|weekdays|सोमवार\s+से\s+शुक्रवार)(?:\s+|$)', ' ', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'(?:^|\s+)(?:every\s+monday|har\s+somwar|हर\s+सोमवार)(?:\s+|$)', ' ', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'(?:^|\s+)(?:daily|everyday|every\s+day|har\s+din|roz|rozaana|रोज|रोजाना|प्रतिदिन|हर\s+दिन)(?:\s+|$)', ' ', cleaned, flags=re.IGNORECASE)
     # Remove date qualifiers
     cleaned = re.sub(r'(?:^|\s+)(?:for|on|ko)?\s*(?:today|tomorrow|kal|aaj|आज|कल)(?:\s+|$)', ' ', cleaned, flags=re.IGNORECASE)
@@ -1063,10 +1065,17 @@ def rule_based_fallback(text: str, context: dict = None) -> dict:
     clean_title = clean_task_title(text)
     is_daily = any(w in text_lower for w in ["daily", "everyday", "every day", "har din", "roz", "rozaana", "रोज", "रोजाना", "प्रतिदिन"])
     rec_val = None
-    if is_daily:
-        rec_val = "daily"
-    elif is_mon_to_fri:
+    if is_mon_to_fri:
         rec_val = "weekdays"
+        # Start from TODAY if today is Monday-Friday
+        today_d = datetime.now().date()
+        if today_d.weekday() < 5:
+            due_dt = datetime.combine(today_d, due_dt.time() if due_dt else datetime.min.time())
+        else:
+            days_ahead = (0 - today_d.weekday()) % 7
+            due_dt = datetime.combine(today_d + timedelta(days=days_ahead), due_dt.time() if due_dt else datetime.min.time())
+    elif is_daily:
+        rec_val = "daily"
     elif is_monday_query and any(w in text_lower for w in ["every", "har", "repeat", "प्रत्येक"]):
         rec_val = "weekly_monday"
 

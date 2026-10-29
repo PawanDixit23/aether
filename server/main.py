@@ -552,8 +552,16 @@ async def quick_capture(
         else:
             recurrence_val = data.get("recurrence")
 
-        # If day is Monday, adjust due_date to upcoming Monday
-        if recurrence_val == "weekly_monday" or "monday" in msg_lower:
+        # Handle recurrence due_date start dates
+        if recurrence_val in ["weekdays", "monday_to_friday"]:
+            # For Monday to Friday: start TODAY if today is Mon-Fri
+            today_d = datetime.now().date()
+            if today_d.weekday() < 5: # Monday (0) to Friday (4)
+                due_dt = datetime.combine(today_d, due_dt.time() if due_dt else datetime.min.time())
+            else: # Saturday (5) or Sunday (6) -> start next Monday
+                days_ahead = (0 - today_d.weekday()) % 7
+                due_dt = datetime.combine(today_d + timedelta(days=days_ahead), due_dt.time() if due_dt else datetime.min.time())
+        elif recurrence_val == "weekly_monday":
             today_d = datetime.now().date()
             days_ahead = (0 - today_d.weekday()) % 7 # 0 is Monday
             if days_ahead == 0 and due_dt and due_dt < datetime.now():
