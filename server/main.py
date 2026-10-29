@@ -112,6 +112,13 @@ class TaskCreate(BaseModel):
     priority: Optional[str] = "medium"
     due_date: Optional[datetime] = None
     reminder_time: Optional[str] = None
+    recurrence: Optional[str] = None
+    parent_id: Optional[int] = None
+    subtasks: Optional[List[str]] = None
+
+class TaskReschedule(BaseModel):
+    due_date: Optional[datetime] = None
+    reminder_time: Optional[str] = None
 
 class FinancialRecordCreate(BaseModel):
     type: str
@@ -495,6 +502,20 @@ async def quick_capture(
                 r_time = r_time or extracted_time
                 due_dt = due_dt or extracted_dt
 
+        # If time was not found in current turn, check recent conversation history to restore agreed time
+        if not r_time:
+            for m in reversed(context.get("recent_chat", [])):
+                try:
+                    from ai_engine import parse_reminder_time
+                    cand_time, cand_dt = parse_reminder_time(m.get("content", ""))
+                    if cand_time:
+                        r_time = cand_time
+                        if not due_dt:
+                            due_dt = cand_dt
+                        break
+                except Exception:
+                    pass
+
         # Ensure due_date is always valid today if time exists
         if not due_dt:
             if r_time:
@@ -515,28 +536,102 @@ async def quick_capture(
         except Exception:
             pass
 
+        # Detect recurring intent
+        msg_lower = user_msg.lower()
+        is_daily = any(w in msg_lower for w in ["daily", "everyday", "every day", "har din", "roz", "rozaana", "रोज", "रोजाना", "प्रतिदिन"]) or (data.get("recurrence") == "daily")
+        is_weekdays = any(w in msg_lower for w in ["monday to friday", "mon to fri", "weekdays", "सोमवार से शुक्रवार"]) or (data.get("recurrence") == "weekdays")
+        is_weekly_mon = any(w in msg_lower for w in ["every monday", "har somwar", "हर सोमवार"]) or (data.get("recurrence") == "weekly_monday")
+        
+        recurrence_val = None
+        if is_daily:
+            recurrence_val = "daily"
+        elif is_weekdays:
+            recurrence_val = "weekdays"
+        elif is_weekly_mon:
+            recurrence_val = "weekly_monday"
+        else:
+            recurrence_val = data.get("recurrence")
+
+        # If day is Monday, adjust due_date to upcoming Monday
+        if recurrence_val == "weekly_monday" or "monday" in msg_lower:
+            today_d = datetime.now().date()
+            days_ahead = (0 - today_d.weekday()) % 7 # 0 is Monday
+            if days_ahead == 0 and due_dt and due_dt < datetime.now():
+                days_ahead = 7
+            elif days_ahead == 0 and not (due_dt and due_dt >= datetime.now()):
+                days_ahead = 7
+            if days_ahead > 0:
+                due_dt = datetime.combine(today_d + timedelta(days=days_ahead), due_dt.time() if due_dt else datetime.min.time())
+
+        # Check if parent task with subtasks requested
+        subtask_list = data.get("subtasks")
+        if not subtask_list:
+            import re
+            p_match = re.search(r'(?:parent[s]?\s+task|parent)\s+(?:like\s+)?[\"\'\s]*([\w\s]+?)(?:[\"\'\s]+and|\s+and|\s+tells|\s+with)\s+.*?(?:subtask[s]?)\s+(.*)', user_msg, re.I)
+            if p_match:
+                title = p_match.group(1).strip()
+                s_raw = p_match.group(2).strip()
+                if "january to december" in s_raw.lower() or "jan to dec" in s_raw.lower() or "जनवरी से दिसंबर" in s_raw:
+                    subtask_list = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+                else:
+                    subtask_list = [s.strip(" ,.-") for s in re.split(r',| and | aur | और ', s_raw) if s.strip()]
+
         task = Task(
             user_email=eff_email,
             title=title,
             priority=data.get("priority", "medium"),
             reminder_time=r_time,
             due_date=due_dt,
+            recurrence=recurrence_val,
             notified=False
         )
         db.add(task)
         db.commit()
         db.refresh(task)
         executed = True
-        
-        if lang == "en":
-            time_part = f" for {task.reminder_time}" if task.reminder_time else ""
-            result_message = f"Reminder scheduled{time_part}: \"{task.title}\" ⏰ [{task.priority.upper()}]"
-        elif lang == "hinglish":
-            time_part = f" {task.reminder_time} ke liye" if task.reminder_time else ""
-            result_message = f"Aapka reminder{time_part} set ho gaya hai: \"{task.title}\" ⏰ [{task.priority.upper()}]"
-        else: # 'hi' or 'auto'
-            time_part = f" ({task.reminder_time} के लिए)" if task.reminder_time else ""
-            result_message = f"रिमाइंडर एजेंडा में सेट किया गया{time_part}: \"{task.title}\" ⏰ [{task.priority.upper()}]"
+
+        # If subtasks are defined, create child tasks linked by parent_id
+        if subtask_list and isinstance(subtask_list, list) and len(subtask_list) > 0:
+            for st in subtask_list:
+                st_name = str(st).strip()
+                if st_name:
+                    db.add(Task(
+                        user_email=eff_email,
+                        title=st_name,
+                        parent_id=task.id,
+                        priority=task.priority,
+                        status="pending",
+                        notified=False
+                    ))
+            db.commit()
+
+            if lang == "en":
+                result_message = f"Parent task \"{task.title}\" and {len(subtask_list)} subtasks created successfully! 📁✅"
+            elif lang == "hinglish":
+                result_message = f"Parent task \"{task.title}\" aur {len(subtask_list)} subtasks create ho gaye hain! 📁✅"
+            else:
+                result_message = f"पैरेंट टास्क \"{task.title}\" और इसके {len(subtask_list)} सब-टास्क सफलतापूर्वक बनाए गए! 📁✅"
+        else:
+            repeat_tag = ""
+            if recurrence_val == "daily":
+                repeat_tag = " [DAILY 🔁]"
+            elif recurrence_val in ["weekdays", "monday_to_friday"]:
+                repeat_tag = " [MON-FRI 🔁]"
+            elif recurrence_val == "weekly_monday":
+                repeat_tag = " [EVERY MONDAY 🔁]"
+
+            if lang == "en":
+                time_part = f" for {task.reminder_time}" if task.reminder_time else ""
+                prefix = "Recurring reminder" if recurrence_val else "Reminder"
+                result_message = f"{prefix} scheduled{time_part}: \"{task.title}\" ⏰{repeat_tag} [{task.priority.upper()}]"
+            elif lang == "hinglish":
+                time_part = f" {task.reminder_time} ke liye" if task.reminder_time else ""
+                prefix = "Aapka recurring reminder" if recurrence_val else "Aapka reminder"
+                result_message = f"{prefix}{time_part} set ho gaya hai: \"{task.title}\" ⏰{repeat_tag} [{task.priority.upper()}]"
+            else: # 'hi' or 'auto'
+                time_part = f" ({task.reminder_time} के लिए)" if task.reminder_time else ""
+                prefix = "पुनरावर्ती (Recurring) रिमाइंडर" if recurrence_val else "रिमाइंडर"
+                result_message = f"{prefix} एजेंडा में सेट किया गया{time_part}: \"{task.title}\" ⏰{repeat_tag} [{task.priority.upper()}]"
             
         undo_payload = json.dumps({"table": "tasks", "id": task.id})
 
@@ -681,6 +776,52 @@ def get_live_news(limit: int = 5, category: str = None):
     return get_structured_news(limit=limit, category=category)
 
 # ----------------- Reminders & Notification Engine -----------------
+def get_next_weekday(dt: datetime) -> datetime:
+    next_day = dt + timedelta(days=1)
+    while next_day.weekday() >= 5: # 5=Sat, 6=Sun
+        next_day += timedelta(days=1)
+    return next_day
+
+def auto_advance_recurring_tasks(db: Session, user_email: Optional[str] = None):
+    """Automatically rolls recurring tasks (daily, weekdays, weekly) forward if their scheduled date is in the past."""
+    try:
+        now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
+        today = now.date()
+        query = db.query(Task).filter(Task.recurrence != None)
+        if user_email:
+            query = query.filter(Task.user_email == user_email)
+        rec_tasks = query.all()
+        updated = False
+        for dt in rec_tasks:
+            if not dt.due_date:
+                continue
+            due_dt = dt.due_date
+            if isinstance(due_dt, str):
+                due_dt = datetime.fromisoformat(due_dt.replace(' ', 'T'))
+            # If due date is in the past (yesterday or earlier), roll forward
+            if due_dt.date() < today:
+                if dt.recurrence == "daily":
+                    new_dt = datetime.combine(today, due_dt.time())
+                elif dt.recurrence in ["weekdays", "monday_to_friday"]:
+                    new_dt = datetime.combine(today, due_dt.time())
+                    while new_dt.weekday() >= 5:
+                        new_dt += timedelta(days=1)
+                elif str(dt.recurrence).startswith("weekly"):
+                    new_dt = due_dt
+                    while new_dt.date() < today:
+                        new_dt += timedelta(days=7)
+                else:
+                    new_dt = datetime.combine(today, due_dt.time())
+                
+                dt.due_date = new_dt
+                dt.status = "pending"
+                dt.notified = False
+                updated = True
+        if updated:
+            db.commit()
+    except Exception as e:
+        print(f"[AutoAdvanceRecurringTasks Note] {e}")
+
 @app.get("/api/reminders/due")
 def get_due_reminders(
     user_email: Optional[str] = Depends(get_user_email),
@@ -689,6 +830,8 @@ def get_due_reminders(
     """Fetch pending tasks whose reminder time has arrived or passed and have not been alerted yet."""
     if not user_email:
         return []
+
+    auto_advance_recurring_tasks(db, user_email)
 
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     tasks = db.query(Task).filter(
@@ -711,6 +854,8 @@ def get_due_reminders(
                     "title": t.title,
                     "priority": t.priority,
                     "reminder_time": t.reminder_time or dt.strftime("%I:%M %p"),
+                    "recurrence": getattr(t, "recurrence", None),
+                    "parent_id": getattr(t, "parent_id", None),
                     "due_date": dt.isoformat()
                 })
         except Exception as e:
@@ -724,20 +869,32 @@ def acknowledge_reminder(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    """Acknowledge reminder so it won't repeatedly alert."""
+    """Acknowledge reminder so it won't repeatedly alert. Advances recurring tasks to their next scheduled occurrence."""
     query = db.query(Task).filter(Task.id == task_id)
     if user_email:
         query = query.filter(Task.user_email == user_email)
     task = query.first()
     if task:
         task.notified = True
+        rec = getattr(task, "recurrence", None)
+        if rec and task.due_date:
+            if rec == "daily":
+                task.due_date = task.due_date + timedelta(days=1)
+            elif rec in ["weekdays", "monday_to_friday"]:
+                task.due_date = get_next_weekday(task.due_date)
+            elif str(rec).startswith("weekly"):
+                task.due_date = task.due_date + timedelta(days=7)
+            else:
+                task.due_date = task.due_date + timedelta(days=1)
+            task.notified = False
+            task.status = "pending"
         db.commit()
         return {"status": "acknowledged", "task_id": task_id}
     raise HTTPException(status_code=404, detail="Task not found")
 
 # ----------------- Tasks Endpoints -----------------
-def serialize_task(t: Task) -> dict:
-    return {
+def serialize_task(t: Task, db: Optional[Session] = None) -> dict:
+    res = {
         "id": t.id,
         "title": t.title,
         "description": t.description,
@@ -746,9 +903,17 @@ def serialize_task(t: Task) -> dict:
         "is_completed": t.status == "completed",
         "due_date": t.due_date.isoformat() if t.due_date else None,
         "reminder_time": t.reminder_time,
+        "recurrence": getattr(t, "recurrence", None),
+        "parent_id": getattr(t, "parent_id", None),
         "notified": t.notified,
-        "created_at": t.created_at.isoformat() if t.created_at else None
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "subtasks": []
     }
+    if db:
+        subs = db.query(Task).filter(Task.parent_id == t.id).order_by(Task.id.asc()).all()
+        if subs:
+            res["subtasks"] = [serialize_task(st) for st in subs]
+    return res
 
 @app.get("/api/tasks")
 def list_tasks(
@@ -757,6 +922,7 @@ def list_tasks(
     db: Session = Depends(get_db)
 ):
     eff_email = (user_email or "").strip().lower()
+    auto_advance_recurring_tasks(db, eff_email or None)
     if eff_email:
         # Migrate any unassigned tasks to this active user
         try:
@@ -767,9 +933,12 @@ def list_tasks(
         query = db.query(Task).filter(Task.user_email == eff_email)
     else:
         query = db.query(Task).filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai"))
+    
+    # Return top-level tasks by default (nested subtasks are attached inside serialize_task)
+    query = query.filter((Task.parent_id == None) | (Task.parent_id == 0))
     if status:
         query = query.filter(Task.status == status)
-    return [serialize_task(t) for t in query.order_by(Task.created_at.desc()).all()]
+    return [serialize_task(t, db=db) for t in query.order_by(Task.created_at.desc()).all()]
 
 @app.post("/api/tasks")
 def create_task(
@@ -780,11 +949,18 @@ def create_task(
     eff_email = (task_in.user_email or user_email or "").strip().lower() or None
     data = task_in.dict()
     data["user_email"] = eff_email
+    subtasks = data.pop("subtasks", None)
     task = Task(**data)
     db.add(task)
     db.commit()
     db.refresh(task)
-    return serialize_task(task)
+    if subtasks and isinstance(subtasks, list):
+        for st in subtasks:
+            st_name = str(st).strip()
+            if st_name:
+                db.add(Task(user_email=eff_email, title=st_name, parent_id=task.id, priority=task.priority, status="pending"))
+        db.commit()
+    return serialize_task(task, db=db)
 
 @app.put("/api/tasks/{task_id}/toggle")
 def toggle_task(
@@ -798,10 +974,78 @@ def toggle_task(
     task = query.first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    task.status = "completed" if task.status != "completed" else "pending"
+    new_status = "completed" if task.status != "completed" else "pending"
+    task.status = new_status
+    
+    # If this task is a subtask, update parent task progress
+    if getattr(task, "parent_id", None):
+        parent = db.query(Task).filter(Task.id == task.parent_id).first()
+        if parent:
+            all_subs = db.query(Task).filter(Task.parent_id == parent.id).all()
+            if all(s.status == "completed" for s in all_subs):
+                parent.status = "completed"
+            else:
+                parent.status = "pending"
+                
+    # If this task is a parent task, toggle all child subtasks to match
+    subs = db.query(Task).filter(Task.parent_id == task.id).all()
+    if subs:
+        for s in subs:
+            s.status = new_status
+
     db.commit()
     db.refresh(task)
-    return serialize_task(task)
+    return serialize_task(task, db=db)
+
+@app.put("/api/tasks/{task_id}/reschedule")
+def reschedule_task(
+    task_id: int, 
+    req: TaskReschedule, 
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    query = db.query(Task).filter(Task.id == task_id)
+    if user_email:
+        query = query.filter(Task.user_email == user_email)
+    task = query.first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if req.due_date:
+        task.due_date = req.due_date
+    if req.reminder_time:
+        task.reminder_time = req.reminder_time
+    task.status = "pending"
+    task.notified = False
+    db.commit()
+    db.refresh(task)
+    return serialize_task(task, db=db)
+
+@app.post("/api/tasks/reschedule-overdue")
+def reschedule_all_overdue(
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    """Reschedules all overdue non-recurring tasks to today at their original reminder time."""
+    now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
+    today = now.date()
+    eff_email = (user_email or "").strip().lower()
+    query = db.query(Task).filter(Task.status == "pending", Task.recurrence == None, Task.due_date != None)
+    if eff_email:
+        query = query.filter(Task.user_email == eff_email)
+    tasks = query.all()
+    count = 0
+    for t in tasks:
+        dt = t.due_date
+        if isinstance(dt, str):
+            try: dt = datetime.fromisoformat(dt.replace(' ', 'T'))
+            except Exception: continue
+        if dt and dt.date() < today:
+            t.due_date = datetime.combine(today, dt.time())
+            t.notified = False
+            count += 1
+    if count > 0:
+        db.commit()
+    return {"status": "ok", "rescheduled_count": count}
 
 @app.delete("/api/tasks/{task_id}")
 def delete_task(
@@ -815,9 +1059,11 @@ def delete_task(
     task = query.first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    # Delete child subtasks if parent is deleted
+    db.query(Task).filter(Task.parent_id == task.id).delete()
     db.delete(task)
     db.commit()
-    return {"message": "Task deleted successfully"}
+    return {"message": "Task and subtasks deleted successfully"}
 
 @app.post("/api/calendar/sync-ical")
 def sync_ical_feed(req: ICalSyncRequest, user_email: Optional[str] = Depends(get_user_email)):
@@ -1442,8 +1688,20 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
                     else:
                         failed_subscriptions.append(sub.get("endpoint", "")[:50])
                 
-                # Push भेजने के बाद task को notified mark करें
+                # Push भेजने के बाद task को notified mark करें (यदि recurring है तो अगली आवृत्ति schedule करें)
                 task.notified = True
+                rec = getattr(task, "recurrence", None)
+                if rec and task.due_date:
+                    if rec == "daily":
+                        task.due_date = task.due_date + timedelta(days=1)
+                    elif rec in ["weekdays", "monday_to_friday"]:
+                        task.due_date = get_next_weekday(task.due_date)
+                    elif str(rec).startswith("weekly"):
+                        task.due_date = task.due_date + timedelta(days=7)
+                    else:
+                        task.due_date = task.due_date + timedelta(days=1)
+                    task.notified = False
+                    task.status = "pending"
                 db.commit()
                 
                 if failed_subscriptions:

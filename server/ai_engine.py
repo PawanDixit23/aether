@@ -424,19 +424,35 @@ def parse_reminder_time(text: str) -> tuple:
         except Exception:
             pass
 
-    # 3. Absolute time: 10:30 AM, 5 PM, 5 baje, 6:00
+    # 3. Absolute time: 10:30 AM, at 12:30, 5 PM, 5 baje, 6:00
     is_pm_hint = any(k in text_lower for k in ['shaam', 'shang', 'शाम', 'evening', 'night', 'raat', 'रात', 'dopahar', 'दोपहर', 'pm', 'p.m.'])
     is_am_hint = any(k in text_lower for k in ['subah', 'सुबह', 'morning', 'am', 'a.m.', 'प्रातः'])
 
-    pattern = r'(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.|baje|बजे)?'
-    matches = re.finditer(pattern, text_lower)
-    for m in matches:
-        h_str, m_str, mer = m.groups()
-        if not h_str: continue
-        h = int(h_str)
-        minute = int(m_str) if m_str else 0
-        if h > 24 or minute > 59: continue
-        
+    h = None
+    minute = 0
+    mer = None
+
+    # Pattern A: HH:MM with optional am/pm/baje (e.g. "12:30", "12:30 pm", "9:45 बजे")
+    mA = re.search(r'(\d{1,2}):(\d{2})\s*(am|pm|a\.m\.|p\.m\.|baje|बजे)?', text_lower)
+    if mA:
+        h = int(mA.group(1))
+        minute = int(mA.group(2))
+        mer = mA.group(3)
+    else:
+        # Pattern B: HH with explicit meridian or baje/o'clock (e.g. "5 pm", "10am", "5 baje")
+        mB = re.search(r'(\d{1,2})\s*(am|pm|a\.m\.|p\.m\.|baje|बजे|o\'clock)', text_lower)
+        if mB:
+            h = int(mB.group(1))
+            mer = mB.group(2)
+        else:
+            # Pattern C: Time preposition + HH (e.g. "at 5", "around 6", "by 7")
+            mC = re.search(r'(?:at|around|by|ko|par)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.|baje|बजे)?', text_lower)
+            if mC:
+                h = int(mC.group(1))
+                minute = int(mC.group(2)) if mC.group(2) else 0
+                mer = mC.group(3)
+
+    if h is not None and h <= 24 and minute <= 59:
         if mer in ['pm', 'p.m.'] or is_pm_hint:
             if h < 12: h += 12
         elif mer in ['am', 'a.m.'] or is_am_hint:
@@ -460,13 +476,21 @@ def parse_reminder_time(text: str) -> tuple:
     return None, None
 
 def clean_task_title(text: str) -> str:
-    """Removes reminder boilerplate words to keep titles clean and concise."""
-    cleaned = re.sub(r'^(?:let\s+at\s+the\s+reminder|let\s+at\s+the|set\s+(?:the\s+)?reminder\s*(?:for|at|to|on)?|remind\s+(?:me\s+)?(?:to|for|at)?|रिमाइंडर\s*(?:सेट\s+करो|लगाओ|बनाओ)?|याद\s+दिलाना)\s*', '', text, flags=re.IGNORECASE)
+    """Removes reminder boilerplate words while strictly preserving numbers and quantities (e.g. '1 liter water')."""
+    cleaned = re.sub(r'^(?:let\s+at\s+the\s+reminder|let\s+at\s+the|set\s+(?:the\s+)?reminder\s*(?:for|at|to|on)?|remind\s+(?:me\s+)?(?:to|for|at)?|schedule\s+(?:the\s+)?reminder\s*(?:for|at|to|on|like)?|schedule\s*(?:like)?|रिमाइंडर\s*(?:सेट\s+करो|लगाओ|बनाओ)?|याद\s+दिलाना)\s*', '', text, flags=re.IGNORECASE)
+    # Remove relative durations
     cleaned = re.sub(r'(?:in|after|ke\s*baad)?\s*\d+(?:\.\d+)?\s*(?:hours?|hrs?|ghante|ghanta|minutes?|mins?|minute|घंटे|घंटा|मिनट)\s*(?:baad|me|mein|later|to|for|ki|ka)?', '', cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r'(?:at|on|for|by)?\s*\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|baje|बजे)?\s*(?:today|tomorrow|kal|aaj|आज|कल)?\s*(?:at|ko|par|per)?', '', cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r'^(?:at|to|for|ki|ka|par)\s+', '', cleaned.strip(), flags=re.IGNORECASE)
-    cleaned = cleaned.strip(" ?.,!:\n")
-    return cleaned if len(cleaned) > 2 else text.strip(" ?.,!:\n")
+    # Remove clock times
+    cleaned = re.sub(r'(?:at|on|for|by|around|ko|par)?\s*\d{1,2}:\d{2}\s*(?:am|pm|a\.m\.|p\.m\.|baje|बजे)?', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'(?:at|on|for|by|around|ko|par)?\s*\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.|baje|बजे|o\'clock)', '', cleaned, flags=re.IGNORECASE)
+    # Remove recurrence keywords
+    cleaned = re.sub(r'(?:^|\s+)(?:daily|everyday|every\s+day|har\s+din|roz|rozaana|रोज|रोजाना|प्रतिदिन|हर\s+दिन)(?:\s+|$)', ' ', cleaned, flags=re.IGNORECASE)
+    # Remove date qualifiers
+    cleaned = re.sub(r'(?:^|\s+)(?:for|on|ko)?\s*(?:today|tomorrow|kal|aaj|आज|कल)(?:\s+|$)', ' ', cleaned, flags=re.IGNORECASE)
+    # Clean leading prepositions
+    cleaned = re.sub(r'^(?:at|to|for|ki|ka|par|ko|like|baje|बजे)\s+', '', cleaned.strip(), flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip(' ?.,!:\n')
+    return cleaned if len(cleaned) > 2 else text.strip(' ?.,!:\n')
 
 def build_system_prompt(context: dict = None, live_feed: str = "", language: str = "auto", user_name: str = "Operator", user_query: str = "", has_image: bool = False) -> str:
     ctx_str = ""
@@ -549,18 +573,48 @@ Whatever work, challenge, or question {display_name} brings, you handle it maste
 Your job is to analyze the user's input and return a strict JSON response.
 
 CRITICAL INSTRUCTIONS FOR TASKS & REMINDERS:
-- If the user asks to set a reminder or task (e.g. "set the reminder at 10:30AM today to go to gym", "Let at the reminder at 9:30 to go to market"):
+- If the user asks to set a reminder or task (e.g. "set the reminder at 10:30AM today to go to gym", "1 liter water daily at 12:30", "take 2 tablets at 9pm"):
   action MUST be "task".
-  "title" MUST be the clean action item (e.g. "Go to market", "Go to gym").
-  "reminder_time" MUST be the time string (e.g. "9:30 PM", "10:30 AM").
+  "title" MUST be the clean action item. NEVER strip numeric values or quantities (e.g. "1 liter water", "2 tablets", "500ml water", "10 pushups"). The quantity must remain visible!
+  "reminder_time" MUST be the time string (e.g. "12:30 PM", "9:30 PM", "10:30 AM").
   "due_date" MUST be the ISO datetime string if specified or null.
-- MULTI-TURN CONVERSATION CONTINUATION (CRITICAL):
-  Look at RECENT CONVERSATION HISTORY. If the previous assistant message asked a clarification question (such as "What would you like the reminder to be for?" or "What time should I set the reminder?") and the user now responds with an answer (such as "for testing", "grocery shopping", "at 5 PM"), DO NOT treat this as a greeting or generic query!
-  IMMEDIATELY combine the previous topic and their current answer into a completed action:
-  - action: "task"
-  - title: the user's answer (e.g. "Testing" or "for testing")
-  - reminder_time: the time previously discussed (e.g. "10:00 PM")
-  - priority: "medium"
+  "recurrence":
+    - "daily": if user says daily / everyday / roz / har din.
+    - "weekdays": if user says Monday to Friday, mon to fri, weekdays, सोमवार से शुक्रवार.
+    - "weekly_monday" (or weekly_tuesday, etc.): if user asks to repeat every Monday / हर सोमवार.
+    - null: for single one-off reminders.
+
+- MULTI-TURN CONVERSATION & STEP-BY-STEP CLARIFICATION (CRITICAL):
+  1. INCOMPLETE REMINDER PROMPT:
+     If the user only says "set reminder", "remind me", "रिमाइंडर लगाओ", "रिमाइंडर सेट करो" WITHOUT specifying a time and WITHOUT a task:
+     action MUST be "query". Ask:
+     - In English: "Sure! What time or date should I set the reminder for?"
+     - In Hindi: "ज़रूर! आप कब के लिए रिमाइंडर सेट करना चाहते हैं? (जैसे: शाम 5 बजे या कल सुबह 10 बजे)"
+     - In Hinglish: "Sure! Aap kab ke liye reminder set karna chahte hain? (jaise: shaam 5 baje ya kal 10 AM)"
+  2. USER PROVIDES TIME AFTER BEING ASKED:
+     If the previous assistant message asked "when / what time should I set the reminder?" and the user now answers with a time (e.g. "at 5 PM", "12:30", "शाम 5 बजे"):
+     action MUST be "query". Ask:
+     - In English: "Got it for that time. What is this reminder for, and what priority should I set (Low, Medium, High, Urgent)?"
+     - In Hindi: "ठीक है। यह रिमाइंडर किस काम के लिए है और इसकी प्राथमिकता (Priority) क्या रखनी है (Low, Medium, High, Urgent)?"
+     - In Hinglish: "Theek hai. Yeh reminder kis kaam ke liye hai aur priority kya rakhni hai (Low, Medium, High, Urgent)?"
+  3. USER PROVIDES TASK & PRIORITY:
+     If the previous assistant message asked for the task/topic and priority, and the user now answers (e.g. "Gym, high priority", "testing", "meeting with client"):
+     action MUST be "task". Combine the previous time discussed + current task + priority (default 'medium' if not stated).
+  4. DAY-OF-WEEK AMBIGUITY (e.g. "on Monday" / "सोमवार को"):
+     If the user specifies a day like Monday without clarifying if it's one-time or recurring:
+     action MUST be "query". Ask:
+     - In English: "Should I schedule this for only the upcoming Monday, or repeat it every Monday?"
+     - In Hindi: "क्या यह रिमाइंडर केवल आने वाले सोमवार के लिए सेट करना है, या हर सोमवार (Every Monday) रिपीट करना है?"
+     If the user then replies "every Monday" -> action: "task", recurrence: "weekly_monday".
+     If the user replies "only upcoming Monday" -> action: "task", recurrence: null.
+
+- PARENT TASK WITH SUBTASKS HIERARCHY:
+  - If user requests creating a parent task with subtasks (e.g. "make reminder with parent task Year and subtask January to December", or "parent task Project X with subtask A, B, C"):
+    action MUST be "task".
+    "title": Parent task name (e.g. "Year" or "Project X").
+    "subtasks": array of subtask strings. (For "January to December", expand to: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]).
+  - If user mentions creating a parent task with subtasks but DOES NOT provide the subtasks:
+    action MUST be "query". Ask: "What subtasks would you like to include under the parent task?"
 
 CRITICAL INSTRUCTIONS FOR "query":
 - When the query is about WEATHER:
@@ -585,10 +639,12 @@ Output Format (strictly valid JSON with no markdown wrapping):
   "confidence": 0.0 to 1.0,
   "confidence_level": "high" | "medium" | "low",
   "data": {{
-    "title": "Clean task title (if task)",
+    "title": "Clean task title preserving numbers (e.g. '1 liter water')",
     "priority": "low" | "medium" | "high" | "urgent",
-    "reminder_time": "10:30 AM or null",
+    "reminder_time": "12:30 PM or null",
     "due_date": "ISO string or null",
+    "recurrence": "daily" | "weekdays" | "weekly_monday" | null,
+    "subtasks": ["Subtask 1", "Subtask 2"] | null,
     "amount": float,
     "currency": "INR",
     "category": "string",
@@ -789,8 +845,147 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
     return rule_based_fallback(user_input, context)
 
 def rule_based_fallback(text: str, context: dict = None) -> dict:
-    """Smart offline parser when no LLM API is available."""
+    """Smart conversational offline parser when no LLM API is available."""
     text_lower = text.lower().strip()
+    recent_chat = context.get('recent_chat', []) if context else []
+    
+    last_assistant_msg = ""
+    for m in reversed(recent_chat):
+        if m.get('role') in ['Aether', 'Assistant']:
+            last_assistant_msg = m.get('content', '')
+            break
+
+    # 1. Multi-turn step 1: User replies with time after being asked "when/what time"
+    if any(q in last_assistant_msg for q in ["कब के लिए रिमाइंडर", "what time or date should i set", "when should i set"]):
+        r_time, dt = parse_reminder_time(text)
+        time_display = r_time or text.strip()
+        return {
+            "action": "query",
+            "confidence": 0.98,
+            "confidence_level": "high",
+            "data": {
+                "response": f"ठीक है, {time_display} के लिए। यह रिमाइंडर किस काम के लिए है और इसकी प्राथमिकता (Priority) क्या रखनी है (Low, Medium, High, Urgent)?"
+            },
+            "explanation": "Clarification step 2: Asking task and priority"
+        }
+
+    # 2. Multi-turn step 2: User replies with task & priority after being asked
+    if any(q in last_assistant_msg for q in ["किस काम के लिए है और इसकी प्राथमिकता", "what is this reminder for, and what priority"]):
+        pri = "medium"
+        if any(w in text_lower for w in ["urgent", "turant", "ज़रूरी", "asap"]):
+            pri = "urgent"
+        elif any(w in text_lower for w in ["high", "उच्च", "पहला"]):
+            pri = "high"
+        elif any(w in text_lower for w in ["low", "कम"]):
+            pri = "low"
+        
+        # Clean priority words from title
+        clean_name = re.sub(r'\b(urgent|high|low|medium|priority|प्राथमिकता|urgent priority|high priority)\b', '', text, flags=re.IGNORECASE).strip(" ,.-")
+        
+        # Look back in recent_chat for agreed reminder time
+        agreed_time = None
+        for m in reversed(recent_chat):
+            t_cand, _ = parse_reminder_time(m.get('content', ''))
+            if t_cand:
+                agreed_time = t_cand
+                break
+        
+        return {
+            "action": "task",
+            "confidence": 0.98,
+            "confidence_level": "high",
+            "data": {
+                "title": clean_name or text,
+                "priority": pri,
+                "reminder_time": agreed_time,
+                "recurrence": None
+            },
+            "explanation": "Completed multi-turn reminder scheduling"
+        }
+
+    # 3. Multi-turn step: User answers Monday disambiguation question
+    if any(q in last_assistant_msg for q in ["आने वाले सोमवार के लिए सेट करना है, या हर सोमवार", "only the upcoming monday, or repeat it every monday"]):
+        is_every = any(w in text_lower for w in ["every", "har", "repeat", "रोज", "हर", "सप्ताह"])
+        rec_choice = "weekly_monday" if is_every else None
+        
+        # Recover previous task title and time from chat history
+        hist_title = "Reminder"
+        hist_time = None
+        for m in reversed(recent_chat):
+            if m.get('role') == 'User':
+                c = m.get('content', '')
+                t_found, _ = parse_reminder_time(c)
+                if t_found:
+                    hist_time = t_found
+                clean_c = clean_task_title(c)
+                if len(clean_c) > 2 and clean_c != "Reminder":
+                    hist_title = clean_c
+                    break
+
+        return {
+            "action": "task",
+            "confidence": 0.98,
+            "confidence_level": "high",
+            "data": {
+                "title": hist_title,
+                "reminder_time": hist_time,
+                "recurrence": rec_choice
+            },
+            "explanation": "Resolved Monday recurrence choice"
+        }
+
+    # 4. Check Parent Task with Subtasks (e.g. "Year with subtask January to December")
+    parent_match = re.search(r'(?:parent[s]?\s+task|parent)\s+(?:like\s+)?[\"\'\s]*([\w\s]+?)(?:[\"\'\s]+and|\s+and|\s+tells|\s+with)\s+.*?(?:subtask[s]?)\s+(.*)', text, re.I)
+    if parent_match:
+        p_title = parent_match.group(1).strip()
+        s_raw = parent_match.group(2).strip()
+        if "january to december" in s_raw.lower() or "jan to dec" in s_raw.lower() or "जनवरी से दिसंबर" in s_raw:
+            subtasks = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+        else:
+            subtasks = [s.strip(" ,.-") for s in re.split(r',| and | aur | और ', s_raw) if s.strip()]
+        return {
+            "action": "task",
+            "confidence": 0.99,
+            "confidence_level": "high",
+            "data": {
+                "title": p_title,
+                "priority": "medium",
+                "subtasks": subtasks
+            },
+            "explanation": f"Created parent task {p_title} with {len(subtasks)} subtasks"
+        }
+
+    # 5. Check Initial Incomplete Reminder Prompt ("set reminder", "remind me")
+    incomplete_prompts = [
+        "set reminder", "set a reminder", "remind me", "reminder lagao", "reminder", 
+        "रिमाइंडर लगाओ", "रिमाइंडर सेट करो", "schedule reminder", "make reminder", "create reminder"
+    ]
+    if text_lower in incomplete_prompts:
+        return {
+            "action": "query",
+            "confidence": 0.99,
+            "confidence_level": "high",
+            "data": {
+                "response": "ज़रूर! आप कब के लिए रिमाइंडर सेट करना चाहते हैं? (जैसे: शाम 5 बजे या कल सुबह 10 बजे)"
+            },
+            "explanation": "Clarification: Asking reminder time"
+        }
+
+    # 6. Check Day of Week / Recurrence checks
+    is_mon_to_fri = bool(re.search(r'monday\s+to\s+friday|mon\s+to\s+fri|सोमवार\s+से\s+शुक्रवार', text_lower))
+    is_monday_query = bool(re.search(r'\b(?:on\s+)?(monday|somwar|सोमवार)\b', text_lower))
+    
+    if is_monday_query and not is_mon_to_fri and not any(w in text_lower for w in ["every", "har", "repeat", "only", "upcoming", "sirf", "aane wala"]):
+        # Ambiguous: ask whether upcoming or every Monday!
+        return {
+            "action": "query",
+            "confidence": 0.98,
+            "confidence_level": "high",
+            "data": {
+                "response": "क्या यह रिमाइंडर केवल आने वाले सोमवार के लिए सेट करना है, या हर सोमवार (Every Monday) रिपीट करना है?"
+            },
+            "explanation": "Clarification: Monday recurrence disambiguation"
+        }
     
     question_triggers = [
         "tell me", "what", "how", "can you", "who", "why", "when", "today", "todays",
@@ -866,6 +1061,14 @@ def rule_based_fallback(text: str, context: dict = None) -> dict:
 
     reminder_time_str, due_dt = parse_reminder_time(text)
     clean_title = clean_task_title(text)
+    is_daily = any(w in text_lower for w in ["daily", "everyday", "every day", "har din", "roz", "rozaana", "रोज", "रोजाना", "प्रतिदिन"])
+    rec_val = None
+    if is_daily:
+        rec_val = "daily"
+    elif is_mon_to_fri:
+        rec_val = "weekdays"
+    elif is_monday_query and any(w in text_lower for w in ["every", "har", "repeat", "प्रत्येक"]):
+        rec_val = "weekly_monday"
 
     return {
         "action": "task",
@@ -875,7 +1078,8 @@ def rule_based_fallback(text: str, context: dict = None) -> dict:
             "title": clean_title,
             "priority": priority,
             "reminder_time": reminder_time_str,
-            "due_date": due_dt.isoformat() if due_dt else None
+            "due_date": due_dt.isoformat() if due_dt else None,
+            "recurrence": rec_val
         },
         "explanation": "Extracted task and reminder"
     }

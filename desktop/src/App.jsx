@@ -774,6 +774,23 @@ export default function App() {
     return cleanList;
   }, [tasks, googleTasks]);
   const [newTaskInput, setNewTaskInput] = useState('');
+  const [expandedTaskIds, setExpandedTaskIds] = useState({});
+  const toggleSubtasksExpand = (taskId) => {
+    setExpandedTaskIds(prev => ({ ...prev, [taskId]: !prev[taskId] }));
+  };
+  const renderRecurrenceBadge = (rec) => {
+    if (!rec) return null;
+    let label = '🔁 Recurring';
+    if (rec === 'daily') label = '🔁 Daily';
+    else if (rec === 'weekdays' || rec === 'monday_to_friday') label = '🔁 Mon-Fri';
+    else if (rec === 'weekly_monday') label = '🔁 Every Mon';
+    else if (rec.startsWith('weekly')) label = '🔁 Weekly';
+    return (
+      <span style={{ color: '#c084fc', background: 'rgba(192, 132, 252, 0.15)', border: '1px solid rgba(192, 132, 252, 0.3)', padding: '1px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600 }}>
+        {label}
+      </span>
+    );
+  };
   const [financeRecords, setFinanceRecords] = useState([]);
   const [financeSummary, setFinanceSummary] = useState({ total_income: 0, total_expense: 0, balance: 0 });
   const [memories, setMemories] = useState([]);
@@ -949,10 +966,18 @@ export default function App() {
 
   // Today-only pending tasks count for bell badge
   const getTodayPendingCount = () => {
-    const todayStr = formatLocalDateStr(new Date());
+    const today = new Date();
+    const todayStr = formatLocalDateStr(today);
+    const dayIdx = today.getDay(); // 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
     const list = (combinedTasks && combinedTasks.length > 0) ? combinedTasks : (tasks || []);
     return list.filter(t => {
       if (!isTaskPending(t)) return false;
+      // Daily recurring tasks
+      if (t.recurrence === 'daily' || t.repeat === 'daily') return true;
+      // Weekdays (Mon-Fri)
+      if ((t.recurrence === 'weekdays' || t.recurrence === 'monday_to_friday') && dayIdx >= 1 && dayIdx <= 5) return true;
+      // Weekly Monday
+      if (t.recurrence === 'weekly_monday' && dayIdx === 1) return true;
       // 1. Explicit due_date check (must strictly match today's local date)
       if (t.due_date) {
         const taskDay = formatLocalDateStr(t.due_date);
@@ -2196,8 +2221,45 @@ export default function App() {
         if (str) return str;
       } catch (e) {}
     }
-    // Only items with an explicit due_date should be bound to calendar dates
+    if (t?.created_at) {
+      try {
+        const str = formatLocalDateStr(t.created_at);
+        if (str) return str;
+      } catch (e) {}
+    }
     return null;
+  };
+
+  const handleRescheduleTask = async (taskId, targetDateStr = null) => {
+    const todayStr = formatLocalDateStr(new Date());
+    const finalDate = targetDateStr || todayStr;
+    try {
+      const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
+      await fetch(`${API_BASE}/tasks/${taskId}/reschedule`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ due_date: `${finalDate}T10:00:00` })
+      });
+      refreshAllData();
+      showToast('कार्य सफलतापूर्वक रीशेड्यूल किया गया!', 'success');
+    } catch (e) {
+      showToast('रीशेड्यूल करने में त्रुटि', 'error');
+    }
+  };
+
+  const handleRescheduleAllOverdue = async () => {
+    try {
+      const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
+      const res = await fetch(`${API_BASE}/tasks/reschedule-overdue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders }
+      });
+      const data = await res.json();
+      refreshAllData();
+      showToast(`${data.rescheduled_count || 0} बकाया कार्य आज के लिए रीशेड्यूल किए गए!`, 'success');
+    } catch (e) {
+      showToast('रीशेड्यूल करने में त्रुटि', 'error');
+    }
   };
 
   const handleCopyTodayTasksToSelectedDate = async () => {
@@ -4745,12 +4807,44 @@ export default function App() {
               {/* Active Reminders Card */}
               {(() => {
                 const isTaskDone = (t) => t.is_completed || t.status === 'completed';
+                const todayStr = formatLocalDateStr(new Date());
+                const isOverdue = (t) => {
+                  if (isTaskDone(t)) return false;
+                  if (t.recurrence) return false;
+                  const dStr = getTaskDateStr(t);
+                  return dStr && dStr < todayStr;
+                };
+                const overdueTasks = (combinedTasks || tasks || []).filter(isOverdue);
                 const pendingReminders = tasks.filter(t => t.reminder_time && !isTaskDone(t));
                 const pendingTasks = tasks.filter(t => !isTaskDone(t));
                 const completedTasks = tasks.filter(t => isTaskDone(t));
 
                 return (
                   <>
+                    {/* Overdue Task Banner on Today Tab */}
+                    {overdueTasks.length > 0 && (
+                      <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '16px', padding: '12px 16px', marginBottom: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span style={{ fontSize: '1.2rem' }}>⚠️</span>
+                          <div>
+                            <div style={{ color: '#f87171', fontWeight: 700, fontSize: '0.86rem' }}>
+                              {overdueTasks.length} Overdue Task(s) from past days
+                            </div>
+                            <div style={{ color: '#94a3b8', fontSize: '0.74rem' }}>
+                              You have unfinished tasks from previous dates.
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleRescheduleAllOverdue}
+                          style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '10px', padding: '6px 14px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        >
+                          <span>Reschedule to Today ⚡</span>
+                        </button>
+                      </div>
+                    )}
+
                     <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px', marginBottom: '18px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: 'var(--accent-cyan)', fontWeight: 700, fontSize: '0.85rem' }}>
                         <Bell size={16} />
@@ -4763,7 +4857,39 @@ export default function App() {
                           <div key={task.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
                             <div>
                               <div style={{ color: '#ffffff', fontSize: '0.92rem', fontWeight: 500 }}>{task.title}</div>
-                              <div style={{ color: 'var(--accent-cyan)', fontSize: '0.76rem', marginTop: '2px' }}>⏰ {task.reminder_time}</div>
+                              <div style={{ color: 'var(--accent-cyan)', fontSize: '0.76rem', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                {task.reminder_time && <span>⏰ {task.reminder_time}</span>}
+                                {renderRecurrenceBadge(task.recurrence)}
+                              </div>
+                              {task.subtasks && task.subtasks.length > 0 && (
+                                <div style={{ marginTop: '6px' }}>
+                                  <button 
+                                    type="button" 
+                                    onClick={(e) => { e.stopPropagation(); toggleSubtasksExpand(task.id); }}
+                                    style={{ background: 'rgba(192, 132, 252, 0.1)', border: '1px solid rgba(192, 132, 252, 0.25)', color: '#c084fc', padding: '2px 8px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
+                                  >
+                                    <span>📁 {task.subtasks.filter(s => s.is_completed || s.status === 'completed').length}/{task.subtasks.length} Subtasks</span>
+                                    <span>{expandedTaskIds[task.id] ? '▲' : '▼'}</span>
+                                  </button>
+                                  {expandedTaskIds[task.id] && (
+                                    <div style={{ marginTop: '6px', paddingLeft: '8px', borderLeft: '2px solid rgba(192, 132, 252, 0.3)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                      {task.subtasks.map(st => {
+                                        const stDone = st.is_completed || st.status === 'completed';
+                                        return (
+                                          <div 
+                                            key={st.id} 
+                                            onClick={(e) => { e.stopPropagation(); handleToggleTask(st.id); }}
+                                            style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', padding: '2px 0' }}
+                                          >
+                                            <span style={{ color: stDone ? '#10b981' : '#64748b', fontSize: '0.80rem' }}>{stDone ? '☑' : '☐'}</span>
+                                            <span style={{ color: stDone ? '#64748b' : '#e2e8f0', fontSize: '0.78rem', textDecoration: stDone ? 'line-through' : 'none' }}>{st.title}</span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                             <button 
                               type="button" 
@@ -4816,8 +4942,38 @@ export default function App() {
                                 <span style={{ fontSize: '0.88rem', color: '#ffffff' }}>
                                   {task.title}
                                 </span>
-                                {task.reminder_time && (
-                                  <div style={{ color: 'var(--accent-cyan)', fontSize: '0.74rem' }}>⏰ {task.reminder_time}</div>
+                                <div style={{ color: 'var(--accent-cyan)', fontSize: '0.74rem', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                                  {task.reminder_time && <span>⏰ {task.reminder_time}</span>}
+                                  {renderRecurrenceBadge(task.recurrence)}
+                                </div>
+                                {task.subtasks && task.subtasks.length > 0 && (
+                                  <div style={{ marginTop: '6px' }}>
+                                    <button 
+                                      type="button" 
+                                      onClick={(e) => { e.stopPropagation(); toggleSubtasksExpand(task.id); }}
+                                      style={{ background: 'rgba(192, 132, 252, 0.1)', border: '1px solid rgba(192, 132, 252, 0.25)', color: '#c084fc', padding: '2px 8px', borderRadius: '6px', fontSize: '0.72rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
+                                    >
+                                      <span>📁 {task.subtasks.filter(s => s.is_completed || s.status === 'completed').length}/{task.subtasks.length} Subtasks</span>
+                                      <span>{expandedTaskIds[task.id] ? '▲' : '▼'}</span>
+                                    </button>
+                                    {expandedTaskIds[task.id] && (
+                                      <div style={{ marginTop: '6px', paddingLeft: '8px', borderLeft: '2px solid rgba(192, 132, 252, 0.3)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        {task.subtasks.map(st => {
+                                          const stDone = st.is_completed || st.status === 'completed';
+                                          return (
+                                            <div 
+                                              key={st.id} 
+                                              onClick={(e) => { e.stopPropagation(); handleToggleTask(st.id); }}
+                                              style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', padding: '2px 0' }}
+                                            >
+                                              <span style={{ color: stDone ? '#10b981' : '#64748b', fontSize: '0.80rem' }}>{stDone ? '☑' : '☐'}</span>
+                                              <span style={{ color: stDone ? '#64748b' : '#e2e8f0', fontSize: '0.78rem', textDecoration: stDone ? 'line-through' : 'none' }}>{st.title}</span>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                             </div>
@@ -5190,24 +5346,41 @@ export default function App() {
                       const cellDateStr = formatLocalDateStr(cellDate);
                       const isToday = cellDateStr === todayStr;
                       const isSelected = cellDateStr === selectedStr;
+                      const isPastCell = cellDateStr < todayStr;
                       const dayReminders = combinedTasks.filter(t => getTaskDateStr(t) === cellDateStr);
+                      const cellDoneCount = dayReminders.filter(t => t.is_completed || t.status === 'completed').length;
+                      const cellTotal = dayReminders.length;
+                      const isCellAllDone = cellTotal > 0 && cellDoneCount === cellTotal;
+                      const hasCellOverdue = isPastCell && cellTotal > 0 && cellDoneCount < cellTotal;
 
                       cells.push(
                         <div
                           key={cellDateStr + i}
                           className={`calendar-day-cell ${isOtherMonth ? 'other-month' : ''} ${isToday ? 'today' : ''} ${isSelected ? 'selected' : ''}`}
+                          style={{
+                            border: hasCellOverdue ? '1px solid rgba(249, 115, 22, 0.4)' : isCellAllDone ? '1px solid rgba(16, 185, 129, 0.4)' : undefined,
+                            background: isCellAllDone ? 'rgba(16, 185, 129, 0.05)' : hasCellOverdue ? 'rgba(249, 115, 22, 0.06)' : undefined
+                          }}
                           onClick={() => {
                             setCalSelectedDate(cellDate);
                             if (isOtherMonth) setCalCurrentMonth(new Date(cellDate.getFullYear(), cellDate.getMonth(), 1));
                           }}
                         >
                           <span>{dayNum}</span>
-                          {dayReminders.length > 0 && (
-                            <span className="calendar-badge-count">{dayReminders.length}</span>
+                          {cellTotal > 0 && (
+                            <span 
+                              className="calendar-badge-count"
+                              style={{
+                                background: isCellAllDone ? '#10b981' : hasCellOverdue ? '#f97316' : '#38bdf8',
+                                color: '#022c22'
+                              }}
+                            >
+                              {isCellAllDone ? `✓${cellTotal}` : hasCellOverdue ? `${cellDoneCount}/${cellTotal}` : cellTotal}
+                            </span>
                           )}
-                          {dayReminders.length > 0 && (
+                          {cellTotal > 0 && (
                             <div className="calendar-badge-dot" style={{
-                              background: dayReminders.some(t => t.priority === 'urgent' || t.priority === 'high') ? '#f43f5e' : '#f59e0b'
+                              background: isCellAllDone ? '#10b981' : hasCellOverdue ? '#f97316' : dayReminders.some(t => t.priority === 'urgent' || t.priority === 'high') ? '#f43f5e' : '#38bdf8'
                             }} />
                           )}
                         </div>
@@ -5435,6 +5608,11 @@ export default function App() {
                                     {t.reminder_time && (
                                       <span style={{ fontSize: '0.72rem', color: '#38bdf8', fontWeight: 600 }}>
                                         ⏰ {t.reminder_time}
+                                      </span>
+                                    )}
+                                    {t.recurrence === 'daily' && (
+                                      <span style={{ fontSize: '0.65rem', color: '#c084fc', background: 'rgba(192, 132, 252, 0.15)', border: '1px solid rgba(192, 132, 252, 0.3)', padding: '1px 5px', borderRadius: '4px', fontWeight: 600 }}>
+                                        🔁 Daily
                                       </span>
                                     )}
                                     <span style={{
@@ -5710,6 +5888,11 @@ export default function App() {
                                       <span style={{ color: '#38bdf8', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                         <span>⏰</span>
                                         <span>{t.reminder_time}</span>
+                                      </span>
+                                    )}
+                                    {t.recurrence === 'daily' && (
+                                      <span style={{ fontSize: '0.68rem', color: '#c084fc', background: 'rgba(192, 132, 252, 0.15)', border: '1px solid rgba(192, 132, 252, 0.3)', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                                        🔁 Daily
                                       </span>
                                     )}
                                     {t.due_date && (

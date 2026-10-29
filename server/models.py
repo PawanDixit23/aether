@@ -17,6 +17,8 @@ class Task(Base):
     status = Column(String, default="pending")    # pending, in_progress, completed, cancelled
     due_date = Column(DateTime, nullable=True)
     reminder_time = Column(String, nullable=True) # e.g. "10:30 AM" or "13:30"
+    recurrence = Column(String, nullable=True, default=None) # e.g. "daily", "weekdays", "weekly_monday" or None
+    parent_id = Column(Integer, nullable=True, default=None) # For hierarchical subtasks
     notified = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 

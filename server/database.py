@@ -36,7 +36,7 @@ def get_db():
         db.close()
 
 def ensure_schema_migrations():
-    """Ensure user_email column exists on all tables even if existing SQLite file is used."""
+    """Ensure user_email and recurrence columns exist on tables even if existing SQLite/Postgres is used."""
     try:
         with engine.connect() as conn:
             tables = ["tasks", "financial_records", "memory_vault", "audit_logs", "chat_messages"]
@@ -47,5 +47,15 @@ def ensure_schema_migrations():
                 except Exception:
                     # Column already exists or table not created yet
                     pass
+            try:
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN recurrence VARCHAR"))
+                conn.commit()
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE tasks ADD COLUMN parent_id INTEGER"))
+                conn.commit()
+            except Exception:
+                pass
     except Exception as e:
         print(f"[Schema Migration Note] {e}")
