@@ -167,6 +167,7 @@ export default function App() {
           ref={webViewRef}
           source={{ uri: AETHER_URL }}
           style={styles.webView}
+          userAgent="Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
           javaScriptEnabled={true}
           domStorageEnabled={true}
           startInLoadingState={true}
