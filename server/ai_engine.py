@@ -28,7 +28,7 @@ if os.path.exists(env_path):
     load_dotenv(env_path)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3:8b")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini")
@@ -657,8 +657,8 @@ CRITICAL INSTRUCTIONS FOR "query":
   Share the match outcomes, scores, winners, and team details from the live feed or your sports intelligence.
   NEVER say "I only have access to today's data" or refuse to answer. Always synthesize and deliver the match results and sports scores.
 - When providing NEWS:
-  Present news items clearly with a numbered list. Each item MUST have a concise headline and direct clickable markdown link in the exact format: 1. [{Headline}]({url}) - {Source}
-  CRITICAL: Never output a raw URL on its own line and never break [{Headline}] and ({url}) across multiple lines. Always keep each news headline as a clean single-line markdown link [Headline](url).
+  Present news items clearly with a numbered list. Each item MUST have a concise headline and direct clickable markdown link in the exact format: 1. [Headline](URL) - Source
+  CRITICAL: Never output a raw URL on its own line and never break [Headline] and (URL) across multiple lines. Always keep each news headline as a clean single-line markdown link [Headline](URL).
 
 Determine the action type:
 1. "task": Creating a task or reminder.
@@ -772,8 +772,9 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
 
         models_to_try = [
             GEMINI_MODEL,
-            "gemini-3.1-flash-lite",
-            "gemini-2.5-flash"
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash"
         ]
         unique_models = list(dict.fromkeys(models_to_try))
 

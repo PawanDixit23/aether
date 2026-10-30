@@ -65,7 +65,8 @@ import {
   RefreshCw,
   Upload,
   Radio,
-  Home
+  Home,
+  LayoutDashboard
 } from 'lucide-react';
 import { supabase } from './supabase';
 import { FormattedMessage } from './components/chat/FormattedMessage';
@@ -295,13 +296,13 @@ const resolveSpeechVoice = (voiceId, lang = 'en') => {
 
   const isHindi = lang && (lang.startsWith('hi') || lang === 'hi-IN');
   if (isHindi) {
-    // Priority: hi-IN voices first, then any Hindi-named voice
+    // Priority: genuine hi-IN voices first, then any Hindi-named voice
     const hiVoice = voices.find(v => v.lang === 'hi-IN')
       || voices.find(v => v.lang && v.lang.toLowerCase().startsWith('hi'))
       || voices.find(v => /hindi/i.test(v.name));
-    if (hiVoice) return hiVoice;
-    // Fallback: any available voice
-    return voices[0] || null;
+    // DO NOT fallback to English voices[0] for Hindi text, as English synthesizers
+    // skip Devanagari characters and only read punctuation ("exclamation point question mark")
+    return hiVoice || null;
   }
 
   // For English — prefer Indian English (en-IN) voices for sharp & clear output
@@ -3011,11 +3012,13 @@ export default function App() {
       };
 
       recognition.onresult = (event) => {
-        const transcript = Array.from(event.results).map(r => r[0].transcript).join('');
+        const transcript = Array.from(event.results).map(r => r[0].transcript).join(' ').trim();
         setInputText(transcript);
-        if (event.results[0].isFinal) {
+        if (event.results[0].isFinal || event.results[event.results.length - 1].isFinal) {
           setIsListening(false);
-          handleSendPrompt(transcript);
+          // Strip any leading wake-word if user repeated "Hey Aether ..."
+          const cleanPrompt = transcript.replace(/^(hey\s*aether|ok\s*aether|hey\s*ether|aether|ether|हे\s*ईथर|ईथर)[,\s]+/i, '').trim() || transcript;
+          handleSendPrompt(cleanPrompt);
         }
       };
 
@@ -3080,31 +3083,37 @@ export default function App() {
 
       wakeRec.onresult = (event) => {
         if (isDestroyed) return;
-        const transcript = Array.from(event.results)
-          .map(r => r[0].transcript)
-          .join('')
-          .toLowerCase();
+        
+        // Use only the latest recognition segment to prevent stale accumulation
+        let latestSegment = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i] && event.results[i][0]) {
+            latestSegment += " " + event.results[i][0].transcript;
+          }
+        }
+        const text = latestSegment.trim().toLowerCase();
+        if (!text) return;
 
-        // Check for wake words: "hey aether", "aether", "ok aether", "हे ईथर", "ईथर", "सुनो ईथर", "ether", "either"
-        const wakeWordRegex = /(hey\s*aether|ok\s*aether|okay\s*aether|aether|हे\s*ईथर|ईथर|सुनो\s*ईथर|hey\s*ether|ether|hey\s*either)/i;
-        const match = transcript.match(wakeWordRegex);
+        // Check for wake words: "hey aether", "ok aether", "hey ether", "ok ether", "aether", "ether", "हे ईथर", "ईथर", "सुनो ईथर"
+        const wakeWordRegex = /\b(hey\s*aether|ok\s*aether|okay\s*aether|hey\s*ether|ok\s*ether|okay\s*ether|aether|ether|हे\s*ईथर|ईथर|सुनो\s*ईथर)\b/i;
+        const match = text.match(wakeWordRegex);
 
         if (match) {
-          console.log("[Wake Word Detected]:", transcript);
-          showToast("⚡ 'Hey Aether' पहचाना गया! बोलिए...", "info");
+          console.log("[Wake Word Detected]:", text);
+          showToast("⚡ 'Hey Aether' पहचाना गया!", "info");
           
           try { wakeRec.stop(); } catch (e) {}
           wakeWordRecognitionRef.current = null;
 
           // Extract any query following the wake word
-          const queryPart = transcript.slice(match.index + match[0].length).trim();
-          if (queryPart.length > 3) {
+          const queryPart = text.slice(match.index + match[0].length).replace(/^[,.\s]+/, '').trim();
+          if (queryPart.length > 2) {
             handleSendPrompt(queryPart);
           } else {
             // Trigger active speech recognition
             setTimeout(() => {
               toggleVoiceRecognition();
-            }, 300);
+            }, 250);
           }
         }
       };
@@ -3150,20 +3159,23 @@ export default function App() {
     if (!voiceOutputEnabled) return;
     if (!text || !text.trim()) return;
 
+    const hasDevanagari = /[\u0900-\u097F]/.test(text);
+
     // Clean markdown artifacts from text before speaking (preserve link text / headlines!)
     const cleanText = text
       .replace(/\[(.*?)\]\([^)]*\)/g, '$1')   // preserve headline text from markdown links
       .replace(/https?:\/\/[^\s]+/g, '')      // remove raw URLs
       .replace(/Link:\s*(?:स्रोत पढ़ें|Read Source)?/gi, '') // clean link labels
-      .replace(/[*_#`🔗🏆📰•]/g, '')          // remove markdown formatting & symbols
+      .replace(/[*_#`🔗🏆📰•⚡✨🎯💡📌]/g, '') // remove markdown formatting & symbols/emojis
       .replace(/```[\s\S]*?```/g, '')         // remove code blocks
+      .replace(/₹\s*([0-9,.-]+)/g, (match, p1) => hasDevanagari ? `${p1} रुपये` : `${p1} Rupees`)
+      .replace(/[!]/g, '.')                   // prevent speech engines from literally saying "exclamation mark"
       .replace(/\s+/g, ' ')                  // normalize whitespace
       .trim();
 
     if (!cleanText) return;
 
     const activeVoice = AETHER_VOICES.find(v => v.id === selectedVoice) || AETHER_VOICES[0];
-    const hasDevanagari = /[\u0900-\u097F]/.test(cleanText);
     const isHindi = selectedLang === 'hi' || hasDevanagari;
     const lang = isHindi ? 'hi' : 'en';
     const bcp47 = isHindi ? 'hi-IN' : 'en-IN';  // Always Indian locale
@@ -3177,8 +3189,18 @@ export default function App() {
     const isMobileDevice = (typeof window !== 'undefined' && !!window.ReactNativeWebView) || 
       (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
 
-    if (isMobileDevice) {
-      // Mobile: Always use server streaming TTS (/api/tts) for guaranteed crisp Indian English / Hindi audio
+    let availableVoices = [];
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      availableVoices = window.speechSynthesis.getVoices() || [];
+    }
+    const hasHindiBrowserVoice = availableVoices.some(v => 
+      v.lang === 'hi-IN' || (v.lang && v.lang.toLowerCase().startsWith('hi')) || /hindi/i.test(v.name)
+    );
+
+    // If on mobile OR if Hindi is spoken but the browser lacks a native Hindi voice:
+    // ALWAYS use server streaming TTS (/api/tts) with authentic Google Hindi voice!
+    // This completely prevents English synthesizers from skipping Hindi letters and speaking only punctuation ("exclamation point question mark").
+    if (isMobileDevice || (isHindi && !hasHindiBrowserVoice)) {
       playStreamAudio(cleanText, selectedVoice, lang);
       return;
     }
@@ -4311,14 +4333,11 @@ export default function App() {
             <button 
               type="button" 
               className="jarvis-icon-btn" 
-              onClick={() => {
-                setIsSettingsOpen(false);
-                setShowDashboard(true);
-              }}
+              onClick={() => setIsSettingsOpen(false)}
               style={{ position: 'absolute', left: 0 }}
-              title="Home Dashboard"
+              title="Back"
             >
-              <Home size={22} />
+              <ChevronLeft size={22} />
             </button>
             <h2 className="settings-header-title">Settings</h2>
           </div>
@@ -4352,6 +4371,30 @@ export default function App() {
             >
               {effectiveLang === 'en' ? 'Sign out' : effectiveLang === 'hinglish' ? 'Sign out' : 'साइन आउट'}
             </button>
+          </div>
+
+          {/* SECTION: OVERVIEW / DASHBOARD */}
+          <div className="settings-section-heading">OVERVIEW</div>
+          <div className="settings-card-group">
+            <div 
+              className="settings-row-item" 
+              onClick={() => {
+                setIsSettingsOpen(false);
+                setShowDashboard(true);
+              }}
+              style={{ cursor: 'pointer' }}
+            >
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+                  <LayoutDashboard size={16} />
+                </div>
+                <span style={{ fontWeight: 600, color: '#f8fafc' }}>Dashboard</span>
+              </div>
+              <div className="settings-row-right">
+                <span style={{ color: '#38bdf8', fontSize: '0.8rem', fontWeight: 500 }}>Open</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
           </div>
 
           {/* SECTION: YOUR JARVIS */}
@@ -4567,34 +4610,31 @@ export default function App() {
           {activeTab === 'aether' && (
             <div className="gemini-screen-container">
               
-              {/* TOP BAR: [Home Icon] [Aether ⌵ (Centered)] [Bell] [Edit3] [Profile Avatar] */}
+              {/* TOP BAR: [Back (Dashboard only)] [Aether ⌵ (Centered)] [Bell] [Edit3] [Profile Avatar] */}
               <header className="gemini-top-bar">
                 <div className="gemini-top-left" style={{ width: '80px', display: 'flex', alignItems: 'center' }}>
-                  <button
-                    type="button"
-                    className="gemini-icon-btn"
-                    onClick={() => {
-                      setIsSettingsOpen(false);
-                      setShowDashboard(prev => !prev);
-                    }}
-                    title={showDashboard ? "Close Dashboard (Back to Landing)" : "Open Executive Dashboard"}
-                    style={{
-                      background: showDashboard ? 'rgba(56, 189, 248, 0.18)' : 'rgba(255, 255, 255, 0.05)',
-                      border: showDashboard ? '1.5px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.1)',
-                      color: showDashboard ? '#38bdf8' : '#e2e8f0',
-                      borderRadius: '12px',
-                      width: '38px',
-                      height: '38px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      boxShadow: showDashboard ? '0 0 14px rgba(56, 189, 248, 0.35)' : 'none',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    <Home size={19} />
-                  </button>
+                  {showDashboard && (
+                    <button
+                      type="button"
+                      className="gemini-icon-btn"
+                      onClick={() => setShowDashboard(false)}
+                      title="Back to Landing (होम पर वापस जाएं)"
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        color: '#e2e8f0',
+                        borderRadius: '12px',
+                        width: '38px',
+                        height: '38px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <ArrowLeft size={18} />
+                    </button>
+                  )}
                 </div>
 
                 <div className="gemini-top-center" style={{ position: 'relative', display: 'flex', justifyContent: 'center' }}>
@@ -5025,54 +5065,51 @@ export default function App() {
                       </svg>
                     </button>
                   ) : (
-                    /* Mic + Waveform — shown when input is empty */
-                    <>
-                      {wakeWordEnabled && (
-                        <span
-                          onClick={() => setActiveSubModal('permissions')}
-                          title="'Hey Aether' Wake Word Active (Click to manage)"
-                          style={{
-                            fontSize: '0.66rem',
-                            color: '#38bdf8',
-                            background: 'rgba(56, 189, 248, 0.12)',
-                            border: '1px solid rgba(56, 189, 248, 0.3)',
-                            borderRadius: '20px',
-                            padding: '3px 8px',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '5px',
-                            cursor: 'pointer',
-                            marginRight: '4px',
-                            userSelect: 'none'
-                          }}
-                        >
-                          <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 6px #38bdf8' }} />
-                          Hey Aether
-                        </span>
-                      )}
-                      <button 
-                        type="button" 
-                        className={`gemini-prompt-btn mic ${isListening ? 'listening' : ''}`}
-                        onClick={toggleListening}
-                        title={isListening ? "Stop listening" : "Voice Input (माइक शुरू करें)"}
-                      >
-                        <Mic size={20} />
-                      </button>
-
-                      <button 
-                        type="button" 
-                        className="gemini-prompt-btn waveform-btn"
-                        onClick={() => {
-                          toggleListening();
-                          showToast("⚡ Zero-Latency Acoustic Voice Mode Active", "info");
-                        }}
-                        title="Live Voice Mode"
-                      >
-                        <div className="gemini-waveform-icon">
+                    /* Clean single microphone button with audio pulse indicator */
+                    <button 
+                      type="button" 
+                      className={`gemini-prompt-btn mic ${isListening ? 'listening' : ''}`}
+                      onClick={toggleListening}
+                      title={
+                        isListening 
+                          ? "Stop listening" 
+                          : wakeWordEnabled 
+                            ? "Voice Input (Wake word 'Hey Aether' active)" 
+                            : "Voice Input (माइक शुरू करें)"
+                      }
+                      style={{
+                        position: 'relative',
+                        boxShadow: isListening 
+                          ? '0 0 16px rgba(56, 189, 248, 0.6)' 
+                          : wakeWordEnabled 
+                            ? '0 0 8px rgba(56, 189, 248, 0.25)' 
+                            : 'none'
+                      }}
+                    >
+                      {isListening ? (
+                        <div className="gemini-waveform-icon" style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
                           <span /><span /><span />
                         </div>
-                      </button>
-                    </>
+                      ) : (
+                        <>
+                          <Mic size={20} color={wakeWordEnabled ? '#38bdf8' : '#e2e8f0'} />
+                          {wakeWordEnabled && (
+                            <span 
+                              style={{ 
+                                position: 'absolute', 
+                                top: '6px', 
+                                right: '6px', 
+                                width: '6px', 
+                                height: '6px', 
+                                borderRadius: '50%', 
+                                background: '#38bdf8', 
+                                boxShadow: '0 0 6px #38bdf8' 
+                              }} 
+                            />
+                          )}
+                        </>
+                      )}
+                    </button>
                   )}
                 </form>
               </div>

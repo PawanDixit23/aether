@@ -91,72 +91,44 @@ export const DashboardView = ({
   const nextEvent = pendingUpcoming.length > 0 ? pendingUpcoming[0] : null;
 
   return (
-    <div style={{ width: '100%', maxWidth: '440px', margin: '0 auto', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', overflowY: 'auto', padding: '12px 18px 24px' }}>
+    <div style={{ width: '100%', maxWidth: '440px', margin: '0 auto', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', overflowY: 'auto', padding: '16px 18px 24px' }}>
       
-      {/* 1. TOP BAR: AETHER Logo [● Online] ... [Bell] [Avatar] */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '1.25rem', fontWeight: 800, color: '#38bdf8', letterSpacing: '0.04em' }}>
-            AETHER
-          </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '12px', padding: '2px 8px' }}>
-            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', boxShadow: '0 0 6px #10b981' }} />
-            <span style={{ fontSize: '0.68rem', fontWeight: 600, color: '#34d399' }}>Online</span>
+      {/* 1. GREETING & DATE HEADLINE */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', paddingTop: '4px' }}>
+        <div>
+          <h1 style={{ fontSize: '1.45rem', fontWeight: 700, color: '#ffffff', margin: '0 0 2px 0', letterSpacing: '-0.02em' }}>
+            {getGreeting()}, {userName || 'Pawan'}
+          </h1>
+          <div style={{ fontSize: '0.86rem', color: '#60a5fa', fontWeight: 500, marginBottom: '2px' }}>
+            Let's make today productive ✨
+          </div>
+          <div style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: 500 }}>
+            {formattedDate}
           </div>
         </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {/* Notification Bell */}
+        {onClose && (
           <button
             type="button"
-            onClick={() => setActiveSubModal('reminders')}
-            style={{ position: 'relative', background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#e2e8f0', cursor: 'pointer' }}
-            title="Notifications & Agenda"
+            onClick={onClose}
+            style={{
+              background: 'rgba(255, 255, 255, 0.08)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              borderRadius: '50%',
+              width: '32px',
+              height: '32px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#94a3b8',
+              cursor: 'pointer',
+              fontSize: '1rem',
+              transition: 'all 0.2s'
+            }}
+            title="Close Dashboard"
           >
-            <Bell size={17} />
-            {tasksLeftCount > 0 && (
-              <span style={{ position: 'absolute', top: '7px', right: '7px', width: '7px', height: '7px', borderRadius: '50%', background: '#ef4444', border: '1.5px solid #080f1d' }} />
-            )}
+            ✕
           </button>
-
-          {/* Profile Avatar */}
-          <div 
-            onClick={() => setIsSettingsOpen(true)}
-            style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'linear-gradient(135deg, #38bdf8, #2563eb)', border: '1.5px solid rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', overflow: 'hidden' }}
-            title="Profile & Settings"
-          >
-            {userAvatar ? (
-              <img src={userAvatar} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" />
-            ) : (
-              (userName || 'P').charAt(0).toUpperCase()
-            )}
-          </div>
-
-          {/* Close Dashboard Button */}
-          {onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', cursor: 'pointer', fontSize: '1.1rem' }}
-              title="Close Dashboard (Back to Landing)"
-            >
-              ✕
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* 2. GREETING & DATE HEADLINE */}
-      <div style={{ marginBottom: '14px' }}>
-        <h1 style={{ fontSize: '1.45rem', fontWeight: 700, color: '#ffffff', margin: '0 0 2px 0', letterSpacing: '-0.02em' }}>
-          {getGreeting()}, {userName || 'Pawan'}
-        </h1>
-        <div style={{ fontSize: '0.86rem', color: '#60a5fa', fontWeight: 500, marginBottom: '2px' }}>
-          Let's make today productive ✨
-        </div>
-        <div style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: 500 }}>
-          {formattedDate}
-        </div>
+        )}
       </div>
 
       {/* 3. CENTER ORB (Holographic Blue Earth with Concentric Orbital Rings) */}
