@@ -3159,48 +3159,39 @@ export default function App() {
     if (!voiceOutputEnabled) return;
     if (!text || !text.trim()) return;
 
+    // Detect if the message is in Hindi (contains Devanagari characters)
     const hasDevanagari = /[\u0900-\u097F]/.test(text);
+    const lang = hasDevanagari ? 'hi' : 'en';
+    const bcp47 = hasDevanagari ? 'hi-IN' : 'en-IN';
 
-    // Clean markdown artifacts from text before speaking (preserve link text / headlines!)
-    const cleanText = text
+    // Clean markdown artifacts, URLs, code blocks, emojis, and unwanted symbols
+    let cleanText = text
       .replace(/\[(.*?)\]\([^)]*\)/g, '$1')   // preserve headline text from markdown links
       .replace(/https?:\/\/[^\s]+/g, '')      // remove raw URLs
       .replace(/Link:\s*(?:स्रोत पढ़ें|Read Source)?/gi, '') // clean link labels
       .replace(/[*_#`🔗🏆📰•⚡✨🎯💡📌]/g, '') // remove markdown formatting & symbols/emojis
       .replace(/```[\s\S]*?```/g, '')         // remove code blocks
       .replace(/₹\s*([0-9,.-]+)/g, (match, p1) => hasDevanagari ? `${p1} रुपये` : `${p1} Rupees`)
-      .replace(/[!]/g, '.')                   // prevent speech engines from literally saying "exclamation mark"
+      .replace(/[!]/g, '')                    // remove exclamation points so synthesizers never speak "exclamation point" or "dot"
+      .replace(/\s*([.,?।])\s*/g, '$1 ')      // attach punctuation directly to preceding word so synthesizers pause naturally instead of reading punctuation names
+      .replace(/[.?।]+\s*([.?।]+)/g, '$1')    // remove duplicate punctuation like "..", ".?", "?."
       .replace(/\s+/g, ' ')                  // normalize whitespace
       .trim();
 
     if (!cleanText) return;
 
-    const activeVoice = AETHER_VOICES.find(v => v.id === selectedVoice) || AETHER_VOICES[0];
-    const isHindi = selectedLang === 'hi' || hasDevanagari;
-    const lang = isHindi ? 'hi' : 'en';
-    const bcp47 = isHindi ? 'hi-IN' : 'en-IN';  // Always Indian locale
-
     // Cancel any ongoing speech
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+      try { window.speechSynthesis.cancel(); } catch (e) {}
     }
 
-    // Check if running on mobile device (Android/iOS WebView or mobile browser)
     const isMobileDevice = (typeof window !== 'undefined' && !!window.ReactNativeWebView) || 
       (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
 
-    let availableVoices = [];
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      availableVoices = window.speechSynthesis.getVoices() || [];
-    }
-    const hasHindiBrowserVoice = availableVoices.some(v => 
-      v.lang === 'hi-IN' || (v.lang && v.lang.toLowerCase().startsWith('hi')) || /hindi/i.test(v.name)
-    );
-
-    // If on mobile OR if Hindi is spoken but the browser lacks a native Hindi voice:
-    // ALWAYS use server streaming TTS (/api/tts) with authentic Google Hindi voice!
-    // This completely prevents English synthesizers from skipping Hindi letters and speaking only punctuation ("exclamation point question mark").
-    if (isMobileDevice || (isHindi && !hasHindiBrowserVoice)) {
+    // CRITICAL: For Hindi text, ALWAYS use server-side Google Hindi TTS (/api/tts?lang=hi).
+    // Desktop and mobile browser speech engines frequently lack native Hindi voices and attempt
+    // to read Devanagari with English synthesizers, which skips words and reads "dot question mark".
+    if (hasDevanagari || isMobileDevice) {
       playStreamAudio(cleanText, selectedVoice, lang);
       return;
     }
@@ -3213,9 +3204,9 @@ export default function App() {
       if (voices && voices.length > 0) {
         try {
           const utterance = new SpeechSynthesisUtterance(cleanText);
-          // Sharp & clear settings: slightly faster rate, neutral pitch
+          const activeVoice = AETHER_VOICES.find(v => v.id === selectedVoice) || AETHER_VOICES[0];
           utterance.rate = (activeVoice ? activeVoice.rate : 1.0) * speechRate;
-          utterance.pitch = isHindi ? 1.0 : (activeVoice ? activeVoice.pitch : 1.0);
+          utterance.pitch = (activeVoice ? activeVoice.pitch : 1.0);
           utterance.volume = 1.0;
           utterance.lang = bcp47;
 
@@ -4729,7 +4720,17 @@ export default function App() {
 
               {/* CENTER STAGE OR CONVERSATION STREAM */}
               {showDashboard ? (
-                <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+                <div 
+                  className="no-scrollbar" 
+                  style={{ 
+                    flex: 1, 
+                    overflowY: 'hidden', 
+                    overflowX: 'hidden', 
+                    display: 'flex', 
+                    flexDirection: 'column',
+                    minHeight: 0
+                  }}
+                >
                   <DashboardView
                     userName={userPreferredName || userName}
                     currentTime={currentTime}
@@ -4779,15 +4780,6 @@ export default function App() {
                   >
                     {getDynamicSubheading()}
                   </p>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowDashboard(true)}
-                    style={{ marginTop: '14px', background: 'rgba(56, 189, 248, 0.12)', border: '1px solid rgba(56, 189, 248, 0.3)', color: '#38bdf8', padding: '8px 18px', borderRadius: '12px', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
-                  >
-                    <Home size={15} />
-                    <span>View Dashboard</span>
-                  </button>
                 </div>
               ) : (
                 <div className="gemini-chat-feed" ref={geminiChatFeedRef}>

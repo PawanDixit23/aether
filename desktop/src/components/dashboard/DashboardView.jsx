@@ -91,7 +91,24 @@ export const DashboardView = ({
   const nextEvent = pendingUpcoming.length > 0 ? pendingUpcoming[0] : null;
 
   return (
-    <div style={{ width: '100%', maxWidth: '440px', margin: '0 auto', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', overflowY: 'auto', padding: '16px 18px 24px' }}>
+    <div 
+      className="no-scrollbar"
+      style={{ 
+        width: '100%', 
+        maxWidth: '440px', 
+        margin: '0 auto', 
+        display: 'flex', 
+        flexDirection: 'column', 
+        height: '100%', 
+        boxSizing: 'border-box', 
+        overflowY: 'auto', 
+        overflowX: 'hidden',
+        padding: '12px 18px 120px',
+        scrollbarWidth: 'none',
+        msOverflowStyle: 'none',
+        WebkitOverflowScrolling: 'touch'
+      }}
+    >
       
       {/* 1. GREETING & DATE HEADLINE */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', paddingTop: '4px' }}>
