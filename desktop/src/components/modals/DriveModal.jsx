@@ -50,7 +50,7 @@ export const DriveModal = ({
         </div>
 
         <p style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '16px', lineHeight: '1.4' }}>
-          Aether से Google Drive फ़ाइल या डॉक्यूमेंट जोड़ें ताकि AI उसका विश्लेषण कर सके:
+          Attach a Google Drive file, sheet, or document link for Aether AI to inspect and analyze:
         </p>
 
         {/* Quick Presets */}
@@ -91,11 +91,11 @@ export const DriveModal = ({
         <form onSubmit={handleAttachDriveFromModal}>
           <div style={{ marginBottom: '12px' }}>
             <label style={{ display: 'block', fontSize: '0.74rem', color: '#94a3b8', marginBottom: '6px', fontWeight: 600 }}>
-              फ़ाइल का नाम (Document Title):
+              Document Title:
             </label>
             <input
               type="text"
-              placeholder="उदा. Project_Quarterly_Report"
+              placeholder="e.g. Project_Quarterly_Report"
               value={driveDocName}
               onChange={(e) => setDriveDocName(e.target.value)}
               style={{
@@ -113,7 +113,7 @@ export const DriveModal = ({
 
           <div style={{ marginBottom: '18px' }}>
             <label style={{ display: 'block', fontSize: '0.74rem', color: '#94a3b8', marginBottom: '6px', fontWeight: 600 }}>
-              Google Drive लिंक (URL):
+              Google Drive URL:
             </label>
             <input
               type="url"

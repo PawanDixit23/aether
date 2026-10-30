@@ -134,7 +134,7 @@ export const PermissionsModal = ({
                 const nextVal = !voiceOutputEnabled;
                 setVoiceOutputEnabled(nextVal);
                 localStorage.setItem('aether_voice_output', String(nextVal));
-                showToast(nextVal ? '🔊 आवाज़ चालू — Indian English/Hindi' : '🔇 आवाज़ बंद — सिर्फ़ टेक्स्ट', 'info');
+                showToast(nextVal ? '🔊 Voice output enabled — Indian English / Hindi' : '🔇 Voice output muted — Text only', 'info');
               }}
               role="button"
               tabIndex={0}
@@ -152,7 +152,7 @@ export const PermissionsModal = ({
               <div style={{ minWidth: 0 }}>
                 <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>"Hey Aether" Wake Word</div>
                 <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>
-                  {wakeWordEnabled ? 'हैंड्स-फ्री वॉयस एक्टिवेशन चालू • बोलें "Hey Aether" या "हे ईथर"' : 'हैंड्स-फ्री वेक-वर्ड बंद (माइक बटन दबाना होगा)'}
+                  {wakeWordEnabled ? 'Hands-free voice activation active • Say "Hey Aether"' : 'Hands-free wake word disabled (tap microphone to speak)'}
                 </div>
               </div>
             </div>

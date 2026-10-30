@@ -74,6 +74,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# In-memory deduplication cache for WhatsApp incoming webhooks (prevents duplicate replies)
+PROCESSED_WABA_MSG_IDS = set()
+
 def get_user_email(
     x_user_email: Optional[str] = Header(None, alias="X-User-Email"),
     user_email: Optional[str] = None
@@ -899,8 +902,10 @@ def clear_chat_history(
     db: Session = Depends(get_db)
 ):
     if user_email:
-        db.query(ChatMessage).filter(ChatMessage.user_email == user_email).delete()
-        db.commit()
+        db.query(ChatMessage).filter(ChatMessage.user_email == user_email.strip().lower()).delete()
+    else:
+        db.query(ChatMessage).filter(ChatMessage.user_email == None).delete()
+    db.commit()
     return {"message": "Chat history cleared, ready for new conversation"}
 
 @app.get("/api/news")
@@ -1453,7 +1458,7 @@ def list_finance_records(
     db: Session = Depends(get_db)
 ):
     if not user_email:
-        return []
+        return db.query(FinancialRecord).filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == "")).order_by(FinancialRecord.date.desc()).limit(limit).all()
     return db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).order_by(FinancialRecord.date.desc()).limit(limit).all()
 
 @app.get("/api/finance/summary")
@@ -1462,13 +1467,9 @@ def get_finance_summary(
     db: Session = Depends(get_db)
 ):
     if not user_email:
-        return {
-            "total_income": 0.0,
-            "total_expense": 0.0,
-            "balance": 0.0,
-            "record_count": 0
-        }
-    records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).all()
+        records = db.query(FinancialRecord).filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == "")).all()
+    else:
+        records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).all()
     total_income = sum(r.amount for r in records if r.type == "income")
     total_expense = sum(r.amount for r in records if r.type == "expense")
     balance = total_income - total_expense
@@ -2332,6 +2333,16 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             return {"status": "ok", "message": "no incoming messages"}
 
         msg = messages[0]
+        msg_id = msg.get("id")
+        if msg_id:
+            if msg_id in PROCESSED_WABA_MSG_IDS:
+                print(f"[WhatsApp Webhook] Duplicate message received ({msg_id}) — ignoring to prevent duplicate response.")
+                return {"status": "ok", "message": "duplicate ignored"}
+            PROCESSED_WABA_MSG_IDS.add(msg_id)
+            if len(PROCESSED_WABA_MSG_IDS) > 2000:
+                # Keep cache manageable
+                PROCESSED_WABA_MSG_IDS.pop()
+
         sender = msg.get("from")  # e.g., '919876543210'
         msg_type = msg.get("type")
         user_text = ""

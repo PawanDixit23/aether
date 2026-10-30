@@ -35,8 +35,8 @@ export const BriefingModal = ({
         {isBriefingLoading ? (
           <div style={{ textAlign: 'center', padding: '36px 0', color: '#94a3b8' }}>
             <div style={{ fontSize: '1.6rem', marginBottom: '10px' }}>🎙️</div>
-            <div style={{ fontSize: '0.88rem', color: '#e2e8f0', fontWeight: 600 }}>दैनिक ब्रीफिंग तैयार की जा रही है...</div>
-            <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '4px' }}>मौसम व आज के एजेंडा का लाइव विश्लेषण</div>
+            <div style={{ fontSize: '0.88rem', color: '#e2e8f0', fontWeight: 600 }}>Generating Daily Briefing...</div>
+            <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '4px' }}>Realtime weather & priority agenda analysis</div>
           </div>
         ) : executiveBriefingData ? (
           <div>
@@ -45,7 +45,7 @@ export const BriefingModal = ({
                 📍 Jaipur
               </span>
               <span style={{ fontSize: '0.72rem', background: 'rgba(16, 185, 129, 0.12)', color: '#10b981', padding: '3px 8px', borderRadius: '10px', border: '1px solid rgba(16, 185, 129, 0.25)' }}>
-                📋 {executiveBriefingData.task_count || 0} कार्य आज
+                📋 {executiveBriefingData.task_count || 0} tasks today
               </span>
             </div>
 
@@ -80,7 +80,7 @@ export const BriefingModal = ({
                 }}
               >
                 {isBriefingPlaying ? <Pause size={16} /> : <Play size={16} />}
-                {isBriefingPlaying ? 'रोकें (Pause)' : 'सुनें (Listen)'}
+                {isBriefingPlaying ? 'Pause Audio' : 'Listen Briefing'}
               </button>
               <button
                 type="button"
@@ -99,13 +99,13 @@ export const BriefingModal = ({
                   cursor: 'pointer'
                 }}
               >
-                बंद करें
+                Close
               </button>
             </div>
           </div>
         ) : (
           <div style={{ textAlign: 'center', padding: '30px 0', color: '#64748b' }}>
-            कोई ब्रीफिंग उपलब्ध नहीं है।
+            No briefing available at this moment.
           </div>
         )}
       </div>

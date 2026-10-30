@@ -1,5 +1,22 @@
 import React, { useState } from 'react';
-import { Wallet, Plus, X, Edit3, Trash2, Download, SlidersHorizontal, RotateCcw, Check } from 'lucide-react';
+import { 
+  Wallet, 
+  Plus, 
+  X, 
+  Edit3, 
+  Trash2, 
+  Download, 
+  SlidersHorizontal, 
+  RotateCcw, 
+  Check, 
+  Eye, 
+  EyeOff, 
+  ChevronLeft, 
+  ChevronRight,
+  TrendingUp,
+  Clock,
+  ArrowDownCircle
+} from 'lucide-react';
 
 export const getCategoryIcon = (cat) => {
   const c = (cat || '').toLowerCase();
@@ -17,17 +34,18 @@ export const getCategoryIcon = (cat) => {
 const DEFAULT_BUDGETS = [
   { id: 'fuel', cat: 'fuel', name: '⛽ Petrol / Fuel', limit: 4000 },
   { id: 'food', cat: 'food', name: '🍔 Food & Dining', limit: 5000 },
-  { id: 'shopping', cat: 'shopping', name: '🛒 Shopping', limit: 10000 }
+  { id: 'shopping', cat: 'shopping', name: '🛒 Shopping', limit: 10000 },
+  { id: 'bills', cat: 'bills', name: '⚡ Utility Bills', limit: 3000 }
 ];
 
 export const FinanceModal = ({
   isOpen,
   onClose,
-  financeSummary,
-  financeRecords,
+  financeSummary = {},
+  financeRecords = [],
   isAddingExpense,
   setIsAddingExpense,
-  newExpenseForm,
+  newExpenseForm = { type: 'expense', category: 'food', amount: '', note: '', payment_mode: 'upi' },
   setNewExpenseForm,
   editingFinanceRecord,
   setEditingFinanceRecord,
@@ -40,6 +58,11 @@ export const FinanceModal = ({
 }) => {
   if (!isOpen) return null;
 
+  // Active view tab: 'overview' | 'budgets' | 'transactions'
+  const [activeTab, setActiveTab] = useState('overview');
+  const [isBalanceHidden, setIsBalanceHidden] = useState(false);
+  const [currentDate, setCurrentDate] = useState(new Date());
+
   const [budgets, setBudgets] = useState(() => {
     try {
       const saved = localStorage.getItem('aether_custom_budgets');
@@ -51,6 +74,21 @@ export const FinanceModal = ({
   const [isEditingBudgets, setIsEditingBudgets] = useState(false);
   const [newBudgetForm, setNewBudgetForm] = useState({ name: '', cat: '', limit: '' });
 
+  // Format month title dynamically like "April 2025" or current month
+  const monthTitle = currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  const handlePrevMonth = () => {
+    const prev = new Date(currentDate);
+    prev.setMonth(prev.getMonth() - 1);
+    setCurrentDate(prev);
+  };
+
+  const handleNextMonth = () => {
+    const next = new Date(currentDate);
+    next.setMonth(next.getMonth() + 1);
+    setCurrentDate(next);
+  };
+
   const handleSaveBudgetLimit = (id, newLimit) => {
     const updated = budgets.map(b => b.id === id ? { ...b, limit: Number(newLimit) || 0 } : b);
     setBudgets(updated);
@@ -61,13 +99,13 @@ export const FinanceModal = ({
     const updated = budgets.filter(b => b.id !== id);
     setBudgets(updated);
     localStorage.setItem('aether_custom_budgets', JSON.stringify(updated));
-    showToast("बजट कैटेगरी हटा दी गई", "info");
+    if (showToast) showToast("Budget category removed", "info");
   };
 
   const handleAddBudgetCategory = (e) => {
     e.preventDefault();
     if (!newBudgetForm.name.trim() || !newBudgetForm.limit) {
-      showToast("कृपया नाम और बजट लिमिट भरें", "info");
+      if (showToast) showToast("Please provide category name and budget limit", "info");
       return;
     }
     const catKey = (newBudgetForm.cat || newBudgetForm.name).toLowerCase().trim().replace(/\s+/g, '_');
@@ -81,18 +119,18 @@ export const FinanceModal = ({
     setBudgets(updated);
     localStorage.setItem('aether_custom_budgets', JSON.stringify(updated));
     setNewBudgetForm({ name: '', cat: '', limit: '' });
-    showToast(`नई बजट कैटेगरी '${newEntry.name}' जोड़ी गई! ✅`, "success");
+    if (showToast) showToast(`Added budget category '${newEntry.name}'!`, "success");
   };
 
   const handleResetBudgets = () => {
     setBudgets(DEFAULT_BUDGETS);
     localStorage.setItem('aether_custom_budgets', JSON.stringify(DEFAULT_BUDGETS));
-    showToast("बजट डिफ़ॉल्ट पर रीसेट कर दिया गया", "info");
+    if (showToast) showToast("Budgets reset to defaults", "info");
   };
 
   const handleExportCSV = () => {
     if (!financeRecords || financeRecords.length === 0) {
-      showToast("एक्सपोर्ट करने के लिए कोई लेन-देन रिकॉर्ड नहीं है।", "info");
+      if (showToast) showToast("No transactions to export.", "info");
       return;
     }
     const headers = ["Record ID", "Date", "Type", "Category", "Amount (INR)", "Payment Mode", "Notes"];
@@ -115,271 +153,569 @@ export const FinanceModal = ({
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    showToast("वित्तीय रिपोर्ट CSV सफलतापूर्वक डाउनलोड हो गई! 📥", "success");
+    if (showToast) showToast("Finance CSV exported successfully! 📥", "success");
   };
 
+  // =========================================================================
+  // 100% REAL & DYNAMIC FINANCE CALCULATIONS
+  // =========================================================================
+
+  // Calculate real Income, Expenses, Balance and Savings from records & server summary
+  const recordsIncome = (financeRecords || [])
+    .filter(r => (r.type || '').toLowerCase() === 'income')
+    .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+  const recordsExpense = (financeRecords || [])
+    .filter(r => (r.type || 'expense').toLowerCase() === 'expense')
+    .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+
+  const effectiveIncome = recordsIncome > 0 ? recordsIncome : Number(financeSummary?.total_income || 0);
+  const effectiveExpense = recordsExpense > 0 ? recordsExpense : Number(financeSummary?.total_expense || 0);
+  const effectiveBalance = effectiveIncome - effectiveExpense;
+  const effectiveSavings = effectiveIncome > effectiveExpense ? effectiveIncome - effectiveExpense : 0;
+
+  // Real Category Breakdown computed dynamically from financeRecords
+  const categoryTotals = {};
+  const expenseRecords = (financeRecords || []).filter(r => (r.type || 'expense').toLowerCase() === 'expense');
+  expenseRecords.forEach(r => {
+    const rawCat = (r.category || 'other').toLowerCase();
+    categoryTotals[rawCat] = (categoryTotals[rawCat] || 0) + Number(r.amount || 0);
+  });
+
+  const categoryColorPalette = {
+    food: '#06b6d4',
+    dining: '#06b6d4',
+    swiggy: '#06b6d4',
+    zomato: '#06b6d4',
+    shopping: '#eab308',
+    amazon: '#eab308',
+    grocery: '#eab308',
+    petrol: '#f97316',
+    fuel: '#f97316',
+    diesel: '#f97316',
+    bills: '#3b82f6',
+    utilities: '#3b82f6',
+    recharge: '#3b82f6',
+    electricity: '#3b82f6',
+    entertainment: '#a855f7',
+    netflix: '#a855f7',
+    medical: '#ec4899',
+    medicine: '#ec4899',
+    health: '#ec4899',
+    travel: '#10b981',
+    cab: '#10b981',
+    uber: '#10b981',
+    rent: '#6366f1',
+    other: '#94a3b8',
+    general: '#cbd5e1'
+  };
+
+  const dynamicCategories = Object.entries(categoryTotals).map(([catKey, catAmt]) => {
+    const pct = effectiveExpense > 0 ? Math.round((catAmt / effectiveExpense) * 100) : 0;
+    const displayName = catKey.charAt(0).toUpperCase() + catKey.slice(1);
+    const color = categoryColorPalette[catKey] || '#38bdf8';
+    return { name: displayName, percent: pct, amount: catAmt, color };
+  }).sort((a, b) => b.amount - a.amount);
+
+  // SVG Donut Slices calculation
+  const radius = 54;
+  const circumference = 2 * Math.PI * radius;
+  let accumulatedPercent = 0;
+
+  // Real Weekly Trend for Current Week (Monday through Sunday)
+  const now = new Date();
+  const currentDayOfWeek = (now.getDay() + 6) % 7; // 0 = Mon, 6 = Sun
+  const mondayDate = new Date(now);
+  mondayDate.setDate(now.getDate() - currentDayOfWeek);
+
+  const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const weeklyData = dayNames.map((dName, dayIdx) => {
+    const targetDate = new Date(mondayDate);
+    targetDate.setDate(mondayDate.getDate() + dayIdx);
+    const targetDateStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
+    const dayDateLabel = targetDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+
+    const dayExpenseSum = expenseRecords
+      .filter(r => (r.date || r.created_at || '').slice(0, 10) === targetDateStr)
+      .reduce((acc, r) => acc + Number(r.amount || 0), 0);
+
+    const isToday = dayIdx === currentDayOfWeek;
+    return {
+      day: dName,
+      date: dayDateLabel,
+      amountNum: dayExpenseSum,
+      amount: `₹${dayExpenseSum.toLocaleString('en-IN')}`,
+      isHighlight: isToday
+    };
+  });
+
+  const maxWeeklyExpense = Math.max(...weeklyData.map(d => d.amountNum), 1);
+
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-      <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '520px', maxHeight: '85vh', overflowY: 'auto' }}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.88)', backdropFilter: 'blur(16px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+      <div style={{ background: '#080f1d', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '28px', padding: '22px 20px', width: '100%', maxWidth: '440px', maxHeight: '92vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', boxShadow: '0 24px 64px rgba(0,0,0,0.85)' }}>
+        
+        {/* Top Header matching Screenshot 2: Finance [Eye] < Month > [X] */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#10b981', fontWeight: 700 }}>
-            <Wallet size={18} />
-            <span>EXECUTIVE WEALTH & LEDGER</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <h2 style={{ fontSize: '1.45rem', fontWeight: 700, color: '#ffffff', margin: 0, letterSpacing: '-0.02em' }}>
+              Finance
+            </h2>
+            <button
+              type="button"
+              onClick={() => setIsBalanceHidden(!isBalanceHidden)}
+              style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
+              title={isBalanceHidden ? "Show Balance" : "Hide Balance"}
+            >
+              {isBalanceHidden ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
           </div>
-          <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {/* Month Navigator Pill */}
+            <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '20px', padding: '4px 10px', gap: '6px' }}>
+              <button
+                type="button"
+                onClick={handlePrevMonth}
+                style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 0, display: 'flex' }}
+              >
+                <ChevronLeft size={15} />
+              </button>
+              <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#e2e8f0', minWidth: '76px', textAlign: 'center' }}>
+                {monthTitle}
+              </span>
+              <button
+                type="button"
+                onClick={handleNextMonth}
+                style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: 0, display: 'flex' }}
+              >
+                <ChevronRight size={15} />
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', cursor: 'pointer', fontSize: '1.1rem' }}
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-          <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: '14px', padding: '14px' }}>
-            <div style={{ fontSize: '0.74rem', color: '#94a3b8' }}>TOTAL BALANCE</div>
-            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#10b981', marginTop: '4px' }}>₹{financeSummary.balance.toLocaleString('en-IN')}</div>
+        {/* Total Balance Card matching Screenshot 2 */}
+        <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '18px 20px', marginBottom: '16px', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
+            <span style={{ fontSize: '0.78rem', color: '#94a3b8', fontWeight: 500 }}>Total Balance</span>
+            <span style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', fontSize: '0.74rem', fontWeight: 700, padding: '3px 8px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '2px' }}>
+              Live Record
+            </span>
           </div>
-          <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: '14px', padding: '14px' }}>
-            <div style={{ fontSize: '0.74rem', color: '#94a3b8' }}>TOTAL EXPENSES</div>
-            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#ef4444', marginTop: '4px' }}>₹{financeSummary.total_expense.toLocaleString('en-IN')}</div>
+
+          <div style={{ fontSize: '1.85rem', fontWeight: 800, color: '#ffffff', letterSpacing: '-0.02em', marginBottom: '16px' }}>
+            {isBalanceHidden ? '••••••••' : `₹${effectiveBalance.toLocaleString('en-IN')}`}
+          </div>
+
+          {/* 3 Metric Pills: Income, Expenses, Savings */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+            <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '12px', padding: '8px 10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.7rem', color: '#94a3b8', marginBottom: '4px' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' }} />
+                <span>Income</span>
+              </div>
+              <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#34d399' }}>
+                {isBalanceHidden ? '••••' : `₹${effectiveIncome.toLocaleString('en-IN')}`}
+              </div>
+            </div>
+
+            <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '12px', padding: '8px 10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.7rem', color: '#94a3b8', marginBottom: '4px' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#ef4444' }} />
+                <span>Expenses</span>
+              </div>
+              <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#f87171' }}>
+                {isBalanceHidden ? '••••' : `₹${effectiveExpense.toLocaleString('en-IN')}`}
+              </div>
+            </div>
+
+            <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '12px', padding: '8px 10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.7rem', color: '#94a3b8', marginBottom: '4px' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#38bdf8' }} />
+                <span>Savings</span>
+              </div>
+              <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#38bdf8' }}>
+                {isBalanceHidden ? '••••' : `₹${effectiveSavings.toLocaleString('en-IN')}`}
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Monthly Budget Tracking (Customizable & Dynamic) */}
-        <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '16px', padding: '14px', marginBottom: '16px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <span style={{ fontSize: '0.76rem', color: '#cbd5e1', fontWeight: 600 }}>मासिक बजट स्थिति (Monthly Budgets)</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        {/* 3 Tabs: Overview | Budgets | Transactions */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', background: 'rgba(255, 255, 255, 0.04)', padding: '4px', borderRadius: '16px' }}>
+          {[
+            { id: 'overview', label: 'Overview' },
+            { id: 'budgets', label: 'Budgets' },
+            { id: 'transactions', label: 'Transactions' }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                flex: 1,
+                padding: '8px 0',
+                border: 'none',
+                borderRadius: '12px',
+                background: activeTab === tab.id ? 'linear-gradient(135deg, rgba(37, 99, 235, 0.9), rgba(56, 189, 248, 0.9))' : 'transparent',
+                color: activeTab === tab.id ? '#ffffff' : '#94a3b8',
+                fontWeight: activeTab === tab.id ? 700 : 500,
+                fontSize: '0.82rem',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                boxShadow: activeTab === tab.id ? '0 4px 14px rgba(37, 99, 235, 0.35)' : 'none'
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* TAB 1: OVERVIEW */}
+        {activeTab === 'overview' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '16px' }}>
+            
+            {/* Spending Breakdown Card */}
+            <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '18px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
+              <h3 style={{ fontSize: '0.94rem', fontWeight: 700, color: '#ffffff', margin: '0 0 14px 0' }}>
+                Spending Breakdown
+              </h3>
+
+              {dynamicCategories.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '24px 0', color: '#64748b', fontSize: '0.8rem' }}>
+                  No expenses recorded this month yet. Use "Add Expense" below to start tracking.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                  {/* SVG Donut Chart */}
+                  <div style={{ position: 'relative', width: '136px', height: '136px', flexShrink: 0 }}>
+                    <svg width="136" height="136" viewBox="0 0 136 136" style={{ transform: 'rotate(-90deg)' }}>
+                      {dynamicCategories.map((cat, idx) => {
+                        const strokeDasharray = `${(cat.percent / 100) * circumference} ${circumference}`;
+                        const strokeDashoffset = -((accumulatedPercent / 100) * circumference);
+                        accumulatedPercent += cat.percent;
+                        return (
+                          <circle
+                            key={idx}
+                            cx="68"
+                            cy="68"
+                            r={radius}
+                            fill="transparent"
+                            stroke={cat.color}
+                            strokeWidth="16"
+                            strokeDasharray={strokeDasharray}
+                            strokeDashoffset={strokeDashoffset}
+                            strokeLinecap="round"
+                          />
+                        );
+                      })}
+                    </svg>
+                    {/* Center Text inside Donut Hole */}
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                      <div style={{ fontSize: '0.94rem', fontWeight: 800, color: '#ffffff' }}>
+                        ₹{effectiveExpense.toLocaleString('en-IN')}
+                      </div>
+                      <div style={{ fontSize: '0.66rem', color: '#94a3b8', marginTop: '1px' }}>
+                        Total Spent
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Breakdown Legend List */}
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '7px' }}>
+                    {dynamicCategories.slice(0, 6).map((cat, idx) => (
+                      <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.76rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: cat.color }} />
+                          <span style={{ color: '#cbd5e1' }}>{cat.name}</span>
+                        </div>
+                        <span style={{ color: '#94a3b8', fontWeight: 600 }}>{cat.percent}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Weekly Trend Card */}
+            <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '18px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                <h3 style={{ fontSize: '0.94rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>
+                  Weekly Trend
+                </h3>
+              </div>
+
+              {/* Chart container with Y-axis and bars */}
+              <div style={{ display: 'flex', gap: '10px', height: '140px', alignItems: 'flex-end', paddingTop: '30px' }}>
+                {/* Y-axis markers */}
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100px', fontSize: '0.66rem', color: '#64748b', paddingBottom: '20px' }}>
+                  <span>₹{Math.round(maxWeeklyExpense).toLocaleString('en-IN')}</span>
+                  <span>₹{Math.round(maxWeeklyExpense / 2).toLocaleString('en-IN')}</span>
+                  <span>₹0</span>
+                </div>
+
+                {/* Bars */}
+                <div style={{ flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', height: '100px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '2px' }}>
+                  {weeklyData.map((d, idx) => (
+                    <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, height: '100%', justifyContent: 'flex-end', position: 'relative' }}>
+                      {/* Active Tooltip over Today */}
+                      {d.isHighlight && (
+                        <div style={{ position: 'absolute', top: '-34px', background: 'rgba(15, 23, 42, 0.92)', border: '1px solid #38bdf8', borderRadius: '8px', padding: '3px 7px', fontSize: '0.66rem', color: '#fff', textAlign: 'center', whiteSpace: 'nowrap', zIndex: 5, boxShadow: '0 4px 12px rgba(56,189,248,0.3)' }}>
+                          <div style={{ fontWeight: 700, color: '#38bdf8' }}>{d.amount}</div>
+                          <div style={{ fontSize: '0.6rem', color: '#94a3b8' }}>{d.date}</div>
+                        </div>
+                      )}
+
+                      {/* Bar Pillar */}
+                      <div
+                        style={{
+                          width: '14px',
+                          height: d.amountNum > 0 ? `${Math.max(10, (d.amountNum / maxWeeklyExpense) * 100)}%` : '4px',
+                          borderRadius: '6px',
+                          background: d.isHighlight 
+                            ? 'linear-gradient(180deg, #38bdf8 0%, #2563eb 100%)' 
+                            : d.amountNum > 0
+                              ? 'linear-gradient(180deg, rgba(56, 189, 248, 0.4) 0%, rgba(37, 99, 235, 0.25) 100%)'
+                              : 'rgba(255, 255, 255, 0.08)',
+                          border: d.isHighlight ? '1px solid #38bdf8' : 'none',
+                          boxShadow: d.isHighlight ? '0 0 14px rgba(56, 189, 248, 0.5)' : 'none',
+                          transition: 'all 0.3s'
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Day Labels below bars */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '34px', marginTop: '6px', fontSize: '0.68rem', color: '#64748b' }}>
+                {weeklyData.map((d, idx) => (
+                  <span key={idx} style={{ flex: 1, textAlign: 'center', color: d.isHighlight ? '#38bdf8' : '#64748b', fontWeight: d.isHighlight ? 700 : 500 }}>
+                    {d.day}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* TAB 2: BUDGETS */}
+        {activeTab === 'budgets' && (
+          <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '18px', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <span style={{ fontSize: '0.86rem', color: '#e2e8f0', fontWeight: 700 }}>Monthly Budgets</span>
               <button
                 type="button"
                 onClick={() => setIsEditingBudgets(!isEditingBudgets)}
-                style={{
-                  background: isEditingBudgets ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.06)',
-                  border: '1px solid rgba(56, 189, 248, 0.3)',
-                  color: '#38bdf8',
-                  borderRadius: '8px',
-                  padding: '2px 8px',
-                  fontSize: '0.68rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}
+                style={{ background: 'rgba(56, 189, 248, 0.12)', border: '1px solid rgba(56, 189, 248, 0.3)', color: '#38bdf8', borderRadius: '8px', padding: '3px 8px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
               >
-                <SlidersHorizontal size={11} />
-                <span>{isEditingBudgets ? 'पूर्ण (Done)' : '⚙️ बजट बदलें'}</span>
+                <SlidersHorizontal size={12} />
+                <span>{isEditingBudgets ? 'Done' : 'Edit Budgets'}</span>
               </button>
-              <span style={{ fontSize: '0.68rem', color: '#10b981' }}>ऑटो-अलर्ट सक्रिय</span>
             </div>
-          </div>
 
-          {/* Budget Editor (Inline Drawer) */}
-          {isEditingBudgets && (
-            <div style={{ background: 'rgba(15, 23, 42, 0.65)', border: '1px solid rgba(56, 189, 248, 0.2)', borderRadius: '12px', padding: '12px', marginBottom: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <span style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: 600 }}>कैटेगरी बजट लिमिट सेट करें:</span>
-                <button
-                  type="button"
-                  onClick={handleResetBudgets}
-                  style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.68rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
-                >
-                  <RotateCcw size={10} /> Reset
-                </button>
+            {/* Budget Editor Drawer */}
+            {isEditingBudgets && (
+              <div style={{ background: 'rgba(15, 23, 42, 0.8)', border: '1px solid rgba(56, 189, 248, 0.25)', borderRadius: '14px', padding: '12px', marginBottom: '14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '0.74rem', color: '#94a3b8', fontWeight: 600 }}>Adjust Category Limits:</span>
+                  <button type="button" onClick={handleResetBudgets} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.7rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                    <RotateCcw size={10} /> Reset
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '10px' }}>
+                  {budgets.map(b => (
+                    <div key={b.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                      <span style={{ fontSize: '0.76rem', color: '#e2e8f0', flex: 1 }}>{b.name}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ fontSize: '0.72rem', color: '#64748b' }}>₹</span>
+                        <input
+                          type="number"
+                          defaultValue={b.limit}
+                          onBlur={(e) => handleSaveBudgetLimit(b.id, e.target.value)}
+                          style={{ width: '84px', background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', color: '#fff', fontSize: '0.76rem', padding: '3px 6px', textAlign: 'right' }}
+                        />
+                        <button type="button" onClick={() => handleDeleteBudget(b.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}>
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <form onSubmit={handleAddBudgetCategory} style={{ display: 'flex', gap: '6px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                  <input
+                    type="text"
+                    placeholder="New category (e.g. 💊 Medical)"
+                    value={newBudgetForm.name}
+                    onChange={e => setNewBudgetForm({ ...newBudgetForm, name: e.target.value })}
+                    style={{ flex: 1, background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', color: '#fff', fontSize: '0.74rem', padding: '4px 8px' }}
+                  />
+                  <input
+                    type="number"
+                    placeholder="Limit (₹)"
+                    value={newBudgetForm.limit}
+                    onChange={e => setNewBudgetForm({ ...newBudgetForm, limit: e.target.value })}
+                    style={{ width: '80px', background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', color: '#fff', fontSize: '0.74rem', padding: '4px 8px' }}
+                  />
+                  <button type="submit" style={{ background: '#10b981', color: '#022c22', border: 'none', borderRadius: '6px', padding: '4px 10px', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer' }}>
+                    Add
+                  </button>
+                </form>
               </div>
+            )}
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px' }}>
-                {budgets.map(b => (
-                  <div key={b.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                    <span style={{ fontSize: '0.74rem', color: '#e2e8f0', flex: 1 }}>{b.name}</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <span style={{ fontSize: '0.72rem', color: '#64748b' }}>₹</span>
-                      <input
-                        type="number"
-                        defaultValue={b.limit}
-                        onBlur={(e) => handleSaveBudgetLimit(b.id, e.target.value)}
-                        style={{ width: '80px', background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', color: '#fff', fontSize: '0.75rem', padding: '3px 6px', textAlign: 'right' }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteBudget(b.id)}
-                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
-                        title="Delete category"
-                      >
-                        <Trash2 size={12} />
-                      </button>
+            {/* Budgets List with Progress Bars */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {budgets.map(b => {
+                const spent = (financeRecords || [])
+                  .filter(r => (r.type || 'expense') === 'expense' && (r.category || '').toLowerCase() === b.cat.toLowerCase())
+                  .reduce((acc, cur) => acc + Number(cur.amount || 0), 0);
+                const percent = Math.min(100, Math.round((spent / (b.limit || 1)) * 100));
+                const isExceeded = spent > b.limit;
+
+                return (
+                  <div key={b.id} style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#e2e8f0' }}>{b.name}</span>
+                      <span style={{ fontSize: '0.76rem', color: isExceeded ? '#ef4444' : '#94a3b8', fontWeight: 600 }}>
+                        ₹{spent.toLocaleString('en-IN')} / ₹{b.limit.toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                    <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
+                      <div style={{ width: `${percent}%`, height: '100%', background: isExceeded ? '#ef4444' : 'linear-gradient(90deg, #38bdf8, #10b981)', borderRadius: '3px', transition: 'width 0.4s ease' }} />
                     </div>
                   </div>
-                ))}
-              </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
-              {/* Add New Category */}
-              <form onSubmit={handleAddBudgetCategory} style={{ display: 'flex', gap: '6px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                <input
-                  type="text"
-                  placeholder="नई कैटेगरी (उदा. 💊 Medical)"
-                  value={newBudgetForm.name}
-                  onChange={e => setNewBudgetForm({ ...newBudgetForm, name: e.target.value })}
-                  style={{ flex: 1, background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', color: '#fff', fontSize: '0.72rem', padding: '4px 8px' }}
-                />
+        {/* TAB 3: TRANSACTIONS */}
+        {activeTab === 'transactions' && (
+          <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '18px', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <span style={{ fontSize: '0.86rem', color: '#e2e8f0', fontWeight: 700 }}>
+                Recent Transactions ({financeRecords.length})
+              </span>
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                style={{ background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.1)', color: '#94a3b8', borderRadius: '8px', padding: '4px 8px', fontSize: '0.72rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Download size={12} />
+                <span>Export CSV</span>
+              </button>
+            </div>
+
+            {financeRecords.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '24px 0', color: '#64748b', fontSize: '0.82rem' }}>
+                No transaction records found yet. Record an expense or income below to see history.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
+                {financeRecords.map(rec => {
+                  const isExp = (rec.type || 'expense') === 'expense';
+                  return (
+                    <div key={rec.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: isExp ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem' }}>
+                          {getCategoryIcon(rec.category)}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#f1f5f9' }}>
+                            {rec.note || rec.description || rec.category || 'Expense'}
+                          </div>
+                          <div style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                            {new Date(rec.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '0.88rem', fontWeight: 700, color: isExp ? '#ef4444' : '#10b981' }}>
+                          {isExp ? '-' : '+'}₹{Number(rec.amount || 0).toLocaleString('en-IN')}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteFinanceRecord(rec.id)}
+                          style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.6, cursor: 'pointer', padding: '2px' }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Quick Add Form Drawer when Add Expense or Add Income is clicked */}
+        {isAddingExpense && (
+          <div style={{ background: '#0e172a', border: '1px solid rgba(56, 189, 248, 0.3)', borderRadius: '20px', padding: '16px', marginBottom: '16px', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <span style={{ fontSize: '0.86rem', fontWeight: 700, color: '#ffffff' }}>
+                {newExpenseForm.type === 'income' ? 'Record Income' : 'Record Expense'}
+              </span>
+              <button type="button" onClick={() => setIsAddingExpense(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
+              <div>
+                <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Amount (₹)</label>
                 <input
                   type="number"
-                  placeholder="लिमिट (₹)"
-                  value={newBudgetForm.limit}
-                  onChange={e => setNewBudgetForm({ ...newBudgetForm, limit: e.target.value })}
-                  style={{ width: '80px', background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', color: '#fff', fontSize: '0.72rem', padding: '4px 6px' }}
+                  placeholder="e.g. 500"
+                  value={newExpenseForm.amount}
+                  onChange={e => setNewExpenseForm({ ...newExpenseForm, amount: e.target.value })}
+                  style={{ width: '100%', boxSizing: 'border-box', background: '#060a14', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '0.82rem' }}
                 />
-                <button
-                  type="submit"
-                  style={{ background: 'rgba(56, 189, 248, 0.2)', border: '1px solid rgba(56, 189, 248, 0.4)', color: '#38bdf8', borderRadius: '6px', padding: '4px 10px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}
-                >
-                  जोड़ें
-                </button>
-              </form>
-            </div>
-          )}
-
-          {/* Budget Progress Bars */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {budgets.map(b => {
-              const spent = financeRecords
-                .filter(r => (r.category || '').toLowerCase().includes(b.cat) && (r.type === 'expense' || r.record_type === 'expense' || !r.type))
-                .reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
-              const limit = b.limit || 1;
-              const pct = Math.min(100, Math.round((spent / limit) * 100));
-              const isWarning = pct >= 80;
-              const isExceeded = pct >= 100;
-              return (
-                <div key={b.id || b.cat}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', marginBottom: '3px' }}>
-                    <span style={{ color: '#e2e8f0' }}>{b.name}</span>
-                    <span style={{ color: isExceeded ? '#ef4444' : isWarning ? '#f59e0b' : '#94a3b8', fontWeight: isWarning ? 700 : 400 }}>
-                      ₹{spent.toLocaleString('en-IN')} / ₹{limit.toLocaleString('en-IN')} ({pct}%)
-                      {isExceeded && ' ⚠️ सीमा पार!'}
-                    </span>
-                  </div>
-                  <div style={{ height: '4px', background: 'rgba(255, 255, 255, 0.08)', borderRadius: '4px', overflow: 'hidden' }}>
-                    <div style={{ 
-                      height: '100%', 
-                      width: `${pct}%`, 
-                      background: isExceeded 
-                        ? 'linear-gradient(90deg, #ef4444, #dc2626)' 
-                        : isWarning 
-                        ? 'linear-gradient(90deg, #f59e0b, #ef4444)' 
-                        : 'linear-gradient(90deg, #10b981, #38bdf8)',
-                      borderRadius: '4px',
-                      transition: 'width 0.4s ease'
-                    }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Header + Actions (Export CSV + Add Expense Toggle) */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-          <h4 style={{ fontSize: '0.85rem', color: '#cbd5e1', margin: 0 }}>Recent Financial Entries ({financeRecords.length})</h4>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button
-              type="button"
-              onClick={handleExportCSV}
-              title="Download CSV Spreadsheet"
-              style={{
-                background: 'rgba(16, 185, 129, 0.15)',
-                border: '1px solid rgba(16, 185, 129, 0.35)',
-                color: '#10b981',
-                borderRadius: '10px',
-                padding: '4px 10px',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px'
-              }}
-            >
-              <Download size={13} />
-              <span>Export CSV</span>
-            </button>
-            <button 
-              type="button"
-              onClick={() => setIsAddingExpense(!isAddingExpense)}
-              style={{
-                background: isAddingExpense ? 'rgba(239, 68, 68, 0.15)' : 'rgba(56, 189, 248, 0.15)',
-                border: isAddingExpense ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(56, 189, 248, 0.3)',
-                color: isAddingExpense ? '#ef4444' : '#38bdf8',
-                borderRadius: '10px',
-                padding: '4px 10px',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px'
-              }}
-            >
-              {isAddingExpense ? <X size={13} /> : <Plus size={13} />}
-              {isAddingExpense ? 'रद्द करें' : 'नया खर्च'}
-            </button>
-          </div>
-        </div>
-
-        {/* Quick Add Form */}
-        {isAddingExpense && (
-          <div style={{ background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(56, 189, 248, 0.25)', borderRadius: '14px', padding: '14px', marginBottom: '16px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-              <div>
-                <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Type</label>
-                <select 
-                  value={newExpenseForm.type}
-                  onChange={e => setNewExpenseForm({ ...newExpenseForm, type: e.target.value })}
-                  style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '8px', padding: '6px 8px', fontSize: '0.8rem' }}
-                >
-                  <option value="expense">Expense (खर्च)</option>
-                  <option value="income">Income (आय)</option>
-                </select>
               </div>
               <div>
                 <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Category</label>
-                <select 
+                <select
                   value={newExpenseForm.category}
                   onChange={e => setNewExpenseForm({ ...newExpenseForm, category: e.target.value })}
-                  style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '8px', padding: '6px 8px', fontSize: '0.8rem' }}
+                  style={{ width: '100%', boxSizing: 'border-box', background: '#060a14', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '0.82rem' }}
                 >
-                  <option value="fuel">⛽ Petrol / Fuel</option>
-                  <option value="food">🍔 Food / Dining</option>
+                  <option value="food">🍔 Food & Dining</option>
                   <option value="shopping">🛒 Shopping</option>
-                  <option value="travel">🚗 Travel / Cab</option>
-                  <option value="rent">🏠 Rent / Home</option>
-                  <option value="bills">⚡ Bills / Recharge</option>
+                  <option value="petrol">⛽ Petrol / Fuel</option>
+                  <option value="bills">⚡ Bills & Utilities</option>
+                  <option value="entertainment">🎬 Entertainment</option>
                   <option value="medical">💊 Medical</option>
-                  <option value="general">🏷️ Other / General</option>
+                  <option value="other">🏷️ Other</option>
                 </select>
               </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '8px', marginBottom: '10px' }}>
-              <div>
-                <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Amount (₹)</label>
-                <input 
-                  type="number" 
-                  placeholder="500"
-                  value={newExpenseForm.amount}
-                  onChange={e => setNewExpenseForm({ ...newExpenseForm, amount: e.target.value })}
-                  style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '8px', padding: '6px 8px', fontSize: '0.82rem' }}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Note / Detail</label>
-                <input 
-                  type="text" 
-                  placeholder="e.g. पेट्रोल डलवाया, ग्रॉसरी..."
-                  value={newExpenseForm.note}
-                  onChange={e => setNewExpenseForm({ ...newExpenseForm, note: e.target.value })}
-                  style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '8px', padding: '6px 8px', fontSize: '0.82rem' }}
-                />
-              </div>
+
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Note / Description</label>
+              <input
+                type="text"
+                placeholder="e.g. Swiggy lunch, petrol refill..."
+                value={newExpenseForm.note}
+                onChange={e => setNewExpenseForm({ ...newExpenseForm, note: e.target.value })}
+                style={{ width: '100%', boxSizing: 'border-box', background: '#060a14', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '0.82rem' }}
+              />
             </div>
+
             <button
               type="button"
               onClick={async () => {
                 if (!newExpenseForm.amount) {
-                  showToast("कृपया राशि दर्ज करें", "info");
+                  if (showToast) showToast("Please enter an amount", "info");
                   return;
                 }
                 try {
@@ -390,175 +726,80 @@ export const FinanceModal = ({
                       ...(userEmail ? { 'X-User-Email': userEmail } : {})
                     },
                     body: JSON.stringify({
-                      text: `${newExpenseForm.amount} rupees ${newExpenseForm.type === 'expense' ? 'spent on' : 'received for'} ${newExpenseForm.note || newExpenseForm.category}`,
+                      text: `${newExpenseForm.amount} rupees ${newExpenseForm.type === 'income' ? 'received for' : 'spent on'} ${newExpenseForm.note || newExpenseForm.category}`,
                       capture_type: 'text'
                     })
                   });
                   setIsAddingExpense(false);
-                  setNewExpenseForm({ type: 'expense', category: 'fuel', amount: '', note: '', payment_mode: 'upi' });
-                  showToast("नया रिकॉर्ड दर्ज किया गया!", "success");
-                  refreshAllData();
+                  setNewExpenseForm({ type: 'expense', category: 'food', amount: '', note: '', payment_mode: 'upi' });
+                  if (showToast) showToast("Transaction recorded successfully! ✅", "success");
+                  if (refreshAllData) refreshAllData();
                 } catch (err) {
-                  showToast("जोड़ने में समस्या आई", "error");
+                  if (showToast) showToast("Failed to record transaction", "error");
                 }
               }}
-              style={{ width: '100%', background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px', borderRadius: '8px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}
+              style={{ width: '100%', background: newExpenseForm.type === 'income' ? '#10b981' : '#f43f5e', border: 'none', color: '#ffffff', padding: '10px', borderRadius: '10px', fontWeight: 700, fontSize: '0.84rem', cursor: 'pointer' }}
             >
-              सेव करें (Save Record)
+              Save Transaction
             </button>
           </div>
         )}
 
-        {/* List of Entries */}
-        {financeRecords.length === 0 ? (
-          <div style={{ color: '#64748b', fontSize: '0.82rem', textAlign: 'center', padding: '30px 0' }}>कोई रिकॉर्ड नहीं है। WhatsApp पर या ऊपर '+ नया खर्च' से जोड़ें।</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {financeRecords.map(rec => {
-              const isExp = (rec.type === 'expense' || rec.record_type === 'expense' || !rec.type);
-              const isEditingThis = editingFinanceRecord && editingFinanceRecord.id === rec.id;
+        {/* Fixed Bottom Action Buttons matching Screenshot 2: [Add Expense] [Add Income] */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: 'auto', paddingTop: '8px' }}>
+          <button
+            type="button"
+            onClick={() => {
+              setNewExpenseForm({ ...newExpenseForm, type: 'expense' });
+              setIsAddingExpense(true);
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #f43f5e 0%, #e11d48 100%)',
+              border: 'none',
+              borderRadius: '16px',
+              padding: '12px 14px',
+              color: '#ffffff',
+              fontWeight: 700,
+              fontSize: '0.88rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              boxShadow: '0 6px 20px rgba(244, 63, 94, 0.35)'
+            }}
+          >
+            <Clock size={16} />
+            <span>Add Expense</span>
+          </button>
 
-              if (isEditingThis) {
-                return (
-                  <div key={rec.id} style={{ background: 'rgba(56, 189, 248, 0.08)', border: '1px solid rgba(56, 189, 248, 0.3)', borderRadius: '12px', padding: '12px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-                      <select
-                        value={editingFinanceRecord.category}
-                        onChange={e => setEditingFinanceRecord({ ...editingFinanceRecord, category: e.target.value })}
-                        style={{ background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', borderRadius: '8px', padding: '5px', fontSize: '0.78rem' }}
-                      >
-                        <option value="fuel">⛽ Petrol</option>
-                        <option value="food">🍔 Food</option>
-                        <option value="shopping">🛒 Shopping</option>
-                        <option value="travel">🚗 Travel</option>
-                        <option value="rent">🏠 Rent</option>
-                        <option value="bills">⚡ Bills</option>
-                        <option value="medical">💊 Medical</option>
-                        <option value="general">🏷️ General</option>
-                      </select>
-                      <input 
-                        type="number"
-                        value={editingFinanceRecord.amount}
-                        onChange={e => setEditingFinanceRecord({ ...editingFinanceRecord, amount: e.target.value })}
-                        style={{ background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', borderRadius: '8px', padding: '5px 8px', fontSize: '0.8rem' }}
-                      />
-                    </div>
-                    <input 
-                      type="text"
-                      value={editingFinanceRecord.note || ''}
-                      onChange={e => setEditingFinanceRecord({ ...editingFinanceRecord, note: e.target.value })}
-                      placeholder="विवरण (Note)"
-                      style={{ width: '100%', background: '#0a101d', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', borderRadius: '8px', padding: '5px 8px', fontSize: '0.8rem', marginBottom: '8px' }}
-                    />
-                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                      <button 
-                        type="button" 
-                        onClick={() => setEditingFinanceRecord(null)}
-                        style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', padding: '4px 8px' }}
-                      >
-                        रद्द करें
-                      </button>
-                      <button 
-                        type="button" 
-                        onClick={handleSaveFinanceEdit}
-                        style={{ background: '#10b981', border: 'none', color: '#fff', borderRadius: '6px', padding: '5px 12px', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}
-                      >
-                        अपडेट करें
-                      </button>
-                    </div>
-                  </div>
-                );
-              }
+          <button
+            type="button"
+            onClick={() => {
+              setNewExpenseForm({ ...newExpenseForm, type: 'income' });
+              setIsAddingExpense(true);
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+              border: 'none',
+              borderRadius: '16px',
+              padding: '12px 14px',
+              color: '#ffffff',
+              fontWeight: 700,
+              fontSize: '0.88rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              boxShadow: '0 6px 20px rgba(16, 185, 129, 0.35)'
+            }}
+          >
+            <ArrowDownCircle size={16} />
+            <span>Add Income</span>
+          </button>
+        </div>
 
-              return (
-                <div 
-                  key={rec.id} 
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center', 
-                    padding: '10px 12px', 
-                    background: 'rgba(255, 255, 255, 0.03)', 
-                    border: '1px solid rgba(255, 255, 255, 0.06)',
-                    borderRadius: '12px'
-                  }}
-                >
-                  <div style={{ flex: 1, minWidth: 0, paddingRight: '8px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-                      <span style={{ fontSize: '0.95rem' }}>{getCategoryIcon(rec.category)}</span>
-                      <span style={{ 
-                        fontSize: '0.7rem', 
-                        padding: '1px 6px', 
-                        borderRadius: '4px', 
-                        background: 'rgba(56, 189, 248, 0.1)', 
-                        color: '#38bdf8',
-                        textTransform: 'capitalize',
-                        fontWeight: 600
-                      }}>
-                        {rec.category || 'General'}
-                      </span>
-                      <span style={{ color: '#ffffff', fontSize: '0.84rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {rec.note || rec.description || rec.category || 'खर्च'}
-                      </span>
-                    </div>
-                    <div style={{ color: '#64748b', fontSize: '0.72rem', display: 'flex', gap: '8px' }}>
-                      <span>{new Date(rec.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-                      {rec.payment_mode && (
-                        <span style={{ textTransform: 'uppercase', color: '#94a3b8' }}>• {rec.payment_mode}</span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{ color: isExp ? '#ef4444' : '#10b981', fontWeight: 700, fontSize: '0.95rem' }}>
-                      {isExp ? '-' : '+'}₹{Number(rec.amount || 0).toLocaleString('en-IN')}
-                    </div>
-                    <button
-                      type="button"
-                      title="Edit expense"
-                      onClick={() => setEditingFinanceRecord({
-                        id: rec.id,
-                        amount: rec.amount,
-                        note: rec.note || rec.description || '',
-                        category: rec.category || 'general',
-                        type: rec.type || 'expense'
-                      })}
-                      style={{
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
-                        borderRadius: '6px',
-                        color: '#94a3b8',
-                        padding: '4px 6px',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center'
-                      }}
-                    >
-                      <Edit3 size={13} />
-                    </button>
-                    <button
-                      type="button"
-                      title="Delete expense"
-                      onClick={() => handleDeleteFinanceRecord(rec.id)}
-                      style={{
-                        background: 'rgba(239, 68, 68, 0.1)',
-                        border: '1px solid rgba(239, 68, 68, 0.2)',
-                        borderRadius: '6px',
-                        color: '#ef4444',
-                        padding: '4px 6px',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center'
-                      }}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
     </div>
   );

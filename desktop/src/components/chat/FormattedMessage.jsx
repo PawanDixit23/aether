@@ -1,11 +1,24 @@
 import React from 'react';
+import { ExternalLink } from 'lucide-react';
 
-// Lightweight Markdown & Links message formatter with multiline link healing
+// Robust Markdown & Link message formatter with multiline headline & URL healing
 export const FormattedMessage = ({ text }) => {
   if (!text) return null;
 
-  // 1. Heal links where Gemini or line breaks separated ] and ( or wrapped URLs
-  const healedText = text
+  // 1. First, heal any multiline markdown links where headlines or URLs got split across lines:
+  // e.g.:
+  // 1. [UP MLC Polls: BJP's Candidate
+  // Selection Under Lens]
+  // (https://news.google.com/rss/artic
+  // les/CB...) - Source
+  let healedText = text.replace(/\[([\s\S]*?)\]\s*\((https?:\/\/[\s\S]*?)\)/g, (match, title, rawUrl) => {
+    const cleanTitle = title.replace(/\s*\n+\s*/g, ' ').trim();
+    const cleanUrl = rawUrl.replace(/\s+/g, '').trim();
+    return `[${cleanTitle}](${cleanUrl})`;
+  });
+
+  // 2. Extra healing passes for orphaned braces
+  healedText = healedText
     .replace(/\]\s*\n+\s*\(/g, '](')
     .replace(/\[\s*\n+/g, '[')
     .replace(/\n+\s*\]/g, ']')
@@ -23,28 +36,38 @@ export const FormattedMessage = ({ text }) => {
         const parts = line.split(regex);
 
         return (
-          <div key={idx} style={{ lineHeight: '1.55', wordBreak: 'break-word' }}>
+          <div key={idx} style={{ lineHeight: '1.58', wordBreak: 'break-word' }}>
             {parts.map((part, pIdx) => {
               if (!part) return null;
 
               // Check [title](url)
               const linkMatch = part.match(/^\[(.*?)\]\((https?:\/\/[^\s)]+)\)$/);
               if (linkMatch) {
+                const linkTitle = linkMatch[1];
+                const linkUrl = linkMatch[2];
                 return (
                   <a
                     key={pIdx}
-                    href={linkMatch[2]}
+                    href={linkUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
-                      color: 'var(--accent-cyan)',
+                      color: '#38bdf8',
                       fontWeight: 600,
-                      textDecoration: 'underline',
-                      wordBreak: 'break-word'
+                      textDecoration: 'none',
+                      borderBottom: '1px solid rgba(56, 189, 248, 0.4)',
+                      wordBreak: 'break-word',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '1px 2px',
+                      borderRadius: '4px',
+                      transition: 'background 0.15s ease'
                     }}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {linkMatch[1]} ↗
+                    <span>{linkTitle}</span>
+                    <ExternalLink size={12} style={{ flexShrink: 0, opacity: 0.8 }} />
                   </a>
                 );
               }
@@ -65,8 +88,9 @@ export const FormattedMessage = ({ text }) => {
                       gap: '4px',
                       color: 'var(--accent-cyan)',
                       fontWeight: 600,
-                      textDecoration: 'underline',
+                      textDecoration: 'none',
                       background: 'rgba(56, 189, 248, 0.12)',
+                      border: '1px solid rgba(56, 189, 248, 0.25)',
                       padding: '2px 8px',
                       borderRadius: '6px',
                       margin: '2px 0',
@@ -75,7 +99,7 @@ export const FormattedMessage = ({ text }) => {
                     }}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    🔗 स्रोत पढ़ें ↗ (Read Source)
+                    <span>🔗 स्रोत पढ़ें ↗</span>
                   </a>
                 );
               }
