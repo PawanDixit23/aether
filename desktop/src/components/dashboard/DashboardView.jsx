@@ -103,7 +103,7 @@ export const DashboardView = ({
         boxSizing: 'border-box', 
         overflowY: 'auto', 
         overflowX: 'hidden',
-        padding: '12px 18px 120px',
+        padding: '8px 12px 24px',
         scrollbarWidth: 'none',
         msOverflowStyle: 'none',
         WebkitOverflowScrolling: 'touch'
@@ -149,7 +149,7 @@ export const DashboardView = ({
       </div>
 
       {/* 3. CENTER ORB (Holographic Blue Earth with Concentric Orbital Rings) */}
-      <div style={{ position: 'relative', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', margin: '8px 0 16px' }}>
+      <div style={{ position: 'relative', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', margin: '4px 0 12px' }}>
         
         {/* Orbital Ring Background Visual */}
         <div 
@@ -158,8 +158,8 @@ export const DashboardView = ({
           }}
           style={{ 
             position: 'relative', 
-            width: '210px', 
-            height: '210px', 
+            width: '180px', 
+            height: '175px', 
             display: 'flex', 
             alignItems: 'center', 
             justifyContent: 'center',
@@ -170,8 +170,8 @@ export const DashboardView = ({
           {/* Outer glowing orbital rings */}
           <div style={{
             position: 'absolute',
-            width: '200px',
-            height: '80px',
+            width: '175px',
+            height: '70px',
             border: isListening ? '1.5px solid rgba(56, 189, 248, 0.6)' : '1px solid rgba(56, 189, 248, 0.25)',
             borderRadius: '50%',
             transform: 'rotate(-25deg)',
@@ -182,8 +182,8 @@ export const DashboardView = ({
 
           <div style={{
             position: 'absolute',
-            width: '210px',
-            height: '90px',
+            width: '180px',
+            height: '78px',
             border: isSpeaking ? '1.5px solid rgba(168, 85, 247, 0.6)' : '1px solid rgba(56, 189, 248, 0.15)',
             borderRadius: '50%',
             transform: 'rotate(22deg)',
@@ -193,8 +193,8 @@ export const DashboardView = ({
 
           {/* Central Holographic Blue Sphere with Canvas/Particles */}
           <div style={{
-            width: '148px',
-            height: '148px',
+            width: '130px',
+            height: '130px',
             borderRadius: '50%',
             background: 'radial-gradient(circle at 35% 30%, #38bdf8 0%, #1d4ed8 50%, #030712 95%)',
             boxShadow: isListening 
@@ -214,8 +214,8 @@ export const DashboardView = ({
 
             {/* Glowing Digital Core Atmosphere */}
             <div style={{
-              width: '60px',
-              height: '60px',
+              width: '50px',
+              height: '50px',
               borderRadius: '50%',
               background: 'radial-gradient(circle, rgba(255,255,255,0.7) 0%, rgba(56,189,248,0.2) 60%, transparent 100%)',
               filter: 'blur(4px)',
@@ -371,8 +371,8 @@ export const DashboardView = ({
       </div>
 
       {/* 5. TODAY'S OVERVIEW SECTION matching Screenshot 1 */}
-      <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '18px 16px', marginBottom: '14px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+      <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '14px 12px', marginBottom: '14px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <span style={{ fontSize: '0.94rem', fontWeight: 700, color: '#ffffff' }}>
             Today's Overview
           </span>
@@ -387,43 +387,43 @@ export const DashboardView = ({
         </div>
 
         {/* 3 Metric Cards in a Row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '12px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '6px', marginBottom: '10px', width: '100%', boxSizing: 'border-box' }}>
           
           {/* Card 1: Tasks left */}
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '12px 10px' }}>
-            <div style={{ width: '26px', height: '26px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.18)', border: '1px solid rgba(16, 185, 129, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginBottom: '8px' }}>
-              <CheckSquare size={14} />
+          <div style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '10px 8px' }}>
+            <div style={{ width: '24px', height: '24px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.18)', border: '1px solid rgba(16, 185, 129, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginBottom: '6px' }}>
+              <CheckSquare size={13} />
             </div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.2 }}>
+            <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.2 }}>
               {tasksLeftCount}
             </div>
-            <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: '2px' }}>
+            <div style={{ fontSize: '0.66rem', color: '#94a3b8', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Tasks left
             </div>
           </div>
 
           {/* Card 2: Events today */}
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '12px 10px' }}>
-            <div style={{ width: '26px', height: '26px', borderRadius: '8px', background: 'rgba(56, 189, 248, 0.18)', border: '1px solid rgba(56, 189, 248, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', marginBottom: '8px' }}>
-              <Calendar size={14} />
+          <div style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '10px 8px' }}>
+            <div style={{ width: '24px', height: '24px', borderRadius: '8px', background: 'rgba(56, 189, 248, 0.18)', border: '1px solid rgba(56, 189, 248, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', marginBottom: '6px' }}>
+              <Calendar size={13} />
             </div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.2 }}>
+            <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.2 }}>
               {eventsTodayCount}
             </div>
-            <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: '2px' }}>
+            <div style={{ fontSize: '0.66rem', color: '#94a3b8', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Events today
             </div>
           </div>
 
           {/* Card 3: Spent today */}
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '12px 10px' }}>
-            <div style={{ width: '26px', height: '26px', borderRadius: '8px', background: 'rgba(244, 63, 94, 0.18)', border: '1px solid rgba(244, 63, 94, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f43f5e', marginBottom: '8px' }}>
-              <Wallet size={14} />
+          <div style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '10px 8px' }}>
+            <div style={{ width: '24px', height: '24px', borderRadius: '8px', background: 'rgba(244, 63, 94, 0.18)', border: '1px solid rgba(244, 63, 94, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f43f5e', marginBottom: '6px' }}>
+              <Wallet size={13} />
             </div>
-            <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.2 }}>
+            <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {spentTodayStr}
             </div>
-            <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: '2px' }}>
+            <div style={{ fontSize: '0.66rem', color: '#94a3b8', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Spent today
             </div>
           </div>
@@ -431,36 +431,36 @@ export const DashboardView = ({
         </div>
 
         {/* 2 Bottom Widgets: Weather & Next Event */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '6px', width: '100%', boxSizing: 'border-box' }}>
           
           {/* Weather Widget */}
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ fontSize: '1.4rem' }}>⛅</div>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: '0.68rem', color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div style={{ minWidth: 0, overflow: 'hidden', boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ fontSize: '1.25rem', flexShrink: 0 }}>⛅</div>
+            <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+              <div style={{ fontSize: '0.66rem', color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {weatherCity}
               </div>
-              <div style={{ fontSize: '0.94rem', fontWeight: 700, color: '#ffffff' }}>
+              <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#ffffff', lineHeight: 1.2 }}>
                 {weatherTemp}
               </div>
-              <div style={{ fontSize: '0.64rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div style={{ fontSize: '0.62rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {weatherDesc}
               </div>
             </div>
           </div>
 
           {/* Next Event Widget */}
-          <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ minWidth: 0, overflow: 'hidden', boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             {/* Purple Accent Bar */}
-            <div style={{ width: '4px', height: '36px', borderRadius: '4px', background: 'linear-gradient(180deg, #a855f7, #6366f1)', flexShrink: 0 }} />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#ffffff' }}>
+            <div style={{ width: '4px', height: '32px', borderRadius: '4px', background: 'linear-gradient(180deg, #a855f7, #6366f1)', flexShrink: 0 }} />
+            <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {nextEvent ? (nextEvent.reminder_time || (nextEvent.due_date ? new Date(nextEvent.due_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today')) : 'No events'}
               </div>
-              <div style={{ fontSize: '0.72rem', color: '#cbd5e1', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div style={{ fontSize: '0.7rem', color: '#cbd5e1', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {nextEvent ? (nextEvent.title || nextEvent.text || 'Upcoming Task') : 'Agenda clean'}
               </div>
-              <div style={{ fontSize: '0.64rem', color: '#64748b' }}>
+              <div style={{ fontSize: '0.62rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {nextEvent ? (nextEvent.is_google_calendar ? 'Google Calendar' : 'Aether Tasks') : 'All caught up'}
               </div>
             </div>

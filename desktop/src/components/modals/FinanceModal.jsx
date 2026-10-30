@@ -13,10 +13,21 @@ import {
   EyeOff, 
   ChevronLeft, 
   ChevronRight,
+  ChevronDown,
   TrendingUp,
   Clock,
   ArrowDownCircle
 } from 'lucide-react';
+
+export const FINANCE_CATEGORIES = [
+  { id: 'food', label: 'Food & Dining', icon: '🍔', color: '#06b6d4' },
+  { id: 'shopping', label: 'Shopping', icon: '🛒', color: '#eab308' },
+  { id: 'petrol', label: 'Petrol / Fuel', icon: '⛽', color: '#f97316' },
+  { id: 'bills', label: 'Bills & Utilities', icon: '⚡', color: '#3b82f6' },
+  { id: 'entertainment', label: 'Entertainment', icon: '🎬', color: '#a855f7' },
+  { id: 'medical', label: 'Medical', icon: '💊', color: '#ec4899' },
+  { id: 'other', label: 'Other', icon: '🏷️', color: '#94a3b8' }
+];
 
 export const getCategoryIcon = (cat) => {
   const c = (cat || '').toLowerCase();
@@ -62,6 +73,7 @@ export const FinanceModal = ({
   const [activeTab, setActiveTab] = useState('overview');
   const [isBalanceHidden, setIsBalanceHidden] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
 
   const [budgets, setBudgets] = useState(() => {
     try {
@@ -679,26 +691,97 @@ export const FinanceModal = ({
                   placeholder="e.g. 500"
                   value={newExpenseForm.amount}
                   onChange={e => setNewExpenseForm({ ...newExpenseForm, amount: e.target.value })}
-                  style={{ width: '100%', boxSizing: 'border-box', background: '#060a14', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '0.82rem' }}
+                  style={{ width: '100%', boxSizing: 'border-box', background: '#060a14', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '10px', padding: '9px 10px', color: '#fff', fontSize: '0.84rem' }}
                 />
               </div>
-              <div>
+              <div style={{ position: 'relative' }}>
                 <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Category</label>
-                <select
-                  value={newExpenseForm.category}
-                  onChange={e => setNewExpenseForm({ ...newExpenseForm, category: e.target.value })}
-                  style={{ width: '100%', boxSizing: 'border-box', background: '#060a14', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '0.82rem' }}
+                <button
+                  type="button"
+                  onClick={() => setIsCategoryPickerOpen(!isCategoryPickerOpen)}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    background: '#060a14',
+                    border: isCategoryPickerOpen ? '1.5px solid #38bdf8' : '1px solid rgba(255,255,255,0.12)',
+                    borderRadius: '10px',
+                    padding: '8px 10px',
+                    color: '#fff',
+                    fontSize: '0.8rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    cursor: 'pointer',
+                    boxShadow: isCategoryPickerOpen ? '0 0 12px rgba(56, 189, 248, 0.25)' : 'none',
+                    textAlign: 'left'
+                  }}
                 >
-                  <option value="food">🍔 Food & Dining</option>
-                  <option value="shopping">🛒 Shopping</option>
-                  <option value="petrol">⛽ Petrol / Fuel</option>
-                  <option value="bills">⚡ Bills & Utilities</option>
-                  <option value="entertainment">🎬 Entertainment</option>
-                  <option value="medical">💊 Medical</option>
-                  <option value="other">🏷️ Other</option>
-                </select>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span>{FINANCE_CATEGORIES.find(c => c.id === newExpenseForm.category)?.icon || '🍔'}</span>
+                    <span style={{ fontWeight: 600 }}>{FINANCE_CATEGORIES.find(c => c.id === newExpenseForm.category)?.label || 'Food & Dining'}</span>
+                  </span>
+                  <ChevronDown size={14} color="#94a3b8" />
+                </button>
               </div>
             </div>
+
+            {/* Custom Modern Dark Category Picker Drawer */}
+            {isCategoryPickerOpen && (
+              <div style={{
+                background: '#070d1d',
+                border: '1px solid rgba(56, 189, 248, 0.3)',
+                borderRadius: '14px',
+                padding: '8px',
+                marginBottom: '12px',
+                display: 'grid',
+                gridTemplateColumns: '1fr',
+                gap: '4px',
+                boxShadow: '0 12px 32px rgba(0,0,0,0.85)'
+              }}>
+                <div style={{ fontSize: '0.68rem', color: '#94a3b8', padding: '2px 8px 4px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Select Category
+                </div>
+                {FINANCE_CATEGORIES.map(cat => {
+                  const isSelected = newExpenseForm.category === cat.id;
+                  return (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => {
+                        setNewExpenseForm({ ...newExpenseForm, category: cat.id });
+                        setIsCategoryPickerOpen(false);
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 12px',
+                        background: isSelected ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                        border: isSelected ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid transparent',
+                        borderRadius: '10px',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'all 0.15s'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '1.1rem' }}>{cat.icon}</span>
+                        <span style={{ fontSize: '0.82rem', fontWeight: isSelected ? 700 : 500, color: isSelected ? '#38bdf8' : '#e2e8f0' }}>
+                          {cat.label}
+                        </span>
+                      </div>
+                      {isSelected ? (
+                        <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: '#38bdf8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Check size={12} color="#080e1e" strokeWidth={3} />
+                        </div>
+                      ) : (
+                        <div style={{ width: '16px', height: '16px', borderRadius: '50%', border: '1.5px solid rgba(255, 255, 255, 0.2)' }} />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             <div style={{ marginBottom: '12px' }}>
               <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Note / Description</label>
