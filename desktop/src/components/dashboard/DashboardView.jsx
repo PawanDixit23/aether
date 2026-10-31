@@ -12,7 +12,8 @@ import {
   CheckSquare,
   MapPin,
   Sparkles,
-  Plus
+  Plus,
+  Activity
 } from 'lucide-react';
 import { AetherParticleSphere } from '../chat/AetherParticleSphere';
 
@@ -795,6 +796,63 @@ export const DashboardView = ({
             )}
           </div>
         )}
+      </div>
+
+      {/* 7. SYSTEM OBSERVABILITY & HEALTH METRICS */}
+      <div 
+        onClick={() => setActiveSubModal('observability')}
+        style={{
+          background: '#0e172a',
+          border: '1px solid rgba(56, 189, 248, 0.2)',
+          borderRadius: '20px',
+          padding: '12px 14px',
+          marginBottom: '10px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '10px',
+          transition: 'all 0.15s ease'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{
+            width: '36px',
+            height: '36px',
+            borderRadius: '11px',
+            background: 'rgba(16, 185, 129, 0.15)',
+            border: '1px solid rgba(16, 185, 129, 0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#10b981',
+            flexShrink: 0
+          }}>
+            <Activity size={18} />
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '0.86rem', fontWeight: 700, color: '#f8fafc' }}>
+                System Observability & Health
+              </span>
+              <span style={{
+                width: '7px',
+                height: '7px',
+                borderRadius: '50%',
+                background: '#10b981',
+                boxShadow: '0 0 8px #10b981'
+              }} />
+            </div>
+            <div style={{ fontSize: '0.70rem', color: '#94a3b8', marginTop: '2px' }}>
+              Gemini Core • Latency & Subsystems Monitor
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#38bdf8', fontSize: '0.74rem', fontWeight: 600, flexShrink: 0 }}>
+          <span>Live Metrics</span>
+          <ChevronRight size={14} />
+        </div>
       </div>
 
     </div>

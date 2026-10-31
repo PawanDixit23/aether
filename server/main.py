@@ -1264,10 +1264,9 @@ def get_due_reminders(
     db: Session = Depends(get_db)
 ):
     """Fetch pending tasks whose reminder time has arrived or passed and have not been alerted yet."""
-    if not user_email:
-        return []
+    eff_email = (user_email or "e.pawandixit@gmail.com").strip().lower()
 
-    auto_advance_recurring_tasks(db, user_email)
+    auto_advance_recurring_tasks(db, eff_email)
 
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     tasks = db.query(Task).filter(

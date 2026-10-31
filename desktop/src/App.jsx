@@ -88,6 +88,7 @@ import { DriveModal } from './components/modals/DriveModal';
 import { FinanceModal } from './components/modals/FinanceModal';
 import { BriefingModal } from './components/modals/BriefingModal';
 import { AuditModal } from './components/modals/AuditModal';
+import { ObservabilityModal } from './components/modals/ObservabilityModal';
 import { PermissionsModal } from './components/modals/PermissionsModal';
 import { SettingsSubModals } from './components/modals/SettingsSubModals';
 
@@ -6190,6 +6191,13 @@ export default function App() {
         onClose={() => setActiveSubModal(null)}
         auditLogs={auditLogs}
         handleUndo={handleUndo}
+      />
+
+      {/* 5.1 Observability & System Health Modal */}
+      <ObservabilityModal
+        isOpen={activeSubModal === 'observability'}
+        onClose={() => setActiveSubModal(null)}
+        apiBase={API_BASE}
       />
 
       {/* 5. Settings Sub-Modals */}
