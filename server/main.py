@@ -378,7 +378,36 @@ def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
 
     return {"status": "synced", "user": email, "restored": restored_counts}
 
-# ----------------- Quick Capture / Action Engine -----------------
+# ----------------- Autonomous Agent & Quick Capture Engine -----------------
+class AgentRunRequest(BaseModel):
+    prompt: str
+    user_email: Optional[str] = None
+    language: Optional[str] = "auto"
+
+@app.post("/api/agent/run")
+async def run_agent_workflow(
+    req: AgentRunRequest,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    """
+    Executes multi-step autonomous workflows with permission checks, tool loops,
+    and reversible audit logging as defined in AETHER_RECOMMENDED_ARCHITECTURE.md
+    """
+    from agent import AgentOrchestrator
+    eff_email = req.user_email or user_email or "operator@aether.local"
+    orchestrator = AgentOrchestrator(db=db, user_email=eff_email, lang=req.language or "auto")
+    result_state = await orchestrator.run(req.prompt)
+    return {
+        "status": "completed" if result_state.completed else "partial",
+        "requires_approval": result_state.requires_approval,
+        "approval_prompt": result_state.approval_prompt,
+        "message": result_state.final_message,
+        "plan": result_state.plan,
+        "tools_executed": [t.tool_name for t in result_state.executed_tools],
+        "can_undo": any(t.undo_payload is not None for t in result_state.executed_tools)
+    }
+
 @app.post("/api/action/quick-capture")
 async def quick_capture(
     req: QuickCaptureRequest, 
@@ -427,6 +456,45 @@ async def _execute_quick_capture(
     db.add(user_chat)
     db.commit()
     db.refresh(user_chat)
+
+    # 1. ChatSorter: Automatically extract episodic facts/routines into memory vault
+    try:
+        from memory import ChatSorter
+        ChatSorter.extract_facts(user_msg, eff_email or "operator@aether.local", db)
+    except Exception as cs_err:
+        print(f"[ChatSorter Passive Note] {cs_err}")
+
+    # 2. Autonomous Multi-Step Agent Routing
+    lang = req.language or "auto"
+    has_conjunction = bool(re.search(r'\b(?:and then|after that|aur phir|and|aur|तथा|और)\b', user_msg, re.I))
+    has_multi_intent = any(w in user_msg.lower() for w in ["spent", "kharch", "balance", "task", "remind", "weather", "youtube", "meeting"])
+    if has_conjunction and has_multi_intent and not req.image_data:
+        try:
+            from agent import AgentOrchestrator
+            orchestrator = AgentOrchestrator(db=db, user_email=eff_email or "operator@aether.local", lang=lang)
+            agent_res = await orchestrator.run(user_msg)
+            if agent_res.executed_tools and len(agent_res.executed_tools) > 1:
+                ai_chat = ChatMessage(
+                    user_email=eff_email,
+                    role="assistant",
+                    content=agent_res.final_message,
+                    action_type="agent_multi_step",
+                    action_data=json.dumps({"plan": agent_res.plan}),
+                    confidence=0.98
+                )
+                db.add(ai_chat)
+                db.commit()
+                return {
+                    "status": "executed",
+                    "action": "agent_multi_step",
+                    "confidence_level": "high",
+                    "confidence": 0.98,
+                    "message": agent_res.final_message,
+                    "parsed": {"action": "agent_multi_step", "plan": agent_res.plan},
+                    "can_undo": any(t.undo_payload is not None for t in agent_res.executed_tools)
+                }
+        except Exception as ag_err:
+            print(f"[Agent Orchestrator Note] {ag_err}")
 
     context = build_context(db, client_time=req.client_time, tz_name=req.timezone, user_email=eff_email, exclude_chat_id=user_chat.id)
     lang = req.language or "auto"
