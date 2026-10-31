@@ -529,7 +529,10 @@ export const DashboardView = ({
           </div>
 
           {/* Card 2: Events today */}
-          <div style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 6px' }}>
+          <div 
+            onClick={() => setActiveSubModal('reminders')}
+            style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 6px', cursor: 'pointer', transition: 'all 0.15s ease' }}
+          >
             <div style={{ width: '22px', height: '22px', borderRadius: '7px', background: 'rgba(56, 189, 248, 0.18)', border: '1px solid rgba(56, 189, 248, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', marginBottom: '4px' }}>
               <Calendar size={12} />
             </div>
@@ -542,7 +545,10 @@ export const DashboardView = ({
           </div>
 
           {/* Card 3: Spent today */}
-          <div style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 6px' }}>
+          <div 
+            onClick={() => setActiveSubModal('finance')}
+            style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 6px', cursor: 'pointer', transition: 'all 0.15s ease' }}
+          >
             <div style={{ width: '22px', height: '22px', borderRadius: '7px', background: 'rgba(244, 63, 94, 0.18)', border: '1px solid rgba(244, 63, 94, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f43f5e', marginBottom: '4px' }}>
               <Wallet size={12} />
             </div>
@@ -557,7 +563,10 @@ export const DashboardView = ({
         </div>
 
         {/* Next Event Widget */}
-        <div style={{ minWidth: 0, overflow: 'hidden', boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '12px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div 
+          onClick={() => setActiveSubModal('reminders')}
+          style={{ minWidth: 0, overflow: 'hidden', boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '12px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'all 0.15s ease' }}
+        >
           <div style={{ width: '4px', height: '28px', borderRadius: '4px', background: 'linear-gradient(180deg, #a855f7, #6366f1)', flexShrink: 0 }} />
           <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
             <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

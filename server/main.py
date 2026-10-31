@@ -131,6 +131,18 @@ def get_user_email(
         return email.strip().lower()
     return None
 
+DEFAULT_OWNER_EMAIL = os.environ.get("DEFAULT_USER_EMAIL", "e.pawandixit@gmail.com").strip().lower()
+
+def get_effective_email(user_email: Optional[str]) -> str:
+    """Returns effective email with strict isolation: explicit user email if provided, else default owner email."""
+    if user_email and user_email.strip():
+        return user_email.strip().lower()
+    return DEFAULT_OWNER_EMAIL
+
+def is_owner_email(email: str) -> bool:
+    """Checks whether the given email matches the primary environment owner."""
+    return (email or "").strip().lower() == DEFAULT_OWNER_EMAIL
+
 # ----------------- Pydantic Schemas -----------------
 class AuthRecordRequest(BaseModel):
     email: str
@@ -314,13 +326,14 @@ def record_user_login(req: AuthRecordRequest, db: Session = Depends(get_db)):
     """Log user authentication in local audit log and claim legacy unassigned tenant data."""
     email = req.email.strip().lower()
     try:
-        # Migrate any previously unassigned records to this authenticated user
-        db.query(Task).filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai")).update({Task.user_email: email})
-        db.query(FinancialRecord).filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == "") | (FinancialRecord.user_email == "operator@aether.ai")).update({FinancialRecord.user_email: email})
-        db.query(MemoryItem).filter((MemoryItem.user_email == None) | (MemoryItem.user_email == "") | (MemoryItem.user_email == "operator@aether.ai")).update({MemoryItem.user_email: email})
-        db.query(ChatMessage).filter((ChatMessage.user_email == None) | (ChatMessage.user_email == "") | (ChatMessage.user_email == "operator@aether.ai")).update({ChatMessage.user_email: email})
-        db.query(AuditLog).filter((AuditLog.user_email == None) | (AuditLog.user_email == "") | (AuditLog.user_email == "operator@aether.ai")).update({AuditLog.user_email: email})
-        db.commit()
+        # Migrate any previously unassigned records ONLY if primary environment owner
+        if is_owner_email(email):
+            db.query(Task).filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai")).update({Task.user_email: email})
+            db.query(FinancialRecord).filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == "") | (FinancialRecord.user_email == "operator@aether.ai")).update({FinancialRecord.user_email: email})
+            db.query(MemoryItem).filter((MemoryItem.user_email == None) | (MemoryItem.user_email == "") | (MemoryItem.user_email == "operator@aether.ai")).update({MemoryItem.user_email: email})
+            db.query(ChatMessage).filter((ChatMessage.user_email == None) | (ChatMessage.user_email == "") | (ChatMessage.user_email == "operator@aether.ai")).update({ChatMessage.user_email: email})
+            db.query(AuditLog).filter((AuditLog.user_email == None) | (AuditLog.user_email == "") | (AuditLog.user_email == "operator@aether.ai")).update({AuditLog.user_email: email})
+            db.commit()
     except Exception as e:
         print(f"[Record Login Auto-claim Note] {e}")
 
@@ -1011,14 +1024,16 @@ async def _execute_quick_capture(
         # Smart Memory Lookup: Check if user stored this contact's phone number in memory vault
         if not c_num:
             try:
-                target_email = (eff_email or user_email or "e.pawandixit@gmail.com").strip().lower()
+                target_email = get_effective_email(eff_email or user_email)
                 search_terms = [c_name.lower(), c_name.replace(" ", "").lower()]
-                mems = db.query(MemoryItem).filter(
-                    (MemoryItem.user_email == target_email) |
-                    (MemoryItem.user_email == "e.pawandixit@gmail.com") |
-                    (MemoryItem.user_email == None) |
-                    (MemoryItem.user_email == "operator@aether.local")
-                ).all()
+                if is_owner_email(target_email):
+                    mems = db.query(MemoryItem).filter(
+                        (MemoryItem.user_email == target_email) |
+                        (MemoryItem.user_email == None) |
+                        (MemoryItem.user_email == "operator@aether.local")
+                    ).all()
+                else:
+                    mems = db.query(MemoryItem).filter(MemoryItem.user_email == target_email).all()
                 for m in mems:
                     m_fact = (m.fact or "").lower()
                     if any(st in m_fact for st in search_terms):
@@ -1266,20 +1281,26 @@ def get_due_reminders(
     db: Session = Depends(get_db)
 ):
     """Fetch pending tasks whose reminder time has arrived or passed and have not been alerted yet."""
-    eff_email = (user_email or "e.pawandixit@gmail.com").strip().lower()
+    eff_email = get_effective_email(user_email)
 
     auto_advance_recurring_tasks(db, eff_email)
 
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
-    tasks = db.query(Task).filter(
-        (Task.user_email == eff_email) |
-        (Task.user_email == "e.pawandixit@gmail.com") |
-        (Task.user_email == None) |
-        (Task.user_email == "operator@aether.local") |
-        (Task.user_email == "test@example.com"),
-        Task.status == "pending",
-        Task.notified == False
-    ).all()
+    if is_owner_email(eff_email):
+        tasks = db.query(Task).filter(
+            (Task.user_email == eff_email) |
+            (Task.user_email == None) |
+            (Task.user_email == "operator@aether.local") |
+            (Task.user_email == "test@example.com"),
+            Task.status == "pending",
+            Task.notified == False
+        ).all()
+    else:
+        tasks = db.query(Task).filter(
+            Task.user_email == eff_email,
+            Task.status == "pending",
+            Task.notified == False
+        ).all()
     
     due_tasks = []
     for t in tasks:
@@ -1311,16 +1332,17 @@ def acknowledge_reminder(
     db: Session = Depends(get_db)
 ):
     """Acknowledge reminder so it won't repeatedly alert. Preserves today's date so task remains visible in today's agenda."""
-    eff_email = (user_email or "e.pawandixit@gmail.com").strip().lower()
+    eff_email = get_effective_email(user_email)
     query = db.query(Task).filter(Task.id == task_id)
-    if user_email:
+    if is_owner_email(eff_email):
         query = query.filter(
             (Task.user_email == eff_email) |
-            (Task.user_email == "e.pawandixit@gmail.com") |
             (Task.user_email == None) |
             (Task.user_email == "operator@aether.local") |
             (Task.user_email == "test@example.com")
         )
+    else:
+        query = query.filter(Task.user_email == eff_email)
     task = query.first()
     if task:
         task.notified = True
@@ -1357,28 +1379,31 @@ def list_tasks(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = (user_email or "e.pawandixit@gmail.com").strip().lower()
+    eff_email = get_effective_email(user_email)
     auto_advance_recurring_tasks(db, eff_email)
 
-    try:
-        db.query(Task).filter(
-            (Task.user_email == None) | 
-            (Task.user_email == "") | 
-            (Task.user_email == "operator@aether.ai") | 
+    if is_owner_email(eff_email):
+        try:
+            db.query(Task).filter(
+                (Task.user_email == None) | 
+                (Task.user_email == "") | 
+                (Task.user_email == "operator@aether.ai") | 
+                (Task.user_email == "operator@aether.local") |
+                (Task.user_email == "test@example.com")
+            ).update({Task.user_email: eff_email})
+            db.commit()
+        except Exception:
+            db.rollback()
+
+        query = db.query(Task).filter(
+            (Task.user_email == eff_email) |
+            (Task.user_email == None) |
             (Task.user_email == "operator@aether.local") |
             (Task.user_email == "test@example.com")
-        ).update({Task.user_email: eff_email})
-        db.commit()
-    except Exception:
-        db.rollback()
-
-    query = db.query(Task).filter(
-        (Task.user_email == eff_email) |
-        (Task.user_email == "e.pawandixit@gmail.com") |
-        (Task.user_email == None) |
-        (Task.user_email == "operator@aether.local") |
-        (Task.user_email == "test@example.com")
-    )
+        )
+    else:
+        # Strict isolation for other users
+        query = db.query(Task).filter(Task.user_email == eff_email)
     
     # Return top-level tasks by default (nested subtasks are attached inside serialize_task)
     query = query.filter((Task.parent_id == None) | (Task.parent_id == 0))
@@ -1927,13 +1952,15 @@ def list_memory(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = (user_email or "e.pawandixit@gmail.com").strip().lower()
-    return db.query(MemoryItem).filter(
-        (MemoryItem.user_email == eff_email) |
-        (MemoryItem.user_email == "e.pawandixit@gmail.com") |
-        (MemoryItem.user_email == None) |
-        (MemoryItem.user_email == "operator@aether.local")
-    ).order_by(MemoryItem.created_at.desc()).all()
+    eff_email = get_effective_email(user_email)
+    if is_owner_email(eff_email):
+        return db.query(MemoryItem).filter(
+            (MemoryItem.user_email == eff_email) |
+            (MemoryItem.user_email == None) |
+            (MemoryItem.user_email == "operator@aether.local")
+        ).order_by(MemoryItem.created_at.desc()).all()
+    else:
+        return db.query(MemoryItem).filter(MemoryItem.user_email == eff_email).order_by(MemoryItem.created_at.desc()).all()
 
 @app.post("/api/memory")
 def create_memory(
@@ -1941,7 +1968,7 @@ def create_memory(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = (req.user_email or user_email or "e.pawandixit@gmail.com").strip().lower()
+    eff_email = get_effective_email(req.user_email or user_email)
     fact_str = (req.fact or "").strip()
     if not fact_str:
         raise HTTPException(status_code=400, detail="Empty fact")
@@ -1949,10 +1976,16 @@ def create_memory(
 
     # Check if existing item exists for this contact/subject to avoid duplicates
     first_token = fact_str.split()[0].lower() if fact_str else ""
-    existing = db.query(MemoryItem).filter(
-        (MemoryItem.user_email == eff_email) | (MemoryItem.user_email == "e.pawandixit@gmail.com") | (MemoryItem.user_email == None) | (MemoryItem.user_email == "operator@aether.local"),
-        MemoryItem.category == cat
-    ).all()
+    if is_owner_email(eff_email):
+        existing = db.query(MemoryItem).filter(
+            (MemoryItem.user_email == eff_email) | (MemoryItem.user_email == None) | (MemoryItem.user_email == "operator@aether.local"),
+            MemoryItem.category == cat
+        ).all()
+    else:
+        existing = db.query(MemoryItem).filter(
+            MemoryItem.user_email == eff_email,
+            MemoryItem.category == cat
+        ).all()
     matched = next((ex for ex in existing if first_token in (ex.fact or "").lower()), None)
     if matched:
         matched.fact = fact_str
@@ -2003,22 +2036,24 @@ def get_executive_briefing(
     if _cached and (_briefing_time.time() - _cached["ts"] < _BRIEFING_CACHE_TTL):
         return _cached["data"]
 
-    eff_email = (user_email or "e.pawandixit@gmail.com").strip().lower()
-    tasks = db.query(Task).filter(
-        (Task.user_email == eff_email) |
-        (Task.user_email == "e.pawandixit@gmail.com") |
-        (Task.user_email == None) |
-        (Task.user_email == "operator@aether.local") |
-        (Task.user_email == "test@example.com"),
-        Task.status == "pending"
-    ).all()
+    eff_email = get_effective_email(user_email)
+    if is_owner_email(eff_email):
+        tasks = db.query(Task).filter(
+            (Task.user_email == eff_email) |
+            (Task.user_email == None) |
+            (Task.user_email == "operator@aether.local") |
+            (Task.user_email == "test@example.com"),
+            Task.status == "pending"
+        ).all()
+        memories = db.query(MemoryItem).filter(
+            (MemoryItem.user_email == eff_email) |
+            (MemoryItem.user_email == None)
+        ).limit(5).all()
+    else:
+        tasks = db.query(Task).filter(Task.user_email == eff_email, Task.status == "pending").all()
+        memories = db.query(MemoryItem).filter(MemoryItem.user_email == eff_email).limit(5).all()
     urgent_tasks = [t for t in tasks if t.priority in ["high", "urgent"]]
     finance = get_finance_summary(user_email=eff_email, db=db)
-    memories = db.query(MemoryItem).filter(
-        (MemoryItem.user_email == eff_email) |
-        (MemoryItem.user_email == "e.pawandixit@gmail.com") |
-        (MemoryItem.user_email == None)
-    ).limit(5).all()
 
     now = datetime.now()
     hour = now.hour
@@ -2061,7 +2096,12 @@ def get_executive_briefing(
 
     display_name = user_name or "साथी"
     if display_name == "Operator":
-        display_name = "पवन"
+        if is_owner_email(eff_email):
+            display_name = "पवन"
+        elif user_email:
+            display_name = user_email.split('@')[0].capitalize()
+        else:
+            display_name = "साथी"
 
     response_data = {
         "greeting": f"{greeting}, {display_name}!",
