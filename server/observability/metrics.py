@@ -62,3 +62,4 @@ class ObservabilityTracker:
 
 # Global Singleton Metrics Tracker
 tracker = ObservabilityTracker()
+
