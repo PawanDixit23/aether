@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 
 # Ensure server module directory is in sys.path regardless of execution root
 _SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -81,6 +82,42 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── Security & Observability Subsystems ─────────────────────────────────────
+from security import TokenBucketRateLimiter, ContentQuarantine
+from observability import tracker as obs_tracker
+
+_api_rate_limiter = TokenBucketRateLimiter(capacity=300, refill_rate_per_sec=10.0)
+
+@app.middleware("http")
+async def security_and_observability_middleware(request: Request, call_next):
+    start_time = time.time()
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Rate Limiting Guard on API routes
+    if request.url.path.startswith("/api/"):
+        allowed, remaining, retry_after = _api_rate_limiter.is_allowed(client_ip)
+        if not allowed:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many requests. Please throttle your rate."},
+                headers={"Retry-After": str(int(retry_after) + 1)}
+            )
+            
+    response = await call_next(request)
+    
+    # Observability & Latency Tracking
+    duration_ms = (time.time() - start_time) * 1000
+    obs_tracker.record_request(request.url.path, duration_ms, response.status_code)
+    response.headers["X-Response-Time-Ms"] = str(round(duration_ms, 2))
+    
+    return response
+
+@app.get("/api/metrics")
+def get_system_metrics():
+    """Returns real-time observability telemetry and operational health."""
+    return obs_tracker.get_summary()
 
 # In-memory deduplication cache for WhatsApp incoming webhooks (prevents duplicate replies)
 PROCESSED_WABA_MSG_IDS = set()
@@ -506,6 +543,11 @@ async def _execute_quick_capture(
         user_msg = "कृपया इस फ़ोटो का विश्लेषण करें (यदि यह बिल/रसीद/खर्च है तो राशि और विवरण दर्ज करें, अन्यथा सामान्य जानकारी दें)।"
 
     eff_email = (req.user_email or user_email or "").strip().lower() or None
+
+    # Security: Content Quarantine & Prompt Injection Sanitization (AETHER_SECURITY_REVIEW.md)
+    _, is_suspicious = ContentQuarantine.sanitize_input(user_msg, source="user_quick_capture")
+    if is_suspicious:
+        print(f"[Security Alert] Neutralized prompt injection pattern in: {user_msg[:60]}")
 
     # Record User Message
     db_content = f"📸 {user_msg}" if req.image_data and not user_msg.startswith("📸") else user_msg

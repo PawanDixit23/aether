@@ -94,3 +94,4 @@ class GoogleCalendarService:
             "formatted_time": event_dt.strftime("%I:%M %p, %a %d %b %Y"),
             "status": "scheduled"
         }
+
