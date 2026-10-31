@@ -5037,13 +5037,58 @@ export default function App() {
                               <a
                                 href={telUrl}
                                 onClick={(e) => {
+                                  e.preventDefault();
+                                  let finalNum = aData?.phone_number;
+                                  if (!finalNum) {
+                                    const contactName = aData?.contact_name || 'Contact';
+                                    const entered = window.prompt(`${contactName} का मोबाइल नंबर दर्ज करें (Enter Phone Number to Dial):`);
+                                    if (entered && entered.trim()) {
+                                      finalNum = entered.trim();
+                                      // Save contact permanently to Aether Memory Vault
+                                      try {
+                                        const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+                                        fetch(`${API_BASE}/memory`, {
+                                          method: 'POST',
+                                          headers: {
+                                            'Content-Type': 'application/json',
+                                            ...(currentEmail ? { 'X-User-Email': currentEmail } : {})
+                                          },
+                                          body: JSON.stringify({
+                                            fact: `${contactName} phone number is ${finalNum}`,
+                                            category: 'contact'
+                                          })
+                                        }).catch(() => {});
+                                      } catch (saveErr) {}
+                                    }
+                                  }
+
+                                  const cleanDigits = finalNum ? finalNum.replace(/[^\d+*#]/g, '') : '';
+                                  const dialTarget = cleanDigits ? `tel:${cleanDigits}` : 'intent:#Intent;action=android.intent.action.DIAL;end';
+
+                                  // 1. Send native message to React Native WebView
                                   if (typeof window !== 'undefined' && window.ReactNativeWebView) {
-                                    e.preventDefault();
-                                    window.ReactNativeWebView.postMessage(JSON.stringify({
-                                      type: 'MAKE_CALL',
-                                      telUrl: telUrl,
-                                      phoneNumber: aData?.phone_number
-                                    }));
+                                    try {
+                                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                                        type: 'MAKE_CALL',
+                                        telUrl: dialTarget,
+                                        phoneNumber: cleanDigits
+                                      }));
+                                    } catch (err) {}
+                                  }
+
+                                  // 2. Direct browser / web link fallback (works 100% on all APK versions)
+                                  try {
+                                    const link = document.createElement('a');
+                                    link.href = dialTarget;
+                                    link.target = '_top';
+                                    link.rel = 'noopener noreferrer';
+                                    document.body.appendChild(link);
+                                    link.click();
+                                    setTimeout(() => {
+                                      try { document.body.removeChild(link); } catch (rmErr) {}
+                                    }, 400);
+                                  } catch (dialErr) {
+                                    window.location.href = dialTarget;
                                   }
                                 }}
                                 target="_top"
@@ -5060,7 +5105,8 @@ export default function App() {
                                   alignItems: 'center',
                                   gap: '6px',
                                   flexShrink: 0,
-                                  boxShadow: '0 2px 6px rgba(34, 197, 94, 0.3)'
+                                  boxShadow: '0 2px 6px rgba(34, 197, 94, 0.3)',
+                                  cursor: 'pointer'
                                 }}
                               >
                                 <Phone size={13} fill="#fff" />

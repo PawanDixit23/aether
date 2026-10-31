@@ -998,9 +998,9 @@ async def _execute_quick_capture(
                 search_terms = [c_name.lower(), c_name.replace(" ", "").lower()]
                 mems = db.query(MemoryItem).filter(MemoryItem.user_email == eff_email).all()
                 for m in mems:
-                    m_text = f"{m.content or ''} {m.key or ''}".lower()
-                    if any(st in m_text for st in search_terms):
-                        mem_match = re.search(r'(\+?\d[\d\s\-]{8,14}\d)', m.content or "")
+                    m_fact = (m.fact or "").lower()
+                    if any(st in m_fact for st in search_terms):
+                        mem_match = re.search(r'(\+?\d[\d\s\-]{8,14}\d)', m.fact or "")
                         if mem_match:
                             c_num = mem_match.group(1).replace(" ", "").replace("-", "")
                             data["phone_number"] = c_num
@@ -1020,11 +1020,11 @@ async def _execute_quick_capture(
                 result_message = f"📞 **{c_name} ({c_num}) को कॉल मिलाई जा रही है...**\n\nसीधे डायल करने के लिए नीचे दिए गए 'Call' बटन पर टैप करें। 📱"
         else:
             if lang == "en":
-                result_message = f"📞 **Initiating call to {c_name}:**\nOpening phone dialer... 📱"
+                result_message = f"📞 **Calling {c_name}:**\nTap **Call Now** to enter {c_name}'s number and dial directly. (Aether will remember this contact for next time!) 📱"
             elif lang == "hinglish":
-                result_message = f"📞 **{c_name} ke liye dialer khol raha hoon:**\nNumber dial karne ke liye Call button dabayein. 📱"
+                result_message = f"📞 **{c_name} ko call karne ke liye:**\n**Call Now** dabakar number enter karein aur dial karein. Agli baar ke liye Aether ise yaad rakhega! 📱"
             else:
-                result_message = f"📞 **{c_name} को कॉल करने के लिए डायलर खोला जा रहा है:**\nकॉल करने के लिए नीचे दिए गए बटन पर टैप करें। 📱"
+                result_message = f"📞 **{c_name} को कॉल करने के लिए:**\nसीधे डायल करने के लिए नीचे **Call Now** पर टैप करके नंबर दर्ज करें। (Aether अगली बार के लिए यह नंबर याद रखेगा!) 📱"
 
     elif action == "draft_email":
         recip = data.get("email_recipient") or "Recipient"
