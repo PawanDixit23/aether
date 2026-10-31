@@ -145,10 +145,25 @@ async def test_agent_orchestrator_multi_step_workflow():
     assert len(logs) >= 2
 
 
+def test_google_calendar_integration():
+    """Verify Google Calendar service URL generation and event scheduling."""
+    from calendar_sync import GoogleCalendarService
+    res = GoogleCalendarService.schedule_event(
+        title="Client Strategy Meeting",
+        start_time_str="3:00 PM",
+        duration_minutes=45,
+        details="Quarterly roadmap review"
+    )
+    assert res["status"] == "scheduled"
+    assert "https://calendar.google.com/calendar/render" in res["google_calendar_url"]
+    assert "Client+Strategy+Meeting" in res["google_calendar_url"] or "Client" in res["google_calendar_url"]
+
+
 if __name__ == "__main__":
     test_permission_engine_classification()
     test_verification_engine()
     test_tool_registry_execution()
     test_chatsorter_and_hybrid_memory()
+    test_google_calendar_integration()
     asyncio.run(test_agent_orchestrator_multi_step_workflow())
     print("\n✅ ALL ARCHITECTURAL TESTS PASSED 100%!")

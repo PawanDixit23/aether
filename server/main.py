@@ -408,6 +408,63 @@ async def run_agent_workflow(
         "can_undo": any(t.undo_payload is not None for t in result_state.executed_tools)
     }
 
+# ----------------- Google Calendar Integration Endpoints -----------------
+class CalendarEventRequest(BaseModel):
+    title: str
+    start_time_str: Optional[str] = None
+    date_str: Optional[str] = None
+    duration_minutes: Optional[int] = 60
+    details: Optional[str] = None
+    user_email: Optional[str] = None
+
+@app.post("/api/calendar/events")
+def create_calendar_event(
+    req: CalendarEventRequest,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    """Creates a Google Calendar event and returns direct integration template links."""
+    from calendar_sync import GoogleCalendarService
+    eff_email = req.user_email or user_email or "operator@aether.local"
+    event_info = GoogleCalendarService.schedule_event(
+        title=req.title,
+        start_time_str=req.start_time_str,
+        date_str=req.date_str,
+        duration_minutes=req.duration_minutes or 60,
+        details=req.details or "",
+        user_email=eff_email
+    )
+    return {"status": "created", "event": event_info}
+
+@app.get("/api/calendar/events")
+def get_calendar_events(
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    """Retrieves upcoming calendar-bound tasks and events for the active user."""
+    eff_email = user_email or "operator@aether.local"
+    tasks = db.query(Task).filter(
+        Task.user_email == eff_email,
+        Task.status == "pending"
+    ).order_by(Task.due_date.asc()).limit(20).all()
+    from calendar_sync import GoogleCalendarService
+    events = []
+    for t in tasks:
+        dt = t.due_date or datetime.now()
+        cal_url = GoogleCalendarService.generate_calendar_template_url(
+            title=t.title,
+            start_time=dt,
+            description=f"Aether Task: {t.title} [Priority: {t.priority}]"
+        )
+        events.append({
+            "id": t.id,
+            "title": t.title,
+            "due_date": dt.isoformat(),
+            "reminder_time": t.reminder_time,
+            "google_calendar_url": cal_url
+        })
+    return {"events": events, "count": len(events)}
+
 @app.post("/api/action/quick-capture")
 async def quick_capture(
     req: QuickCaptureRequest, 

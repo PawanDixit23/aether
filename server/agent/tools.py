@@ -245,6 +245,32 @@ class ToolRegistry:
                 else:
                     call.message = f"प्राथमिकता मेमोरी में सुरक्षित कर ली गई: \"{fact}\""
 
+            # ─────────────────────────────────────────────────────────────
+            # 7. Google Calendar Tool
+            # ─────────────────────────────────────────────────────────────
+            elif tool_name == "calendar_event":
+                from calendar_sync import GoogleCalendarService
+                cal_title = params.get("title", "Meeting")
+                cal_time = params.get("start_time_str")
+                cal_date = params.get("date_str")
+                cal_dur = int(params.get("duration", 60))
+                cal_res = GoogleCalendarService.schedule_event(
+                    title=cal_title,
+                    start_time_str=cal_time,
+                    date_str=cal_date,
+                    duration_minutes=cal_dur,
+                    user_email=user_email
+                )
+                call.status = "executed"
+                call.result = cal_res
+                gcal_url = cal_res.get("google_calendar_url")
+                if lang == "en":
+                    call.message = f"📅 **Google Calendar Event Ready:**\n• **Title**: {cal_title}\n• **Time**: {cal_res.get('formatted_time')}\n\n👉 **[Open in Google Calendar]({gcal_url})**"
+                elif lang == "hinglish":
+                    call.message = f"📅 **Google Calendar Event taiyar hai:**\n• **Title**: {cal_title}\n• **Time**: {cal_res.get('formatted_time')}\n\n👉 **[Google Calendar me jodein]({gcal_url})**"
+                else:
+                    call.message = f"📅 **गूगल कैलेंडर इवेंट तैयार है:**\n• **शीर्षक**: {cal_title}\n• **समय**: {cal_res.get('formatted_time')}\n\n👉 **[गूगल कैलेंडर में जोड़ें]({gcal_url})**"
+
             else:
                 call.status = "failed"
                 call.error = f"Unknown tool: {tool_name}"

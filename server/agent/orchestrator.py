@@ -123,7 +123,14 @@ class AgentOrchestrator:
         if any(w in text_lower for w in ["balance", "budget", "total spend", "kul kharch", "bachat"]):
             return "query_finances", {}
 
-        # 2. Tasks & Reminders
+        # 2. Google Calendar Events
+        if any(w in text_lower for w in ["calendar", "google calendar", "schedule meeting", "doctor appointment", "appointment"]):
+            t_match = re.search(r'(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))', text_lower)
+            r_time = t_match.group(1).upper() if t_match else "10:00 AM"
+            clean_title = re.sub(r'(?i)\b(add to calendar|google calendar|schedule meeting|schedule|calendar me|add|event|set appointment)\b', '', step_text).strip()
+            return "calendar_event", {"title": clean_title or "Scheduled Event", "start_time_str": r_time, "duration": 60}
+
+        # 3. Tasks & Reminders
         if any(w in text_lower for w in ["remind", "yaad dilana", "task", "agenda", "meeting", "call at"]):
             # Extract time
             t_match = re.search(r'(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))', text_lower)
