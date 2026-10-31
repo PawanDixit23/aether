@@ -279,7 +279,7 @@ def fetch_live_weather(user_query: str = "", lat: float = None, lon: float = Non
 *Summary: Currently in {location_name}, it is {temp}°C with {condition_en.lower()}.*"""
 
 def fetch_live_news_items(query: str = "", limit: int = 5, lang: str = "en") -> str:
-    """Fetch live top headlines or topic-specific news (especially sports/matches/results/tech/business) with direct article URLs from Google News RSS."""
+    """Fetch live top headlines or topic/location-specific news with direct article URLs from Google News RSS."""
     try:
         q_lower = query.lower() if query else ""
         
@@ -302,21 +302,27 @@ def fetch_live_news_items(query: str = "", limit: int = 5, lang: str = "en") -> 
         is_tech = any(w in q_lower for w in ["tech", "technology", "ai", "software", "gadget", "apple", "google", "meta", "nvidia"])
         is_business = any(w in q_lower for w in ["business", "finance", "market", "stock", "nifty", "sensex", "economy", "crypto", "bitcoin"])
 
-        clean_q = (
-            query.replace("in hindi", "").replace("hindi me", "").replace("hindi mein", "")
-            .replace("in english", "").replace("english me", "").replace("give me", "")
-            .replace("batao", "").replace("latest", "").replace("today", "")
-            .replace("ताज़ा", "").replace("खबरें", "").replace("समाचार", "").strip()
+        # Extract specific subject or location (e.g. "Jaipur", "Rajasthan", "Bitcoin", "Apple")
+        clean_q = re.sub(
+            r'(?i)\b(in hindi|hindi me|hindi mein|हिंदी में|हिंदी|translate to hindi|in english|english me|give me|batao|kripya|please|latest|today|taaza|taza|news|samachar|khabar|khabrein|taaja|aaj ki|aaj ka|ki|ka|ke|ko|se|par|pe|about|of|for|सुनाओ|बताओ|समाचार|खबरें|ताज़ा|आज की)\b',
+            ' ',
+            query or ""
         )
+        clean_q = re.sub(r'[^\w\s]', ' ', clean_q)
+        clean_q = re.sub(r'\s+', ' ', clean_q).strip()
+
         if is_match_or_result or any(w in clean_q.lower() for w in ["cricket", "football", "ipl", "tennis", "hockey", "badminton", "f1", "sports", "sport", "khel"]):
-            search_query = f"{clean_q} sports" if ("sport" not in clean_q.lower() and "cricket" not in clean_q.lower()) else clean_q
+            search_query = f"{clean_q} sports" if ("sport" not in clean_q.lower() and "cricket" not in clean_q.lower()) else (clean_q or "sports")
             url = f"https://news.google.com/rss/search?q={urllib.parse.quote(search_query)}&hl={hl}&gl={gl}&ceid={ceid}"
-        elif is_sports:
+        elif is_sports and not clean_q:
             url = f"https://news.google.com/rss/headlines/section/topic/SPORTS?hl={hl}&gl={gl}&ceid={ceid}"
-        elif is_tech:
+        elif is_tech and not clean_q:
             url = f"https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl={hl}&gl={gl}&ceid={ceid}"
-        elif is_business:
+        elif is_business and not clean_q:
             url = f"https://news.google.com/rss/headlines/section/topic/BUSINESS?hl={hl}&gl={gl}&ceid={ceid}"
+        elif clean_q and len(clean_q) >= 2:
+            # Query has a specific subject or location (e.g. "Jaipur", "Rajasthan", "Delhi", "Gold")
+            url = f"https://news.google.com/rss/search?q={urllib.parse.quote(clean_q)}&hl={hl}&gl={gl}&ceid={ceid}"
         elif wants_hindi:
             url = f"https://news.google.com/rss?hl=hi&gl=IN&ceid=IN:hi"
         else:
@@ -327,9 +333,9 @@ def fetch_live_news_items(query: str = "", limit: int = 5, lang: str = "en") -> 
             root = ET.fromstring(resp.read())
             items = root.findall('.//item')[:limit]
             
-            # Fallback to topic feed if search was empty
-            if not items and is_sports:
-                fb_url = f"https://news.google.com/rss/headlines/section/topic/SPORTS?hl={hl}&gl={gl}&ceid={ceid}"
+            # Fallback to general headlines if specific search produced 0 items
+            if not items and clean_q:
+                fb_url = f"https://news.google.com/rss?hl={hl}&gl={gl}&ceid={ceid}"
                 req_fb = urllib.request.Request(fb_url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req_fb, timeout=5) as resp_fb:
                     root = ET.fromstring(resp_fb.read())
@@ -343,8 +349,8 @@ def fetch_live_news_items(query: str = "", limit: int = 5, lang: str = "en") -> 
                 source = ""
                 if " - " in raw_title:
                     parts = raw_title.rsplit(" - ", 1)
-                    clean_title = parts[0]
-                    source = f" ({parts[1]})"
+                    clean_title = parts[0].strip()
+                    source = f" ({parts[1].strip()})"
                 news_entries.append(f"{idx}. {clean_title}{source}\n   Link: {link}")
             return "\n\n".join(news_entries)
     except Exception as e:
@@ -659,7 +665,10 @@ CRITICAL INSTRUCTIONS FOR "query":
   NEVER say "I only have access to today's data" or refuse to answer. Always synthesize and deliver the match results and sports scores.
 - When providing NEWS:
   Present news items clearly with a numbered list. Each item MUST have a concise headline and direct clickable markdown link in the exact format: 1. [Headline](URL) - Source
-  CRITICAL: Never output a raw URL on its own line and never break [Headline] and (URL) across multiple lines. Always keep each news headline as a clean single-line markdown link [Headline](URL).
+  CRITICAL NEWS GROUNDING & LINK INTEGRITY RULE:
+  - You MUST strictly use the verified headlines and exact article URLs from the [LIVE REAL-TIME DATA FEED] above.
+  - NEVER fabricate, invent, or guess URLs (e.g. do not invent links like bhaskar.com/123 or navbharat.com). Copy the EXACT (Link) provided in the live feed for each article.
+  - Never output a raw URL on its own line and never break [Headline] and (URL) across multiple lines. Always keep each news headline as a clean single-line markdown link [Headline](URL).
 
 Determine the action type:
 1. "task": Creating a task or reminder.

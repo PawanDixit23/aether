@@ -230,6 +230,19 @@ export default function App() {
               return false;
             }
 
+            // 6. Open all external news links and 3rd-party websites in external device browser (Chrome)
+            // This prevents external news sites from replacing the app or failing inside WebView
+            if (
+              !url.startsWith(AETHER_URL) &&
+              !url.startsWith('http://localhost') &&
+              !url.startsWith('http://127.0.0.1') &&
+              !url.startsWith('about:') &&
+              !url.startsWith('data:')
+            ) {
+              Linking.openURL(url).catch(() => {});
+              return false;
+            }
+
             // If OAuth provider falls back to localhost redirect, redirect back to cloud AETHER_URL with token intact
             if (url.includes('access_token') && (url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1'))) {
               const hashIndex = url.indexOf('#');
@@ -250,6 +263,10 @@ export default function App() {
               if (data.type === 'MAKE_CALL') {
                 const telUrl = data.telUrl || (data.phoneNumber ? `tel:${data.phoneNumber}` : 'tel:');
                 Linking.openURL(telUrl).catch(() => {});
+              } else if (data.type === 'OPEN_EXTERNAL_URL') {
+                if (data.url) {
+                  Linking.openURL(data.url).catch(() => {});
+                }
               } else if (data.type === 'OPEN_MAP') {
                 webViewRef.current?.injectJavaScript(`window.__mapOpenedByNative = true; true;`);
                 const { latitude, longitude, webUrl } = data;

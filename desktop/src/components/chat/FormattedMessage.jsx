@@ -64,7 +64,17 @@ export const FormattedMessage = ({ text }) => {
                       borderRadius: '4px',
                       transition: 'background 0.15s ease'
                     }}
-                    onClick={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+                        try {
+                          window.ReactNativeWebView.postMessage(JSON.stringify({
+                            type: 'OPEN_EXTERNAL_URL',
+                            url: linkUrl
+                          }));
+                        } catch (err) {}
+                      }
+                    }}
                   >
                     <span>{linkTitle}</span>
                     <ExternalLink size={12} style={{ flexShrink: 0, opacity: 0.8 }} />
@@ -97,7 +107,17 @@ export const FormattedMessage = ({ text }) => {
                       fontSize: '0.8rem',
                       verticalAlign: 'middle'
                     }}
-                    onClick={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+                        try {
+                          window.ReactNativeWebView.postMessage(JSON.stringify({
+                            type: 'OPEN_EXTERNAL_URL',
+                            url: url
+                          }));
+                        } catch (err) {}
+                      }
+                    }}
                   >
                     <span>🔗 स्रोत पढ़ें ↗</span>
                   </a>
