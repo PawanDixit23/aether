@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from database import engine, Base, get_db
 import models
+from models import AuditLog
 from agent.state import ActionTier, ToolCall
 from agent.governance import PermissionEngine, VerificationEngine
 from agent.tools import ToolRegistry

@@ -16,6 +16,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import * as Notifications from 'expo-notifications';
+import * as Contacts from 'expo-contacts';
 
 // App background color - dark navy matching Aether theme
 const APP_BG = '#080c16';
@@ -294,6 +295,56 @@ export default function App() {
                   } else {
                     Linking.openURL('tel:').catch(() => {});
                   }
+                }
+              } else if (data.type === 'SEARCH_CONTACT_AND_CALL') {
+                // Search device's native contacts via expo-contacts
+                const searchName = (data.contactName || '').trim().toLowerCase();
+                try {
+                  const { status } = await Contacts.requestPermissionsAsync();
+                  if (status === 'granted') {
+                    const { data: contactsList } = await Contacts.getContactsAsync({
+                      fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name],
+                    });
+                    let matchedContact: any = null;
+                    let matchedPhone = '';
+
+                    if (contactsList && contactsList.length > 0) {
+                      matchedContact = contactsList.find((c: any) => {
+                        const fn = (c.name || '').toLowerCase();
+                        return fn === searchName || fn.includes(searchName) || (searchName && searchName.includes(fn));
+                      });
+                      if (matchedContact && matchedContact.phoneNumbers && matchedContact.phoneNumbers.length > 0) {
+                        matchedPhone = matchedContact.phoneNumbers[0].number || '';
+                      }
+                    }
+
+                    if (matchedPhone) {
+                      const cleanDigits = matchedPhone.replace(/[^\d+*#]/g, '');
+                      Linking.openURL(`tel:${cleanDigits}`).catch(() => {
+                        if (Platform.OS === 'android') {
+                          Linking.openURL(`intent:${cleanDigits}#Intent;action=android.intent.action.DIAL;scheme=tel;end`).catch(() => {});
+                        }
+                      });
+                      webViewRef.current?.injectJavaScript(`
+                        if (window.__onContactResolved) {
+                          window.__onContactResolved(${JSON.stringify({ name: matchedContact?.name || data.contactName, phone: cleanDigits })});
+                        }
+                        true;
+                      `);
+                      return;
+                    }
+                  }
+                } catch (cErr) {
+                  console.warn('Contact search error in native:', cErr);
+                }
+
+                // If contact not found by exact query, open native dialer pad
+                if (Platform.OS === 'android') {
+                  Linking.openURL('intent:#Intent;action=android.intent.action.DIAL;end').catch(() => {
+                    Linking.openURL('tel:').catch(() => {});
+                  });
+                } else {
+                  Linking.openURL('tel:').catch(() => {});
                 }
               } else if (data.type === 'OPEN_EXTERNAL_URL') {
                 if (data.url) {

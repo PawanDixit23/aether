@@ -1086,20 +1086,22 @@ async def translate_text(req: TranslateRequest):
     prompt = f"Translate the following text to natural, clear {'Hindi (हिन्दी)' if req.target_lang == 'hi' else 'English'}. Keep links, names, and numbers intact. Return ONLY the translation, nothing else.\n\nText:\n{req.text}"
     gemini_key = os.getenv("GEMINI_API_KEY", "")
     if gemini_key:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={gemini_key.strip()}"
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.2}
-            }
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(url, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    translated = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                    return {"translated": translated}
-        except Exception as e:
-            print(f"[Aether Engine] Translate error: {e}")
+        models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-8b"]
+        for m in models:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={gemini_key.strip()}"
+                payload = {
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.2}
+                }
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(url, json=payload)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        translated = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                        return {"translated": translated}
+            except Exception as e:
+                print(f"[Aether Engine] Translate error ({m}): {e}")
             
     return {"translated": req.text}
 
