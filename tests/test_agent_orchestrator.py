@@ -27,13 +27,16 @@ except ImportError:
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "server")))
 
 from database import engine, Base, get_db
-from models import Task, FinancialRecord, MemoryItem, AuditLog
+import models
 from agent.state import ActionTier, ToolCall
 from agent.governance import PermissionEngine, VerificationEngine
 from agent.tools import ToolRegistry
 from agent.orchestrator import AgentOrchestrator
 from memory.chatsorter import ChatSorter
 from memory.hybrid_provider import HybridMemoryProvider
+
+# Auto-initialize all table schemas on clean test runner environments (e.g. GitHub Actions CI)
+Base.metadata.create_all(bind=engine)
 
 
 def test_permission_engine_classification():

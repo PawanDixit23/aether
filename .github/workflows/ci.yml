@@ -29,6 +29,9 @@ jobs:
 
       - name: Run Autonomous Agent Architectural Tests
         run: |
+          cd server
+          alembic upgrade head || python -c "from database import engine, Base; import models; Base.metadata.create_all(bind=engine)"
+          cd ..
           python tests/test_agent_orchestrator.py
 
       - name: Verify Alembic Migrations
