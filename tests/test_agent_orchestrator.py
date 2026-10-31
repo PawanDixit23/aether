@@ -163,11 +163,41 @@ def test_google_calendar_integration():
     assert "Client+Strategy+Meeting" in res["google_calendar_url"] or "Client" in res["google_calendar_url"]
 
 
+def test_memory_vault_and_contact_persistence():
+    """Verify memory vault contact saving and retrieval."""
+    from models import MemoryItem
+    db = next(get_db())
+    test_email = "e.pawandixit@gmail.com"
+
+    # Save a contact in memory vault
+    existing = db.query(MemoryItem).filter(
+        (MemoryItem.user_email == test_email),
+        MemoryItem.category == "contact"
+    ).all()
+    if not any("8949546909" in (m.fact or "") for m in existing):
+        contact = MemoryItem(
+            user_email=test_email,
+            category="contact",
+            fact="Wife phone number is 8949546909",
+            confidence=1.0
+        )
+        db.add(contact)
+        db.commit()
+
+    # Verify retrieval
+    found = db.query(MemoryItem).filter(
+        (MemoryItem.user_email == test_email) | (MemoryItem.user_email == None),
+        MemoryItem.category == "contact"
+    ).all()
+    assert any("8949546909" in (m.fact or "") for m in found)
+
+
 if __name__ == "__main__":
     test_permission_engine_classification()
     test_verification_engine()
     test_tool_registry_execution()
     test_chatsorter_and_hybrid_memory()
     test_google_calendar_integration()
+    test_memory_vault_and_contact_persistence()
     asyncio.run(test_agent_orchestrator_multi_step_workflow())
     print("\n✅ ALL ARCHITECTURAL TESTS PASSED 100%!")

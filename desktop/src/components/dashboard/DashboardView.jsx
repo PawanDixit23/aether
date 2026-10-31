@@ -110,18 +110,16 @@ export const DashboardView = ({
 
   return (
     <div 
-      className="no-scrollbar"
+      className="dashboard-main-view"
       style={{ 
         width: '100%', 
-        maxWidth: '440px', 
-        margin: '0 auto', 
+        maxWidth: '100%', 
+        margin: '0', 
         display: 'flex', 
         flexDirection: 'column', 
         minHeight: '100%', 
         boxSizing: 'border-box', 
-        padding: '2px 12px 140px',
-        scrollbarWidth: 'none',
-        msOverflowStyle: 'none',
+        padding: '10px 14px 40px',
         WebkitOverflowScrolling: 'touch'
       }}
     >

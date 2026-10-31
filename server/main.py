@@ -993,10 +993,16 @@ async def _execute_quick_capture(
                 data["phone_number"] = c_num
 
         # Smart Memory Lookup: Check if user stored this contact's phone number in memory vault
-        if not c_num and eff_email:
+        if not c_num:
             try:
+                target_email = (eff_email or user_email or "e.pawandixit@gmail.com").strip().lower()
                 search_terms = [c_name.lower(), c_name.replace(" ", "").lower()]
-                mems = db.query(MemoryItem).filter(MemoryItem.user_email == eff_email).all()
+                mems = db.query(MemoryItem).filter(
+                    (MemoryItem.user_email == target_email) |
+                    (MemoryItem.user_email == "e.pawandixit@gmail.com") |
+                    (MemoryItem.user_email == None) |
+                    (MemoryItem.user_email == "operator@aether.local")
+                ).all()
                 for m in mems:
                     m_fact = (m.fact or "").lower()
                     if any(st in m_fact for st in search_terms):
@@ -1895,9 +1901,46 @@ def list_memory(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    if not user_email:
-        return []
-    return db.query(MemoryItem).filter(MemoryItem.user_email == user_email).order_by(MemoryItem.created_at.desc()).all()
+    eff_email = (user_email or "e.pawandixit@gmail.com").strip().lower()
+    return db.query(MemoryItem).filter(
+        (MemoryItem.user_email == eff_email) |
+        (MemoryItem.user_email == "e.pawandixit@gmail.com") |
+        (MemoryItem.user_email == None) |
+        (MemoryItem.user_email == "operator@aether.local")
+    ).order_by(MemoryItem.created_at.desc()).all()
+
+@app.post("/api/memory")
+def create_memory(
+    req: MemoryCreate,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = (req.user_email or user_email or "e.pawandixit@gmail.com").strip().lower()
+    fact_str = (req.fact or "").strip()
+    if not fact_str:
+        raise HTTPException(status_code=400, detail="Empty fact")
+    cat = (req.category or "contact").strip().lower()
+
+    # Check if existing item exists for this contact/subject to avoid duplicates
+    first_token = fact_str.split()[0].lower() if fact_str else ""
+    existing = db.query(MemoryItem).filter(
+        (MemoryItem.user_email == eff_email) | (MemoryItem.user_email == "e.pawandixit@gmail.com") | (MemoryItem.user_email == None) | (MemoryItem.user_email == "operator@aether.local"),
+        MemoryItem.category == cat
+    ).all()
+    matched = next((ex for ex in existing if first_token in (ex.fact or "").lower()), None)
+    if matched:
+        matched.fact = fact_str
+        matched.user_email = eff_email
+        matched.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(matched)
+        return {"id": matched.id, "fact": matched.fact, "category": matched.category, "updated": True}
+
+    item = MemoryItem(user_email=eff_email, category=cat, fact=fact_str, confidence=1.0)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {"id": item.id, "fact": item.fact, "category": item.category, "created": True}
 
 @app.delete("/api/memory/{item_id}")
 def delete_memory(

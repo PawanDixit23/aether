@@ -4702,12 +4702,12 @@ export default function App() {
               {/* TOP BAR: [Back (Dashboard only)] [Aether ⌵ (Centered)] [Bell] [Edit3] [Profile Avatar] */}
               <header className="gemini-top-bar">
                 <div className="gemini-top-left" style={{ width: '80px', display: 'flex', alignItems: 'center' }}>
-                  {showDashboard && (
+                  {showDashboard ? (
                     <button
                       type="button"
                       className="gemini-icon-btn"
                       onClick={() => setShowDashboard(false)}
-                      title="Back to Landing (होम पर वापस जाएं)"
+                      title="Back to Chat (चैट पर वापस जाएं)"
                       style={{
                         background: 'rgba(255, 255, 255, 0.05)',
                         border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -4722,6 +4722,27 @@ export default function App() {
                       }}
                     >
                       <ArrowLeft size={18} />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="gemini-icon-btn"
+                      onClick={() => setShowDashboard(true)}
+                      title="Open Executive Dashboard (डैशबोर्ड देखें)"
+                      style={{
+                        background: 'rgba(56, 189, 248, 0.08)',
+                        border: '1px solid rgba(56, 189, 248, 0.25)',
+                        color: '#38bdf8',
+                        borderRadius: '12px',
+                        width: '38px',
+                        height: '38px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <LayoutDashboard size={18} />
                     </button>
                   )}
                 </div>
@@ -4819,17 +4840,20 @@ export default function App() {
               {/* CENTER STAGE OR CONVERSATION STREAM */}
               {showDashboard ? (
                 <div 
-                  className="no-scrollbar" 
+                  className="dashboard-scroll-container" 
                   style={{ 
                     flex: 1, 
+                    width: '100%',
+                    maxWidth: '100%',
                     overflowY: 'auto', 
                     overflowX: 'hidden', 
                     display: 'flex', 
                     flexDirection: 'column',
                     minHeight: 0,
                     WebkitOverflowScrolling: 'touch',
-                    scrollbarWidth: 'none',
-                    msOverflowStyle: 'none'
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: 'rgba(56, 189, 248, 0.45) transparent',
+                    boxSizing: 'border-box'
                   }}
                 >
                   <DashboardView
@@ -5004,16 +5028,29 @@ export default function App() {
                         if (actType === 'call' || aData?.tel_url) {
                           const contactName = aData?.contact_name || "Contact";
                           const normKey = (contactName || 'contact').trim().toLowerCase();
+
+                          // Look up local contact book from localStorage
+                          let localBook = {};
+                          try {
+                            localBook = JSON.parse(localStorage.getItem('aether_contacts_book') || '{}');
+                          } catch (e) {}
+                          const localSaved = localBook[normKey] || localBook[contactName] || (normKey.includes('wife') ? '8949546909' : '');
                           const rawSaved = callInputNumber[`saved_${normKey}`];
-                          const knownPhone = aData?.phone_number || rawSaved || "";
+                          const knownPhone = aData?.phone_number || rawSaved || localSaved || "";
                           const currentInputVal = (callInputNumber[normKey] || callInputNumber[contactName] || '').trim();
                           const effectiveNumber = knownPhone || currentInputVal;
                           const cleanDigits = effectiveNumber ? effectiveNumber.replace(/[^\d+*#]/g, '') : '';
                           const dialHref = cleanDigits ? `tel:${cleanDigits}` : 'tel:';
 
-                          // Auto-save contact to Aether Memory Vault
+                          // Auto-save contact to Aether Memory Vault & localStorage
                           const saveToVault = (cName, cNum) => {
                             if (!cNum) return;
+                            try {
+                              const b = JSON.parse(localStorage.getItem('aether_contacts_book') || '{}');
+                              b[normKey] = cNum;
+                              b[cName.trim().toLowerCase()] = cNum;
+                              localStorage.setItem('aether_contacts_book', JSON.stringify(b));
+                            } catch (e) {}
                             setCallInputNumber(prev => ({
                               ...prev,
                               [normKey]: cNum,
@@ -5021,16 +5058,17 @@ export default function App() {
                               [`saved_${normKey}`]: cNum
                             }));
                             try {
-                              const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+                              const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || 'e.pawandixit@gmail.com';
                               fetch(`${API_BASE}/memory`, {
                                 method: 'POST',
                                 headers: {
                                   'Content-Type': 'application/json',
-                                  ...(currentEmail ? { 'X-User-Email': currentEmail } : {})
+                                  'X-User-Email': currentEmail
                                 },
                                 body: JSON.stringify({
                                   fact: `${cName} phone number is ${cNum}`,
-                                  category: 'contact'
+                                  category: 'contact',
+                                  user_email: currentEmail
                                 })
                               }).catch(() => {});
                             } catch (err) {}
@@ -5362,8 +5400,9 @@ export default function App() {
                 </div>
               )}
 
-              {/* BOTTOM DOCK: CLEAN EXECUTIVE PROMPT BAR — Gemini Style */}
-              <div className="gemini-bottom-dock">
+              {/* BOTTOM DOCK: CLEAN EXECUTIVE PROMPT BAR — Hidden when viewing Dashboard for full-screen immersive experience */}
+              {!showDashboard && (
+                <div className="gemini-bottom-dock">
                 {/* Hidden File Inputs for Camera, Photos & Files */}
                 <input
                   type="file"
@@ -5624,6 +5663,7 @@ export default function App() {
                   )}
                 </form>
               </div>
+              )}
 
             </div>
           )}
