@@ -1230,6 +1230,8 @@ def auto_advance_recurring_tasks(db: Session, user_email: Optional[str] = None):
         updated = False
         for dt in rec_tasks:
             if not dt.due_date:
+                dt.due_date = datetime.combine(today, datetime.min.time())
+                updated = True
                 continue
             due_dt = dt.due_date
             if isinstance(due_dt, str):

@@ -54,6 +54,17 @@ export const TasksModal = ({
   const [localExpanded, setLocalExpanded] = useState({});
   const dateInputRef = useRef(null);
 
+  // Persistent date-specific completions for recurring tasks: { [taskId]: { [dateStr]: boolean } }
+  const [taskDateCompletions, setTaskDateCompletions] = useState(() => {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const saved = localStorage.getItem('aether_task_date_completions');
+        if (saved) return JSON.parse(saved);
+      }
+    } catch (e) {}
+    return {};
+  });
+
   const todayStr = formatLocalDateStr ? formatLocalDateStr(new Date()) : new Date().toISOString().slice(0, 10);
   
   // Selected date resolution
@@ -63,11 +74,64 @@ export const TasksModal = ({
 
   const monthYearTitle = selectedDateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
-  const isTaskDone = (t) => t.is_completed || t.status === 'completed';
   const isDaily = (t) => t?.recurrence === 'daily' || t?.repeat === 'daily' || String(t?.recurrence || '').toLowerCase().includes('daily');
 
-  const isTaskOverdue = (t) => {
-    if (isTaskDone(t)) return false;
+  // Date-aware completion: a daily task completed today or past is NEVER completed on tomorrow or any future date
+  const isTaskDone = (t, targetDateStr = selectedDateStr) => {
+    if (!t) return false;
+    const daily = isDaily(t);
+
+    // Non-recurring task: standard single completion lifecycle
+    if (!daily) {
+      return Boolean(t.is_completed || t.status === 'completed');
+    }
+
+    // Daily / recurring task:
+    // 1. Explicit user override for this specific date
+    if (taskDateCompletions[t.id] && taskDateCompletions[t.id][targetDateStr] !== undefined) {
+      return Boolean(taskDateCompletions[t.id][targetDateStr]);
+    }
+
+    // 2. Future dates (targetDateStr > todayStr): ALWAYS FALSE (cannot be completed in advance)
+    if (targetDateStr > todayStr) {
+      return false;
+    }
+
+    // 3. Today (targetDateStr === todayStr): follow the task's today status
+    if (targetDateStr === todayStr) {
+      return Boolean(t.is_completed || t.status === 'completed');
+    }
+
+    // 4. Past dates (targetDateStr < todayStr): false unless recorded
+    return false;
+  };
+
+  const isTaskOverdue = (t, targetDateStr = selectedDateStr) => {
+    if (isTaskDone(t, targetDateStr)) return false;
+    
+    // Future dates are never overdue
+    if (targetDateStr > todayStr) return false;
+
+    if (isDaily(t)) {
+      if (targetDateStr < todayStr) return true;
+      if (targetDateStr === todayStr && t.reminder_time) {
+        try {
+          const m = t.reminder_time.match(/(\d+):?(\d+)?\s*(AM|PM)/i);
+          if (m) {
+            let hrs = parseInt(m[1], 10);
+            const mins = m[2] ? parseInt(m[2], 10) : 0;
+            const ampm = m[3].toUpperCase();
+            if (ampm === 'PM' && hrs < 12) hrs += 12;
+            if (ampm === 'AM' && hrs === 12) hrs = 0;
+            const dueNow = new Date();
+            dueNow.setHours(hrs, mins, 0, 0);
+            if (dueNow < new Date()) return true;
+          }
+        } catch (e) {}
+      }
+      return false;
+    }
+
     const tDateStr = getTaskDateStr(t);
     if (tDateStr && tDateStr < todayStr) return true;
     if (tDateStr === todayStr && t.reminder_time) {
@@ -96,14 +160,14 @@ export const TasksModal = ({
       d.setDate(selectedDateObj.getDate() + i);
       const dStr = formatLocalDateStr ? formatLocalDateStr(d) : d.toISOString().slice(0, 10);
       
-      // Calculate tasks count and completed on this date
+      // Calculate tasks count and completed strictly on this date
       const dTasks = combinedTasks.filter(t => {
         if (isDaily(t)) return true;
         const taskD = getTaskDateStr(t);
         return taskD === dStr;
       });
       const dTotal = dTasks.length;
-      const dCompleted = dTasks.filter(t => isTaskDone(t)).length;
+      const dCompleted = dTasks.filter(t => isTaskDone(t, dStr)).length;
 
       days.push({
         dateObj: d,
@@ -117,7 +181,7 @@ export const TasksModal = ({
       });
     }
     return days;
-  }, [selectedDateObj, combinedTasks, todayStr, selectedDateStr, formatLocalDateStr, getTaskDateStr]);
+  }, [selectedDateObj, combinedTasks, todayStr, selectedDateStr, formatLocalDateStr, getTaskDateStr, taskDateCompletions]);
 
   // Navigate date ribbon (prev/next 7 days or single day)
   const shiftDate = (daysCount) => {
@@ -130,12 +194,44 @@ export const TasksModal = ({
   const allCount = combinedTasks.length;
   const dateTasks = combinedTasks.filter(t => isDaily(t) || getTaskDateStr(t) === selectedDateStr || (!getTaskDateStr(t) && isSelectedDateToday && !t.is_google_calendar));
   const dateTotalCount = dateTasks.length;
-  const dateCompletedCount = dateTasks.filter(t => isTaskDone(t)).length;
-  const overdueCount = combinedTasks.filter(t => isTaskOverdue(t)).length;
-  const upcomingCount = combinedTasks.filter(t => !isTaskDone(t) && !isDaily(t) && getTaskDateStr(t) && getTaskDateStr(t) > todayStr).length;
-  const completedCount = combinedTasks.filter(t => isTaskDone(t)).length;
+  const dateCompletedCount = dateTasks.filter(t => isTaskDone(t, selectedDateStr)).length;
+  const overdueCount = combinedTasks.filter(t => isTaskOverdue(t, todayStr)).length;
+  const upcomingCount = combinedTasks.filter(t => !isTaskDone(t, todayStr) && !isDaily(t) && getTaskDateStr(t) && getTaskDateStr(t) > todayStr).length;
+  const completedCount = dateCompletedCount;
 
   const dateProgressPercent = dateTotalCount > 0 ? Math.round((dateCompletedCount / dateTotalCount) * 100) : 0;
+
+  // Internal date-aware task toggling
+  const onToggleTaskInternal = (task) => {
+    if (task.is_google_calendar) return;
+    const currentDone = isTaskDone(task, selectedDateStr);
+    const willBeDone = !currentDone;
+
+    if (isDaily(task)) {
+      const updated = {
+        ...taskDateCompletions,
+        [task.id]: {
+          ...(taskDateCompletions[task.id] || {}),
+          [selectedDateStr]: willBeDone
+        }
+      };
+      setTaskDateCompletions(updated);
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('aether_task_date_completions', JSON.stringify(updated));
+        }
+      } catch (e) {}
+
+      // If toggling on TODAY, also sync with main backend task status
+      if (isSelectedDateToday && handleToggleTask) {
+        handleToggleTask(task.id);
+      }
+    } else {
+      if (handleToggleTask) {
+        handleToggleTask(task.id);
+      }
+    }
+  };
 
   // Status Filter options
   const statusFilterTabs = [
@@ -157,8 +253,8 @@ export const TasksModal = ({
   // Filter tasks based on selected tab, date, priority, and search query
   const filteredTasks = useMemo(() => {
     return combinedTasks.filter(t => {
-      const done = isTaskDone(t);
-      const overdue = isTaskOverdue(t);
+      const done = isTaskDone(t, selectedDateStr);
+      const overdue = isTaskOverdue(t, selectedDateStr);
       const tDateStr = getTaskDateStr(t);
       const daily = isDaily(t);
       const isForSelectedDate = daily || tDateStr === selectedDateStr || (!tDateStr && isSelectedDateToday && !t.is_google_calendar);
@@ -807,9 +903,9 @@ export const TasksModal = ({
             </div>
           ) : (
             filteredTasks.map(t => {
-              const done = isTaskDone(t);
+              const done = isTaskDone(t, selectedDateStr);
               const taskDateStr = getTaskDateStr(t);
-              const overdue = isTaskOverdue(t);
+              const overdue = isTaskOverdue(t, selectedDateStr);
               const daily = isDaily(t);
               const priorityAccent = getPriorityAccent(t.priority);
               const hasSubtasks = t.subtasks && t.subtasks.length > 0;
@@ -844,9 +940,9 @@ export const TasksModal = ({
                 >
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
                     
-                    {/* Squircle Checkbox */}
+                    {/* Squircle Checkbox with Date-Aware Toggle */}
                     <div
-                      onClick={() => !t.is_google_calendar && handleToggleTask(t.id)}
+                      onClick={() => !t.is_google_calendar && onToggleTaskInternal(t)}
                       style={{
                         width: '24px',
                         height: '24px',
