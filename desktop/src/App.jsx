@@ -654,6 +654,7 @@ export default function App() {
   const recognitionRef = useRef(null);
   const userScrolledUpRef = useRef(false);
   const currentAudioRef = useRef(null);
+  const activeMediaPlayingRef = useRef(false);
 
   // Universal Audio Streaming Fallback (Works 100% on Mobile WebViews where SpeechSynthesis is unavailable)
   const playStreamAudio = (text, voiceId, lang) => {
@@ -2749,6 +2750,14 @@ export default function App() {
           if (prev.length === normalizedChats.length && prev[prev.length - 1]?.content === normalizedChats[normalizedChats.length - 1]?.content) {
             return prev;
           }
+          // Avoid wiping out active media players (like YouTube embed iframe) if the latest message matches
+          if (prev.length > 0 && normalizedChats.length > 0) {
+            const lastPrev = prev[prev.length - 1];
+            const lastNorm = normalizedChats[normalizedChats.length - 1];
+            if (lastPrev.content === lastNorm.content && lastPrev.role === lastNorm.role) {
+              return prev;
+            }
+          }
           return normalizedChats;
         });
       }
@@ -3155,20 +3164,20 @@ export default function App() {
       };
 
       wakeRec.onerror = (e) => {
-        // Auto restart on non-fatal errors
-        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing) {
+        // Auto restart on non-fatal errors (pause restart if user is listening to active media/video)
+        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current) {
           if (e.error !== 'not-allowed') {
             setTimeout(() => {
-              try { if (!isDestroyed) wakeRec.start(); } catch (err) {}
+              try { if (!isDestroyed && !activeMediaPlayingRef.current) wakeRec.start(); } catch (err) {}
             }, 1000);
           }
         }
       };
 
       wakeRec.onend = () => {
-        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing) {
+        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current) {
           setTimeout(() => {
-            try { if (!isDestroyed) wakeRec.start(); } catch (e) {}
+            try { if (!isDestroyed && !activeMediaPlayingRef.current) wakeRec.start(); } catch (e) {}
           }, 400);
         }
       };
@@ -3383,20 +3392,39 @@ export default function App() {
       const actionType = result.action || result.parsed?.action;
       const actionData = result.parsed?.data || result.data || {};
 
-      // If YouTube intent: auto open direct video playback
-      if (actionType === 'youtube' && (actionData?.play_url || actionData?.watch_url || actionData?.url)) {
-        try {
-          const directTarget = actionData.play_url || actionData.watch_url || actionData.url;
-          window.open(directTarget, '_blank', 'noopener,noreferrer');
-        } catch (e) {
-          console.warn('YouTube popup notice:', e);
+      // If YouTube intent: mark media active to protect audio focus; let embedded player play directly
+      if (actionType === 'youtube') {
+        activeMediaPlayingRef.current = true;
+        // On desktop browser without embed URL, fallback to window.open
+        if (typeof window !== 'undefined' && !window.ReactNativeWebView && !(actionData?.embed_url || actionData?.video_id)) {
+          try {
+            const directTarget = actionData.play_url || actionData.watch_url || actionData.url;
+            if (directTarget) window.open(directTarget, '_blank', 'noopener,noreferrer');
+          } catch (e) {
+            console.warn('YouTube popup notice:', e);
+          }
         }
       }
 
-      // If Call intent: auto trigger dialer if on mobile
-      if (actionType === 'call' && actionData?.tel_url) {
+      // If Call intent: safely trigger native dialer without breaking WebView connection
+      if (actionType === 'call' && (actionData?.tel_url || actionData?.phone_number)) {
+        const targetTel = actionData.tel_url || (actionData.phone_number ? `tel:${actionData.phone_number}` : 'tel:');
         try {
-          window.location.href = actionData.tel_url;
+          if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'MAKE_CALL',
+              telUrl: targetTel,
+              phoneNumber: actionData.phone_number
+            }));
+          } else {
+            const dialLink = document.createElement('a');
+            dialLink.href = targetTel;
+            dialLink.target = '_top';
+            dialLink.rel = 'noopener noreferrer';
+            document.body.appendChild(dialLink);
+            dialLink.click();
+            document.body.removeChild(dialLink);
+          }
         } catch (e) {
           console.warn('Tel dialer notice:', e);
         }
@@ -3410,7 +3438,8 @@ export default function App() {
         created_at: new Date().toISOString()
       }]);
 
-      if (voiceOutputEnabled) {
+      // If playing YouTube music, skip TTS voiceover to prevent dual audio collision & pause
+      if (voiceOutputEnabled && actionType !== 'youtube') {
         speakText(assistantReply);
       }
 
@@ -4850,7 +4879,7 @@ export default function App() {
                 <div className="gemini-chat-feed" ref={geminiChatFeedRef}>
                   {chatHistory.map((msg, idx) => (
                     <div 
-                      key={idx} 
+                      key={msg.id ? `msg-${msg.id}` : (msg.created_at ? `msg-${msg.created_at}-${idx}` : `msg-${idx}`)} 
                       className={msg.role === 'user' ? 'gemini-msg-user' : 'gemini-msg-assistant'}
                     >
                       {msg.image_url && (
@@ -5003,6 +5032,18 @@ export default function App() {
                               </div>
                               <a
                                 href={telUrl}
+                                onClick={(e) => {
+                                  if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+                                    e.preventDefault();
+                                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                                      type: 'MAKE_CALL',
+                                      telUrl: telUrl,
+                                      phoneNumber: aData?.phone_number
+                                    }));
+                                  }
+                                }}
+                                target="_top"
+                                rel="noopener noreferrer"
                                 style={{
                                   background: '#22c55e',
                                   color: '#fff',

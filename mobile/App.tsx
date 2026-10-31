@@ -185,36 +185,56 @@ export default function App() {
           cacheEnabled={false}
           cacheMode="LOAD_NO_CACHE"
           onShouldStartLoadWithRequest={(request) => {
-            // Open native Phone Dialer, SMS, Mail, and YouTube externally
+            const url = request.url;
+
+            // 1. NEVER block or hijack iframe subrequests (such as embedded YouTube video player)
+            if (request.isTopFrame === false) {
+              return true;
+            }
+
+            // 2. Allow embedded YouTube players and media to load smoothly inside the WebView
+            if (url.includes('/embed/') || url.includes('youtube.com/embed')) {
+              return true;
+            }
+
+            // 3. Open native Phone Dialer, SMS, and Mail externally without breaking the WebView session
             if (
-              request.url.startsWith('tel:') ||
-              request.url.startsWith('sms:') ||
-              request.url.startsWith('mailto:') ||
-              request.url.startsWith('vnd.youtube:') ||
-              request.url.includes('youtube.com') ||
-              request.url.includes('youtu.be')
+              url.startsWith('tel:') ||
+              url.startsWith('sms:') ||
+              url.startsWith('mailto:')
             ) {
-              Linking.openURL(request.url).catch(() => {});
+              Linking.openURL(url).catch(() => {});
               return false;
             }
 
-            // Open native Map apps (Google Maps on Android, Apple Maps on iOS) externally
+            // 4. Open native Map apps (Google Maps on Android, Apple Maps on iOS) externally
             if (
-              request.url.startsWith('geo:') ||
-              request.url.startsWith('maps:') ||
-              request.url.includes('google.com/maps') ||
-              request.url.includes('maps.google.com') ||
-              request.url.includes('maps.apple.com')
+              url.startsWith('geo:') ||
+              url.startsWith('maps:') ||
+              url.includes('google.com/maps') ||
+              url.includes('maps.google.com') ||
+              url.includes('maps.apple.com')
             ) {
-              Linking.openURL(request.url).catch(() => {});
+              Linking.openURL(url).catch(() => {});
+              return false;
+            }
+
+            // 5. If user explicitly clicked an external YouTube watch link from outside an embed
+            if (
+              (url.startsWith('vnd.youtube:') ||
+               url.includes('youtube.com/watch') ||
+               url.includes('youtu.be/')) &&
+              !url.includes('/embed/')
+            ) {
+              Linking.openURL(url).catch(() => {});
               return false;
             }
 
             // If OAuth provider falls back to localhost redirect, redirect back to cloud AETHER_URL with token intact
-            if (request.url.includes('access_token') && (request.url.startsWith('http://localhost') || request.url.startsWith('http://127.0.0.1'))) {
-              const hashIndex = request.url.indexOf('#');
+            if (url.includes('access_token') && (url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1'))) {
+              const hashIndex = url.indexOf('#');
               if (hashIndex !== -1) {
-                const targetUrl = `${AETHER_URL}/${request.url.substring(hashIndex)}`;
+                const targetUrl = `${AETHER_URL}/${url.substring(hashIndex)}`;
                 webViewRef.current?.injectJavaScript(`window.location.href = "${targetUrl}";`);
                 return false;
               }
@@ -227,7 +247,10 @@ export default function App() {
           onMessage={async (event) => {
             try {
               const data = JSON.parse(event.nativeEvent.data);
-              if (data.type === 'OPEN_MAP') {
+              if (data.type === 'MAKE_CALL') {
+                const telUrl = data.telUrl || (data.phoneNumber ? `tel:${data.phoneNumber}` : 'tel:');
+                Linking.openURL(telUrl).catch(() => {});
+              } else if (data.type === 'OPEN_MAP') {
                 webViewRef.current?.injectJavaScript(`window.__mapOpenedByNative = true; true;`);
                 const { latitude, longitude, webUrl } = data;
                 let nativeMapUrl = '';
@@ -370,11 +393,43 @@ export default function App() {
           }}
           onError={(syntheticEvent) => {
             const { nativeEvent } = syntheticEvent;
-            setErrorDetails(nativeEvent.description || 'Connection timeout');
+            const url = nativeEvent?.url || '';
+            const desc = nativeEvent?.description || '';
+            const code = nativeEvent?.code;
+
+            // STRICT GUARD: Ignore non-critical scheme or cancellation errors
+            // (e.g. Opening phone dialer with tel:, mailto:, sms:, geo:, iframe aborts)
+            if (
+              url.startsWith('tel:') ||
+              url.startsWith('sms:') ||
+              url.startsWith('mailto:') ||
+              url.startsWith('geo:') ||
+              url.startsWith('maps:') ||
+              url.includes('/embed/') ||
+              desc.includes('ERR_UNKNOWN_URL_SCHEME') ||
+              desc.includes('ERR_ABORTED') ||
+              code === -10 || // ERROR_UNSUPPORTED_SCHEME
+              code === -3    // ERR_ABORTED
+            ) {
+              console.log('[Aether Native] Ignored harmless scheme or abort error:', desc, url);
+              return;
+            }
+
+            setErrorDetails(desc || 'Connection timeout');
             setHasError(true);
             setIsLoading(false);
           }}
-          renderError={(errorDomain, errorCode, errorDesc) => renderCustomError(errorDesc)}
+          renderError={(errorDomain, errorCode, errorDesc) => {
+            if (
+              errorCode === -10 ||
+              errorCode === -3 ||
+              errorDesc?.includes('ERR_UNKNOWN_URL_SCHEME') ||
+              errorDesc?.includes('ERR_ABORTED')
+            ) {
+              return <View style={{ flex: 1, backgroundColor: APP_BG }} />;
+            }
+            return renderCustomError(errorDesc);
+          }}
           renderLoading={() => (
             <View style={styles.loadingContainer}>
               <View style={styles.logoBadge}>
