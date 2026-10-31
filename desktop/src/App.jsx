@@ -4697,12 +4697,18 @@ export default function App() {
 
           {/* TAB 1: AETHER CLEAN MINIMAL DARK UI */}
           {activeTab === 'aether' && (
-            <div className="gemini-screen-container">
+            <div 
+              className="gemini-screen-container"
+              style={showDashboard ? { paddingLeft: 0, paddingRight: 0 } : {}}
+            >
               
               {/* TOP BAR: [Back (Dashboard only)] [Aether ⌵ (Centered)] [Bell] [Edit3] [Profile Avatar] */}
-              <header className="gemini-top-bar">
+              <header 
+                className="gemini-top-bar"
+                style={showDashboard ? { paddingLeft: '12px', paddingRight: '12px' } : {}}
+              >
                 <div className="gemini-top-left" style={{ width: '80px', display: 'flex', alignItems: 'center' }}>
-                  {showDashboard ? (
+                  {showDashboard && (
                     <button
                       type="button"
                       className="gemini-icon-btn"
@@ -4722,27 +4728,6 @@ export default function App() {
                       }}
                     >
                       <ArrowLeft size={18} />
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="gemini-icon-btn"
-                      onClick={() => setShowDashboard(true)}
-                      title="Open Executive Dashboard (डैशबोर्ड देखें)"
-                      style={{
-                        background: 'rgba(56, 189, 248, 0.08)',
-                        border: '1px solid rgba(56, 189, 248, 0.25)',
-                        color: '#38bdf8',
-                        borderRadius: '12px',
-                        width: '38px',
-                        height: '38px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <LayoutDashboard size={18} />
                     </button>
                   )}
                 </div>
@@ -4851,8 +4836,8 @@ export default function App() {
                     flexDirection: 'column',
                     minHeight: 0,
                     WebkitOverflowScrolling: 'touch',
-                    scrollbarWidth: 'thin',
-                    scrollbarColor: 'rgba(56, 189, 248, 0.45) transparent',
+                    scrollbarWidth: 'none',
+                    msOverflowStyle: 'none',
                     boxSizing: 'border-box'
                   }}
                 >

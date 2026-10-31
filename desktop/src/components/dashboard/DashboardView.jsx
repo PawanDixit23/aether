@@ -119,7 +119,7 @@ export const DashboardView = ({
         flexDirection: 'column', 
         minHeight: '100%', 
         boxSizing: 'border-box', 
-        padding: '10px 14px 40px',
+        padding: '4px 10px 40px',
         WebkitOverflowScrolling: 'touch'
       }}
     >
@@ -137,29 +137,6 @@ export const DashboardView = ({
             {formattedDate}
           </div>
         </div>
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              background: 'rgba(255, 255, 255, 0.08)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              borderRadius: '50%',
-              width: '32px',
-              height: '32px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#94a3b8',
-              cursor: 'pointer',
-              fontSize: '1rem',
-              transition: 'all 0.2s'
-            }}
-            title="Close Dashboard"
-          >
-            ✕
-          </button>
-        )}
       </div>
 
       {/* 2. CENTER ORB (Compact Holographic Sphere) */}
