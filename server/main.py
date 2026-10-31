@@ -2412,11 +2412,12 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         except ImportError:
             from .ai_engine import parse_intent_with_llm
 
+        display_user_name = "Pawan Dixit"
         parsed = await parse_intent_with_llm(
             user_text,
             context=context,
-            user_name="Pawan",
-            language="hi"
+            user_name=display_user_name,
+            language="auto"
         )
         action = parsed.get("action", "query")
         data_inner = parsed.get("data", {})
@@ -2545,7 +2546,13 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
             reply = "⚠️ Please link your email first by sending: /login your-email@gmail.com"
         else:
             from ai_engine import parse_intent_with_llm
-            parsed = await parse_intent_with_llm(body, user_name="Pawan", language="hi")
+            context = build_context(db, user_email=user_email)
+            parsed = await parse_intent_with_llm(
+                body,
+                context=context,
+                user_name="Pawan Dixit",
+                language="auto"
+            )
             action = parsed.get("action", "query")
             data_inner = parsed.get("data", {})
             if action == "task":
