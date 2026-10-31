@@ -497,7 +497,10 @@ export const DashboardView = ({
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '6px', marginBottom: '8px', width: '100%', boxSizing: 'border-box' }}>
           
           {/* Card 1: Tasks left */}
-          <div style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 6px' }}>
+          <div 
+            onClick={() => setActiveSubModal('reminders')}
+            style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 6px', cursor: 'pointer', transition: 'all 0.15s ease' }}
+          >
             <div style={{ width: '22px', height: '22px', borderRadius: '7px', background: 'rgba(16, 185, 129, 0.18)', border: '1px solid rgba(16, 185, 129, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginBottom: '4px' }}>
               <CheckSquare size={12} />
             </div>
