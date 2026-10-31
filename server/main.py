@@ -1086,7 +1086,7 @@ async def translate_text(req: TranslateRequest):
     prompt = f"Translate the following text to natural, clear {'Hindi (हिन्दी)' if req.target_lang == 'hi' else 'English'}. Keep links, names, and numbers intact. Return ONLY the translation, nothing else.\n\nText:\n{req.text}"
     gemini_key = os.getenv("GEMINI_API_KEY", "")
     if gemini_key:
-        models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-8b"]
+        models = ["gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
         for m in models:
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={gemini_key.strip()}"

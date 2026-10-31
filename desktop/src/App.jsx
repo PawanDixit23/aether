@@ -427,6 +427,7 @@ export default function App() {
   const [isCameraModalOpen, setIsCameraModalOpen] = useState(false);
   const cameraVideoRef = useRef(null);
   const cameraStreamRef = useRef(null);
+  const [callInputNumber, setCallInputNumber] = useState({});
 
   const [calCurrentMonth, setCalCurrentMonth] = useState(() => new Date());
   const [calSelectedDate, setCalSelectedDate] = useState(() => new Date());
@@ -5025,160 +5026,220 @@ export default function App() {
                         if (actType === 'call' || aData?.tel_url) {
                           const contactName = aData?.contact_name || "Contact";
                           const knownPhone = aData?.phone_number || "";
-                          const displaySub = knownPhone ? knownPhone : "Tap to pick from contacts or dial";
+
+                          // Safe dialing helper: sends native message to WebView or triggers hidden iframe without top-level document reload
+                          const performDial = (numToDial) => {
+                            const cleanDigits = numToDial ? String(numToDial).replace(/[^\d+*#]/g, '') : '';
+                            if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+                              try {
+                                window.ReactNativeWebView.postMessage(JSON.stringify({
+                                  type: 'MAKE_CALL',
+                                  phoneNumber: cleanDigits,
+                                  telUrl: cleanDigits ? `tel:${cleanDigits}` : 'tel:'
+                                }));
+                                return;
+                              } catch (postErr) {}
+                            }
+
+                            // Pure browser fallback (hidden iframe so page never reloads or errors)
+                            try {
+                              let frame = document.getElementById('aether-dialer-frame');
+                              if (!frame) {
+                                frame = document.createElement('iframe');
+                                frame.id = 'aether-dialer-frame';
+                                frame.style.display = 'none';
+                                document.body.appendChild(frame);
+                              }
+                              frame.src = cleanDigits ? `tel:${cleanDigits}` : 'tel:';
+                            } catch (frameErr) {
+                              window.open(cleanDigits ? `tel:${cleanDigits}` : 'tel:', '_system');
+                            }
+                          };
+
+                          // Auto-save contact to Aether Memory Vault
+                          const saveToVault = (cName, cNum) => {
+                            if (!cNum) return;
+                            try {
+                              const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+                              fetch(`${API_BASE}/memory`, {
+                                method: 'POST',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                  ...(currentEmail ? { 'X-User-Email': currentEmail } : {})
+                                },
+                                body: JSON.stringify({
+                                  fact: `${cName} phone number is ${cNum}`,
+                                  category: 'contact'
+                                })
+                              }).catch(() => {});
+                            } catch (err) {}
+                          };
+
+                          const handleDialAction = async () => {
+                            // 1. If known phone exists, dial immediately
+                            if (knownPhone && knownPhone.trim()) {
+                              performDial(knownPhone.trim());
+                              return;
+                            }
+
+                            // 2. If user entered a number in the input box, save and dial
+                            const inputVal = (callInputNumber[contactName] || '').trim();
+                            if (inputVal) {
+                              saveToVault(contactName, inputVal);
+                              performDial(inputVal);
+                              return;
+                            }
+
+                            // 3. Try Contact Picker API (Chrome / Android browsers supporting it)
+                            if (typeof navigator !== 'undefined' && 'contacts' in navigator && 'ContactsManager' in window) {
+                              try {
+                                const selectedContacts = await navigator.contacts.select(['name', 'tel'], { multiple: false });
+                                if (selectedContacts && selectedContacts.length > 0 && selectedContacts[0].tel && selectedContacts[0].tel.length > 0) {
+                                  const pickedNum = selectedContacts[0].tel[0];
+                                  const pickedName = (selectedContacts[0].name && selectedContacts[0].name[0]) || contactName;
+                                  saveToVault(pickedName, pickedNum);
+                                  performDial(pickedNum);
+                                  return;
+                                }
+                              } catch (pickerErr) {
+                                console.log('Contact picker error:', pickerErr);
+                              }
+                            }
+
+                            // 4. Default: Open native phone dialer immediately
+                            performDial('');
+                          };
 
                           return (
                             <div style={{
                               marginTop: '10px',
-                              padding: '10px 14px',
+                              padding: '12px 14px',
                               borderRadius: '12px',
                               background: 'rgba(34, 197, 94, 0.08)',
                               border: '1px solid rgba(34, 197, 94, 0.25)',
                               display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: '12px'
+                              flexDirection: 'column',
+                              gap: '10px'
                             }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-                                <div style={{
-                                  width: '34px',
-                                  height: '34px',
-                                  borderRadius: '8px',
-                                  background: 'linear-gradient(135deg, #22c55e, #16a34a)',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  flexShrink: 0,
-                                  boxShadow: '0 2px 8px rgba(34, 197, 94, 0.4)'
-                                }}>
-                                  <Phone size={18} color="#fff" />
-                                </div>
-                                <div style={{ minWidth: 0 }}>
-                                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {contactName}
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                                  <div style={{
+                                    width: '36px',
+                                    height: '36px',
+                                    borderRadius: '10px',
+                                    background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    flexShrink: 0,
+                                    boxShadow: '0 2px 8px rgba(34, 197, 94, 0.4)'
+                                  }}>
+                                    <Phone size={18} color="#fff" />
                                   </div>
-                                  <div style={{ fontSize: '0.72rem', color: '#86efac' }}>
-                                    {displaySub}
+                                  <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                      {contactName}
+                                    </div>
+                                    <div style={{ fontSize: '0.72rem', color: '#86efac' }}>
+                                      {knownPhone ? knownPhone : "नंबर दर्ज करें या सीधे डायलर खोलें"}
+                                    </div>
                                   </div>
                                 </div>
+                                {knownPhone ? (
+                                  <button
+                                    type="button"
+                                    onClick={handleDialAction}
+                                    style={{
+                                      background: '#22c55e',
+                                      color: '#fff',
+                                      border: 'none',
+                                      padding: '7px 16px',
+                                      borderRadius: '8px',
+                                      fontSize: '0.8rem',
+                                      fontWeight: 600,
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      cursor: 'pointer',
+                                      boxShadow: '0 2px 8px rgba(34, 197, 94, 0.3)'
+                                    }}
+                                  >
+                                    <Phone size={13} fill="#fff" />
+                                    <span>Call Now</span>
+                                  </button>
+                                ) : null}
                               </div>
-                              <button
-                                type="button"
-                                onClick={async (e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
 
-                                  // Safe dialing helper: sends native message to WebView or triggers hidden iframe without top-level document reload
-                                  const performDial = (numToDial) => {
-                                    const cleanDigits = numToDial ? String(numToDial).replace(/[^\d+*#]/g, '') : '';
-                                    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
-                                      try {
-                                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                                          type: 'MAKE_CALL',
-                                          phoneNumber: cleanDigits,
-                                          telUrl: cleanDigits ? `tel:${cleanDigits}` : 'tel:'
-                                        }));
-                                        return;
-                                      } catch (postErr) {}
-                                    }
-
-                                    if (cleanDigits) {
-                                      try {
-                                        let frame = document.getElementById('aether-dialer-frame');
-                                        if (!frame) {
-                                          frame = document.createElement('iframe');
-                                          frame.id = 'aether-dialer-frame';
-                                          frame.style.display = 'none';
-                                          document.body.appendChild(frame);
+                              {!knownPhone && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '4px' }}>
+                                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                    <input
+                                      type="tel"
+                                      placeholder={`${contactName} का मोबाइल नंबर (e.g. 9876543210)`}
+                                      value={callInputNumber[contactName] || ''}
+                                      onChange={(e) => setCallInputNumber(prev => ({ ...prev, [contactName]: e.target.value }))}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          handleDialAction();
                                         }
-                                        frame.src = `tel:${cleanDigits}`;
-                                      } catch (frameErr) {
-                                        window.open(`tel:${cleanDigits}`, '_system');
-                                      }
-                                    }
-                                  };
-
-                                  // Auto-save contact to Aether Memory Vault
-                                  const saveToVault = (cName, cNum) => {
-                                    if (!cNum) return;
-                                    try {
-                                      const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
-                                      fetch(`${API_BASE}/memory`, {
-                                        method: 'POST',
-                                        headers: {
-                                          'Content-Type': 'application/json',
-                                          ...(currentEmail ? { 'X-User-Email': currentEmail } : {})
-                                        },
-                                        body: JSON.stringify({
-                                          fact: `${cName} phone number is ${cNum}`,
-                                          category: 'contact'
-                                        })
-                                      }).catch(() => {});
-                                    } catch (err) {}
-                                  };
-
-                                  // 1. If phone number is ALREADY known (e.g. found in prompt or memory vault)
-                                  if (knownPhone && knownPhone.trim()) {
-                                    performDial(knownPhone.trim());
-                                    return;
-                                  }
-
-                                  // 2. Try Android / Browser native Contact Picker API
-                                  if (typeof navigator !== 'undefined' && 'contacts' in navigator && 'ContactsManager' in window) {
-                                    try {
-                                      const selectedContacts = await navigator.contacts.select(['name', 'tel'], { multiple: false });
-                                      if (selectedContacts && selectedContacts.length > 0 && selectedContacts[0].tel && selectedContacts[0].tel.length > 0) {
-                                        const pickedNum = selectedContacts[0].tel[0];
-                                        const pickedName = (selectedContacts[0].name && selectedContacts[0].name[0]) || contactName;
-                                        saveToVault(pickedName, pickedNum);
-                                        performDial(pickedNum);
-                                        return;
-                                      }
-                                    } catch (pickerErr) {
-                                      console.log('Native contact picker cancelled or unsupported:', pickerErr);
-                                    }
-                                  }
-
-                                  // 3. Ask React Native WebView to search native mobile contacts via expo-contacts
-                                  if (typeof window !== 'undefined' && window.ReactNativeWebView) {
-                                    try {
-                                      window.ReactNativeWebView.postMessage(JSON.stringify({
-                                        type: 'SEARCH_CONTACT_AND_CALL',
-                                        contactName: contactName
-                                      }));
-                                      return;
-                                    } catch (postErr) {}
-                                  }
-
-                                  // 4. Fallback: prompt for number, save to memory vault, and dial
-                                  const entered = window.prompt(`${contactName} का मोबाइल नंबर दर्ज करें (Enter Phone Number):`);
-                                  if (entered && entered.trim()) {
-                                    const enteredClean = entered.trim();
-                                    saveToVault(contactName, enteredClean);
-                                    performDial(enteredClean);
-                                  } else {
-                                    performDial('');
-                                  }
-                                }}
-                                style={{
-                                  background: '#22c55e',
-                                  color: '#fff',
-                                  border: 'none',
-                                  padding: '6px 14px',
-                                  borderRadius: '8px',
-                                  fontSize: '0.78rem',
-                                  fontWeight: 600,
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '6px',
-                                  flexShrink: 0,
-                                  boxShadow: '0 2px 6px rgba(34, 197, 94, 0.3)',
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                <Phone size={13} fill="#fff" />
-                                <span>{knownPhone ? "Call Now" : "Select & Call"}</span>
-                              </button>
+                                      }}
+                                      style={{
+                                        flex: 1,
+                                        background: 'rgba(15, 23, 42, 0.85)',
+                                        border: '1px solid rgba(34, 197, 94, 0.4)',
+                                        borderRadius: '8px',
+                                        padding: '8px 12px',
+                                        color: '#f8fafc',
+                                        fontSize: '0.82rem',
+                                        outline: 'none'
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={handleDialAction}
+                                      style={{
+                                        background: '#22c55e',
+                                        color: '#fff',
+                                        border: 'none',
+                                        padding: '8px 14px',
+                                        borderRadius: '8px',
+                                        fontSize: '0.78rem',
+                                        fontWeight: 600,
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '5px',
+                                        cursor: 'pointer',
+                                        whiteSpace: 'nowrap',
+                                        boxShadow: '0 2px 6px rgba(34, 197, 94, 0.3)'
+                                      }}
+                                    >
+                                      <Phone size={13} fill="#fff" />
+                                      <span>Call & Save</span>
+                                    </button>
+                                  </div>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                                      💡 एक बार नंबर डालकर Call करने पर Aether इसे याद रखेगा
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => performDial('')}
+                                      style={{
+                                        background: 'rgba(255, 255, 255, 0.08)',
+                                        border: '1px solid rgba(255, 255, 255, 0.15)',
+                                        color: '#e2e8f0',
+                                        padding: '5px 12px',
+                                        borderRadius: '6px',
+                                        fontSize: '0.72rem',
+                                        cursor: 'pointer',
+                                        whiteSpace: 'nowrap'
+                                      }}
+                                    >
+                                      📱 Open Phone Dialer
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           );
                         }

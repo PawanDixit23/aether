@@ -29,7 +29,7 @@ if os.path.exists(env_path):
     load_dotenv(env_path)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3:8b")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini")
@@ -792,12 +792,12 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
             })
 
         models_to_try = [
-            "gemini-1.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash-8b",
             GEMINI_MODEL,
-            "gemini-1.5-pro",
-            "gemini-2.5-flash"
+            "gemini-flash-lite-latest",
+            "gemini-3.1-flash-lite",
+            "gemini-3.5-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-3.8-flash"
         ]
         unique_models = list(dict.fromkeys(models_to_try))
 
@@ -1533,7 +1533,7 @@ You must return a valid JSON response with this exact structure:
   "suggested_task": "Action item title for {operator_name} to follow up"
 }}
 """
-        models_to_try = [GEMINI_MODEL, "gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"]
+        models_to_try = [GEMINI_MODEL, "gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
         models_to_try = list(dict.fromkeys(models_to_try))
         for m in models_to_try:
             try:
@@ -1699,7 +1699,7 @@ Requirements:
 """
     server_key = os.getenv("GEMINI_API_KEY", "").strip() or (GEMINI_API_KEY.strip() if GEMINI_API_KEY else "")
     if server_key:
-        models_to_try = [GEMINI_MODEL, "gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"]
+        models_to_try = [GEMINI_MODEL, "gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-2.5-flash"]
         models_to_try = list(dict.fromkeys(models_to_try))
         for m in models_to_try:
             try:
