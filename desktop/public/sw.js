@@ -83,13 +83,27 @@ self.addEventListener('notificationclick', (event) => {
 
 // ─── Push Subscription Change (जब browser subscription expire करे) ───────────
 self.addEventListener('pushsubscriptionchange', (event) => {
-  // Re-subscribe और नई subscription server को भेजें
+  // Re-subscribe और नई subscription सीधे server को POST करें (बिना window open होने की निर्भरता के)
+  const oldEndpoint = event.oldSubscription ? event.oldSubscription.endpoint : null;
+  const options = (event.oldSubscription && event.oldSubscription.options) ? event.oldSubscription.options : { userVisibleOnly: true };
+
   event.waitUntil(
-    self.registration.pushManager.subscribe(event.oldSubscription.options)
+    self.registration.pushManager.subscribe(options)
       .then(subscription => {
-        console.log('[Aether SW] Push subscription refreshed');
-        // Client को message भेजें ताकि वो server update करे
-        return self.clients.matchAll().then(clients => {
+        console.log('[Aether SW] Push subscription refreshed, syncing to server...');
+        
+        // 1. सीधे server को update POST करें
+        const syncPromise = fetch('/api/push/refresh-subscription', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            old_endpoint: oldEndpoint,
+            subscription: subscription.toJSON()
+          })
+        }).catch(err => console.error('[Aether SW] Push refresh sync failed:', err));
+
+        // 2. Client windows को भी सूचित करें
+        const notifyClients = self.clients.matchAll().then(clients => {
           clients.forEach(client => {
             client.postMessage({
               type: 'PUSH_SUBSCRIPTION_CHANGED',
@@ -97,6 +111,8 @@ self.addEventListener('pushsubscriptionchange', (event) => {
             });
           });
         });
+
+        return Promise.all([syncPromise, notifyClients]);
       })
   );
 });

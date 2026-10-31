@@ -933,6 +933,50 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
 
     return rule_based_fallback(user_input, context)
 
+def resolve_youtube_playback(query: str) -> dict:
+    """Finds top YouTube video so it plays directly instead of just opening search."""
+    clean_q = query.strip()
+    search_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(clean_q)}"
+    video_id = None
+    try:
+        req = urllib.request.Request(
+            search_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+            matches = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
+            if not matches:
+                matches = re.findall(r'/watch\?v=([a-zA-Z0-9_-]{11})', html)
+            if matches:
+                seen = set()
+                deduped = [x for x in matches if not (x in seen or seen.add(x))]
+                if deduped:
+                    video_id = deduped[0]
+    except Exception as e:
+        print(f"[YouTube Video Resolver Notice] {e}")
+
+    if video_id:
+        watch_url = f"https://www.youtube.com/watch?v={video_id}"
+        play_url = f"https://www.youtube.com/watch?v={video_id}&autoplay=1"
+        embed_url = f"https://www.youtube.com/embed/{video_id}?autoplay=1&enablejsapi=1"
+    else:
+        watch_url = search_url
+        play_url = search_url
+        embed_url = f"https://www.youtube.com/embed?listType=search&list={urllib.parse.quote_plus(clean_q)}&autoplay=1"
+
+    return {
+        "query": clean_q,
+        "video_id": video_id,
+        "watch_url": watch_url,
+        "play_url": play_url,
+        "embed_url": embed_url,
+        "url": play_url
+    }
+
 def rule_based_fallback(text: str, context: dict = None) -> dict:
     """Smart conversational offline parser when no LLM API is available."""
     text_lower = text.lower().strip()
@@ -1176,30 +1220,39 @@ def rule_based_fallback(text: str, context: dict = None) -> dict:
         "suno", "sunao", "chalana", "bajao"
     ]) or text_lower.startswith("play") or text_lower.startswith("open youtube")
     if is_yt and not any(w in text_lower for w in ["remind", "reminder", "match", "game", "cricket", "football"]):
-        clean_q = re.sub(r'(?i)\b(play|open|suno|sunao|chalao|chala do|chala|bajao|baja do|gana|gaana|song|songs|video|bhajan|kholo|karo|dekho)\b', '', text)
+        clean_q = re.sub(r'(?i)\b(can you|could you|please|kripya|play|open|suno|sunao|chalao|chala do|chala|bajao|baja do|gana|gaana|song|songs|video|bhajan|kholo|karo|dekho)\b', '', text)
         clean_q = re.sub(r'(?i)\b(on|in|par|pe|me|se)\s+youtube\b', '', clean_q)
         clean_q = re.sub(r'(?i)\byoutube\b', '', clean_q)
         clean_q = re.sub(r'(?i)\b(ka|ke|ki|for)\b\s*$', '', clean_q).strip()
         clean_q = re.sub(r'\s+', ' ', clean_q).strip(' :-.,')
         if not clean_q or clean_q.lower() in ["youtube", "video", "song", "gana", "gaana", "trending"]:
             clean_q = "Trending"
-            yt_url = "https://www.youtube.com"
-        else:
-            import urllib.parse
-            yt_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(clean_q)}"
+
+        yt_info = resolve_youtube_playback(clean_q)
+        watch_url = yt_info["watch_url"]
+        play_url = yt_info["play_url"]
+        embed_url = yt_info["embed_url"]
 
         is_hi = any(w in text_lower for w in ["gana", "chalao", "bajao", "par", "pe", "suno", "sunao"]) or any('\u0900' <= ch <= '\u097f' for ch in text)
-        msg = f"🎬 YouTube पर '{clean_q}' खोला जा रहा है..." if is_hi else f"🎬 Playing '{clean_q}' on YouTube..."
+        msg = (
+            f"🎬 **YouTube पर चलाया जा रहा है:**\n« {clean_q} »\n\n▶️ **Play Video:** {watch_url} 🎵"
+            if is_hi else
+            f"🎬 **Playing on YouTube:**\n« {clean_q} »\n\n▶️ **Play Video:** {watch_url} 🎵"
+        )
         return {
             "action": "youtube",
             "confidence": 0.98,
             "confidence_level": "high",
             "data": {
                 "query": clean_q,
-                "url": yt_url,
+                "video_id": yt_info.get("video_id"),
+                "watch_url": watch_url,
+                "play_url": play_url,
+                "embed_url": embed_url,
+                "url": play_url,
                 "response": msg
             },
-            "explanation": "Rule-based YouTube music/video playback detection"
+            "explanation": "Rule-based YouTube music/video playback detection with direct playback stream"
         }
 
     # 13. Phone Call / Dialer Intent

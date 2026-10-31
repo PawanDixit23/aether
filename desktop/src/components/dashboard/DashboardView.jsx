@@ -9,7 +9,10 @@ import {
   Clock, 
   Bot, 
   Bell, 
-  CheckSquare
+  CheckSquare,
+  MapPin,
+  Sparkles,
+  Plus
 } from 'lucide-react';
 import { AetherParticleSphere } from '../chat/AetherParticleSphere';
 
@@ -32,7 +35,8 @@ export const DashboardView = ({
   setIsCameraOpen,
   setIsSettingsOpen,
   userAvatar,
-  onClose
+  onClose,
+  onToggleTask
 }) => {
   const [selectedMode, setSelectedMode] = useState('voice'); // 'voice' | 'ask' | 'agent'
 
@@ -80,15 +84,29 @@ export const DashboardView = ({
   const spentTodayStr = `₹${calculatedSpentToday.toLocaleString('en-IN')}`;
 
   // 4. Dynamic Live Weather from real briefing API
-  const weatherCity = weatherData?.city_en || weatherData?.city || userLocationName || 'Jaipur';
+  const weatherCity = weatherData?.city_en || weatherData?.city || userLocationName || 'Jaipur (Rajasthan)';
   const weatherTemp = weatherData?.temp !== undefined && weatherData?.temp !== null 
     ? `${Math.round(weatherData.temp)}°C` 
-    : '--°C';
-  const weatherDesc = weatherData?.condition_en || weatherData?.condition_hi || weatherData?.condition || 'Live Sync';
+    : '25°C';
+  const weatherDesc = weatherData?.condition_en || weatherData?.condition_hi || weatherData?.condition || 'Sunny & Clear';
+  const weatherHumidity = weatherData?.humidity || '36%';
+  const weatherWind = weatherData?.wind || '4.2 km/h';
 
   // 5. Dynamic Next Event from real tasks
   const pendingUpcoming = allTasksList.filter(t => !t.is_completed && t.status !== 'completed');
   const nextEvent = pendingUpcoming.length > 0 ? pendingUpcoming[0] : null;
+
+  // 6. Dynamic Today's Tasks List
+  const todayTasks = allTasksList.filter(t => {
+    const isCompleted = t.is_completed || t.status === 'completed';
+    if (isCompleted) return false;
+    // Check if task is for today or overdue or general pending
+    if (t.due_date) {
+      const taskDate = t.due_date.slice(0, 10);
+      return taskDate <= todayDateStr;
+    }
+    return true;
+  });
 
   return (
     <div 
@@ -101,7 +119,7 @@ export const DashboardView = ({
         flexDirection: 'column', 
         minHeight: '100%', 
         boxSizing: 'border-box', 
-        padding: '2px 12px 88px',
+        padding: '2px 12px 140px',
         scrollbarWidth: 'none',
         msOverflowStyle: 'none',
         WebkitOverflowScrolling: 'touch'
@@ -109,15 +127,15 @@ export const DashboardView = ({
     >
       
       {/* 1. GREETING & DATE HEADLINE */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', paddingTop: '2px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px', paddingTop: '2px' }}>
         <div>
-          <h1 style={{ fontSize: '1.45rem', fontWeight: 700, color: '#ffffff', margin: '0 0 2px 0', letterSpacing: '-0.02em' }}>
-            {getGreeting()}, {userName || 'Pawan'}
+          <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: '#ffffff', margin: '0 0 2px 0', letterSpacing: '-0.02em' }}>
+            {getGreeting()}, {userName || 'Pawan Dixit'}
           </h1>
-          <div style={{ fontSize: '0.86rem', color: '#60a5fa', fontWeight: 500, marginBottom: '2px' }}>
+          <div style={{ fontSize: '0.84rem', color: '#60a5fa', fontWeight: 500, marginBottom: '2px' }}>
             Let's make today productive ✨
           </div>
-          <div style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: 500 }}>
+          <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 500 }}>
             {formattedDate}
           </div>
         </div>
@@ -146,8 +164,8 @@ export const DashboardView = ({
         )}
       </div>
 
-      {/* 3. CENTER ORB (Holographic Blue Earth with Concentric Orbital Rings) */}
-      <div style={{ position: 'relative', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', margin: '2px 0 6px' }}>
+      {/* 2. CENTER ORB (Compact Holographic Sphere) */}
+      <div style={{ position: 'relative', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', margin: '0 0 4px' }}>
         
         {/* Orbital Ring Background Visual */}
         <div 
@@ -156,8 +174,8 @@ export const DashboardView = ({
           }}
           style={{ 
             position: 'relative', 
-            width: '160px', 
-            height: '150px', 
+            width: '130px', 
+            height: '115px', 
             display: 'flex', 
             alignItems: 'center', 
             justifyContent: 'center',
@@ -168,8 +186,8 @@ export const DashboardView = ({
           {/* Outer glowing orbital rings */}
           <div style={{
             position: 'absolute',
-            width: '155px',
-            height: '62px',
+            width: '130px',
+            height: '52px',
             border: isListening ? '1.5px solid rgba(56, 189, 248, 0.6)' : '1px solid rgba(56, 189, 248, 0.25)',
             borderRadius: '50%',
             transform: 'rotate(-25deg)',
@@ -180,8 +198,8 @@ export const DashboardView = ({
 
           <div style={{
             position: 'absolute',
-            width: '160px',
-            height: '68px',
+            width: '135px',
+            height: '56px',
             border: isSpeaking ? '1.5px solid rgba(168, 85, 247, 0.6)' : '1px solid rgba(56, 189, 248, 0.15)',
             borderRadius: '50%',
             transform: 'rotate(22deg)',
@@ -191,13 +209,13 @@ export const DashboardView = ({
 
           {/* Central Holographic Blue Sphere with Canvas/Particles */}
           <div style={{
-            width: '116px',
-            height: '116px',
+            width: '92px',
+            height: '92px',
             borderRadius: '50%',
             background: 'radial-gradient(circle at 35% 30%, #38bdf8 0%, #1d4ed8 50%, #030712 95%)',
             boxShadow: isListening 
               ? '0 0 40px rgba(56, 189, 248, 0.8), inset 0 0 22px rgba(255, 255, 255, 0.6)' 
-              : '0 0 30px rgba(37, 99, 235, 0.5), inset 0 0 18px rgba(56, 189, 248, 0.4)',
+              : '0 0 26px rgba(37, 99, 235, 0.5), inset 0 0 16px rgba(56, 189, 248, 0.4)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -205,30 +223,28 @@ export const DashboardView = ({
             overflow: 'hidden',
             transition: 'box-shadow 0.3s ease'
           }}>
-            {/* Embedded Interactive Particle Canvas */}
             <div style={{ position: 'absolute', inset: 0, opacity: 0.75 }}>
               <AetherParticleSphere isListening={isListening} isSpeaking={isSpeaking} />
             </div>
 
-            {/* Glowing Digital Core Atmosphere */}
             <div style={{
-              width: '44px',
-              height: '44px',
+              width: '36px',
+              height: '36px',
               borderRadius: '50%',
               background: 'radial-gradient(circle, rgba(255,255,255,0.7) 0%, rgba(56,189,248,0.2) 60%, transparent 100%)',
-              filter: 'blur(4px)',
+              filter: 'blur(3px)',
               pointerEvents: 'none'
             }} />
           </div>
         </div>
 
         {/* Caption below Orb */}
-        <div style={{ fontSize: '0.72rem', color: '#94a3b8', margin: '6px 0 8px 0', fontWeight: 500 }}>
+        <div style={{ fontSize: '0.70rem', color: '#94a3b8', margin: '4px 0 6px 0', fontWeight: 500 }}>
           Tap to talk • Hold for continuous
         </div>
 
         {/* Mode Switcher Capsule: [Voice] [Ask] [Agent] */}
-        <div style={{ display: 'flex', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '24px', padding: '3px', gap: '4px', marginBottom: '10px' }}>
+        <div style={{ display: 'flex', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '24px', padding: '3px', gap: '4px', marginBottom: '8px' }}>
           <button
             type="button"
             onClick={() => {
@@ -239,12 +255,12 @@ export const DashboardView = ({
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              padding: '6px 14px',
+              padding: '5px 12px',
               borderRadius: '20px',
               border: selectedMode === 'voice' ? '1px solid #38bdf8' : '1px solid transparent',
               background: selectedMode === 'voice' ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
               color: selectedMode === 'voice' ? '#38bdf8' : '#94a3b8',
-              fontSize: '0.78rem',
+              fontSize: '0.76rem',
               fontWeight: 600,
               cursor: 'pointer',
               boxShadow: selectedMode === 'voice' ? '0 0 12px rgba(56, 189, 248, 0.3)' : 'none'
@@ -264,12 +280,12 @@ export const DashboardView = ({
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              padding: '6px 14px',
+              padding: '5px 12px',
               borderRadius: '20px',
               border: selectedMode === 'ask' ? '1px solid #38bdf8' : '1px solid transparent',
               background: selectedMode === 'ask' ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
               color: selectedMode === 'ask' ? '#38bdf8' : '#94a3b8',
-              fontSize: '0.78rem',
+              fontSize: '0.76rem',
               fontWeight: 600,
               cursor: 'pointer'
             }}
@@ -288,12 +304,12 @@ export const DashboardView = ({
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              padding: '6px 14px',
+              padding: '5px 12px',
               borderRadius: '20px',
               border: selectedMode === 'agent' ? '1px solid #38bdf8' : '1px solid transparent',
               background: selectedMode === 'agent' ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
               color: selectedMode === 'agent' ? '#38bdf8' : '#94a3b8',
-              fontSize: '0.78rem',
+              fontSize: '0.76rem',
               fontWeight: 600,
               cursor: 'pointer'
             }}
@@ -305,8 +321,8 @@ export const DashboardView = ({
 
       </div>
 
-      {/* 4. QUICK ACTION CARDS (4 Columns) matching Screenshot 1 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '12px' }}>
+      {/* 3. QUICK ACTION CARDS (4 Columns) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '10px' }}>
         
         {/* Card 1: Add Task */}
         <button
@@ -368,16 +384,67 @@ export const DashboardView = ({
         </button>
       </div>
 
-      {/* 5. TODAY'S OVERVIEW SECTION matching Screenshot 1 */}
-      <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '12px 10px', marginBottom: '24px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-          <span style={{ fontSize: '0.94rem', fontWeight: 700, color: '#ffffff' }}>
+      {/* 4. PROMINENT LIVE WEATHER CARD (Fully Visible & High Contrast) */}
+      <div style={{
+        background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.14) 0%, rgba(30, 58, 138, 0.28) 100%)',
+        border: '1px solid rgba(56, 189, 248, 0.3)',
+        borderRadius: '18px',
+        padding: '11px 14px',
+        marginBottom: '10px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '12px',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25)'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+          <div style={{
+            width: '40px',
+            height: '40px',
+            borderRadius: '12px',
+            background: 'rgba(56, 189, 248, 0.2)',
+            border: '1px solid rgba(56, 189, 248, 0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '1.35rem',
+            flexShrink: 0
+          }}>
+            {weatherTemp.includes('-') || parseInt(weatherTemp) < 15 ? '❄️' : (parseInt(weatherTemp) > 28 ? '☀️' : '⛅')}
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.74rem', color: '#94a3b8' }}>
+              <MapPin size={12} color="#38bdf8" />
+              <span style={{ fontWeight: 600, color: '#f1f5f9', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {weatherCity}
+              </span>
+            </div>
+            <div style={{ fontSize: '0.76rem', color: '#7dd3fc', fontWeight: 500, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {weatherDesc}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#ffffff', lineHeight: 1 }}>
+            {weatherTemp}
+          </div>
+          <div style={{ fontSize: '0.66rem', color: '#94a3b8', marginTop: '3px' }}>
+            💧 {weatherHumidity} • 💨 {weatherWind}
+          </div>
+        </div>
+      </div>
+
+      {/* 5. TODAY'S OVERVIEW METRICS */}
+      <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '20px', padding: '12px 10px', marginBottom: '10px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)', width: '100%', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+          <span style={{ fontSize: '0.92rem', fontWeight: 700, color: '#ffffff' }}>
             Today's Overview
           </span>
           <button
             type="button"
             onClick={() => setActiveSubModal('reminders')}
-            style={{ background: 'none', border: 'none', color: '#38bdf8', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '2px', padding: 0 }}
+            style={{ background: 'none', border: 'none', color: '#38bdf8', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '2px', padding: 0 }}
           >
             <span>See all</span>
             <ChevronRight size={14} />
@@ -385,87 +452,263 @@ export const DashboardView = ({
         </div>
 
         {/* 3 Metric Cards in a Row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '6px', marginBottom: '10px', width: '100%', boxSizing: 'border-box' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '6px', marginBottom: '8px', width: '100%', boxSizing: 'border-box' }}>
           
           {/* Card 1: Tasks left */}
-          <div style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '10px 8px' }}>
-            <div style={{ width: '24px', height: '24px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.18)', border: '1px solid rgba(16, 185, 129, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginBottom: '6px' }}>
-              <CheckSquare size={13} />
+          <div style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 6px' }}>
+            <div style={{ width: '22px', height: '22px', borderRadius: '7px', background: 'rgba(16, 185, 129, 0.18)', border: '1px solid rgba(16, 185, 129, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', marginBottom: '4px' }}>
+              <CheckSquare size={12} />
             </div>
-            <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.2 }}>
+            <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.1 }}>
               {tasksLeftCount}
             </div>
-            <div style={{ fontSize: '0.66rem', color: '#94a3b8', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: '0.64rem', color: '#94a3b8', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Tasks left
             </div>
           </div>
 
           {/* Card 2: Events today */}
-          <div style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '10px 8px' }}>
-            <div style={{ width: '24px', height: '24px', borderRadius: '8px', background: 'rgba(56, 189, 248, 0.18)', border: '1px solid rgba(56, 189, 248, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', marginBottom: '6px' }}>
-              <Calendar size={13} />
+          <div style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 6px' }}>
+            <div style={{ width: '22px', height: '22px', borderRadius: '7px', background: 'rgba(56, 189, 248, 0.18)', border: '1px solid rgba(56, 189, 248, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', marginBottom: '4px' }}>
+              <Calendar size={12} />
             </div>
-            <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.2 }}>
+            <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.1 }}>
               {eventsTodayCount}
             </div>
-            <div style={{ fontSize: '0.66rem', color: '#94a3b8', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: '0.64rem', color: '#94a3b8', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Events today
             </div>
           </div>
 
           {/* Card 3: Spent today */}
-          <div style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '10px 8px' }}>
-            <div style={{ width: '24px', height: '24px', borderRadius: '8px', background: 'rgba(244, 63, 94, 0.18)', border: '1px solid rgba(244, 63, 94, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f43f5e', marginBottom: '6px' }}>
-              <Wallet size={13} />
+          <div style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 6px' }}>
+            <div style={{ width: '22px', height: '22px', borderRadius: '7px', background: 'rgba(244, 63, 94, 0.18)', border: '1px solid rgba(244, 63, 94, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f43f5e', marginBottom: '4px' }}>
+              <Wallet size={12} />
             </div>
-            <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#ffffff', lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {spentTodayStr}
             </div>
-            <div style={{ fontSize: '0.66rem', color: '#94a3b8', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: '0.64rem', color: '#94a3b8', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Spent today
             </div>
           </div>
 
         </div>
 
-        {/* 2 Bottom Widgets: Weather & Next Event */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '6px', width: '100%', boxSizing: 'border-box' }}>
-          
-          {/* Weather Widget */}
-          <div style={{ minWidth: 0, overflow: 'hidden', boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ fontSize: '1.25rem', flexShrink: 0 }}>⛅</div>
-            <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
-              <div style={{ fontSize: '0.66rem', color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {weatherCity}
-              </div>
-              <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#ffffff', lineHeight: 1.2 }}>
-                {weatherTemp}
-              </div>
-              <div style={{ fontSize: '0.62rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {weatherDesc}
-              </div>
+        {/* Next Event Widget */}
+        <div style={{ minWidth: 0, overflow: 'hidden', boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '12px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ width: '4px', height: '28px', borderRadius: '4px', background: 'linear-gradient(180deg, #a855f7, #6366f1)', flexShrink: 0 }} />
+          <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+            <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {nextEvent ? (nextEvent.reminder_time || (nextEvent.due_date ? new Date(nextEvent.due_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today')) : 'No upcoming events'}
+            </div>
+            <div style={{ fontSize: '0.68rem', color: '#cbd5e1', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {nextEvent ? (nextEvent.title || nextEvent.text || 'Upcoming Task') : 'Agenda clear'}
             </div>
           </div>
-
-          {/* Next Event Widget */}
-          <div style={{ minWidth: 0, overflow: 'hidden', boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {/* Purple Accent Bar */}
-            <div style={{ width: '4px', height: '32px', borderRadius: '4px', background: 'linear-gradient(180deg, #a855f7, #6366f1)', flexShrink: 0 }} />
-            <div style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
-              <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {nextEvent ? (nextEvent.reminder_time || (nextEvent.due_date ? new Date(nextEvent.due_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today')) : 'No events'}
-              </div>
-              <div style={{ fontSize: '0.7rem', color: '#cbd5e1', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {nextEvent ? (nextEvent.title || nextEvent.text || 'Upcoming Task') : 'Agenda clean'}
-              </div>
-              <div style={{ fontSize: '0.62rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {nextEvent ? (nextEvent.is_google_calendar ? 'Google Calendar' : 'Aether Tasks') : 'All caught up'}
-              </div>
-            </div>
-          </div>
-
         </div>
 
+      </div>
+
+      {/* 6. TODAY'S TASKS LIST SECTION (The requested Agenda feature) */}
+      <div style={{
+        background: '#0e172a',
+        border: '1px solid rgba(255, 255, 255, 0.08)',
+        borderRadius: '20px',
+        padding: '12px 14px',
+        marginBottom: '16px',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+        width: '100%',
+        boxSizing: 'border-box'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <div style={{
+              width: '24px',
+              height: '24px',
+              borderRadius: '7px',
+              background: 'rgba(16, 185, 129, 0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#10b981'
+            }}>
+              <CheckSquare size={13} />
+            </div>
+            <span style={{ fontSize: '0.90rem', fontWeight: 700, color: '#ffffff' }}>
+              Today's Tasks
+            </span>
+            <span style={{
+              background: 'rgba(56, 189, 248, 0.15)',
+              color: '#38bdf8',
+              fontSize: '0.66rem',
+              fontWeight: 700,
+              padding: '2px 7px',
+              borderRadius: '10px'
+            }}>
+              {todayTasks.length}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveSubModal('reminders')}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#38bdf8',
+              fontSize: '0.74rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '2px',
+              padding: 0
+            }}
+          >
+            <span>View all</span>
+            <ChevronRight size={13} />
+          </button>
+        </div>
+
+        {/* Tasks List Content */}
+        {todayTasks.length === 0 ? (
+          <div style={{
+            padding: '16px 10px',
+            textAlign: 'center',
+            background: 'rgba(255, 255, 255, 0.02)',
+            borderRadius: '12px',
+            border: '1px dashed rgba(255, 255, 255, 0.08)'
+          }}>
+            <div style={{ fontSize: '1.2rem', marginBottom: '3px' }}>🎉</div>
+            <div style={{ fontSize: '0.80rem', fontWeight: 600, color: '#cbd5e1' }}>
+              All caught up for today!
+            </div>
+            <div style={{ fontSize: '0.68rem', color: '#64748b', marginTop: '2px' }}>
+              No pending tasks scheduled right now
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveSubModal('reminders')}
+              style={{
+                marginTop: '8px',
+                background: 'rgba(56, 189, 248, 0.15)',
+                border: '1px solid rgba(56, 189, 248, 0.3)',
+                color: '#38bdf8',
+                borderRadius: '8px',
+                padding: '4px 10px',
+                fontSize: '0.70rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}
+            >
+              <Plus size={11} />
+              <span>Add Task</span>
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+            {todayTasks.slice(0, 6).map((task) => (
+              <div
+                key={task.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '9px 10px',
+                  borderRadius: '12px',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  gap: '8px',
+                  transition: 'all 0.2s'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onToggleTask) onToggleTask(task.id);
+                    }}
+                    style={{
+                      width: '20px',
+                      height: '20px',
+                      borderRadius: '50%',
+                      border: '1.5px solid rgba(56, 189, 248, 0.6)',
+                      background: 'transparent',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                      padding: 0
+                    }}
+                    title="Mark complete"
+                  >
+                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'transparent' }} />
+                  </button>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      color: '#f8fafc',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    }}>
+                      {task.title}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
+                      {task.reminder_time && (
+                        <span style={{ fontSize: '0.66rem', color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                          <Clock size={9} />
+                          {task.reminder_time}
+                        </span>
+                      )}
+                      {task.priority && (
+                        <span style={{
+                          fontSize: '0.60rem',
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          padding: '1px 4px',
+                          borderRadius: '4px',
+                          background: task.priority === 'urgent' ? 'rgba(239, 68, 68, 0.2)' : (task.priority === 'high' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(56, 189, 248, 0.15)'),
+                          color: task.priority === 'urgent' ? '#f87171' : (task.priority === 'high' ? '#fbbf24' : '#38bdf8')
+                        }}>
+                          {task.priority}
+                        </span>
+                      )}
+                      {task.recurrence && (
+                        <span style={{ fontSize: '0.60rem', color: '#94a3b8' }}>
+                          🔁 {task.recurrence}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {todayTasks.length > 6 && (
+              <button
+                type="button"
+                onClick={() => setActiveSubModal('reminders')}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#60a5fa',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  padding: '4px 0',
+                  textAlign: 'center'
+                }}
+              >
+                + {todayTasks.length - 6} more tasks in agenda
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
     </div>

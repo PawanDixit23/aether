@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import FastAPI, Depends, HTTPException, Header, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -30,7 +30,7 @@ VAPID_CLAIMS_EMAIL = os.environ.get("VAPID_CLAIMS_EMAIL", "mailto:aether@pawandi
 _push_subscriptions: dict = {}  # {email: [subscription_info_dict, ...]}
 
 def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "aether-alert"):
-    """VAPID Web Push notification एक subscription पर भेजें।"""
+    """VAPID Web Push notification एक subscription पर भेजें। Returns (success: bool, is_expired: bool)."""
     try:
         from pywebpush import webpush, WebPushException
         webpush(
@@ -39,10 +39,18 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
             vapid_private_key=VAPID_PRIVATE_KEY,
             vapid_claims={"sub": VAPID_CLAIMS_EMAIL},
         )
-        return True
+        return True, False
     except Exception as e:
-        print(f"[WebPush Error] {e}")
-        return False
+        is_expired = False
+        resp = getattr(e, "response", None)
+        status_code = getattr(resp, "status_code", None)
+        err_str = str(e)
+        if status_code in (404, 410) or "410" in err_str or "404" in err_str or "Gone" in err_str:
+            is_expired = True
+            print(f"[WebPush Expired] Subscription expired (404/410): {subscription_info.get('endpoint', '')[:50]}")
+        else:
+            print(f"[WebPush Error] {e}")
+        return False, is_expired
 # ──────────────────────────────────────────────────────────────────────────────
 
 try:
@@ -613,204 +621,195 @@ async def _execute_quick_capture(
             db.commit()
             executed = True
             lines = [f"{idx+1}. **{ct.title}** ({ct.reminder_time or 'Anytime'})" for idx, ct in enumerate(created_tasks)]
-            result_message = f"⏰ **{len(created_tasks)} कार्य एजेंडा में दर्ज किए गए:**\n\n" + "\n".join(lines) + "\n\nसभी रिमाइंडर्स निर्धारित समय पर एक्टिव रहेंगे! ✅"
-            undo_payload = json.dumps({"table": "tasks", "ids": [ct.id for ct in created_tasks]})
-            
-            try:
-                ai_chat = ChatMessage(
-                    user_email=eff_email,
-                    role="assistant",
-                    content=result_message,
-                    action_type=action,
-                    action_data=json.dumps(data) if data else None,
-                    confidence=confidence
-                )
-                db.add(ai_chat)
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                print(f"[Multi-task Chat Record Note] {e}")
-            return {
-                "status": "success",
-                "action": action,
-                "result": result_message,
-                "data": data,
-                "confidence": confidence,
-                "undo_payload": undo_payload
-            }
-
-        r_time = data.get("reminder_time")
-        due_dt = None
-        if data.get("due_date"):
-            try:
-                due_dt = datetime.fromisoformat(data["due_date"])
-            except Exception:
-                due_dt = None
-        
-        # Fallback time extraction if not in LLM payload
-        if not r_time or not due_dt:
-            try:
-                from ai_engine import parse_reminder_time
-            except ImportError:
-                from .ai_engine import parse_reminder_time
-            extracted_time, extracted_dt = parse_reminder_time(user_msg)
-            if extracted_time:
-                r_time = r_time or extracted_time
-                due_dt = due_dt or extracted_dt
-
-        # If time was not found in current turn, check recent conversation history to restore agreed time
-        if not r_time:
-            for m in reversed(context.get("recent_chat", [])):
-                try:
-                    from ai_engine import parse_reminder_time
-                    cand_time, cand_dt = parse_reminder_time(m.get("content", ""))
-                    if cand_time:
-                        r_time = cand_time
-                        if not due_dt:
-                            due_dt = cand_dt
-                        break
-                except Exception:
-                    pass
-
-        # Ensure due_date is always valid today if time exists
-        if not due_dt:
-            if r_time:
-                try:
-                    from ai_engine import parse_reminder_time
-                    _, calculated_dt = parse_reminder_time(r_time)
-                    if calculated_dt:
-                        due_dt = calculated_dt
-                except Exception:
-                    pass
-            if not due_dt:
-                due_dt = datetime.combine(datetime.now().date(), datetime.min.time())
-
-        title = data.get("title") or user_msg
-        try:
-            from ai_engine import clean_task_title
-            title = clean_task_title(title)
-        except Exception:
-            pass
-
-        # Detect recurring intent
-        msg_lower = user_msg.lower()
-        is_daily = any(w in msg_lower for w in ["daily", "everyday", "every day", "har din", "roz", "rozaana", "रोज", "रोजाना", "प्रतिदिन"]) or (data.get("recurrence") == "daily")
-        is_weekdays = any(w in msg_lower for w in ["monday to friday", "mon to fri", "weekdays", "सोमवार से शुक्रवार"]) or (data.get("recurrence") == "weekdays")
-        is_weekly_mon = any(w in msg_lower for w in ["every monday", "har somwar", "हर सोमवार"]) or (data.get("recurrence") == "weekly_monday")
-        
-        recurrence_val = None
-        if is_daily:
-            recurrence_val = "daily"
-        elif is_weekdays:
-            recurrence_val = "weekdays"
-        elif is_weekly_mon:
-            recurrence_val = "weekly_monday"
-        else:
-            recurrence_val = data.get("recurrence")
-
-        # Handle recurrence due_date start dates
-        if recurrence_val in ["weekdays", "monday_to_friday"]:
-            # For Monday to Friday: start TODAY if today is Mon-Fri
-            today_d = datetime.now().date()
-            if today_d.weekday() < 5: # Monday (0) to Friday (4)
-                due_dt = datetime.combine(today_d, due_dt.time() if due_dt else datetime.min.time())
-            else: # Saturday (5) or Sunday (6) -> start next Monday
-                days_ahead = (0 - today_d.weekday()) % 7
-                due_dt = datetime.combine(today_d + timedelta(days=days_ahead), due_dt.time() if due_dt else datetime.min.time())
-        elif recurrence_val == "weekly_monday":
-            today_d = datetime.now().date()
-            days_ahead = (0 - today_d.weekday()) % 7 # 0 is Monday
-            if days_ahead == 0 and due_dt and due_dt < datetime.now():
-                days_ahead = 7
-            elif days_ahead == 0 and not (due_dt and due_dt >= datetime.now()):
-                days_ahead = 7
-            if days_ahead > 0:
-                due_dt = datetime.combine(today_d + timedelta(days=days_ahead), due_dt.time() if due_dt else datetime.min.time())
-
-        # Check if parent task with subtasks requested
-        subtask_list = data.get("subtasks")
-        if not subtask_list:
-            p_match = re.search(r'(?:parent[s]?\s+task|parent)\s+(?:like\s+)?[\"\'\s]*([\w\s]+?)(?:[\"\'\s]+and|\s+and|\s+tells|\s+with)\s+.*?(?:subtask[s]?)\s+(.*)', user_msg, re.I)
-            if p_match:
-                title = p_match.group(1).strip()
-                s_raw = p_match.group(2).strip()
-                if "january to december" in s_raw.lower() or "jan to dec" in s_raw.lower() or "जनवरी से दिसंबर" in s_raw:
-                    subtask_list = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
-                else:
-                    subtask_list = [s.strip(" ,.-") for s in re.split(r',| and | aur | और ', s_raw) if s.strip()]
-
-        task = Task(
-            user_email=eff_email,
-            title=title,
-            priority=data.get("priority", "medium"),
-            reminder_time=r_time,
-            due_date=due_dt,
-            recurrence=recurrence_val,
-            notified=False
-        )
-        db.add(task)
-        db.commit()
-        db.refresh(task)
-        executed = True
-
-        # If subtasks are defined, create child tasks linked by parent_id
-        if subtask_list and isinstance(subtask_list, list) and len(subtask_list) > 0:
-            for st in subtask_list:
-                st_name = str(st).strip()
-                if st_name:
-                    db.add(Task(
-                        user_email=eff_email,
-                        title=st_name,
-                        parent_id=task.id,
-                        priority=task.priority,
-                        status="pending",
-                        notified=False
-                    ))
-            db.commit()
-
             if lang == "en":
-                result_message = f"Parent task \"{task.title}\" and {len(subtask_list)} subtasks created successfully! 📁✅"
+                result_message = f"⏰ **{len(created_tasks)} tasks scheduled:**\n\n" + "\n".join(lines) + "\n\nAll reminders are active! ✅"
             elif lang == "hinglish":
-                result_message = f"Parent task \"{task.title}\" aur {len(subtask_list)} subtasks create ho gaye hain! 📁✅"
+                result_message = f"⏰ **{len(created_tasks)} tasks agenda me add ho gaye:**\n\n" + "\n".join(lines) + "\n\nSabhi reminders set hain! ✅"
             else:
-                result_message = f"पैरेंट टास्क \"{task.title}\" और इसके {len(subtask_list)} सब-टास्क सफलतापूर्वक बनाए गए! 📁✅"
+                result_message = f"⏰ **{len(created_tasks)} कार्य एजेंडा में दर्ज किए गए:**\n\n" + "\n".join(lines) + "\n\nसभी रिमाइंडर्स निर्धारित समय पर एक्टिव रहेंगे! ✅"
+            undo_payload = json.dumps({"table": "tasks", "ids": [ct.id for ct in created_tasks]})
         else:
-            repeat_tag = ""
-            if recurrence_val == "daily":
-                repeat_tag = " [DAILY 🔁]"
-            elif recurrence_val in ["weekdays", "monday_to_friday"]:
-                repeat_tag = " [MON-FRI 🔁]"
-            elif recurrence_val == "weekly_monday":
-                repeat_tag = " [EVERY MONDAY 🔁]"
 
-            if lang == "en":
-                time_part = f" for {task.reminder_time}" if task.reminder_time else ""
-                prefix = "Recurring reminder" if recurrence_val else "Reminder"
-                result_message = f"{prefix} scheduled{time_part}: \"{task.title}\" ⏰{repeat_tag} [{task.priority.upper()}]"
-            elif lang == "hinglish":
-                time_part = f" {task.reminder_time} ke liye" if task.reminder_time else ""
-                prefix = "Aapka recurring reminder" if recurrence_val else "Aapka reminder"
-                result_message = f"{prefix}{time_part} set ho gaya hai: \"{task.title}\" ⏰{repeat_tag} [{task.priority.upper()}]"
-            else: # 'hi' or 'auto'
-                time_part = f" ({task.reminder_time} के लिए)" if task.reminder_time else ""
-                prefix = "पुनरावर्ती (Recurring) रिमाइंडर" if recurrence_val else "रिमाइंडर"
-                result_message = f"{prefix} एजेंडा में सेट किया गया{time_part}: \"{task.title}\" ⏰{repeat_tag} [{task.priority.upper()}]"
-            undo_payload = json.dumps({"table": "tasks", "id": task.id})
+            r_time = data.get("reminder_time")
+            due_dt = None
+            if data.get("due_date"):
+                try:
+                    due_dt = datetime.fromisoformat(data["due_date"])
+                except Exception:
+                    due_dt = None
+        
+            # Fallback time extraction if not in LLM payload
+            if not r_time or not due_dt:
+                try:
+                    from ai_engine import parse_reminder_time
+                except ImportError:
+                    from .ai_engine import parse_reminder_time
+                extracted_time, extracted_dt = parse_reminder_time(user_msg)
+                if extracted_time:
+                    r_time = r_time or extracted_time
+                    due_dt = due_dt or extracted_dt
+
+            # If time was not found in current turn, check recent conversation history to restore agreed time
+            if not r_time:
+                for m in reversed(context.get("recent_chat", [])):
+                    try:
+                        from ai_engine import parse_reminder_time
+                        cand_time, cand_dt = parse_reminder_time(m.get("content", ""))
+                        if cand_time:
+                            r_time = cand_time
+                            if not due_dt:
+                                due_dt = cand_dt
+                            break
+                    except Exception:
+                        pass
+
+            # Ensure due_date is always valid today if time exists
+            if not due_dt:
+                if r_time:
+                    try:
+                        from ai_engine import parse_reminder_time
+                        _, calculated_dt = parse_reminder_time(r_time)
+                        if calculated_dt:
+                            due_dt = calculated_dt
+                    except Exception:
+                        pass
+                if not due_dt:
+                    due_dt = datetime.combine(datetime.now().date(), datetime.min.time())
+
+            title = data.get("title") or user_msg
+            try:
+                from ai_engine import clean_task_title
+                title = clean_task_title(title)
+            except Exception:
+                pass
+
+            # Detect recurring intent
+            msg_lower = user_msg.lower()
+            is_daily = any(w in msg_lower for w in ["daily", "everyday", "every day", "har din", "roz", "rozaana", "रोज", "रोजाना", "प्रतिदिन"]) or (data.get("recurrence") == "daily")
+            is_weekdays = any(w in msg_lower for w in ["monday to friday", "mon to fri", "weekdays", "सोमवार से शुक्रवार"]) or (data.get("recurrence") == "weekdays")
+            is_weekly_mon = any(w in msg_lower for w in ["every monday", "har somwar", "हर सोमवार"]) or (data.get("recurrence") == "weekly_monday")
+        
+            recurrence_val = None
+            if is_daily:
+                recurrence_val = "daily"
+            elif is_weekdays:
+                recurrence_val = "weekdays"
+            elif is_weekly_mon:
+                recurrence_val = "weekly_monday"
+            else:
+                recurrence_val = data.get("recurrence")
+
+            # Handle recurrence due_date start dates
+            if recurrence_val in ["weekdays", "monday_to_friday"]:
+                # For Monday to Friday: start TODAY if today is Mon-Fri
+                today_d = datetime.now().date()
+                if today_d.weekday() < 5: # Monday (0) to Friday (4)
+                    due_dt = datetime.combine(today_d, due_dt.time() if due_dt else datetime.min.time())
+                else: # Saturday (5) or Sunday (6) -> start next Monday
+                    days_ahead = (0 - today_d.weekday()) % 7
+                    due_dt = datetime.combine(today_d + timedelta(days=days_ahead), due_dt.time() if due_dt else datetime.min.time())
+            elif recurrence_val == "weekly_monday":
+                today_d = datetime.now().date()
+                days_ahead = (0 - today_d.weekday()) % 7 # 0 is Monday
+                if days_ahead == 0 and due_dt and due_dt < datetime.now():
+                    days_ahead = 7
+                elif days_ahead == 0 and not (due_dt and due_dt >= datetime.now()):
+                    days_ahead = 7
+                if days_ahead > 0:
+                    due_dt = datetime.combine(today_d + timedelta(days=days_ahead), due_dt.time() if due_dt else datetime.min.time())
+
+            # Check if parent task with subtasks requested
+            subtask_list = data.get("subtasks")
+            if not subtask_list:
+                p_match = re.search(r'(?:parent[s]?\s+task|parent)\s+(?:like\s+)?[\"\'\s]*([\w\s]+?)(?:[\"\'\s]+and|\s+and|\s+tells|\s+with)\s+.*?(?:subtask[s]?)\s+(.*)', user_msg, re.I)
+                if p_match:
+                    title = p_match.group(1).strip()
+                    s_raw = p_match.group(2).strip()
+                    if "january to december" in s_raw.lower() or "jan to dec" in s_raw.lower() or "जनवरी से दिसंबर" in s_raw:
+                        subtask_list = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+                    else:
+                        subtask_list = [s.strip(" ,.-") for s in re.split(r',| and | aur | और ', s_raw) if s.strip()]
+
+            task = Task(
+                user_email=eff_email,
+                title=title,
+                priority=data.get("priority", "medium"),
+                reminder_time=r_time,
+                due_date=due_dt,
+                recurrence=recurrence_val,
+                notified=False
+            )
+            db.add(task)
+            db.commit()
+            db.refresh(task)
+            executed = True
+
+            # If subtasks are defined, create child tasks linked by parent_id
+            if subtask_list and isinstance(subtask_list, list) and len(subtask_list) > 0:
+                for st in subtask_list:
+                    st_name = str(st).strip()
+                    if st_name:
+                        db.add(Task(
+                            user_email=eff_email,
+                            title=st_name,
+                            parent_id=task.id,
+                            priority=task.priority,
+                            status="pending",
+                            notified=False
+                        ))
+                db.commit()
+
+                if lang == "en":
+                    result_message = f"Parent task \"{task.title}\" and {len(subtask_list)} subtasks created successfully! 📁✅"
+                elif lang == "hinglish":
+                    result_message = f"Parent task \"{task.title}\" aur {len(subtask_list)} subtasks create ho gaye hain! 📁✅"
+                else:
+                    result_message = f"पैरेंट टास्क \"{task.title}\" और इसके {len(subtask_list)} सब-टास्क सफलतापूर्वक बनाए गए! 📁✅"
+            else:
+                repeat_tag = ""
+                if recurrence_val == "daily":
+                    repeat_tag = " [DAILY 🔁]"
+                elif recurrence_val in ["weekdays", "monday_to_friday"]:
+                    repeat_tag = " [MON-FRI 🔁]"
+                elif recurrence_val == "weekly_monday":
+                    repeat_tag = " [EVERY MONDAY 🔁]"
+
+                if lang == "en":
+                    time_part = f" for {task.reminder_time}" if task.reminder_time else ""
+                    prefix = "Recurring reminder" if recurrence_val else "Reminder"
+                    result_message = f"{prefix} scheduled{time_part}: \"{task.title}\" ⏰{repeat_tag} [{task.priority.upper()}]"
+                elif lang == "hinglish":
+                    time_part = f" {task.reminder_time} ke liye" if task.reminder_time else ""
+                    prefix = "Aapka recurring reminder" if recurrence_val else "Aapka reminder"
+                    result_message = f"{prefix}{time_part} set ho gaya hai: \"{task.title}\" ⏰{repeat_tag} [{task.priority.upper()}]"
+                else: # 'hi' or 'auto'
+                    time_part = f" ({task.reminder_time} के लिए)" if task.reminder_time else ""
+                    prefix = "पुनरावर्ती (Recurring) रिमाइंडर" if recurrence_val else "रिमाइंडर"
+                    result_message = f"{prefix} एजेंडा में सेट किया गया{time_part}: \"{task.title}\" ⏰{repeat_tag} [{task.priority.upper()}]"
+                undo_payload = json.dumps({"table": "tasks", "id": task.id})
 
     elif action == "youtube":
-        q = data.get("query") or user_msg
-        url = data.get("url")
-        if not url:
-            import urllib.parse
-            url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(q)}"
-            data["url"] = url
+        q = data.get("query")
+        if not q or q == user_msg:
+            clean_yt = re.sub(r'(?i)\b(can you|could you|please|kripya|play|open|suno|sunao|chalao|chala do|chala|bajao|baja do|gana|gaana|song|songs|video|bhajan|kholo|karo|dekho)\b', '', user_msg)
+            clean_yt = re.sub(r'(?i)\b(on|in|par|pe|me|se)\s+youtube\b', '', clean_yt)
+            clean_yt = re.sub(r'(?i)\byoutube\b', '', clean_yt)
+            clean_yt = re.sub(r'(?i)\b(ka|ke|ki|for)\b\s*$', '', clean_yt).strip()
+            q = re.sub(r'\s+', ' ', clean_yt).strip(' :-.,') or "Trending"
+        try:
+            from ai_engine import resolve_youtube_playback
+        except ImportError:
+            from .ai_engine import resolve_youtube_playback
+        yt_info = resolve_youtube_playback(q)
+        data.update(yt_info)
+        watch_url = yt_info.get("watch_url") or data.get("url")
         executed = True
         if lang == "en":
-            result_message = f"🎬 **Playing on YouTube:**\n« {q} »\n\nOpening media playback stream... 🎵"
+            result_message = f"🎬 **Playing on YouTube:**\n« {q} »\n\n▶️ **Play Video:** {watch_url} 🎵"
         elif lang == "hinglish":
-            result_message = f"🎬 **YouTube par chala raha hoon:**\n« {q} »\n\nMedia link taiyar hai! 🎵"
+            result_message = f"🎬 **YouTube par chala raha hoon:**\n« {q} »\n\n▶️ **Play Video:** {watch_url} 🎵"
         else:
-            result_message = f"🎬 **YouTube पर खोला जा रहा है:**\n« {q} »\n\nप्ले करने के लिए नीचे दिए गए बटन पर टैप करें। 🎵"
+            result_message = f"🎬 **YouTube पर चलाया जा रहा है:**\n« {q} »\n\n▶️ **वीडियो चलाएं:** {watch_url} 🎵"
 
     elif action == "call":
         c_name = data.get("contact_name") or "Contact"
@@ -1894,19 +1893,23 @@ def undo_action(log_id: int, db: Session = Depends(get_db)):
     payload = json.loads(log.undo_payload)
     table = payload.get("table")
     record_id = payload.get("id")
+    record_ids = payload.get("ids") or ([record_id] if record_id is not None else [])
 
     if table == "financial_records":
-        rec = db.query(FinancialRecord).filter(FinancialRecord.id == record_id).first()
-        if rec:
-            db.delete(rec)
+        for rid in record_ids:
+            rec = db.query(FinancialRecord).filter(FinancialRecord.id == rid).first()
+            if rec:
+                db.delete(rec)
     elif table == "tasks":
-        rec = db.query(Task).filter(Task.id == record_id).first()
-        if rec:
-            db.delete(rec)
+        for rid in record_ids:
+            rec = db.query(Task).filter(Task.id == rid).first()
+            if rec:
+                db.delete(rec)
     elif table == "memory_vault":
-        rec = db.query(MemoryItem).filter(MemoryItem.id == record_id).first()
-        if rec:
-            db.delete(rec)
+        for rid in record_ids:
+            rec = db.query(MemoryItem).filter(MemoryItem.id == rid).first()
+            if rec:
+                db.delete(rec)
 
     log.is_undone = True
     db.commit()
@@ -2061,6 +2064,67 @@ def unsubscribe_push(user_email: str, endpoint: str, db: Session = Depends(get_d
         print(f"[PushUnsubscribe DB Error] {dbe}")
     return {"status": "unsubscribed"}
 
+class PushRefreshRequest(BaseModel):
+    old_endpoint: Optional[str] = None
+    subscription: dict
+
+@app.post("/api/push/refresh-subscription")
+def refresh_push_subscription(req: PushRefreshRequest, db: Session = Depends(get_db)):
+    """Service Worker pushsubscriptionchange event से automatically new subscription update करें।"""
+    sub_data = req.subscription
+    new_endpoint = sub_data.get("endpoint", "")
+    old_endpoint = req.old_endpoint or ""
+    
+    if not new_endpoint:
+        raise HTTPException(status_code=400, detail="New subscription required")
+        
+    keys = sub_data.get("keys", {})
+    p256dh = keys.get("p256dh", "")
+    auth = keys.get("auth", "")
+    
+    existing = None
+    if old_endpoint:
+        existing = db.query(PushSubscription).filter(PushSubscription.endpoint == old_endpoint).first()
+    if not existing:
+        existing = db.query(PushSubscription).filter(PushSubscription.endpoint == new_endpoint).first()
+        
+    if existing:
+        email = existing.user_email
+        if email in _push_subscriptions:
+            _push_subscriptions[email] = [s for s in _push_subscriptions[email] if s.get("endpoint") not in (old_endpoint, new_endpoint)]
+            _push_subscriptions[email].append(sub_data)
+        existing.endpoint = new_endpoint
+        existing.p256dh = p256dh
+        existing.auth = auth
+        db.commit()
+        return {"status": "refreshed", "user": email}
+    return {"status": "not_found"}
+
+def _send_whatsapp_message_sync(to_number: str, message_body: str, phone_id: str, access_token: str) -> bool:
+    """Synchronous WhatsApp message dispatch via Meta Cloud API for worker threads."""
+    if not phone_id or not access_token:
+        print("[WhatsApp] WHATSAPP_PHONE_ID or WHATSAPP_TOKEN missing.")
+        return False
+    url = f"https://graph.facebook.com/v21.0/{phone_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_number,
+        "type": "text",
+        "text": {"body": message_body}
+    }
+    try:
+        with httpx.Client(timeout=10) as client:
+            resp = client.post(url, json=payload, headers=headers)
+            print(f"[WhatsApp Sync Outgoing Response] Status: {resp.status_code}")
+            return resp.status_code in (200, 201)
+    except Exception as e:
+        print(f"[WhatsApp Sync Outgoing Error] {e}")
+        return False
+
 @app.post("/api/reminders/push-check")
 def push_check_reminders(request: Request, db: Session = Depends(get_db)):
     """
@@ -2122,29 +2186,48 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
                 body = f"समय: {task.reminder_time or 'अभी'} • कार्य का समय हो गया है!"
                 
                 # सभी subscriptions पर push भेजें
+                task_pushed_success = False
                 failed_subscriptions = []
+                expired_endpoints = []
+
                 for sub in subscriptions:
-                    success = _send_web_push(sub, title, body, f"reminder-{task.id}")
+                    success, is_expired = _send_web_push(sub, title, body, f"reminder-{task.id}")
                     if success:
                         pushed_count += 1
+                        task_pushed_success = True
                     else:
                         failed_subscriptions.append(sub.get("endpoint", "")[:50])
-                
-                # Push भेजने के बाद task को notified mark करें (यदि recurring है तो अगली आवृत्ति schedule करें)
-                task.notified = True
-                rec = getattr(task, "recurrence", None)
-                if rec and task.due_date:
-                    if rec == "daily":
-                        task.due_date = task.due_date + timedelta(days=1)
-                    elif rec in ["weekdays", "monday_to_friday"]:
-                        task.due_date = get_next_weekday(task.due_date)
-                    elif str(rec).startswith("weekly"):
-                        task.due_date = task.due_date + timedelta(days=7)
-                    else:
-                        task.due_date = task.due_date + timedelta(days=1)
-                    task.notified = False
-                    task.status = "pending"
-                db.commit()
+                        if is_expired:
+                            expired_endpoints.append(sub.get("endpoint"))
+
+                # Cleanup expired (404/410) subscriptions from DB and memory
+                if expired_endpoints:
+                    try:
+                        db.query(PushSubscription).filter(PushSubscription.endpoint.in_(expired_endpoints)).delete(synchronize_session=False)
+                        db.commit()
+                        _push_subscriptions[email] = [s for s in _push_subscriptions[email] if s.get("endpoint") not in expired_endpoints]
+                        print(f"[PushCheck] Cleaned up {len(expired_endpoints)} expired subscriptions for {email}")
+                    except Exception as clean_err:
+                        print(f"[Push Clean Error] {clean_err}")
+
+                # Push सफल होने पर ही task को notified mark करें (Issue #3 fix)
+                if task_pushed_success:
+                    task.notified = True
+                    rec = getattr(task, "recurrence", None)
+                    if rec and task.due_date:
+                        if rec == "daily":
+                            task.due_date = task.due_date + timedelta(days=1)
+                        elif rec in ["weekdays", "monday_to_friday"]:
+                            task.due_date = get_next_weekday(task.due_date)
+                        elif str(rec).startswith("weekly"):
+                            task.due_date = task.due_date + timedelta(days=7)
+                        else:
+                            task.due_date = task.due_date + timedelta(days=1)
+                        task.notified = False
+                        task.status = "pending"
+                    db.commit()
+                else:
+                    errors.append(f"Push delivery failed for task {task.id} (user {email}). Task left un-notified for retry.")
                 
                 if failed_subscriptions:
                     errors.append(f"Failed subs for task {task.id}: {len(failed_subscriptions)}")
@@ -2204,10 +2287,16 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
                                     f"क्या शेष कार्यों को कल के लिए आगे बढ़ाना है? बस मुझे यहाँ बता दें।"
                                 )
 
-                            import asyncio
-                            asyncio.create_task(_send_whatsapp_message(p_phone, digest_msg, wa_phone_id, wa_token))
-                            db.add(MemoryItem(user_email=p_email, category="whatsapp_digest_sent", fact=digest_key))
-                            db.commit()
+                            # Synchronous dispatch for worker thread (Issue #1 fix)
+                            sent_ok = _send_whatsapp_message_sync(p_phone, digest_msg, wa_phone_id, wa_token)
+                            if sent_ok:
+                                db.add(MemoryItem(user_email=p_email, category="whatsapp_digest_sent", fact=digest_key))
+                                db.commit()
+                                print(f"[WhatsApp Digest] Successfully sent {digest_type} digest to {p_phone}")
+                            else:
+                                print(f"[WhatsApp Digest] Failed delivery to {p_phone}, will retry on next check.")
+                    except Exception as p_err:
+                        print(f"[Digest Pairing Error] {p_err}")
                     except Exception as p_err:
                         print(f"[Digest Pairing Error] {p_err}")
     except Exception as e_dig:
@@ -2717,6 +2806,25 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
                 reply_text = f"🧾 *खर्च दर्ज किया गया!*\n\n• *राशि*: ₹{rec.amount:,.2f}\n• *श्रेणी*: {rec.category.title()}\n• *मोड*: {rec.payment_mode.upper()}\n• *विवरण*: {rec.note}{alert_suffix}"
             else:
                 reply_text = f"💰 *आय दर्ज की गई!*\n\n• *राशि*: +₹{rec.amount:,.2f}\n• *श्रेणी*: {rec.category.title()}\n• *विवरण*: {rec.note}"
+        elif action == "youtube":
+            q = data_inner.get("query")
+            if not q or q == user_text:
+                clean_yt = re.sub(r'(?i)\b(can you|could you|please|kripya|play|open|suno|sunao|chalao|chala do|chala|bajao|baja do|gana|gaana|song|songs|video|bhajan|kholo|karo|dekho)\b', '', user_text)
+                clean_yt = re.sub(r'(?i)\b(on|in|par|pe|me|se)\s+youtube\b', '', clean_yt)
+                clean_yt = re.sub(r'(?i)\byoutube\b', '', clean_yt)
+                clean_yt = re.sub(r'(?i)\b(ka|ke|ki|for)\b\s*$', '', clean_yt).strip()
+                q = re.sub(r'\s+', ' ', clean_yt).strip(' :-.,') or "Trending"
+            try:
+                from ai_engine import resolve_youtube_playback
+            except ImportError:
+                from .ai_engine import resolve_youtube_playback
+            yt_info = resolve_youtube_playback(q)
+            watch_url = yt_info.get("watch_url") or data_inner.get("url") or f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(q)}"
+            reply_text = (
+                f"🎬 *Playing on YouTube:*\n« {q} »\n\n"
+                f"▶️ *Tap to Watch & Play Now:*\n{watch_url}\n\n"
+                f"Enjoy the video! 🎵"
+            )
         else:
             reply_text = data_inner.get("response", "कार्य पूरा किया गया।")
 
@@ -2803,6 +2911,25 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
                 db.add(rec)
                 db.commit()
                 reply = f"🧾 Kharch saved: ₹{rec.amount:,.2f} ({rec.category})"
+            elif action == "youtube":
+                q = data_inner.get("query")
+                if not q or q == body:
+                    clean_yt = re.sub(r'(?i)\b(can you|could you|please|kripya|play|open|suno|sunao|chalao|chala do|chala|bajao|baja do|gana|gaana|song|songs|video|bhajan|kholo|karo|dekho)\b', '', body)
+                    clean_yt = re.sub(r'(?i)\b(on|in|par|pe|me|se)\s+youtube\b', '', clean_yt)
+                    clean_yt = re.sub(r'(?i)\byoutube\b', '', clean_yt)
+                    clean_yt = re.sub(r'(?i)\b(ka|ke|ki|for)\b\s*$', '', clean_yt).strip()
+                    q = re.sub(r'\s+', ' ', clean_yt).strip(' :-.,') or "Trending"
+                try:
+                    from ai_engine import resolve_youtube_playback
+                except ImportError:
+                    from .ai_engine import resolve_youtube_playback
+                yt_info = resolve_youtube_playback(q)
+                watch_url = yt_info.get("watch_url") or data_inner.get("url") or f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(q)}"
+                reply = (
+                    f"🎬 *Playing on YouTube:*\n« {q} »\n\n"
+                    f"▶️ *Tap to Watch & Play Now:*\n{watch_url}\n\n"
+                    f"Enjoy the video! 🎵"
+                )
             else:
                 reply = data_inner.get("response", "Done.")
 

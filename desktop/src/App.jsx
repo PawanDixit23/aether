@@ -2268,13 +2268,39 @@ export default function App() {
       }
     };
 
+    const handleSwMessage = async (event) => {
+      if (event.data?.type === 'PUSH_SUBSCRIPTION_CHANGED' && event.data?.subscription) {
+        const emailToUse = userEmail || localStorage.getItem('aether_user_email') || '';
+        if (emailToUse) {
+          try {
+            await fetch(`${serverBase}/api/push/subscribe`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                user_email: emailToUse,
+                subscription: event.data.subscription,
+              }),
+            });
+            console.log('[Aether Push] ✅ Subscription refreshed & synced for', emailToUse);
+          } catch (e) {
+            console.warn('[Aether Push] Refresh sync warning:', e);
+          }
+        }
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handleSwMessage);
+
     navigator.serviceWorker.register('/sw.js')
       .then(reg => {
         console.log('Aether SW Active:', reg.scope);
         setupPushSubscription(reg);
       })
       .catch(err => console.log('Aether SW error:', err));
-  }, [userEmail]);
+
+    return () => {
+      navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+    };
+  }, [userEmail, serverBase]);
   // ─────────────────────────────────────────────────────────────────────────────
 
   // Calendar & Reminders Helpers
@@ -3356,10 +3382,11 @@ export default function App() {
       const actionType = result.action || result.parsed?.action;
       const actionData = result.parsed?.data || result.data || {};
 
-      // If YouTube intent: auto open YouTube safely
-      if (actionType === 'youtube' && actionData?.url) {
+      // If YouTube intent: auto open direct video playback
+      if (actionType === 'youtube' && (actionData?.play_url || actionData?.watch_url || actionData?.url)) {
         try {
-          window.open(actionData.url, '_blank', 'noopener,noreferrer');
+          const directTarget = actionData.play_url || actionData.watch_url || actionData.url;
+          window.open(directTarget, '_blank', 'noopener,noreferrer');
         } catch (e) {
           console.warn('YouTube popup notice:', e);
         }
@@ -4787,6 +4814,7 @@ export default function App() {
                     setIsSettingsOpen={setIsSettingsOpen}
                     userAvatar={userAvatar}
                     onClose={() => setShowDashboard(false)}
+                    onToggleTask={handleToggleTask}
                   />
                 </div>
               ) : chatHistory.length === 0 ? (
@@ -4848,65 +4876,90 @@ export default function App() {
                         if (!aData && typeof msg.action_data === 'string') {
                           try { aData = JSON.parse(msg.action_data); } catch (e) {}
                         }
-                        if (actType === 'youtube' || aData?.url?.includes('youtube.com')) {
-                          const ytUrl = aData?.url || `https://www.youtube.com/results?search_query=${encodeURIComponent(aData?.query || 'Trending')}`;
+                        if (actType === 'youtube' || aData?.url?.includes('youtube.com') || aData?.embed_url || aData?.watch_url) {
+                          const directPlayUrl = aData?.play_url || aData?.watch_url || aData?.url || `https://www.youtube.com/results?search_query=${encodeURIComponent(aData?.query || 'Trending')}`;
+                          const embedUrl = aData?.embed_url || (aData?.video_id ? `https://www.youtube.com/embed/${aData.video_id}?autoplay=1&enablejsapi=1` : (aData?.query ? `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(aData.query)}&autoplay=1` : null));
                           return (
                             <div style={{
                               marginTop: '10px',
-                              padding: '10px 14px',
-                              borderRadius: '12px',
+                              padding: '12px 14px',
+                              borderRadius: '14px',
                               background: 'rgba(239, 68, 68, 0.08)',
                               border: '1px solid rgba(239, 68, 68, 0.25)',
                               display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: '12px'
+                              flexDirection: 'column',
+                              gap: '8px'
                             }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-                                <div style={{
-                                  width: '34px',
-                                  height: '34px',
-                                  borderRadius: '8px',
-                                  background: 'linear-gradient(135deg, #ef4444, #dc2626)',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  flexShrink: 0,
-                                  boxShadow: '0 2px 8px rgba(239, 68, 68, 0.4)'
-                                }}>
-                                  <YoutubeIcon size={20} color="#fff" />
-                                </div>
-                                <div style={{ minWidth: 0 }}>
-                                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {aData?.query || "YouTube Playback"}
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                                  <div style={{
+                                    width: '34px',
+                                    height: '34px',
+                                    borderRadius: '8px',
+                                    background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    flexShrink: 0,
+                                    boxShadow: '0 2px 8px rgba(239, 68, 68, 0.4)'
+                                  }}>
+                                    <YoutubeIcon size={20} color="#fff" />
                                   </div>
-                                  <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
-                                    YouTube Media Stream
+                                  <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontSize: '0.84rem', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                      {aData?.query || "YouTube Playback"}
+                                    </div>
+                                    <div style={{ fontSize: '0.70rem', color: '#f87171' }}>
+                                      Live Video Stream
+                                    </div>
                                   </div>
                                 </div>
+                                <a
+                                  href={directPlayUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    background: '#ef4444',
+                                    color: '#fff',
+                                    textDecoration: 'none',
+                                    padding: '6px 12px',
+                                    borderRadius: '8px',
+                                    fontSize: '0.78rem',
+                                    fontWeight: 600,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    flexShrink: 0,
+                                    boxShadow: '0 2px 6px rgba(239, 68, 68, 0.3)'
+                                  }}
+                                >
+                                  <Play size={13} fill="#fff" />
+                                  <span>Play</span>
+                                </a>
                               </div>
-                              <a
-                                href={ytUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{
-                                  background: '#ef4444',
-                                  color: '#fff',
-                                  textDecoration: 'none',
-                                  padding: '6px 12px',
-                                  borderRadius: '8px',
-                                  fontSize: '0.78rem',
-                                  fontWeight: 600,
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '6px',
-                                  flexShrink: 0,
-                                  boxShadow: '0 2px 6px rgba(239, 68, 68, 0.3)'
-                                }}
-                              >
-                                <Play size={13} fill="#fff" />
-                                <span>Play</span>
-                              </a>
+
+                              {/* Embedded In-Chat YouTube Player */}
+                              {embedUrl && (
+                                <div style={{
+                                  position: 'relative',
+                                  width: '100%',
+                                  paddingBottom: '56.25%',
+                                  height: 0,
+                                  borderRadius: '10px',
+                                  overflow: 'hidden',
+                                  margin: '4px 0 2px',
+                                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                                  boxShadow: '0 4px 14px rgba(0, 0, 0, 0.45)'
+                                }}>
+                                  <iframe
+                                    src={embedUrl}
+                                    title={aData?.query || "YouTube Video"}
+                                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0 }}
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                    allowFullScreen
+                                  />
+                                </div>
+                              )}
                             </div>
                           );
                         }
