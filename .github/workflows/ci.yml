@@ -60,3 +60,4 @@ jobs:
         run: |
           cd desktop
           npm run build
+
