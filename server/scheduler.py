@@ -88,3 +88,4 @@ class DurableScheduler:
         job.status = "failed" if job.attempts >= 5 else "pending"
         job.updated_at = datetime.utcnow()
         db.commit()
+
