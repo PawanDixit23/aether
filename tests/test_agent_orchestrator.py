@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from database import engine, Base, get_db
 import models
-from models import AuditLog
+from models import AuditLog, MemoryItem, ScheduledJob
 from agent.state import ActionTier, ToolCall
 from agent.governance import PermissionEngine, VerificationEngine
 from agent.tools import ToolRegistry
@@ -109,6 +109,9 @@ def test_chatsorter_and_hybrid_memory():
     """Verify passive fact extraction and memory retrieval."""
     db = next(get_db())
     test_email = "test_memory@aether.local"
+    # Clean up test email records for deterministic test runs
+    db.query(MemoryItem).filter(MemoryItem.user_email == test_email).delete()
+    db.commit()
 
     # Extract routine
     facts = ChatSorter.extract_facts("Every morning I walk 5km in the park", test_email, db)
@@ -120,9 +123,50 @@ def test_chatsorter_and_hybrid_memory():
     assert len(pref_facts) >= 1
     assert pref_facts[0].category == "preference"
 
+    # Extract contact relationship (wife phone number)
+    contact_facts = ChatSorter.extract_facts("Wife ka number 8949546909 hai", test_email, db)
+    assert len(contact_facts) >= 1
+    assert contact_facts[0].category == "contact"
+    assert "8949546909" in contact_facts[0].fact
+
     # Hybrid recall
     recalled = HybridMemoryProvider.recall_context("tea and morning habits", test_email, db)
     assert len(recalled["relevant_facts"]) >= 1
+
+
+def test_durable_scheduler_and_observability():
+    """Verify persistent job scheduling and observability metrics tracking."""
+    from scheduler import DurableScheduler
+    from observability import tracker
+    from datetime import datetime, timedelta
+
+    db = next(get_db())
+    test_email = "test_scheduler@aether.local"
+
+    scheduler = DurableScheduler()
+    job = scheduler.schedule_job(
+        db=db,
+        job_type="reminder",
+        scheduled_at=datetime.utcnow() - timedelta(minutes=1),
+        user_email=test_email,
+        payload={"task_id": 999, "title": "Hydration Reminder"}
+    )
+    assert job.id is not None
+    assert job.status == "pending"
+
+    # Check pending jobs retrieval
+    pending = scheduler.get_pending_jobs(db)
+    assert any(j.id == job.id for j in pending)
+
+    # Mark completed
+    scheduler.mark_completed(db, job)
+    assert job.status == "completed"
+
+    # Verify observability tracker
+    tracker.record_request("/api/chat", latency_ms=120.5, status_code=200)
+    summary = tracker.get_summary()
+    assert summary["status"] == "healthy"
+    assert summary["total_requests"] >= 1
 
 
 @pytest.mark.asyncio
@@ -197,6 +241,7 @@ if __name__ == "__main__":
     test_verification_engine()
     test_tool_registry_execution()
     test_chatsorter_and_hybrid_memory()
+    test_durable_scheduler_and_observability()
     test_google_calendar_integration()
     test_memory_vault_and_contact_persistence()
     asyncio.run(test_agent_orchestrator_multi_step_workflow())

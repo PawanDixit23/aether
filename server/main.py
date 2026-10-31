@@ -233,7 +233,7 @@ def get_current_time_str(client_time: Optional[str] = None, tz_name: Optional[st
         pass
     return datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
 
-def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None, exclude_chat_id: Optional[int] = None) -> dict:
+def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None, exclude_chat_id: Optional[int] = None, prompt_query: Optional[str] = None) -> dict:
     if not user_email:
         return {
             "current_time": get_current_time_str(client_time, tz_name),
@@ -246,7 +246,23 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
         }
     tasks = db.query(Task).filter(Task.user_email == user_email, Task.status == "pending").all()
     records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).all()
-    memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
+
+    # Hybrid Memory Retrieval: rank & surface relevant facts/contacts matching the prompt
+    recalled_mems = []
+    if prompt_query:
+        try:
+            from memory import HybridMemoryProvider
+            recalled = HybridMemoryProvider.recall_context(prompt_query, user_email, db, limit=8)
+            recalled_facts = set(recalled.get("relevant_facts", []))
+            all_mem_objs = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
+            # Prioritize recalled items first
+            recalled_mems = [m for m in all_mem_objs if m.fact in recalled_facts]
+            remaining_mems = [m for m in all_mem_objs if m.fact not in recalled_facts]
+            memories = recalled_mems + remaining_mems[:12]
+        except Exception:
+            memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
+    else:
+        memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
 
     # Fetch last 8 messages for conversational context
     chat_q = db.query(ChatMessage).filter(ChatMessage.user_email == user_email)
@@ -595,7 +611,7 @@ async def _execute_quick_capture(
         except Exception as ag_err:
             print(f"[Agent Orchestrator Note] {ag_err}")
 
-    context = build_context(db, client_time=req.client_time, tz_name=req.timezone, user_email=eff_email, exclude_chat_id=user_chat.id)
+    context = build_context(db, client_time=req.client_time, tz_name=req.timezone, user_email=eff_email, exclude_chat_id=user_chat.id, prompt_query=user_msg)
     lang = req.language or "auto"
     parsed = await parse_intent_with_llm(
         user_msg, 
@@ -2237,7 +2253,7 @@ def text_to_speech(request: Request, text: str = "", voice: str = "zephyr", lang
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS synthesis error: {str(e)}")
 
-# ----------------- Health Check -----------------
+# ----------------- Health Check & Observability -----------------
 @app.get("/health")
 @app.get("/api/health")
 def health():
@@ -2247,6 +2263,15 @@ def health():
         "version": "0.1.0",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+@app.get("/api/metrics")
+def get_metrics():
+    """Returns real-time operational telemetry and latency metrics."""
+    try:
+        from observability import tracker
+        return tracker.get_summary()
+    except Exception as e:
+        return {"status": "degraded", "error": str(e), "timestamp": datetime.utcnow().isoformat()}
 
 # ----------------- Web Push Subscription Endpoints -----------------
 class PushSubscribeRequest(BaseModel):

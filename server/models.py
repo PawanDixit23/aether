@@ -78,3 +78,18 @@ class PushSubscription(Base):
     p256dh = Column(Text, nullable=False)
     auth = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class ScheduledJob(Base):
+    __tablename__ = "scheduled_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, index=True, nullable=True)
+    job_type = Column(String, nullable=False)   # e.g. "reminder", "task_notify", "whatsapp_digest"
+    payload = Column(Text, nullable=True)       # JSON string
+    scheduled_at = Column(DateTime, nullable=False)
+    status = Column(String, default="pending")  # pending, running, completed, failed
+    attempts = Column(Integer, default=0)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+

@@ -1,6 +1,20 @@
 version: '3.8'
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: aether-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   backend:
     build:
       context: .
@@ -13,6 +27,7 @@ services:
       - TZ=Asia/Kolkata
       - TIMEZONE=Asia/Kolkata
       - PYTHONUNBUFFERED=1
+      - REDIS_URL=redis://redis:6379/0
     env_file:
       - server/.env
     volumes:
@@ -24,6 +39,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    depends_on:
+      redis:
+        condition: service_healthy
 
   desktop-dev:
     image: node:20-alpine
@@ -43,5 +61,7 @@ services:
 
 volumes:
   aether-data:
+    driver: local
+  redis-data:
     driver: local
 

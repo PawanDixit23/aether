@@ -5101,17 +5101,18 @@ export default function App() {
                                 {knownPhone ? (
                                   <a
                                     href={dialHref}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={() => {
-                                      if (typeof window !== 'undefined' && window.ReactNativeWebView) {
-                                        try {
-                                          window.ReactNativeWebView.postMessage(JSON.stringify({
-                                            type: 'MAKE_CALL',
-                                            phoneNumber: cleanDigits,
-                                            telUrl: dialHref
-                                          }));
-                                        } catch (err) {}
+                                    onClick={(e) => {
+                                      if (typeof window !== 'undefined') {
+                                        if (window.ReactNativeWebView) {
+                                          try {
+                                            window.ReactNativeWebView.postMessage(JSON.stringify({
+                                              type: 'MAKE_CALL',
+                                              phoneNumber: cleanDigits,
+                                              telUrl: dialHref
+                                            }));
+                                          } catch (err) {}
+                                        }
+                                        window.location.href = dialHref;
                                       }
                                     }}
                                     style={{
@@ -5165,20 +5166,21 @@ export default function App() {
                                     />
                                     <a
                                       href={dialHref}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      onClick={() => {
+                                      onClick={(e) => {
                                         if (cleanDigits) {
                                           saveToVault(contactName, cleanDigits);
                                         }
-                                        if (typeof window !== 'undefined' && window.ReactNativeWebView) {
-                                          try {
-                                            window.ReactNativeWebView.postMessage(JSON.stringify({
-                                              type: 'MAKE_CALL',
-                                              phoneNumber: cleanDigits,
-                                              telUrl: dialHref
-                                            }));
-                                          } catch (err) {}
+                                        if (typeof window !== 'undefined') {
+                                          if (window.ReactNativeWebView) {
+                                            try {
+                                              window.ReactNativeWebView.postMessage(JSON.stringify({
+                                                type: 'MAKE_CALL',
+                                                phoneNumber: cleanDigits,
+                                                telUrl: dialHref
+                                              }));
+                                            } catch (err) {}
+                                          }
+                                          window.location.href = dialHref;
                                         }
                                       }}
                                       style={{
@@ -5208,17 +5210,18 @@ export default function App() {
                                     </span>
                                     <a
                                       href="tel:"
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      onClick={() => {
-                                        if (typeof window !== 'undefined' && window.ReactNativeWebView) {
-                                          try {
-                                            window.ReactNativeWebView.postMessage(JSON.stringify({
-                                              type: 'MAKE_CALL',
-                                              phoneNumber: '',
-                                              telUrl: 'tel:'
-                                            }));
-                                          } catch (err) {}
+                                      onClick={(e) => {
+                                        if (typeof window !== 'undefined') {
+                                          if (window.ReactNativeWebView) {
+                                            try {
+                                              window.ReactNativeWebView.postMessage(JSON.stringify({
+                                                type: 'MAKE_CALL',
+                                                phoneNumber: '',
+                                                telUrl: 'tel:'
+                                              }));
+                                            } catch (err) {}
+                                          }
+                                          window.location.href = 'tel:';
                                         }
                                       }}
                                       style={{
