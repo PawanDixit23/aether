@@ -61,18 +61,46 @@ export const DashboardView = ({
   // Today's local date string YYYY-MM-DD
   const todayDateStr = `${currentTime.getFullYear()}-${String(currentTime.getMonth() + 1).padStart(2, '0')}-${String(currentTime.getDate()).padStart(2, '0')}`;
 
-  // 1. Dynamic Tasks Left Count (100% Real from combinedTasks / tasks)
   const allTasksList = combinedTasks && combinedTasks.length > 0 ? combinedTasks : (tasks || []);
-  const tasksLeftCount = typeof getTodayPendingCount === 'function' 
-    ? getTodayPendingCount() 
-    : allTasksList.filter(t => !t.is_completed && t.status !== 'completed').length;
 
-  // 2. Dynamic Events Today Count (Tasks / Google Calendar events scheduled for today)
-  const eventsTodayCount = allTasksList.filter(t => {
-    if (t.due_date && t.due_date.startsWith(todayDateStr)) return true;
-    if (t.created_at && t.created_at.startsWith(todayDateStr) && t.is_google_calendar) return true;
-    if (t.reminder_time && !t.is_completed) return true;
+  // Strict Today's Tasks (Only tasks scheduled for today or daily recurring)
+  const todayTasks = allTasksList.filter(t => {
+    const isDaily = t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily');
+    if (isDaily) return true;
+
+    if (t.due_date) {
+      const taskDate = t.due_date.slice(0, 10);
+      return taskDate === todayDateStr;
+    }
+    // If no due date, check if created today and not google calendar
+    if (t.created_at && t.created_at.slice(0, 10) === todayDateStr && !t.is_google_calendar) {
+      return true;
+    }
     return false;
+  });
+
+  // Strict Overdue Tasks (Uncompleted past tasks from previous days)
+  const overdueTasksList = allTasksList.filter(t => {
+    const isDone = t.is_completed || t.status === 'completed';
+    if (isDone) return false;
+    const isDaily = t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily');
+    if (isDaily) return false;
+    if (t.due_date) {
+      const taskDate = t.due_date.slice(0, 10);
+      return taskDate < todayDateStr;
+    }
+    return false;
+  });
+
+  // 1. Dynamic Tasks Left Count (Only today's pending tasks)
+  const tasksLeftCount = todayTasks.filter(t => !t.is_completed && t.status !== 'completed').length;
+
+  // 2. Dynamic Events Today Count (Only calendar events or meetings strictly for today)
+  const eventsTodayCount = allTasksList.filter(t => {
+    const isToday = (t.due_date && t.due_date.slice(0, 10) === todayDateStr) ||
+                    (t.start_time && t.start_time.slice(0, 10) === todayDateStr);
+    if (!isToday) return false;
+    return t.is_google_calendar || t.is_event || (t.title && /meeting|appointment|webinar|flight|train|function|annual day/i.test(t.title));
   }).length;
 
   // 3. Dynamic Spent Today (Sum of expenses today from real financeRecords)
@@ -155,25 +183,12 @@ export const DashboardView = ({
     };
   };
 
-  // 6. Dynamic Today's Tasks List (Includes all daily tasks and today's tasks)
-  const todayTasks = allTasksList.filter(t => {
-    // Daily recurring tasks ALWAYS belong to today!
-    const isDaily = t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily');
-    if (isDaily) return true;
-
-    if (t.due_date) {
-      const taskDate = t.due_date.slice(0, 10);
-      return taskDate <= todayDateStr;
-    }
-    return true;
-  });
-
-  // Sort: Overdue first, then Pending, then Completed
+  // Sort today's tasks: Pending first (by reminder_time), then Completed
   todayTasks.sort((a, b) => {
-    const order = { overdue: 1, pending: 2, completed: 3 };
-    const statA = order[getTaskStatusInfo(a).key] || 2;
-    const statB = order[getTaskStatusInfo(b).key] || 2;
-    return statA - statB;
+    const aDone = a.is_completed || a.status === 'completed';
+    const bDone = b.is_completed || b.status === 'completed';
+    if (aDone !== bDone) return aDone ? 1 : -1;
+    return (a.reminder_time || '').localeCompare(b.reminder_time || '');
   });
 
   return (
@@ -555,6 +570,40 @@ export const DashboardView = ({
         </div>
 
       </div>
+
+      {/* Overdue Tasks Banner (Separated from Today's Tasks) */}
+      {overdueTasksList.length > 0 && (
+        <div 
+          onClick={() => setActiveSubModal('reminders')}
+          style={{
+            background: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.25)',
+            borderRadius: '16px',
+            padding: '10px 14px',
+            marginBottom: '10px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            cursor: 'pointer',
+            gap: '10px'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+            <span style={{ fontSize: '1.1rem' }}>⚠️</span>
+            <div>
+              <div style={{ fontSize: '0.80rem', fontWeight: 700, color: '#fca5a5' }}>
+                {overdueTasksList.length} Overdue Task{overdueTasksList.length > 1 ? 's' : ''} from previous days
+              </div>
+              <div style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+                Tap to review or reschedule all to today
+              </div>
+            </div>
+          </div>
+          <span style={{ fontSize: '0.74rem', color: '#f87171', fontWeight: 700, whiteSpace: 'nowrap' }}>
+            Review ⚡
+          </span>
+        </div>
+      )}
 
       {/* 6. TODAY'S TASKS LIST SECTION (The requested Agenda feature) */}
       <div style={{

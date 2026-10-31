@@ -3568,18 +3568,47 @@ export default function App() {
     }
   };
 
-  const handleCreateTask = async (e) => {
-    e.preventDefault();
-    if (!newTaskInput.trim()) return;
+  const handleCreateTask = async (e, customTitle, customDateStr, customPriority) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const rawTitle = (customTitle !== undefined ? customTitle : newTaskInput || '').trim();
+    if (!rawTitle) {
+      showToast("कृपया कार्य का नाम लिखें (e.g. Drink 2L water at 3 PM)", 'info');
+      return;
+    }
     const effEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
     
-    // Optimistic addition so user sees it right away and it stays cached
+    // Natural Language Time Extraction (e.g. "at 3 PM", "at 9:00 PM")
+    let parsedTime = null;
+    let cleanTitle = rawTitle;
+    const timeMatch = rawTitle.match(/\b(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i) ||
+                     rawTitle.match(/\b(?:at\s+)(\d{1,2}:\d{2})\b/i);
+    if (timeMatch) {
+      parsedTime = timeMatch[1].toUpperCase();
+      cleanTitle = rawTitle.replace(timeMatch[0], '').replace(/\s{2,}/g, ' ').trim();
+      if (!cleanTitle) cleanTitle = rawTitle;
+    }
+
+    // Check recurrence (daily / roz)
+    let recurrence = null;
+    if (/\b(?:daily|roz|har din|everyday)\b/i.test(rawTitle)) {
+      recurrence = 'daily';
+    }
+
+    let dueDateIso = new Date().toISOString();
+    if (customDateStr) {
+      try {
+        const d = new Date(customDateStr + 'T12:00:00');
+        if (!isNaN(d.getTime())) dueDateIso = d.toISOString();
+      } catch (err) {}
+    }
+
     const optimisticTask = {
       id: 'local_' + Date.now(),
-      title: newTaskInput.trim(),
-      priority: 'medium',
-      reminder_time: null,
-      due_date: new Date().toISOString(),
+      title: cleanTitle,
+      priority: customPriority || 'medium',
+      reminder_time: parsedTime,
+      recurrence: recurrence,
+      due_date: dueDateIso,
       status: 'pending',
       is_completed: false,
       created_at: new Date().toISOString()
@@ -3594,8 +3623,11 @@ export default function App() {
           ...(effEmail ? { 'X-User-Email': effEmail } : {})
         },
         body: JSON.stringify({ 
-          title: newTaskInput.trim(), 
-          priority: 'medium',
+          title: cleanTitle, 
+          priority: customPriority || 'medium',
+          reminder_time: parsedTime,
+          recurrence: recurrence,
+          due_date: dueDateIso,
           user_email: effEmail || null 
         })
       });

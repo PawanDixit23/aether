@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { 
   Calendar, 
   Clock, 
@@ -13,6 +13,8 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Inbox,
   Sparkles,
   Layers,
@@ -34,7 +36,7 @@ export const TasksModal = ({
   handleToggleTask,
   handleDeleteTask,
   handleCreateTask,
-  newTaskInput,
+  newTaskInput = '',
   setNewTaskInput,
   handleRescheduleAllOverdue,
   expandedTaskIds = {},
@@ -43,12 +45,24 @@ export const TasksModal = ({
 }) => {
   if (!isOpen) return null;
 
-  // Local UI filters matching Todoli TaskScreen
+  // Local state for UI filters & inputs
+  const [localTaskInput, setLocalTaskInput] = useState(newTaskInput || '');
+  const [inputError, setInputError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('all'); // 'all' | 'high' | 'medium' | 'low'
+  const [newTaskPriority, setNewTaskPriority] = useState('medium');
   const [localExpanded, setLocalExpanded] = useState({});
+  const dateInputRef = useRef(null);
 
-  const todayStr = formatLocalDateStr(new Date());
+  const todayStr = formatLocalDateStr ? formatLocalDateStr(new Date()) : new Date().toISOString().slice(0, 10);
+  
+  // Selected date resolution
+  const selectedDateObj = calSelectedDate ? new Date(calSelectedDate) : new Date();
+  const selectedDateStr = formatLocalDateStr ? formatLocalDateStr(selectedDateObj) : selectedDateObj.toISOString().slice(0, 10);
+  const isSelectedDateToday = selectedDateStr === todayStr;
+
+  const monthYearTitle = selectedDateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
   const isTaskDone = (t) => t.is_completed || t.status === 'completed';
   const isDaily = (t) => t?.recurrence === 'daily' || t?.repeat === 'daily' || String(t?.recurrence || '').toLowerCase().includes('daily');
 
@@ -74,22 +88,59 @@ export const TasksModal = ({
     return false;
   };
 
+  // Generate 7-Day Date Ribbon centered around selected date
+  const weekDays = useMemo(() => {
+    const days = [];
+    for (let i = -3; i <= 3; i++) {
+      const d = new Date(selectedDateObj);
+      d.setDate(selectedDateObj.getDate() + i);
+      const dStr = formatLocalDateStr ? formatLocalDateStr(d) : d.toISOString().slice(0, 10);
+      
+      // Calculate tasks count and completed on this date
+      const dTasks = combinedTasks.filter(t => {
+        if (isDaily(t)) return true;
+        const taskD = getTaskDateStr(t);
+        return taskD === dStr;
+      });
+      const dTotal = dTasks.length;
+      const dCompleted = dTasks.filter(t => isTaskDone(t)).length;
+
+      days.push({
+        dateObj: d,
+        dateStr: dStr,
+        dayName: d.toLocaleDateString('en-US', { weekday: 'short' }),
+        dayNum: d.getDate(),
+        isToday: dStr === todayStr,
+        isSelected: dStr === selectedDateStr,
+        totalTasks: dTotal,
+        completedTasks: dCompleted
+      });
+    }
+    return days;
+  }, [selectedDateObj, combinedTasks, todayStr, selectedDateStr, formatLocalDateStr, getTaskDateStr]);
+
+  // Navigate date ribbon (prev/next 7 days or single day)
+  const shiftDate = (daysCount) => {
+    const nextD = new Date(selectedDateObj);
+    nextD.setDate(selectedDateObj.getDate() + daysCount);
+    if (setCalSelectedDate) setCalSelectedDate(nextD);
+  };
+
   // Section Counts matching Todoli statusFilters
   const allCount = combinedTasks.length;
-  const todayTasks = combinedTasks.filter(t => isDaily(t) || getTaskDateStr(t) === todayStr || (!getTaskDateStr(t) && !t.is_google_calendar));
-  const todayCount = todayTasks.length;
+  const dateTasks = combinedTasks.filter(t => isDaily(t) || getTaskDateStr(t) === selectedDateStr || (!getTaskDateStr(t) && isSelectedDateToday && !t.is_google_calendar));
+  const dateTotalCount = dateTasks.length;
+  const dateCompletedCount = dateTasks.filter(t => isTaskDone(t)).length;
   const overdueCount = combinedTasks.filter(t => isTaskOverdue(t)).length;
   const upcomingCount = combinedTasks.filter(t => !isTaskDone(t) && !isDaily(t) && getTaskDateStr(t) && getTaskDateStr(t) > todayStr).length;
   const completedCount = combinedTasks.filter(t => isTaskDone(t)).length;
 
-  // Progress stats for Today
-  const todayCompleted = todayTasks.filter(t => isTaskDone(t)).length;
-  const progressPercent = todayCount > 0 ? Math.round((todayCompleted / todayCount) * 100) : 0;
+  const dateProgressPercent = dateTotalCount > 0 ? Math.round((dateCompletedCount / dateTotalCount) * 100) : 0;
 
   // Status Filter options
   const statusFilterTabs = [
+    { key: 'today', label: isSelectedDateToday ? 'Today' : selectedDateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), count: dateTotalCount, icon: Calendar },
     { key: 'all', label: 'Inbox', count: allCount, icon: Inbox },
-    { key: 'today', label: 'Today', count: todayCount, icon: Calendar },
     { key: 'overdue', label: 'Overdue', count: overdueCount, icon: AlertCircle, isAlert: overdueCount > 0 },
     { key: 'upcoming', label: 'Upcoming', count: upcomingCount, icon: Clock },
     { key: 'completed', label: 'Completed', count: completedCount, icon: CheckCircle2 }
@@ -103,20 +154,20 @@ export const TasksModal = ({
     { key: 'low', label: 'Low', dot: '#10B981' }
   ];
 
-  // Filter tasks based on status, priority, and search
+  // Filter tasks based on selected tab, date, priority, and search query
   const filteredTasks = useMemo(() => {
     return combinedTasks.filter(t => {
       const done = isTaskDone(t);
       const overdue = isTaskOverdue(t);
       const tDateStr = getTaskDateStr(t);
       const daily = isDaily(t);
-      const isToday = daily || tDateStr === todayStr || (!tDateStr && !t.is_google_calendar);
+      const isForSelectedDate = daily || tDateStr === selectedDateStr || (!tDateStr && isSelectedDateToday && !t.is_google_calendar);
 
       // Status filter
       if (agendaFilter === 'completed' && !done) return false;
       if (agendaFilter === 'overdue' && !overdue) return false;
       if (agendaFilter === 'upcoming' && (done || daily || !tDateStr || tDateStr <= todayStr)) return false;
-      if (agendaFilter === 'today' && !isToday) return false;
+      if (agendaFilter === 'today' && !isForSelectedDate) return false;
 
       // Priority filter
       const p = (t.priority || 'medium').toLowerCase();
@@ -134,7 +185,6 @@ export const TasksModal = ({
 
       return true;
     }).sort((a, b) => {
-      // Uncompleted first, then overdue first, then by date/time
       const aDone = isTaskDone(a);
       const bDone = isTaskDone(b);
       if (aDone !== bDone) return aDone ? 1 : -1;
@@ -143,11 +193,9 @@ export const TasksModal = ({
       const bOverdue = isTaskOverdue(b);
       if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
 
-      const dA = getTaskDateStr(a) || '9999-99-99';
-      const dB = getTaskDateStr(b) || '9999-99-99';
-      return dA.localeCompare(dB);
+      return (a.reminder_time || '').localeCompare(b.reminder_time || '');
     });
-  }, [combinedTasks, agendaFilter, priorityFilter, searchQuery, todayStr]);
+  }, [combinedTasks, agendaFilter, priorityFilter, searchQuery, selectedDateStr, todayStr, isSelectedDateToday, getTaskDateStr]);
 
   const toggleExpand = (id) => {
     setLocalExpanded(prev => ({ ...prev, [id]: !prev[id] }));
@@ -160,6 +208,29 @@ export const TasksModal = ({
     if (p === 'low') return { color: '#10B981', bg: 'rgba(16, 185, 129, 0.15)', border: '#10B981' };
     return { color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.15)', border: '#F59E0B' };
   };
+
+  // Form submission with validation
+  const onSubmitTask = (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const titleVal = localTaskInput.trim();
+    if (!titleVal) {
+      setInputError('⚠️ कार्य का नाम दर्ज करें (e.g. Drink 2L water at 3 PM)');
+      return;
+    }
+    setInputError('');
+    if (handleCreateTask) {
+      handleCreateTask(e, titleVal, selectedDateStr, newTaskPriority);
+    }
+    setLocalTaskInput('');
+    if (setNewTaskInput) setNewTaskInput('');
+  };
+
+  const quickSuggestions = [
+    { text: 'Drink 2L water at 3 PM', label: '💧 2L Water' },
+    { text: 'Walk 30 mins after dinner at 8 PM', label: '🏃 Walk' },
+    { text: 'Call meeting follow-up at 5 PM', label: '📞 Call' },
+    { text: 'Take daily vitamins at 9 PM', label: '💊 Vitamins' }
+  ];
 
   return (
     <div style={{
@@ -188,9 +259,9 @@ export const TasksModal = ({
         overflow: 'hidden'
       }}>
         
-        {/* ── 1. TODOLI HEADER & BRANDING ── */}
+        {/* ── 1. HEADER & DATE TITLE ── */}
         <div style={{
-          padding: '18px 20px 14px',
+          padding: '16px 18px 12px',
           borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
           background: 'linear-gradient(180deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%)'
         }}>
@@ -210,12 +281,12 @@ export const TasksModal = ({
                 <Check size={20} strokeWidth={3} />
               </div>
               <div>
-                <h2 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#F8FAFC', margin: 0, letterSpacing: '-0.02em' }}>
-                  Tasks
+                <h2 style={{ fontSize: '1.30rem', fontWeight: 800, color: '#F8FAFC', margin: 0, letterSpacing: '-0.02em' }}>
+                  Tasks & Agenda
                 </h2>
                 <div style={{ fontSize: '0.74rem', color: '#94A3B8', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span>{todayCompleted} of {todayCount} completed today</span>
-                  <span style={{ color: '#0D9488', fontWeight: 700 }}>({progressPercent}%)</span>
+                  <span>{dateCompletedCount} of {dateTotalCount} completed</span>
+                  <span style={{ color: '#0D9488', fontWeight: 700 }}>({dateProgressPercent}%)</span>
                 </div>
               </div>
             </div>
@@ -234,8 +305,7 @@ export const TasksModal = ({
                   alignItems: 'center',
                   justifyContent: 'center',
                   color: '#94A3B8',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease'
+                  cursor: 'pointer'
                 }}
                 title="Sync Google Calendar"
               >
@@ -262,79 +332,198 @@ export const TasksModal = ({
             </div>
           </div>
 
-          {/* Progress bar matching Todoli */}
+          {/* Progress bar */}
           <div style={{
             marginTop: '12px',
             width: '100%',
-            height: '5px',
+            height: '4px',
             background: 'rgba(255, 255, 255, 0.08)',
             borderRadius: '999px',
             overflow: 'hidden'
           }}>
             <div style={{
-              width: `${Math.min(100, Math.max(0, progressPercent))}%`,
+              width: `${Math.min(100, Math.max(0, dateProgressPercent))}%`,
               height: '100%',
               background: 'linear-gradient(90deg, #0D9488 0%, #10B981 100%)',
               borderRadius: '999px',
-              transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+              transition: 'width 0.3s ease'
             }} />
           </div>
         </div>
 
-        {/* ── 2. SEARCH BAR & QUICK FILTERS ── */}
-        <div style={{ padding: '12px 18px 0', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          
-          {/* Search Input */}
-          <div style={{
-            position: 'relative',
-            display: 'flex',
-            alignItems: 'center'
-          }}>
-            <Search size={15} color="#64748B" style={{ position: 'absolute', left: '12px' }} />
-            <input
-              type="text"
-              placeholder="Search tasks or tags..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{
-                width: '100%',
-                background: '#1E293B',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: '12px',
-                padding: '9px 12px 9px 36px',
-                color: '#F8FAFC',
-                fontSize: '0.84rem',
-                outline: 'none',
-                boxSizing: 'border-box'
-              }}
-            />
-            {searchQuery && (
+        {/* ── 2. CALENDAR DATE RIBBON (Select previous/upcoming dates) ── */}
+        <div style={{
+          padding: '12px 18px 0',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px'
+        }}>
+          {/* Month Header with Navigation & Date Picker */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <button
                 type="button"
-                onClick={() => setSearchQuery('')}
+                onClick={() => shiftDate(-7)}
+                style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', padding: '2px' }}
+                title="Previous Week"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <span style={{ fontSize: '0.86rem', fontWeight: 700, color: '#E2E8F0' }}>
+                {monthYearTitle}
+              </span>
+              <button
+                type="button"
+                onClick={() => shiftDate(7)}
+                style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', padding: '2px' }}
+                title="Next Week"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {/* Today Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (setCalSelectedDate) setCalSelectedDate(new Date());
+                  setAgendaFilter('today');
+                }}
                 style={{
-                  position: 'absolute',
-                  right: '10px',
-                  background: 'none',
-                  border: 'none',
-                  color: '#94A3B8',
-                  cursor: 'pointer',
-                  padding: '2px'
+                  background: isSelectedDateToday ? '#0D9488' : 'rgba(255, 255, 255, 0.06)',
+                  border: isSelectedDateToday ? '1px solid #0D9488' : '1px solid rgba(255, 255, 255, 0.1)',
+                  color: isSelectedDateToday ? '#FFFFFF' : '#94A3B8',
+                  borderRadius: '8px',
+                  padding: '3px 9px',
+                  fontSize: '0.70rem',
+                  fontWeight: 700,
+                  cursor: 'pointer'
                 }}
               >
-                <X size={14} />
+                Today
               </button>
-            )}
+
+              {/* Native Date Picker Trigger */}
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => dateInputRef.current && dateInputRef.current.showPicker ? dateInputRef.current.showPicker() : dateInputRef.current?.click()}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.06)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    borderRadius: '8px',
+                    width: '28px',
+                    height: '24px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#94A3B8',
+                    cursor: 'pointer'
+                  }}
+                  title="Jump to date"
+                >
+                  <Calendar size={13} />
+                </button>
+                <input
+                  ref={dateInputRef}
+                  type="date"
+                  value={selectedDateStr}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      const picked = new Date(e.target.value + 'T12:00:00');
+                      if (setCalSelectedDate) setCalSelectedDate(picked);
+                      setAgendaFilter('today');
+                    }
+                  }}
+                  style={{
+                    position: 'absolute',
+                    opacity: 0,
+                    width: 0,
+                    height: 0,
+                    pointerEvents: 'none'
+                  }}
+                />
+              </div>
+            </div>
           </div>
 
-          {/* ── Status Filters Bar (Inbox, Today, Overdue, Upcoming, Completed) ── */}
+          {/* 7-Day Date Ribbon */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(7, 1fr)',
+            gap: '6px',
+            background: '#1E293B',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            borderRadius: '16px',
+            padding: '8px 6px'
+          }}>
+            {weekDays.map(wd => {
+              const hasTasks = wd.totalTasks > 0;
+              const allDone = hasTasks && wd.completedTasks === wd.totalTasks;
+              return (
+                <button
+                  key={wd.dateStr}
+                  type="button"
+                  onClick={() => {
+                    if (setCalSelectedDate) setCalSelectedDate(wd.dateObj);
+                    setAgendaFilter('today');
+                  }}
+                  style={{
+                    background: wd.isSelected ? '#0D9488' : 'transparent',
+                    border: 'none',
+                    borderRadius: '12px',
+                    padding: '6px 2px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    color: wd.isSelected ? '#FFFFFF' : wd.isToday ? '#38BDF8' : '#94A3B8',
+                    transition: 'all 0.15s ease',
+                    position: 'relative'
+                  }}
+                >
+                  <span style={{ fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase', marginBottom: '2px', opacity: wd.isSelected ? 0.95 : 0.7 }}>
+                    {wd.dayName}
+                  </span>
+                  <span style={{ fontSize: '0.94rem', fontWeight: wd.isSelected || wd.isToday ? 800 : 600 }}>
+                    {wd.dayNum}
+                  </span>
+
+                  {/* Task Count Badge / Dot */}
+                  {hasTasks ? (
+                    <span style={{
+                      marginTop: '3px',
+                      fontSize: '0.58rem',
+                      fontWeight: 700,
+                      color: wd.isSelected ? '#FFFFFF' : allDone ? '#10B981' : '#38BDF8',
+                      background: wd.isSelected ? 'rgba(255, 255, 255, 0.2)' : allDone ? 'rgba(16, 185, 129, 0.15)' : 'rgba(56, 189, 248, 0.15)',
+                      padding: '0 4px',
+                      borderRadius: '4px'
+                    }}>
+                      {wd.completedTasks}/{wd.totalTasks}
+                    </span>
+                  ) : (
+                    <span style={{ height: '11px', marginTop: '3px' }} />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+        </div>
+
+        {/* ── 3. STATUS FILTERS & PRIORITY BAR ── */}
+        <div style={{ padding: '10px 18px 0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          
+          {/* Status Tabs */}
           <div style={{
             display: 'flex',
             gap: '6px',
             overflowX: 'auto',
-            paddingBottom: '4px',
-            scrollbarWidth: 'none',
-            msOverflowStyle: 'none'
+            paddingBottom: '2px',
+            scrollbarWidth: 'none'
           }}>
             {statusFilterTabs.map((tab) => {
               const isSelected = agendaFilter === tab.key;
@@ -361,25 +550,24 @@ export const TasksModal = ({
                         ? '#F87171' 
                         : '#94A3B8',
                     borderRadius: '12px',
-                    padding: '7px 13px',
-                    fontSize: '0.78rem',
+                    padding: '6px 12px',
+                    fontSize: '0.76rem',
                     fontWeight: isSelected ? 800 : 700,
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '6px',
+                    gap: '5px',
                     whiteSpace: 'nowrap',
-                    transition: 'all 0.15s ease',
-                    boxShadow: isSelected ? '0 4px 12px rgba(13, 148, 136, 0.35)' : 'none'
+                    transition: 'all 0.15s ease'
                   }}
                 >
-                  <TabIcon size={13} strokeWidth={isSelected ? 2.5 : 2} />
+                  <TabIcon size={12} strokeWidth={isSelected ? 2.5 : 2} />
                   <span>{tab.label}</span>
                   <span style={{
                     background: isSelected ? 'rgba(255, 255, 255, 0.22)' : 'rgba(255, 255, 255, 0.08)',
                     borderRadius: '8px',
-                    padding: '1px 6px',
-                    fontSize: '0.68rem',
+                    padding: '1px 5px',
+                    fontSize: '0.66rem',
                     fontWeight: 700
                   }}>
                     {tab.count}
@@ -389,129 +577,95 @@ export const TasksModal = ({
             })}
           </div>
 
-          {/* ── Priority Sub-Filters Bar (All, High, Medium, Low) ── */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            overflowX: 'auto',
-            paddingBottom: '4px',
-            scrollbarWidth: 'none'
-          }}>
-            <span style={{ fontSize: '0.70rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase', marginRight: '2px', letterSpacing: '0.04em' }}>
-              Priority:
-            </span>
-            {priorityFilterOptions.map((p) => {
-              const isSelected = priorityFilter === p.key;
-              return (
-                <button
-                  key={p.key}
-                  type="button"
-                  onClick={() => setPriorityFilter(p.key)}
-                  style={{
-                    background: isSelected ? '#1E293B' : 'transparent',
-                    border: isSelected ? '1px solid rgba(255, 255, 255, 0.2)' : '1px solid rgba(255, 255, 255, 0.05)',
-                    color: isSelected ? '#F8FAFC' : '#94A3B8',
-                    borderRadius: '10px',
-                    padding: '4px 10px',
-                    fontSize: '0.72rem',
-                    fontWeight: isSelected ? 700 : 600,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '5px',
-                    whiteSpace: 'nowrap'
-                  }}
-                >
-                  {p.dot && (
-                    <span style={{
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      background: p.dot
-                    }} />
-                  )}
-                  <span>{p.label}</span>
-                </button>
-              );
-            })}
+          {/* Search + Priority Filter row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+              <Search size={14} color="#64748B" style={{ position: 'absolute', left: '10px' }} />
+              <input
+                type="text"
+                placeholder="Search tasks..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{
+                  width: '100%',
+                  background: '#1E293B',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  borderRadius: '10px',
+                  padding: '7px 10px 7px 32px',
+                  color: '#F8FAFC',
+                  fontSize: '0.80rem',
+                  outline: 'none',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              {priorityFilterOptions.map((p) => {
+                const isSelected = priorityFilter === p.key;
+                return (
+                  <button
+                    key={p.key}
+                    type="button"
+                    onClick={() => setPriorityFilter(p.key)}
+                    style={{
+                      background: isSelected ? '#1E293B' : 'transparent',
+                      border: isSelected ? '1px solid rgba(255, 255, 255, 0.2)' : '1px solid rgba(255, 255, 255, 0.05)',
+                      color: isSelected ? '#F8FAFC' : '#94A3B8',
+                      borderRadius: '8px',
+                      padding: '5px 8px',
+                      fontSize: '0.70rem',
+                      fontWeight: isSelected ? 700 : 600,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    {p.dot && <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: p.dot }} />}
+                    <span>{p.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
         </div>
 
-        {/* ── 3. OVERDUE RECOVERY BANNER (Todoli Recovery Mode) ── */}
-        {overdueCount > 0 && agendaFilter !== 'completed' && (
-          <div style={{
-            margin: '8px 18px 0',
-            padding: '10px 14px',
-            borderRadius: '14px',
-            background: 'rgba(239, 68, 68, 0.1)',
-            border: '1px solid rgba(239, 68, 68, 0.25)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '10px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-              <span style={{ fontSize: '1.1rem' }}>🌿</span>
-              <div>
-                <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#FCA5A5' }}>
-                  {overdueCount} task{overdueCount > 1 ? 's are' : ' is'} overdue
-                </div>
-                <div style={{ fontSize: '0.68rem', color: '#94A3B8' }}>
-                  Reschedule overdue items to get back on track
-                </div>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleRescheduleAllOverdue}
-              style={{
-                background: '#EF4444',
-                color: '#FFFFFF',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '6px 12px',
-                fontSize: '0.72rem',
-                fontWeight: 700,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                boxShadow: '0 2px 8px rgba(239, 68, 68, 0.4)'
-              }}
-            >
-              Reschedule All ⚡
-            </button>
-          </div>
-        )}
-
-        {/* ── 4. QUICK ADD TASK BAR ── */}
-        <div style={{ padding: '12px 18px 8px' }}>
+        {/* ── 4. QUICK ADD TASK BAR WITH BULLETPROOF SUBMISSION ── */}
+        <div style={{ padding: '10px 18px 4px' }}>
           <form 
-            onSubmit={handleCreateTask}
+            onSubmit={onSubmitTask}
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
+              gap: '6px',
               background: '#1E293B',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
+              border: inputError ? '1.5px solid #EF4444' : '1px solid rgba(255, 255, 255, 0.12)',
               borderRadius: '14px',
-              padding: '4px 6px 4px 14px'
+              padding: '4px 6px 4px 12px',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
             }}
           >
             <input
               type="text"
-              placeholder="+ Add task (e.g. Drink 2L water at 3 PM)..."
-              value={newTaskInput}
-              onChange={(e) => setNewTaskInput(e.target.value)}
+              placeholder={`Add task for ${isSelectedDateToday ? 'today' : selectedDateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} (e.g. Drink 2L water at 3 PM)...`}
+              value={localTaskInput}
+              onChange={(e) => {
+                setLocalTaskInput(e.target.value);
+                if (setNewTaskInput) setNewTaskInput(e.target.value);
+                if (inputError) setInputError('');
+              }}
               style={{
                 flex: 1,
                 background: 'transparent',
                 border: 'none',
                 color: '#F8FAFC',
-                fontSize: '0.86rem',
+                fontSize: '0.84rem',
                 outline: 'none'
               }}
             />
+
             <button 
               type="submit" 
               style={{
@@ -526,16 +680,89 @@ export const TasksModal = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: '4px',
-                boxShadow: '0 2px 8px rgba(13, 148, 136, 0.4)'
+                boxShadow: '0 2px 8px rgba(13, 148, 136, 0.4)',
+                whiteSpace: 'nowrap'
               }}
             >
               <Plus size={14} strokeWidth={2.8} />
               <span>Add</span>
             </button>
           </form>
+
+          {inputError && (
+            <div style={{ color: '#F87171', fontSize: '0.72rem', marginTop: '4px', paddingLeft: '4px' }}>
+              {inputError}
+            </div>
+          )}
+
+          {/* Quick Suggestions */}
+          <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', marginTop: '6px', scrollbarWidth: 'none' }}>
+            {quickSuggestions.map((s, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => {
+                  setLocalTaskInput(s.text);
+                  if (setNewTaskInput) setNewTaskInput(s.text);
+                }}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  borderRadius: '8px',
+                  padding: '3px 8px',
+                  color: '#94A3B8',
+                  fontSize: '0.68rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* ── 5. TODOLI TASK LIST CARDS ── */}
+        {/* ── 5. OVERDUE RECOVERY BANNER (When Overdue exists) ── */}
+        {overdueCount > 0 && agendaFilter !== 'completed' && (
+          <div style={{
+            margin: '6px 18px 0',
+            padding: '8px 12px',
+            borderRadius: '12px',
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '10px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+              <span style={{ fontSize: '1rem' }}>⚠️</span>
+              <div style={{ fontSize: '0.76rem', fontWeight: 700, color: '#FCA5A5' }}>
+                {overdueCount} task{overdueCount > 1 ? 's are' : ' is'} overdue
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleRescheduleAllOverdue}
+              style={{
+                background: '#EF4444',
+                color: '#FFFFFF',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '4px 10px',
+                fontSize: '0.70rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              Reschedule All ⚡
+            </button>
+          </div>
+        )}
+
+        {/* ── 6. TASK LIST FOR CURRENT SELECTED DATE / FILTER ── */}
         <div style={{
           flex: 1,
           overflowY: 'auto',
@@ -547,35 +774,35 @@ export const TasksModal = ({
           {filteredTasks.length === 0 ? (
             <div style={{
               textAlign: 'center',
-              padding: '40px 16px',
+              padding: '36px 16px',
               color: '#64748B',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
-              gap: '10px'
+              gap: '8px'
             }}>
               <div style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '16px',
+                width: '44px',
+                height: '44px',
+                borderRadius: '14px',
                 background: 'rgba(255, 255, 255, 0.03)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 color: '#64748B'
               }}>
-                <CheckCircle2 size={24} />
+                <CheckCircle2 size={22} />
               </div>
-              <div style={{ fontSize: '0.90rem', fontWeight: 600, color: '#94A3B8' }}>
+              <div style={{ fontSize: '0.88rem', fontWeight: 600, color: '#94A3B8' }}>
                 {searchQuery ? `No tasks matching "${searchQuery}"` :
-                 agendaFilter === 'today' ? '🎉 No pending tasks for today!' :
+                 agendaFilter === 'today' ? `No pending tasks for ${isSelectedDateToday ? 'today' : selectedDateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}!` :
                  agendaFilter === 'overdue' ? '✨ No overdue tasks! All caught up.' :
                  agendaFilter === 'upcoming' ? 'No upcoming tasks scheduled.' :
                  agendaFilter === 'completed' ? 'No completed tasks yet.' :
                  'Your task stack is clear!'}
               </div>
-              <div style={{ fontSize: '0.74rem', color: '#64748B', maxWidth: '280px' }}>
-                {agendaFilter === 'today' ? 'Add a task or prompt Aether: "Remind me to drink water at 3 PM"' : 'Tasks you create or sync will show up here.'}
+              <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                Type in the box above or prompt Aether: "Remind me to drink water at 3 PM"
               </div>
             </div>
           ) : (
@@ -612,13 +839,12 @@ export const TasksModal = ({
                     display: 'flex',
                     flexDirection: 'column',
                     gap: '6px',
-                    transition: 'all 0.15s ease',
-                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)'
+                    transition: 'all 0.15s ease'
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
                     
-                    {/* Todoli Squircle Checkbox */}
+                    {/* Squircle Checkbox */}
                     <div
                       onClick={() => !t.is_google_calendar && handleToggleTask(t.id)}
                       style={{
@@ -643,49 +869,39 @@ export const TasksModal = ({
                       {done && <Check size={15} color="#FFFFFF" strokeWidth={3.2} />}
                     </div>
 
-                    {/* Title & Metadata */}
+                    {/* Content */}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{
                         color: done ? '#64748B' : '#F8FAFC',
-                        fontSize: '0.94rem',
+                        fontSize: '0.92rem',
                         fontWeight: 600,
                         textDecoration: done ? 'line-through' : 'none',
                         wordBreak: 'break-word',
-                        letterSpacing: '-0.01em',
                         lineHeight: 1.35
                       }}>
                         {t.title}
                       </div>
 
-                      {/* Description if present */}
-                      {t.description && (
-                        <div style={{ fontSize: '0.76rem', color: '#94A3B8', marginTop: '3px', wordBreak: 'break-word' }}>
-                          {t.description}
-                        </div>
-                      )}
-
-                      {/* Metadata Row: Time, Recurrence, Status, Priority */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
+                      {/* Metadata row */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '5px', flexWrap: 'wrap' }}>
                         
-                        {/* Time Badge with Clock Icon */}
                         <span style={{
                           color: done ? '#64748B' : overdue ? '#F87171' : '#94A3B8',
-                          fontSize: '0.72rem',
+                          fontSize: '0.70rem',
                           fontWeight: 500,
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: '4px'
                         }}>
-                          <Clock size={12} color={done ? '#64748B' : overdue ? '#F87171' : '#0D9488'} />
+                          <Clock size={11} color={done ? '#64748B' : overdue ? '#F87171' : '#0D9488'} />
                           <span>
                             {overdue && '⚠️ '}
                             {t.reminder_time 
                               ? (overdue ? `Overdue - ${t.reminder_time}` : t.reminder_time)
-                              : (taskDateStr ? formatLocalDateStr(t.due_date) : 'Today')}
+                              : (taskDateStr || 'Anytime')}
                           </span>
                         </span>
 
-                        {/* Status Badge */}
                         <span style={{
                           background: done ? 'rgba(16, 185, 129, 0.16)' : overdue ? 'rgba(239, 68, 68, 0.18)' : 'rgba(13, 148, 136, 0.16)',
                           color: done ? '#34D399' : overdue ? '#EF4444' : '#0D9488',
@@ -698,7 +914,6 @@ export const TasksModal = ({
                           {done ? '✓ Completed' : overdue ? '⚠️ Overdue' : '⏳ Pending'}
                         </span>
 
-                        {/* Recurrence Badge (Todoli Style) */}
                         {daily && (
                           <span style={{
                             background: 'rgba(168, 85, 247, 0.14)',
@@ -717,7 +932,6 @@ export const TasksModal = ({
                           </span>
                         )}
 
-                        {/* Priority Badge */}
                         {t.priority && (
                           <span style={{
                             background: priorityAccent.bg,
@@ -733,7 +947,6 @@ export const TasksModal = ({
                           </span>
                         )}
 
-                        {/* GCal Badge */}
                         {t.is_google_calendar && (
                           <span style={{
                             background: 'rgba(66, 133, 244, 0.16)',
@@ -747,11 +960,10 @@ export const TasksModal = ({
                             GCal
                           </span>
                         )}
-
                       </div>
                     </div>
 
-                    {/* Right Action: Subtask counter chip & Delete icon */}
+                    {/* Actions */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
                       {hasSubtasks && (
                         <button
@@ -770,7 +982,6 @@ export const TasksModal = ({
                             alignItems: 'center',
                             gap: '3px'
                           }}
-                          title="Toggle subtasks"
                         >
                           <span>{completedSubCount}/{subtaskCount}</span>
                           {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
@@ -798,9 +1009,7 @@ export const TasksModal = ({
                             color: '#EF4444',
                             opacity: 0.6,
                             cursor: 'pointer',
-                            padding: '4px',
-                            borderRadius: '6px',
-                            transition: 'opacity 0.15s ease'
+                            padding: '4px'
                           }}
                           title="Delete task"
                         >
@@ -811,7 +1020,7 @@ export const TasksModal = ({
 
                   </div>
 
-                  {/* Inline Expanded Subtasks (Todoli Style) */}
+                  {/* Inline Expanded Subtasks */}
                   {isExpanded && hasSubtasks && (
                     <div style={{
                       marginTop: '6px',
