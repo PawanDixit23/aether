@@ -16,7 +16,11 @@ import {
   ChevronDown,
   TrendingUp,
   Clock,
-  ArrowDownCircle
+  ArrowDownCircle,
+  MessageSquare,
+  Sparkles,
+  Clipboard,
+  CheckCircle2
 } from 'lucide-react';
 
 export const FINANCE_CATEGORIES = [
@@ -74,6 +78,68 @@ export const FinanceModal = ({
   const [isBalanceHidden, setIsBalanceHidden] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
+
+  // Bank SMS Auto-Log State
+  const [isSmsParserOpen, setIsSmsParserOpen] = useState(false);
+  const [smsInputText, setSmsInputText] = useState('');
+  const [isParsingSms, setIsParsingSms] = useState(false);
+  const [parsedSmsResult, setParsedSmsResult] = useState(null);
+
+  const handleParseSms = async (textToParse = smsInputText) => {
+    const raw = (textToParse || '').trim();
+    if (!raw) {
+      if (showToast) showToast("कृपया बैंक SMS टेक्स्ट दर्ज करें", "info");
+      return;
+    }
+    setIsParsingSms(true);
+    setParsedSmsResult(null);
+    try {
+      const resp = await fetch(`${API_BASE}/finance/parse-sms`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(userEmail ? { 'X-User-Email': userEmail } : {})
+        },
+        body: JSON.stringify({
+          sms_text: raw,
+          user_email: userEmail || null,
+          auto_commit: true
+        })
+      });
+      const data = await resp.json();
+      if (data.status === 'success' && data.records && data.records.length > 0) {
+        const rec = data.records[0];
+        setParsedSmsResult(rec);
+        setSmsInputText('');
+        if (showToast) showToast(`✅ ₹${rec.amount} ${rec.category === 'shopping' ? 'शॉपिंग' : ''} खर्च दर्ज हुआ! (${rec.merchant || ''})`, "success");
+        if (refreshAllData) refreshAllData();
+      } else {
+        if (showToast) showToast("SMS में वैध वित्तीय लेनदेन नहीं मिला। कृपया टेक्स्ट जांचें।", "info");
+      }
+    } catch (err) {
+      if (showToast) showToast("SMS पार्स करने में त्रुटि हुई", "error");
+    } finally {
+      setIsParsingSms(false);
+    }
+  };
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim()) {
+          setSmsInputText(text.trim());
+          if (showToast) showToast("क्लिपबोर्ड से SMS पेस्ट किया गया! 📋", "info");
+        } else {
+          if (showToast) showToast("क्लिपबोर्ड खाली है", "info");
+        }
+      } else {
+        if (showToast) showToast("क्लिपबोर्ड एक्सेस उपलब्ध नहीं है, कृपया मैन्युअल पेस्ट करें", "info");
+      }
+    } catch (e) {
+      if (showToast) showToast("कृपया बॉक्स में SMS मैन्युअल रूप से पेस्ट करें", "info");
+    }
+  };
 
   const [budgets, setBudgets] = useState(() => {
     try {
@@ -361,7 +427,149 @@ export const FinanceModal = ({
           </div>
         </div>
 
-        {/* 3 Tabs: Overview | Budgets | Transactions */}
+        {/* Bank SMS Auto-Log Quick Action Capsule */}
+        <div 
+          onClick={() => setIsSmsParserOpen(!isSmsParserOpen)}
+          style={{
+            background: isSmsParserOpen ? 'rgba(56, 189, 248, 0.12)' : 'linear-gradient(135deg, rgba(56, 189, 248, 0.08) 0%, rgba(30, 41, 59, 0.5) 100%)',
+            border: isSmsParserOpen ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid rgba(56, 189, 248, 0.2)',
+            borderRadius: '16px',
+            padding: '10px 14px',
+            marginBottom: '14px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            cursor: 'pointer',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+            transition: 'all 0.2s'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: 'rgba(56, 189, 248, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8' }}>
+              <MessageSquare size={16} />
+            </div>
+            <div>
+              <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span>Auto-Log Shopping / Bank SMS</span>
+                <span style={{ fontSize: '0.62rem', background: 'rgba(56, 189, 248, 0.2)', color: '#38bdf8', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>AI Auto-Parse</span>
+              </div>
+              <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: '1px' }}>
+                Paste bank SMS to auto-extract amount, merchant, date & time
+              </div>
+            </div>
+          </div>
+          <span style={{ fontSize: '0.74rem', color: '#38bdf8', fontWeight: 700, whiteSpace: 'nowrap' }}>
+            {isSmsParserOpen ? 'Close ✕' : 'Paste SMS ⚡'}
+          </span>
+        </div>
+
+        {/* SMS Auto-Log Drawer */}
+        {isSmsParserOpen && (
+          <div style={{
+            background: '#070d1d',
+            border: '1.5px solid rgba(56, 189, 248, 0.35)',
+            borderRadius: '20px',
+            padding: '16px',
+            marginBottom: '16px',
+            boxShadow: '0 12px 32px rgba(0,0,0,0.6)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '0.84rem', fontWeight: 700, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Sparkles size={16} color="#38bdf8" />
+                <span>Instant Bank SMS Expense Parser</span>
+              </span>
+              <button
+                type="button"
+                onClick={handlePasteFromClipboard}
+                style={{
+                  background: 'rgba(56, 189, 248, 0.15)',
+                  border: '1px solid rgba(56, 189, 248, 0.3)',
+                  borderRadius: '8px',
+                  color: '#38bdf8',
+                  padding: '4px 8px',
+                  fontSize: '0.70rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                <Clipboard size={12} />
+                <span>Paste from Clipboard</span>
+              </button>
+            </div>
+
+            <textarea
+              rows={3}
+              placeholder="Paste Indian Bank SMS here (e.g. 'A/C 1234 debited for Rs 1499.00 on 31-Oct-26 at ZARA MALL JAIPUR. UPI Ref: 987654...')"
+              value={smsInputText}
+              onChange={e => setSmsInputText(e.target.value)}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                background: '#0f172a',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                borderRadius: '12px',
+                padding: '10px 12px',
+                color: '#f8fafc',
+                fontSize: '0.80rem',
+                fontFamily: 'inherit',
+                resize: 'none',
+                outline: 'none',
+                marginBottom: '10px'
+              }}
+            />
+
+            <button
+              type="button"
+              disabled={isParsingSms || !smsInputText.trim()}
+              onClick={() => handleParseSms()}
+              style={{
+                width: '100%',
+                background: !smsInputText.trim() ? 'rgba(56, 189, 248, 0.2)' : 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                border: 'none',
+                color: '#ffffff',
+                padding: '11px',
+                borderRadius: '12px',
+                fontWeight: 700,
+                fontSize: '0.84rem',
+                cursor: !smsInputText.trim() ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                boxShadow: smsInputText.trim() ? '0 4px 14px rgba(2, 132, 199, 0.4)' : 'none',
+                transition: 'all 0.15s'
+              }}
+            >
+              <Sparkles size={15} />
+              <span>{isParsingSms ? 'Parsing Transaction & Logging...' : '⚡ Auto-Detect & Record to Expense'}</span>
+            </button>
+
+            {/* Parsed Result Success Card */}
+            {parsedSmsResult && (
+              <div style={{
+                marginTop: '12px',
+                background: 'rgba(16, 185, 129, 0.1)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                borderRadius: '12px',
+                padding: '10px 12px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#34d399', fontSize: '0.78rem', fontWeight: 700, marginBottom: '6px' }}>
+                  <CheckCircle2 size={15} />
+                  <span>Transaction Successfully Logged into Ledger!</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px', fontSize: '0.74rem' }}>
+                  <div style={{ color: '#cbd5e1' }}><strong>Store/Merchant:</strong> {parsedSmsResult.merchant || 'Shopping Store'}</div>
+                  <div style={{ color: '#34d399', fontWeight: 700 }}><strong>Amount:</strong> ₹{Number(parsedSmsResult.amount || 0).toLocaleString('en-IN')}</div>
+                  <div style={{ color: '#cbd5e1' }}><strong>Category:</strong> {(parsedSmsResult.category || 'shopping').toUpperCase()}</div>
+                  <div style={{ color: '#94a3b8' }}><strong>Mode:</strong> {(parsedSmsResult.payment_mode || 'upi').toUpperCase()}</div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', background: 'rgba(255, 255, 255, 0.04)', padding: '4px', borderRadius: '16px' }}>
           {[
             { id: 'overview', label: 'Overview' },
@@ -828,8 +1036,8 @@ export const FinanceModal = ({
           </div>
         )}
 
-        {/* Fixed Bottom Action Buttons matching Screenshot 2: [Add Expense] [Add Income] */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: 'auto', paddingTop: '8px' }}>
+        {/* Fixed Bottom Action Buttons matching Screenshot 2: [Add Expense] [Add Income] [Paste SMS] */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '10px', marginTop: 'auto', paddingTop: '8px' }}>
           <button
             type="button"
             onClick={() => {
@@ -880,6 +1088,30 @@ export const FinanceModal = ({
           >
             <ArrowDownCircle size={16} />
             <span>Add Income</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsSmsParserOpen(prev => !prev)}
+            style={{
+              background: isSmsParserOpen ? 'rgba(56, 189, 248, 0.25)' : 'rgba(56, 189, 248, 0.12)',
+              border: '1px solid rgba(56, 189, 248, 0.4)',
+              borderRadius: '16px',
+              padding: '12px 14px',
+              color: '#38bdf8',
+              fontWeight: 700,
+              fontSize: '0.84rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              cursor: 'pointer',
+              boxShadow: '0 6px 20px rgba(56, 189, 248, 0.2)'
+            }}
+            title="Auto-Log Indian Bank SMS (Shopping, UPI, Card)"
+          >
+            <MessageSquare size={16} />
+            <span>SMS ⚡</span>
           </button>
         </div>
 

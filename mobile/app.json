@@ -41,7 +41,9 @@
         "android.permission.VIBRATE",
         "android.permission.SCHEDULE_EXACT_ALARM",
         "android.permission.RECEIVE_BOOT_COMPLETED",
-        "android.permission.READ_CONTACTS"
+        "android.permission.READ_CONTACTS",
+        "android.permission.RECEIVE_SMS",
+        "android.permission.READ_SMS"
       ]
     },
     "web": {

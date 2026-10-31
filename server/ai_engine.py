@@ -1590,17 +1590,38 @@ def parse_bank_sms(text: str) -> Optional[dict]:
     """Deterministically extracts financial transaction details from Indian Bank SMS alerts."""
     text_clean = text.replace('\n', ' ')
     
-    # 1. Detect credit vs debit
-    is_credit = bool(re.search(r'\b(credited|received|deposited|refunded)\b', text_clean, re.I))
-    is_debit = bool(re.search(r'\b(debited|spent|paid|withdrawn|sent|deducted|transferred to)\b', text_clean, re.I))
-    if not is_credit and not is_debit:
+    # 1. Detect credit vs debit with Indian Banking nuances (e.g. "a/c debited ... credited to [merchant]")
+    is_acct_debit = bool(re.search(r'\b(?:a/c|acct|account|card)\s*(?:no\.?)?\s*[\w\*]*\s*(?:is\s+)?(?:debited|charged|spent|used)\b', text_clean, re.I))
+    is_acct_credit = bool(re.search(r'\b(?:a/c|acct|account)\s*(?:no\.?)?\s*[\w\*]*\s*(?:is\s+)?(?:credited|deposited)\b', text_clean, re.I))
+    
+    has_debit_word = bool(re.search(r'\b(debited|spent|paid|withdrawn|sent|deducted|purchase|purchased|txn of|payment of)\b', text_clean, re.I))
+    has_credit_word = bool(re.search(r'\b(credited|received|deposited|refunded|salary)\b', text_clean, re.I))
+
+    if not has_debit_word and not has_credit_word:
         return None
-    txn_type = 'income' if is_credit else 'expense'
+
+    if is_acct_debit:
+        txn_type = 'expense'
+    elif is_acct_credit and not is_acct_debit:
+        txn_type = 'income'
+    elif has_debit_word and has_credit_word:
+        if re.search(r'debited.*(?:credited to|transfer to|to)', text_clean, re.I):
+            txn_type = 'expense'
+        elif re.search(r'credited.*(?:from|by)', text_clean, re.I):
+            txn_type = 'income'
+        else:
+            txn_type = 'expense'
+    elif has_debit_word:
+        txn_type = 'expense'
+    else:
+        txn_type = 'income'
     
     # 2. Extract Amount
     amt_match = re.search(r'(?:inr|rs\.?|₹)\s*([\d,]+(?:\.\d{1,2})?)', text_clean, re.I)
     if not amt_match:
-        amt_match = re.search(r'\b(?:by|with|for|of)\s+([\d,]+(?:\.\d{1,2})?)\b', text_clean, re.I)
+        amt_match = re.search(r'([\d,]+(?:\.\d{1,2})?)\s*(?:inr|rs\.?|₹)', text_clean, re.I)
+    if not amt_match:
+        amt_match = re.search(r'\b(?:by|with|for|of|spent|paid)\s+([\d,]+(?:\.\d{1,2})?)\b', text_clean, re.I)
     if not amt_match:
         return None
     try:
@@ -1608,41 +1629,64 @@ def parse_bank_sms(text: str) -> Optional[dict]:
     except Exception:
         return None
         
-    # 3. Extract Merchant / Info
-    merchant = 'Transaction'
+    # 3. Extract Merchant / Info (Supports POS, UPI, Retail stores, Shopping)
+    merchant = 'Shopping / Store' if txn_type == 'expense' else 'Sender'
     m_patterns = [
-        r'(?:towards|to|at|info:?|vpa)\s+([A-Za-z0-9\s\.\-_&]+?)(?:\s+(?:on|using|via|ref|bal|available|upi|\.|\,|$))',
-        r'(?:transfer to|paid at)\s+([A-Za-z0-9\s\.\-_&]+?)(?:\s+(?:ref|bal|\.|$))',
+        r'(?:towards\s+pos\s+purchase\s+at|pos\s+purchase\s+at|purchase\s+at|pos\s+txn\s+at)\s+([A-Za-z0-9\s\.\-_&]+)',
+        r';\s*([A-Za-z0-9\s\.\-_&]+?)\s+credited',
+        r'(?:credited to|transfer to|transferred to|paid to|paid at|towards|spent at|at|to)\s+([A-Za-z0-9\s\.\-_&]+?)(?:\s+(?:on|using|via|ref|bal|available|upi|card|\.|\,|$|\(|\;))',
+        r'(?:info:?|vpa:?)\s*([A-Za-z0-9\s\.\-_&@]+?)(?:\s+(?:on|using|via|ref|bal|\.|\,|$|\(|\;))',
     ]
     for pat in m_patterns:
         m_match = re.search(pat, text_clean, re.I)
         if m_match:
             candidate = m_match.group(1).strip()
-            if candidate and not any(w in candidate.lower() for w in ['inr', 'rs', 'a/c', 'acct', 'your', 'bank']):
-                merchant = candidate
+            candidate = re.sub(r'(?i)^(?:pos\s+purchase\s+at|pos\s+purchase|pos\s+txn\s+at|pos|upi/|vpa/)\s*', '', candidate).strip()
+            # Clean trailing noise like "on 31/10", ". Avl Bal", "Ref: ...", etc.
+            candidate = re.split(r'(?i)\s+(?:on\s+\d|\.|\;|\(|\bavl\b|\bbal\b|\bref\b|\bupi\b)', candidate)[0].strip()
+            if candidate and not any(w in candidate.lower() for w in ['inr', 'rs.', 'a/c', 'acct', 'your account', 'bank account']):
+                merchant = candidate.strip(' .,;')
                 break
 
-    # 4. Extract Category
+    # 4. Extract Category (Comprehensive Shopping & Retail dictionary)
     merchant_l = merchant.lower()
+    text_l = text_clean.lower()
     cat = 'general'
-    if any(w in merchant_l for w in ['swiggy', 'zomato', 'chai', 'coffee', 'food', 'restaurant', 'mcdonald', 'kfc', 'burger']):
-        cat = 'food'
-    elif any(w in merchant_l for w in ['shell', 'petrol', 'fuel', 'hpcl', 'bpcl', 'ioc', 'uber', 'ola', 'rapido', 'metro']):
-        cat = 'fuel' if any(w in merchant_l for w in ['shell', 'petrol', 'fuel', 'hpcl', 'bpcl', 'ioc']) else 'travel'
-    elif any(w in merchant_l for w in ['amazon', 'flipkart', 'myntra', 'blinkit', 'zepto', 'instamart']):
+    
+    shopping_keywords = [
+        'shop', 'zara', 'h&m', 'pantaloons', 'shoppers stop', 'westside', 'reliance',
+        'retail', 'mall', 'mart', 'dmart', 'max', 'decathlon', 'croma', 'lifestyle',
+        'uniqlo', 'trends', 'fabindia', 'amazon', 'flipkart', 'myntra', 'ajio',
+        'blinkit', 'zepto', 'instamart', 'nykaa', 'tata cliq', 'clothing', 'fashion'
+    ]
+    food_keywords = [
+        'swiggy', 'zomato', 'chai', 'coffee', 'food', 'restaurant', 'mcdonald', 'kfc',
+        'burger', 'dominos', 'pizza', 'starbucks', 'dhaba', 'bakery', 'sweets', 'cafe'
+    ]
+    fuel_keywords = ['shell', 'petrol', 'fuel', 'hpcl', 'bpcl', 'ioc', 'indian oil', 'cng']
+    travel_keywords = ['uber', 'ola', 'rapido', 'metro', 'irctc', 'rail', 'flight', 'indigo', 'air india', 'makemytrip', 'redbus']
+    bills_keywords = ['electricity', 'bijli', 'airtel', 'jio', 'vi', 'bill', 'bescom', 'recharge', 'broadband', 'water', 'gas']
+
+    if any(w in merchant_l or w in text_l for w in shopping_keywords):
         cat = 'shopping'
-    elif any(w in merchant_l for w in ['electricity', 'bijli', 'airtel', 'jio', 'vi', 'bill', 'bescom', 'recharge']):
+    elif any(w in merchant_l or w in text_l for w in food_keywords):
+        cat = 'food'
+    elif any(w in merchant_l or w in text_l for w in fuel_keywords):
+        cat = 'petrol'
+    elif any(w in merchant_l or w in text_l for w in travel_keywords):
+        cat = 'travel'
+    elif any(w in merchant_l or w in text_l for w in bills_keywords):
         cat = 'bills'
-    elif txn_type == 'income' and 'salary' in text_clean.lower():
+    elif txn_type == 'income' and 'salary' in text_l:
         cat = 'salary'
 
     # 5. Extract Payment Mode
     mode = 'upi'
-    if 'card' in text_clean.lower():
+    if 'card' in text_l:
         mode = 'card'
-    elif 'neft' in text_clean.lower() or 'rtgs' in text_clean.lower() or 'netbanking' in text_clean.lower():
+    elif 'neft' in text_l or 'rtgs' in text_l or 'netbanking' in text_l:
         mode = 'netbanking'
-    elif 'atm' in text_clean.lower():
+    elif 'atm' in text_l:
         mode = 'cash'
 
     # 6. Extract Date & Time
