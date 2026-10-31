@@ -3096,16 +3096,14 @@ export default function App() {
 
   // Background "Hey Aether" Wake Word Detection
   useEffect(() => {
-    if (!onboardingDone || !micEnabled || !wakeWordEnabled) {
-      if (wakeWordRecognitionRef.current) {
-        try { wakeWordRecognitionRef.current.stop(); } catch (e) {}
-        wakeWordRecognitionRef.current = null;
-      }
-      return;
-    }
+    // STRICT GUARD:
+    // 1. NEVER run continuous background wake-word listener on mobile / Android WebView!
+    // On mobile devices, continuous microphone capture permanently locks the Android AudioManager
+    // hardware focus, which interrupts/pauses YouTube & music playback and causes extreme battery drain.
+    const isMobile = (typeof window !== 'undefined' && !!window.ReactNativeWebView) || 
+      (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
 
-    // Do not run background wake-word listener while active listening, speaking, or processing
-    if (isListening || isSpeaking || isProcessing) {
+    if (isMobile || !onboardingDone || !micEnabled || !wakeWordEnabled || isListening || isSpeaking || isProcessing || activeMediaPlayingRef.current) {
       if (wakeWordRecognitionRef.current) {
         try { wakeWordRecognitionRef.current.stop(); } catch (e) {}
         wakeWordRecognitionRef.current = null;
@@ -3164,25 +3162,27 @@ export default function App() {
       };
 
       wakeRec.onerror = (e) => {
-        // Auto restart on non-fatal errors (pause restart if user is listening to active media/video)
-        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current) {
+        // Auto restart on non-fatal errors (pause restart if user is listening to active media/video or on mobile)
+        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current && !isMobile) {
           if (e.error !== 'not-allowed') {
             setTimeout(() => {
-              try { if (!isDestroyed && !activeMediaPlayingRef.current) wakeRec.start(); } catch (err) {}
+              try { if (!isDestroyed && !activeMediaPlayingRef.current && !isMobile) wakeRec.start(); } catch (err) {}
             }, 1000);
           }
         }
       };
 
       wakeRec.onend = () => {
-        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current) {
+        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current && !isMobile) {
           setTimeout(() => {
-            try { if (!isDestroyed && !activeMediaPlayingRef.current) wakeRec.start(); } catch (e) {}
+            try { if (!isDestroyed && !activeMediaPlayingRef.current && !isMobile) wakeRec.start(); } catch (e) {}
           }, 400);
         }
       };
 
-      wakeRec.start();
+      if (!isDestroyed && !activeMediaPlayingRef.current && !isMobile) {
+        wakeRec.start();
+      }
     } catch (e) {
       console.warn("Wake word listener start error:", e);
     }
@@ -3395,6 +3395,10 @@ export default function App() {
       // If YouTube intent: mark media active to protect audio focus; let embedded player play directly
       if (actionType === 'youtube') {
         activeMediaPlayingRef.current = true;
+        if (wakeWordRecognitionRef.current) {
+          try { wakeWordRecognitionRef.current.stop(); } catch (e) {}
+          wakeWordRecognitionRef.current = null;
+        }
         // On desktop browser without embed URL, fallback to window.open
         if (typeof window !== 'undefined' && !window.ReactNativeWebView && !(actionData?.embed_url || actionData?.video_id)) {
           try {

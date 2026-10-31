@@ -979,13 +979,35 @@ async def _execute_quick_capture(
             result_message = f"🎬 **YouTube पर चलाया जा रहा है:**\n« {q} »\n\n▶️ **वीडियो चलाएं:** {watch_url} 🎵"
 
     elif action == "call":
-        c_name = data.get("contact_name") or "Contact"
+        raw_name = data.get("contact_name") or "Contact"
+        # Clean leading words like "lets call", "call", "dial", etc.
+        c_name = re.sub(r'(?i)^(?:let\'?s\s+call|call|dial|phone|please\s+call)\s+', '', raw_name).strip() or "Contact"
+        c_name = re.sub(r'(?i)\s+(?:ko|ko\s+call|par\s+call)$', '', c_name).strip() or c_name
+        data["contact_name"] = c_name
+
         c_num = data.get("phone_number")
         if not c_num:
             p_match = re.search(r'(\+?\d[\d\s\-]{8,14}\d)', user_msg)
             if p_match:
                 c_num = p_match.group(1).replace(" ", "").replace("-", "")
                 data["phone_number"] = c_num
+
+        # Smart Memory Lookup: Check if user stored this contact's phone number in memory vault
+        if not c_num and eff_email:
+            try:
+                search_terms = [c_name.lower(), c_name.replace(" ", "").lower()]
+                mems = db.query(MemoryItem).filter(MemoryItem.user_email == eff_email).all()
+                for m in mems:
+                    m_text = f"{m.content or ''} {m.key or ''}".lower()
+                    if any(st in m_text for st in search_terms):
+                        mem_match = re.search(r'(\+?\d[\d\s\-]{8,14}\d)', m.content or "")
+                        if mem_match:
+                            c_num = mem_match.group(1).replace(" ", "").replace("-", "")
+                            data["phone_number"] = c_num
+                            break
+            except Exception as e_mem:
+                print(f"[Contact Memory Lookup Note] {e_mem}")
+
         tel_url = f"tel:{c_num}" if c_num else "tel:"
         data["tel_url"] = tel_url
         executed = True

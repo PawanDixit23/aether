@@ -198,11 +198,27 @@ export default function App() {
             }
 
             // 3. Open native Phone Dialer, SMS, and Mail externally without breaking the WebView session
-            if (
-              url.startsWith('tel:') ||
-              url.startsWith('sms:') ||
-              url.startsWith('mailto:')
-            ) {
+            if (url.startsWith('tel:')) {
+              const num = url.replace(/^tel:/i, '').replace(/[^\d+*#]/g, '');
+              if (num) {
+                Linking.openURL(`tel:${num}`).catch(() => {
+                  if (Platform.OS === 'android') {
+                    Linking.openURL(`intent:${num}#Intent;action=android.intent.action.DIAL;scheme=tel;end`).catch(() => {});
+                  }
+                });
+              } else {
+                if (Platform.OS === 'android') {
+                  Linking.openURL('intent:#Intent;action=android.intent.action.DIAL;end').catch(() => {
+                    Linking.openURL('tel:').catch(() => {});
+                  });
+                } else {
+                  Linking.openURL('tel:').catch(() => {});
+                }
+              }
+              return false;
+            }
+
+            if (url.startsWith('sms:') || url.startsWith('mailto:')) {
               Linking.openURL(url).catch(() => {});
               return false;
             }
@@ -261,8 +277,24 @@ export default function App() {
             try {
               const data = JSON.parse(event.nativeEvent.data);
               if (data.type === 'MAKE_CALL') {
-                const telUrl = data.telUrl || (data.phoneNumber ? `tel:${data.phoneNumber}` : 'tel:');
-                Linking.openURL(telUrl).catch(() => {});
+                const rawNum = data.phoneNumber || (data.telUrl ? data.telUrl.replace(/^tel:/i, '') : '');
+                const cleanNum = rawNum ? rawNum.replace(/[^\d+*#]/g, '') : '';
+                if (cleanNum) {
+                  Linking.openURL(`tel:${cleanNum}`).catch(() => {
+                    if (Platform.OS === 'android') {
+                      Linking.openURL(`intent:${cleanNum}#Intent;action=android.intent.action.DIAL;scheme=tel;end`).catch(() => {});
+                    }
+                  });
+                } else {
+                  // Open blank native dialer pad
+                  if (Platform.OS === 'android') {
+                    Linking.openURL('intent:#Intent;action=android.intent.action.DIAL;end').catch(() => {
+                      Linking.openURL('tel:').catch(() => {});
+                    });
+                  } else {
+                    Linking.openURL('tel:').catch(() => {});
+                  }
+                }
               } else if (data.type === 'OPEN_EXTERNAL_URL') {
                 if (data.url) {
                   Linking.openURL(data.url).catch(() => {});
