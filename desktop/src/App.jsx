@@ -2333,6 +2333,10 @@ export default function App() {
 
   // Calendar & Reminders Helpers
   const getTaskDateStr = (t) => {
+    // Daily recurring tasks are ALWAYS scheduled for today
+    if (t?.recurrence === 'daily' || t?.repeat === 'daily' || String(t?.recurrence || '').toLowerCase().includes('daily')) {
+      return formatLocalDateStr(new Date());
+    }
     if (t?.due_date) {
       try {
         const str = formatLocalDateStr(t.due_date);
@@ -5671,14 +5675,29 @@ export default function App() {
                 const todayStr = formatLocalDateStr(new Date());
                 const isOverdue = (t) => {
                   if (isTaskDone(t)) return false;
-                  if (t.recurrence) return false;
                   const dStr = getTaskDateStr(t);
-                  return dStr && dStr < todayStr;
+                  if (dStr && dStr < todayStr) return true;
+                  if (dStr === todayStr && t.reminder_time) {
+                    try {
+                      const m = t.reminder_time.match(/(\d+):?(\d+)?\s*(AM|PM)/i);
+                      if (m) {
+                        let hrs = parseInt(m[1], 10);
+                        const mins = m[2] ? parseInt(m[2], 10) : 0;
+                        const ampm = m[3].toUpperCase();
+                        if (ampm === 'PM' && hrs < 12) hrs += 12;
+                        if (ampm === 'AM' && hrs === 12) hrs = 0;
+                        const dueNow = new Date();
+                        dueNow.setHours(hrs, mins, 0, 0);
+                        if (dueNow < new Date()) return true;
+                      }
+                    } catch (e) {}
+                  }
+                  return false;
                 };
                 const overdueTasks = (combinedTasks || tasks || []).filter(isOverdue);
-                const pendingReminders = tasks.filter(t => t.reminder_time && !isTaskDone(t));
-                const pendingTasks = tasks.filter(t => !isTaskDone(t));
-                const completedTasks = tasks.filter(t => isTaskDone(t));
+                const pendingReminders = (combinedTasks || tasks || []).filter(t => t.reminder_time && !isTaskDone(t));
+                const pendingTasks = (combinedTasks || tasks || []).filter(t => !isTaskDone(t));
+                const completedTasks = (combinedTasks || tasks || []).filter(t => isTaskDone(t));
 
                 return (
                   <>
@@ -5718,9 +5737,20 @@ export default function App() {
                           <div key={task.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
                             <div>
                               <div style={{ color: '#ffffff', fontSize: '0.92rem', fontWeight: 500 }}>{task.title}</div>
-                              <div style={{ color: 'var(--accent-cyan)', fontSize: '0.76rem', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <div style={{ color: 'var(--accent-cyan)', fontSize: '0.76rem', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                                 {task.reminder_time && <span>⏰ {task.reminder_time}</span>}
                                 {renderRecurrenceBadge(task.recurrence)}
+                                <span style={{
+                                  background: isOverdue(task) ? 'rgba(239,68,68,0.2)' : 'rgba(56,189,248,0.18)',
+                                  color: isOverdue(task) ? '#ef4444' : '#38bdf8',
+                                  border: isOverdue(task) ? '1px solid rgba(239,68,68,0.35)' : '1px solid rgba(56,189,248,0.3)',
+                                  borderRadius: '6px',
+                                  padding: '1px 6px',
+                                  fontSize: '0.66rem',
+                                  fontWeight: 700
+                                }}>
+                                  {isOverdue(task) ? '⚠️ Overdue' : '⏳ Pending'}
+                                </span>
                               </div>
                               {task.subtasks && task.subtasks.length > 0 && (
                                 <div style={{ marginTop: '6px' }}>
@@ -5803,9 +5833,20 @@ export default function App() {
                                 <span style={{ fontSize: '0.88rem', color: '#ffffff' }}>
                                   {task.title}
                                 </span>
-                                <div style={{ color: 'var(--accent-cyan)', fontSize: '0.74rem', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                                <div style={{ color: 'var(--accent-cyan)', fontSize: '0.74rem', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
                                   {task.reminder_time && <span>⏰ {task.reminder_time}</span>}
                                   {renderRecurrenceBadge(task.recurrence)}
+                                  <span style={{
+                                    background: isOverdue(task) ? 'rgba(239,68,68,0.2)' : 'rgba(56,189,248,0.18)',
+                                    color: isOverdue(task) ? '#ef4444' : '#38bdf8',
+                                    border: isOverdue(task) ? '1px solid rgba(239,68,68,0.35)' : '1px solid rgba(56,189,248,0.3)',
+                                    borderRadius: '6px',
+                                    padding: '1px 6px',
+                                    fontSize: '0.66rem',
+                                    fontWeight: 700
+                                  }}>
+                                    {isOverdue(task) ? '⚠️ Overdue' : '⏳ Pending'}
+                                  </span>
                                 </div>
                                 {task.subtasks && task.subtasks.length > 0 && (
                                   <div style={{ marginTop: '6px' }}>
@@ -5872,11 +5913,21 @@ export default function App() {
                                 <span style={{ fontSize: '0.88rem', color: '#64748b', textDecoration: 'line-through' }}>
                                   {task.title}
                                 </span>
-                                {task.reminder_time && (
-                                  <div style={{ color: '#10b981', fontSize: '0.72rem', opacity: 0.8, marginTop: '2px' }}>
-                                    ⏰ {task.reminder_time} • Completed
-                                  </div>
-                                )}
+                                <div style={{ color: '#10b981', fontSize: '0.72rem', opacity: 0.9, marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                  {task.reminder_time && <span>⏰ {task.reminder_time}</span>}
+                                  {renderRecurrenceBadge(task.recurrence)}
+                                  <span style={{
+                                    background: 'rgba(16,185,129,0.18)',
+                                    color: '#34d399',
+                                    border: '1px solid rgba(16,185,129,0.3)',
+                                    borderRadius: '6px',
+                                    padding: '1px 6px',
+                                    fontSize: '0.66rem',
+                                    fontWeight: 700
+                                  }}>
+                                    ✓ Completed
+                                  </span>
+                                </div>
                               </div>
                             </div>
                             <button 

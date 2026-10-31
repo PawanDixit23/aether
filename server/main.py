@@ -1255,7 +1255,11 @@ def get_due_reminders(
 
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     tasks = db.query(Task).filter(
-        Task.user_email == user_email,
+        (Task.user_email == eff_email) |
+        (Task.user_email == "e.pawandixit@gmail.com") |
+        (Task.user_email == None) |
+        (Task.user_email == "operator@aether.local") |
+        (Task.user_email == "test@example.com"),
         Task.status == "pending",
         Task.notified == False
     ).all()
@@ -1289,25 +1293,20 @@ def acknowledge_reminder(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    """Acknowledge reminder so it won't repeatedly alert. Advances recurring tasks to their next scheduled occurrence."""
+    """Acknowledge reminder so it won't repeatedly alert. Preserves today's date so task remains visible in today's agenda."""
+    eff_email = (user_email or "e.pawandixit@gmail.com").strip().lower()
     query = db.query(Task).filter(Task.id == task_id)
     if user_email:
-        query = query.filter(Task.user_email == user_email)
+        query = query.filter(
+            (Task.user_email == eff_email) |
+            (Task.user_email == "e.pawandixit@gmail.com") |
+            (Task.user_email == None) |
+            (Task.user_email == "operator@aether.local") |
+            (Task.user_email == "test@example.com")
+        )
     task = query.first()
     if task:
         task.notified = True
-        rec = getattr(task, "recurrence", None)
-        if rec and task.due_date:
-            if rec == "daily":
-                task.due_date = task.due_date + timedelta(days=1)
-            elif rec in ["weekdays", "monday_to_friday"]:
-                task.due_date = get_next_weekday(task.due_date)
-            elif str(rec).startswith("weekly"):
-                task.due_date = task.due_date + timedelta(days=7)
-            else:
-                task.due_date = task.due_date + timedelta(days=1)
-            task.notified = False
-            task.status = "pending"
         db.commit()
         return {"status": "acknowledged", "task_id": task_id}
     raise HTTPException(status_code=404, detail="Task not found")
@@ -1341,18 +1340,28 @@ def list_tasks(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = (user_email or "").strip().lower()
-    auto_advance_recurring_tasks(db, eff_email or None)
-    if eff_email:
-        # Migrate any unassigned tasks to this active user
-        try:
-            db.query(Task).filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai")).update({Task.user_email: eff_email})
-            db.commit()
-        except Exception:
-            db.rollback()
-        query = db.query(Task).filter(Task.user_email == eff_email)
-    else:
-        query = db.query(Task).filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai"))
+    eff_email = (user_email or "e.pawandixit@gmail.com").strip().lower()
+    auto_advance_recurring_tasks(db, eff_email)
+
+    try:
+        db.query(Task).filter(
+            (Task.user_email == None) | 
+            (Task.user_email == "") | 
+            (Task.user_email == "operator@aether.ai") | 
+            (Task.user_email == "operator@aether.local") |
+            (Task.user_email == "test@example.com")
+        ).update({Task.user_email: eff_email})
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    query = db.query(Task).filter(
+        (Task.user_email == eff_email) |
+        (Task.user_email == "e.pawandixit@gmail.com") |
+        (Task.user_email == None) |
+        (Task.user_email == "operator@aether.local") |
+        (Task.user_email == "test@example.com")
+    )
     
     # Return top-level tasks by default (nested subtasks are attached inside serialize_task)
     query = query.filter((Task.parent_id == None) | (Task.parent_id == 0))
@@ -1977,16 +1986,22 @@ def get_executive_briefing(
     if _cached and (_briefing_time.time() - _cached["ts"] < _BRIEFING_CACHE_TTL):
         return _cached["data"]
 
-    if not user_email:
-        tasks = []
-        urgent_tasks = []
-        finance = {"total_income": 0.0, "total_expense": 0.0, "balance": 0.0, "record_count": 0}
-        memories = []
-    else:
-        tasks = db.query(Task).filter(Task.user_email == user_email, Task.status == "pending").all()
-        urgent_tasks = [t for t in tasks if t.priority in ["high", "urgent"]]
-        finance = get_finance_summary(user_email=user_email, db=db)
-        memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).limit(5).all()
+    eff_email = (user_email or "e.pawandixit@gmail.com").strip().lower()
+    tasks = db.query(Task).filter(
+        (Task.user_email == eff_email) |
+        (Task.user_email == "e.pawandixit@gmail.com") |
+        (Task.user_email == None) |
+        (Task.user_email == "operator@aether.local") |
+        (Task.user_email == "test@example.com"),
+        Task.status == "pending"
+    ).all()
+    urgent_tasks = [t for t in tasks if t.priority in ["high", "urgent"]]
+    finance = get_finance_summary(user_email=eff_email, db=db)
+    memories = db.query(MemoryItem).filter(
+        (MemoryItem.user_email == eff_email) |
+        (MemoryItem.user_email == "e.pawandixit@gmail.com") |
+        (MemoryItem.user_email == None)
+    ).limit(5).all()
 
     now = datetime.now()
     hour = now.hour

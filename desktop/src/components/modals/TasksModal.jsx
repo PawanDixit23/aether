@@ -36,11 +36,34 @@ export const TasksModal = ({
 
   const todayStr = formatLocalDateStr(new Date());
   const isTaskDone = (t) => t.is_completed || t.status === 'completed';
+  const isDaily = (t) => t?.recurrence === 'daily' || t?.repeat === 'daily' || String(t?.recurrence || '').toLowerCase().includes('daily');
+
+  const isTaskOverdue = (t) => {
+    if (isTaskDone(t)) return false;
+    const tDateStr = getTaskDateStr(t);
+    if (tDateStr && tDateStr < todayStr) return true;
+    if (tDateStr === todayStr && t.reminder_time) {
+      try {
+        const m = t.reminder_time.match(/(\d+):?(\d+)?\s*(AM|PM)/i);
+        if (m) {
+          let hrs = parseInt(m[1], 10);
+          const mins = m[2] ? parseInt(m[2], 10) : 0;
+          const ampm = m[3].toUpperCase();
+          if (ampm === 'PM' && hrs < 12) hrs += 12;
+          if (ampm === 'AM' && hrs === 12) hrs = 0;
+          const dueNow = new Date();
+          dueNow.setHours(hrs, mins, 0, 0);
+          if (dueNow < new Date()) return true;
+        }
+      } catch (e) {}
+    }
+    return false;
+  };
 
   // Calculate section counts
-  const todayCount = combinedTasks.filter(t => !isTaskDone(t) && (getTaskDateStr(t) === todayStr || (!getTaskDateStr(t) && !t.is_google_calendar))).length;
-  const overdueCount = combinedTasks.filter(t => !isTaskDone(t) && getTaskDateStr(t) && getTaskDateStr(t) < todayStr).length;
-  const upcomingCount = combinedTasks.filter(t => !isTaskDone(t) && getTaskDateStr(t) && getTaskDateStr(t) > todayStr).length;
+  const todayCount = combinedTasks.filter(t => isDaily(t) || getTaskDateStr(t) === todayStr || (!getTaskDateStr(t) && !t.is_google_calendar)).length;
+  const overdueCount = combinedTasks.filter(t => isTaskOverdue(t)).length;
+  const upcomingCount = combinedTasks.filter(t => !isTaskDone(t) && !isDaily(t) && getTaskDateStr(t) && getTaskDateStr(t) > todayStr).length;
   const completedCount = combinedTasks.filter(t => isTaskDone(t)).length;
 
   const selectedDateObj = calSelectedDate ? new Date(calSelectedDate) : new Date();
@@ -65,14 +88,15 @@ export const TasksModal = ({
   // Filter tasks based on selected pill
   const filteredTasks = combinedTasks.filter(t => {
     const done = isTaskDone(t);
+    const overdue = isTaskOverdue(t);
     const tDateStr = getTaskDateStr(t);
-    const isPast = tDateStr && tDateStr < todayStr;
-    const isTodayDate = tDateStr === todayStr || (!tDateStr && !t.is_google_calendar && !done);
+    const daily = isDaily(t);
+    const isToday = daily || tDateStr === todayStr || (!tDateStr && !t.is_google_calendar);
 
     if (agendaFilter === 'completed') return done;
-    if (agendaFilter === 'overdue') return !done && isPast;
-    if (agendaFilter === 'upcoming') return !done && tDateStr && tDateStr > todayStr;
-    if (agendaFilter === 'today') return !done && (isTodayDate || (!tDateStr && !isPast));
+    if (agendaFilter === 'overdue') return overdue;
+    if (agendaFilter === 'upcoming') return !done && !daily && tDateStr && tDateStr > todayStr;
+    if (agendaFilter === 'today') return isToday;
     return true; // 'all'
   });
 
@@ -287,7 +311,8 @@ export const TasksModal = ({
             filteredTasks.map(t => {
               const done = isTaskDone(t);
               const taskDateStr = getTaskDateStr(t);
-              const isOverdue = taskDateStr && taskDateStr < todayStr && !done;
+              const overdue = isTaskOverdue(t);
+              const daily = isDaily(t);
               const priority = (t.priority || 'normal').toLowerCase();
               const priorityColor = priority === 'urgent' ? '#fb7185' : priority === 'high' ? '#f87171' : priority === 'low' ? '#34d399' : '#38bdf8';
               const priorityBg = priority === 'urgent' ? 'rgba(244,63,94,0.18)' : priority === 'high' ? 'rgba(239,68,68,0.18)' : priority === 'low' ? 'rgba(16,185,129,0.16)' : 'rgba(56,189,248,0.14)';
@@ -296,8 +321,16 @@ export const TasksModal = ({
                 <div
                   key={t.id}
                   style={{
-                    background: isOverdue ? 'rgba(239, 68, 68, 0.08)' : 'rgba(15, 23, 42, 0.65)',
-                    border: isOverdue ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid rgba(255, 255, 255, 0.07)',
+                    background: done 
+                      ? 'rgba(16, 185, 129, 0.04)' 
+                      : overdue 
+                        ? 'rgba(239, 68, 68, 0.08)' 
+                        : 'rgba(15, 23, 42, 0.65)',
+                    border: done 
+                      ? '1px solid rgba(16, 185, 129, 0.2)' 
+                      : overdue 
+                        ? '1px solid rgba(239, 68, 68, 0.35)' 
+                        : '1px solid rgba(255, 255, 255, 0.07)',
                     borderRadius: '16px',
                     padding: '12px 14px',
                     display: 'flex',
@@ -314,8 +347,8 @@ export const TasksModal = ({
                         width: '22px',
                         height: '22px',
                         borderRadius: '7px',
-                        border: done ? '1.5px solid #10b981' : isOverdue ? '1.5px solid #ef4444' : '1.5px solid rgba(255,255,255,0.25)',
-                        background: done ? 'rgba(16,185,129,0.2)' : 'transparent',
+                        border: done ? '1.5px solid #10b981' : overdue ? '1.5px solid #ef4444' : '1.5px solid rgba(255,255,255,0.25)',
+                        background: done ? '#10b981' : 'transparent',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -323,7 +356,7 @@ export const TasksModal = ({
                         flexShrink: 0
                       }}
                     >
-                      {done && <Check size={14} color="#10b981" strokeWidth={3} />}
+                      {done && <Check size={14} color="#ffffff" strokeWidth={3} />}
                     </div>
 
                     {/* Title & Metadata */}
@@ -333,22 +366,37 @@ export const TasksModal = ({
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
                         {/* Time with Clock Icon */}
-                        <span style={{ color: isOverdue ? '#f87171' : '#94a3b8', fontSize: '0.74rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                          <Clock size={12} color={isOverdue ? '#f87171' : '#38bdf8'} />
-                          <span>{t.reminder_time || (taskDateStr ? formatLocalDateStr(t.due_date) : 'Anytime')}</span>
+                        <span style={{ color: done ? '#64748b' : overdue ? '#f87171' : '#94a3b8', fontSize: '0.74rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <Clock size={12} color={done ? '#64748b' : overdue ? '#f87171' : '#38bdf8'} />
+                          <span>{t.reminder_time || (taskDateStr ? formatLocalDateStr(t.due_date) : 'Today')}</span>
                         </span>
 
-                        {/* Priority Pill from Screenshot */}
-                        <span style={{ background: priorityBg, color: priorityColor, border: `1px solid ${priorityColor}40`, borderRadius: '6px', padding: '1px 8px', fontSize: '0.68rem', fontWeight: 600, textTransform: 'capitalize' }}>
-                          {priority}
+                        {/* Status Badge: Pending, Overdue, or Completed */}
+                        <span style={{
+                          background: done ? 'rgba(16,185,129,0.18)' : overdue ? 'rgba(239,68,68,0.2)' : 'rgba(56,189,248,0.18)',
+                          color: done ? '#34d399' : overdue ? '#ef4444' : '#38bdf8',
+                          border: done ? '1px solid rgba(16,185,129,0.3)' : overdue ? '1px solid rgba(239,68,68,0.35)' : '1px solid rgba(56,189,248,0.3)',
+                          borderRadius: '6px',
+                          padding: '1px 7px',
+                          fontSize: '0.66rem',
+                          fontWeight: 700
+                        }}>
+                          {done ? '✓ Completed' : overdue ? '⚠️ Overdue' : '⏳ Pending'}
                         </span>
 
-                        {/* Overdue / GCal badge */}
-                        {isOverdue && (
-                          <span style={{ background: 'rgba(239,68,68,0.2)', color: '#ef4444', borderRadius: '6px', padding: '1px 6px', fontSize: '0.66rem', fontWeight: 700 }}>
-                            OVERDUE
+                        {daily && (
+                          <span style={{ background: 'rgba(192,132,252,0.15)', color: '#c084fc', border: '1px solid rgba(192,132,252,0.3)', borderRadius: '6px', padding: '1px 6px', fontSize: '0.66rem', fontWeight: 600 }}>
+                            🔁 Daily
                           </span>
                         )}
+
+                        {/* Priority Pill */}
+                        {t.priority && (
+                          <span style={{ background: priorityBg, color: priorityColor, border: `1px solid ${priorityColor}40`, borderRadius: '6px', padding: '1px 8px', fontSize: '0.68rem', fontWeight: 600, textTransform: 'capitalize' }}>
+                            {priority}
+                          </span>
+                        )}
+
                         {t.is_google_calendar && (
                           <span style={{ background: 'rgba(66, 133, 244, 0.2)', color: '#60a5fa', borderRadius: '6px', padding: '1px 6px', fontSize: '0.66rem', fontWeight: 600 }}>
                             GCal

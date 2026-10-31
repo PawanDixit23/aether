@@ -96,16 +96,83 @@ export const DashboardView = ({
   const pendingUpcoming = allTasksList.filter(t => !t.is_completed && t.status !== 'completed');
   const nextEvent = pendingUpcoming.length > 0 ? pendingUpcoming[0] : null;
 
-  // 6. Dynamic Today's Tasks List
+  // Helper to determine status and display properties
+  const getTaskStatusInfo = (t) => {
+    const isDone = t.is_completed || t.status === 'completed';
+    if (isDone) {
+      return {
+        key: 'completed',
+        label: 'Completed',
+        color: '#10b981',
+        bg: 'rgba(16, 185, 129, 0.15)',
+        border: 'rgba(16, 185, 129, 0.3)'
+      };
+    }
+    // Check if overdue
+    let isOverdue = false;
+    if (t.due_date) {
+      try {
+        const d = new Date(t.due_date);
+        if (!isNaN(d.getTime()) && d < currentTime) {
+          isOverdue = true;
+        }
+      } catch (e) {}
+    } else if (t.reminder_time) {
+      try {
+        const m = t.reminder_time.match(/(\d+):?(\d+)?\s*(AM|PM)/i);
+        if (m) {
+          let hrs = parseInt(m[1], 10);
+          const mins = m[2] ? parseInt(m[2], 10) : 0;
+          const ampm = m[3].toUpperCase();
+          if (ampm === 'PM' && hrs < 12) hrs += 12;
+          if (ampm === 'AM' && hrs === 12) hrs = 0;
+          const dueToday = new Date(currentTime);
+          dueToday.setHours(hrs, mins, 0, 0);
+          if (dueToday < currentTime) {
+            isOverdue = true;
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (isOverdue) {
+      return {
+        key: 'overdue',
+        label: 'Overdue',
+        color: '#f87171',
+        bg: 'rgba(239, 68, 68, 0.15)',
+        border: 'rgba(239, 68, 68, 0.3)'
+      };
+    }
+
+    return {
+      key: 'pending',
+      label: 'Pending',
+      color: '#38bdf8',
+      bg: 'rgba(56, 189, 248, 0.15)',
+      border: 'rgba(56, 189, 248, 0.3)'
+    };
+  };
+
+  // 6. Dynamic Today's Tasks List (Includes all daily tasks and today's tasks)
   const todayTasks = allTasksList.filter(t => {
-    const isCompleted = t.is_completed || t.status === 'completed';
-    if (isCompleted) return false;
-    // Check if task is for today or overdue or general pending
+    // Daily recurring tasks ALWAYS belong to today!
+    const isDaily = t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily');
+    if (isDaily) return true;
+
     if (t.due_date) {
       const taskDate = t.due_date.slice(0, 10);
       return taskDate <= todayDateStr;
     }
     return true;
+  });
+
+  // Sort: Overdue first, then Pending, then Completed
+  todayTasks.sort((a, b) => {
+    const order = { overdue: 1, pending: 2, completed: 3 };
+    const statA = order[getTaskStatusInfo(a).key] || 2;
+    const statB = order[getTaskStatusInfo(b).key] || 2;
+    return statA - statB;
   });
 
   return (
@@ -585,85 +652,126 @@ export const DashboardView = ({
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
-            {todayTasks.slice(0, 6).map((task) => (
-              <div
-                key={task.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '9px 10px',
-                  borderRadius: '12px',
-                  background: 'rgba(255, 255, 255, 0.03)',
-                  border: '1px solid rgba(255, 255, 255, 0.06)',
-                  gap: '8px',
-                  transition: 'all 0.2s'
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (onToggleTask) onToggleTask(task.id);
-                    }}
-                    style={{
-                      width: '20px',
-                      height: '20px',
-                      borderRadius: '50%',
-                      border: '1.5px solid rgba(56, 189, 248, 0.6)',
-                      background: 'transparent',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      flexShrink: 0,
-                      padding: 0
-                    }}
-                    title="Mark complete"
-                  >
-                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'transparent' }} />
-                  </button>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{
-                      fontSize: '0.82rem',
-                      fontWeight: 600,
-                      color: '#f8fafc',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis'
-                    }}>
-                      {task.title}
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
-                      {task.reminder_time && (
-                        <span style={{ fontSize: '0.66rem', color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '2px' }}>
-                          <Clock size={9} />
-                          {task.reminder_time}
-                        </span>
+            {todayTasks.slice(0, 8).map((task) => {
+              const statusInfo = getTaskStatusInfo(task);
+              const isDone = statusInfo.key === 'completed';
+              const isDaily = task.recurrence === 'daily' || task.repeat === 'daily' || String(task.recurrence || '').toLowerCase().includes('daily');
+
+              return (
+                <div
+                  key={task.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '9px 11px',
+                    borderRadius: '12px',
+                    background: isDone 
+                      ? 'rgba(16, 185, 129, 0.04)' 
+                      : statusInfo.key === 'overdue' 
+                        ? 'rgba(239, 68, 68, 0.05)' 
+                        : 'rgba(255, 255, 255, 0.03)',
+                    border: isDone 
+                      ? '1px solid rgba(16, 185, 129, 0.15)' 
+                      : statusInfo.key === 'overdue' 
+                        ? '1px solid rgba(239, 68, 68, 0.2)' 
+                        : '1px solid rgba(255, 255, 255, 0.06)',
+                    gap: '8px',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '9px', minWidth: 0, flex: 1 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onToggleTask) onToggleTask(task.id);
+                      }}
+                      style={{
+                        width: '22px',
+                        height: '22px',
+                        borderRadius: '7px',
+                        border: isDone 
+                          ? '1.5px solid #10b981' 
+                          : statusInfo.key === 'overdue'
+                            ? '1.5px solid #ef4444'
+                            : '1.5px solid rgba(56, 189, 248, 0.6)',
+                        background: isDone ? '#10b981' : 'transparent',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        flexShrink: 0,
+                        padding: 0
+                      }}
+                      title={isDone ? "Mark pending" : "Mark complete"}
+                    >
+                      {isDone ? (
+                        <Check size={13} color="#ffffff" strokeWidth={3} />
+                      ) : (
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'transparent' }} />
                       )}
-                      {task.priority && (
-                        <span style={{
-                          fontSize: '0.60rem',
-                          fontWeight: 700,
-                          textTransform: 'uppercase',
-                          padding: '1px 4px',
-                          borderRadius: '4px',
-                          background: task.priority === 'urgent' ? 'rgba(239, 68, 68, 0.2)' : (task.priority === 'high' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(56, 189, 248, 0.15)'),
-                          color: task.priority === 'urgent' ? '#f87171' : (task.priority === 'high' ? '#fbbf24' : '#38bdf8')
-                        }}>
-                          {task.priority}
-                        </span>
-                      )}
-                      {task.recurrence && (
-                        <span style={{ fontSize: '0.60rem', color: '#94a3b8' }}>
-                          🔁 {task.recurrence}
-                        </span>
-                      )}
+                    </button>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{
+                        fontSize: '0.84rem',
+                        fontWeight: 600,
+                        color: isDone ? '#64748b' : '#f8fafc',
+                        textDecoration: isDone ? 'line-through' : 'none',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }}>
+                        {task.title}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '3px', flexWrap: 'wrap' }}>
+                        {task.reminder_time && (
+                          <span style={{ fontSize: '0.68rem', color: isDone ? '#64748b' : '#38bdf8', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                            <Clock size={10} />
+                            {task.reminder_time}
+                          </span>
+                        )}
+                        {isDaily && (
+                          <span style={{ fontSize: '0.64rem', color: '#c084fc', background: 'rgba(192, 132, 252, 0.12)', padding: '1px 5px', borderRadius: '4px', fontWeight: 600 }}>
+                            🔁 Daily
+                          </span>
+                        )}
+                        {task.priority && (
+                          <span style={{
+                            fontSize: '0.60rem',
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            padding: '1px 4px',
+                            borderRadius: '4px',
+                            background: task.priority === 'urgent' ? 'rgba(239, 68, 68, 0.2)' : (task.priority === 'high' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(56, 189, 248, 0.15)'),
+                            color: task.priority === 'urgent' ? '#f87171' : (task.priority === 'high' ? '#fbbf24' : '#38bdf8')
+                          }}>
+                            {task.priority}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
+
+                  {/* Status Badge */}
+                  <div style={{ flexShrink: 0 }}>
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '3px',
+                      fontSize: '0.66rem',
+                      fontWeight: 700,
+                      padding: '2px 8px',
+                      borderRadius: '6px',
+                      background: statusInfo.bg,
+                      color: statusInfo.color,
+                      border: `1px solid ${statusInfo.border}`
+                    }}>
+                      {statusInfo.key === 'completed' ? '✓ Completed' : statusInfo.key === 'overdue' ? '⚠️ Overdue' : '⏳ Pending'}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {todayTasks.length > 6 && (
               <button
                 type="button"
