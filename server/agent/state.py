@@ -38,3 +38,4 @@ class AgentState(BaseModel):
     final_message: Optional[str] = None
     completed: bool = False
     metadata: Dict[str, Any] = Field(default_factory=dict)
+

@@ -41,3 +41,4 @@ class HybridMemoryProvider:
             "relevant_facts": [m.fact for m in top_memories],
             "formatted_context": formatted
         }
+

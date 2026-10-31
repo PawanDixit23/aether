@@ -64,3 +64,4 @@ class ChatSorter:
             print(f"[ChatSorter] Automatically extracted {len(extracted)} episodic facts for {user_email}")
 
         return extracted
+
