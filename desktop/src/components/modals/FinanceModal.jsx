@@ -20,7 +20,8 @@ import {
   MessageSquare,
   Sparkles,
   Clipboard,
-  CheckCircle2
+  CheckCircle2,
+  ShieldCheck
 } from 'lucide-react';
 
 export const FINANCE_CATEGORIES = [
@@ -427,93 +428,137 @@ export const FinanceModal = ({
           </div>
         </div>
 
-        {/* Bank SMS Auto-Log Quick Action Capsule */}
-        <div 
-          onClick={() => setIsSmsParserOpen(!isSmsParserOpen)}
-          style={{
-            background: isSmsParserOpen ? 'rgba(56, 189, 248, 0.12)' : 'linear-gradient(135deg, rgba(56, 189, 248, 0.08) 0%, rgba(30, 41, 59, 0.5) 100%)',
-            border: isSmsParserOpen ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid rgba(56, 189, 248, 0.2)',
-            borderRadius: '16px',
-            padding: '10px 14px',
-            marginBottom: '14px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            cursor: 'pointer',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
-            transition: 'all 0.2s'
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: 'rgba(56, 189, 248, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8' }}>
-              <MessageSquare size={16} />
-            </div>
-            <div>
-              <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span>Auto-Log Shopping / Bank SMS</span>
-                <span style={{ fontSize: '0.62rem', background: 'rgba(56, 189, 248, 0.2)', color: '#38bdf8', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>AI Auto-Parse</span>
+        {/* Unified Bank SMS Auto-Logger Section */}
+        {!isSmsParserOpen ? (
+          <div 
+            onClick={() => setIsSmsParserOpen(true)}
+            style={{
+              background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.08) 0%, rgba(15, 23, 42, 0.6) 100%)',
+              border: '1px solid rgba(56, 189, 248, 0.25)',
+              borderRadius: '18px',
+              padding: '12px 14px',
+              marginBottom: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              cursor: 'pointer',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+              transition: 'all 0.2s'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(56, 189, 248, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', flexShrink: 0 }}>
+                <Sparkles size={18} />
               </div>
-              <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: '1px' }}>
-                Paste bank SMS to auto-extract amount, merchant, date & time
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Auto-Log Expense from SMS</span>
+                  <span style={{ fontSize: '0.62rem', background: 'rgba(56, 189, 248, 0.2)', color: '#38bdf8', padding: '1px 6px', borderRadius: '6px', fontWeight: 700, flexShrink: 0 }}>AI</span>
+                </div>
+                <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  Paste bank SMS to auto-extract amount & merchant
+                </div>
               </div>
             </div>
+            <span style={{ fontSize: '0.74rem', color: '#38bdf8', background: 'rgba(56, 189, 248, 0.12)', border: '1px solid rgba(56, 189, 248, 0.3)', padding: '5px 10px', borderRadius: '12px', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0, marginLeft: '8px' }}>
+              Paste SMS ⚡
+            </span>
           </div>
-          <span style={{ fontSize: '0.74rem', color: '#38bdf8', fontWeight: 700, whiteSpace: 'nowrap' }}>
-            {isSmsParserOpen ? 'Close ✕' : 'Paste SMS ⚡'}
-          </span>
-        </div>
-
-        {/* SMS Auto-Log Drawer */}
-        {isSmsParserOpen && (
+        ) : (
           <div style={{
-            background: '#070d1d',
+            background: '#091122',
             border: '1.5px solid rgba(56, 189, 248, 0.35)',
             borderRadius: '20px',
             padding: '16px',
             marginBottom: '16px',
             boxShadow: '0 12px 32px rgba(0,0,0,0.6)'
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <span style={{ fontSize: '0.84rem', fontWeight: 700, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Sparkles size={16} color="#38bdf8" />
-                <span>Instant Bank SMS Expense Parser</span>
-              </span>
-              <button
-                type="button"
-                onClick={handlePasteFromClipboard}
-                style={{
-                  background: 'rgba(56, 189, 248, 0.15)',
-                  border: '1px solid rgba(56, 189, 248, 0.3)',
-                  borderRadius: '8px',
-                  color: '#38bdf8',
-                  padding: '4px 8px',
-                  fontSize: '0.70rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}
-              >
-                <Clipboard size={12} />
-                <span>Paste from Clipboard</span>
-              </button>
+            {/* Drawer Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ width: '28px', height: '28px', borderRadius: '8px', background: 'rgba(56, 189, 248, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8' }}>
+                  <Sparkles size={15} />
+                </div>
+                <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#ffffff' }}>
+                  Auto-Log Expense from SMS
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <button
+                  type="button"
+                  onClick={handlePasteFromClipboard}
+                  style={{
+                    background: 'rgba(56, 189, 248, 0.15)',
+                    border: '1px solid rgba(56, 189, 248, 0.35)',
+                    borderRadius: '8px',
+                    color: '#38bdf8',
+                    padding: '4px 8px',
+                    fontSize: '0.70rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    whiteSpace: 'nowrap'
+                  }}
+                  title="Paste from clipboard"
+                >
+                  <Clipboard size={12} />
+                  <span>Paste 📋</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsSmsParserOpen(false)}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.08)',
+                    border: 'none',
+                    borderRadius: '8px',
+                    color: '#94a3b8',
+                    padding: '4px 8px',
+                    fontSize: '0.72rem',
+                    cursor: 'pointer',
+                    fontWeight: 600
+                  }}
+                  title="Close SMS Drawer"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
+            {/* Privacy & Zero-Data-Leak Guarantee Banner */}
+            <div style={{
+              background: 'rgba(16, 185, 129, 0.08)',
+              border: '1px solid rgba(16, 185, 129, 0.25)',
+              borderRadius: '12px',
+              padding: '8px 12px',
+              marginBottom: '12px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '8px'
+            }}>
+              <ShieldCheck size={16} color="#34d399" style={{ flexShrink: 0, marginTop: '2px' }} />
+              <div style={{ fontSize: '0.71rem', color: '#94a3b8', lineHeight: 1.4 }}>
+                <span style={{ color: '#34d399', fontWeight: 700 }}>100% Private & Secure:</span> We <strong style={{ color: '#f1f5f9' }}>do not read sensitive OTPs or personal chats</strong>. Simply paste your expense/bank SMS alert here, and Aether safely extracts and calculates your expense.
+              </div>
+            </div>
+
+            {/* Textarea */}
             <textarea
               rows={3}
-              placeholder="Paste Indian Bank SMS here (e.g. 'A/C 1234 debited for Rs 1499.00 on 31-Oct-26 at ZARA MALL JAIPUR. UPI Ref: 987654...')"
+              placeholder="Paste Indian Bank SMS alert here...&#10;(e.g. A/C XX1234 debited for Rs 1499.00 on 31-Oct-26 at ZARA JAIPUR. UPI Ref: 987654...)"
               value={smsInputText}
               onChange={e => setSmsInputText(e.target.value)}
               style={{
                 width: '100%',
                 boxSizing: 'border-box',
-                background: '#0f172a',
-                border: '1px solid rgba(255, 255, 255, 0.12)',
+                background: '#060d1c',
+                border: '1px solid rgba(56, 189, 248, 0.25)',
                 borderRadius: '12px',
                 padding: '10px 12px',
                 color: '#f8fafc',
                 fontSize: '0.80rem',
+                lineHeight: 1.4,
                 fontFamily: 'inherit',
                 resize: 'none',
                 outline: 'none',
@@ -521,6 +566,7 @@ export const FinanceModal = ({
               }}
             />
 
+            {/* Action Submit Button */}
             <button
               type="button"
               disabled={isParsingSms || !smsInputText.trim()}
@@ -556,12 +602,21 @@ export const FinanceModal = ({
                 borderRadius: '12px',
                 padding: '10px 12px'
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#34d399', fontSize: '0.78rem', fontWeight: 700, marginBottom: '6px' }}>
-                  <CheckCircle2 size={15} />
-                  <span>Transaction Successfully Logged into Ledger!</span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#34d399', fontSize: '0.78rem', fontWeight: 700 }}>
+                    <CheckCircle2 size={15} />
+                    <span>Transaction Logged into Ledger!</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setParsedSmsResult(null)}
+                    style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.70rem', cursor: 'pointer', padding: '2px 4px' }}
+                  >
+                    Clear ✕
+                  </button>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px', fontSize: '0.74rem' }}>
-                  <div style={{ color: '#cbd5e1' }}><strong>Store/Merchant:</strong> {parsedSmsResult.merchant || 'Shopping Store'}</div>
+                  <div style={{ color: '#cbd5e1' }}><strong>Store/Merchant:</strong> {parsedSmsResult.merchant || 'Shopping / Store'}</div>
                   <div style={{ color: '#34d399', fontWeight: 700 }}><strong>Amount:</strong> ₹{Number(parsedSmsResult.amount || 0).toLocaleString('en-IN')}</div>
                   <div style={{ color: '#cbd5e1' }}><strong>Category:</strong> {(parsedSmsResult.category || 'shopping').toUpperCase()}</div>
                   <div style={{ color: '#94a3b8' }}><strong>Mode:</strong> {(parsedSmsResult.payment_mode || 'upi').toUpperCase()}</div>
