@@ -2206,6 +2206,10 @@ export default function App() {
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
 
+    const serverBase = typeof window !== 'undefined' && window.location.port === '5173'
+      ? `http://${window.location.hostname}:8000`
+      : '';
+
     const setupPushSubscription = async (reg) => {
       try {
         // 1. Notification permission check
@@ -2221,9 +2225,6 @@ export default function App() {
         }
 
         // 2. Server से VAPID public key fetch करें
-        const serverBase = window.location.port === '5173'
-          ? `http://${window.location.hostname}:8000`
-          : '';
         const keyRes = await fetch(`${serverBase}/api/push/vapid-public-key`);
         if (!keyRes.ok) return;
         const { publicKey } = await keyRes.json();
@@ -2300,7 +2301,7 @@ export default function App() {
     return () => {
       navigator.serviceWorker.removeEventListener('message', handleSwMessage);
     };
-  }, [userEmail, serverBase]);
+  }, [userEmail]);
   // ─────────────────────────────────────────────────────────────────────────────
 
   // Calendar & Reminders Helpers
