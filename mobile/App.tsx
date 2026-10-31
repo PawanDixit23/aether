@@ -185,6 +185,19 @@ export default function App() {
           cacheEnabled={false}
           cacheMode="LOAD_NO_CACHE"
           onShouldStartLoadWithRequest={(request) => {
+            // Open native Phone Dialer, SMS, Mail, and YouTube externally
+            if (
+              request.url.startsWith('tel:') ||
+              request.url.startsWith('sms:') ||
+              request.url.startsWith('mailto:') ||
+              request.url.startsWith('vnd.youtube:') ||
+              request.url.includes('youtube.com') ||
+              request.url.includes('youtu.be')
+            ) {
+              Linking.openURL(request.url).catch(() => {});
+              return false;
+            }
+
             // Open native Map apps (Google Maps on Android, Apple Maps on iOS) externally
             if (
               request.url.startsWith('geo:') ||

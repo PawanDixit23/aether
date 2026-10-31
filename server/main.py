@@ -157,6 +157,20 @@ class ICalSyncRequest(BaseModel):
     url: str
     user_email: Optional[str] = None
 
+class ParseSmsRequest(BaseModel):
+    sms_text: Optional[str] = None
+    sms_list: Optional[List[str]] = None
+    auto_commit: bool = True
+    user_email: Optional[str] = None
+
+class EmailDraftRequest(BaseModel):
+    sender: str
+    subject: str
+    body: str
+    instructions: Optional[str] = ""
+    language: Optional[str] = "en"
+    user_name: Optional[str] = "Pawan Dixit"
+
 try:
     from zoneinfo import ZoneInfo
     DEFAULT_TZ = ZoneInfo(os.environ.get("TIMEZONE", "Asia/Kolkata"))
@@ -461,6 +475,12 @@ async def _execute_quick_capture(
         
     elif action == "expense":
         merchant_or_note = data.get("note") or user_msg
+        txn_dt = datetime.utcnow()
+        if data.get("date"):
+            try:
+                txn_dt = datetime.fromisoformat(data["date"])
+            except Exception:
+                pass
         record = FinancialRecord(
             user_email=eff_email,
             type="expense",
@@ -468,7 +488,8 @@ async def _execute_quick_capture(
             amount=data.get("amount", 0.0),
             currency=data.get("currency", "INR"),
             payment_mode=data.get("payment_mode", "upi"),
-            note=merchant_or_note
+            note=merchant_or_note,
+            date=txn_dt
         )
         db.add(record)
         db.commit()
@@ -517,6 +538,12 @@ async def _execute_quick_capture(
         undo_payload = json.dumps({"table": "financial_records", "id": record.id})
 
     elif action == "income":
+        txn_dt = datetime.utcnow()
+        if data.get("date"):
+            try:
+                txn_dt = datetime.fromisoformat(data["date"])
+            except Exception:
+                pass
         record = FinancialRecord(
             user_email=eff_email,
             type="income",
@@ -524,7 +551,8 @@ async def _execute_quick_capture(
             amount=data.get("amount", 0.0),
             currency=data.get("currency", "INR"),
             payment_mode=data.get("payment_mode", "bank"),
-            note=data.get("note", user_msg)
+            note=data.get("note", user_msg),
+            date=txn_dt
         )
         db.add(record)
         db.commit()
@@ -702,7 +730,6 @@ async def _execute_quick_capture(
         # Check if parent task with subtasks requested
         subtask_list = data.get("subtasks")
         if not subtask_list:
-            import re
             p_match = re.search(r'(?:parent[s]?\s+task|parent)\s+(?:like\s+)?[\"\'\s]*([\w\s]+?)(?:[\"\'\s]+and|\s+and|\s+tells|\s+with)\s+.*?(?:subtask[s]?)\s+(.*)', user_msg, re.I)
             if p_match:
                 title = p_match.group(1).strip()
@@ -769,6 +796,62 @@ async def _execute_quick_capture(
                 prefix = "पुनरावर्ती (Recurring) रिमाइंडर" if recurrence_val else "रिमाइंडर"
                 result_message = f"{prefix} एजेंडा में सेट किया गया{time_part}: \"{task.title}\" ⏰{repeat_tag} [{task.priority.upper()}]"
             undo_payload = json.dumps({"table": "tasks", "id": task.id})
+
+    elif action == "youtube":
+        q = data.get("query") or user_msg
+        url = data.get("url")
+        if not url:
+            import urllib.parse
+            url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(q)}"
+            data["url"] = url
+        executed = True
+        if lang == "en":
+            result_message = f"🎬 **Playing on YouTube:**\n« {q} »\n\nOpening media playback stream... 🎵"
+        elif lang == "hinglish":
+            result_message = f"🎬 **YouTube par chala raha hoon:**\n« {q} »\n\nMedia link taiyar hai! 🎵"
+        else:
+            result_message = f"🎬 **YouTube पर खोला जा रहा है:**\n« {q} »\n\nप्ले करने के लिए नीचे दिए गए बटन पर टैप करें। 🎵"
+
+    elif action == "call":
+        c_name = data.get("contact_name") or "Contact"
+        c_num = data.get("phone_number")
+        if not c_num:
+            p_match = re.search(r'(\+?\d[\d\s\-]{8,14}\d)', user_msg)
+            if p_match:
+                c_num = p_match.group(1).replace(" ", "").replace("-", "")
+                data["phone_number"] = c_num
+        tel_url = f"tel:{c_num}" if c_num else "tel:"
+        data["tel_url"] = tel_url
+        executed = True
+        if c_num:
+            if lang == "en":
+                result_message = f"📞 **Calling {c_name}** ({c_num})...\n\nTap Call below to dial directly on your phone. 📱"
+            elif lang == "hinglish":
+                result_message = f"📞 **{c_name} ({c_num}) ko call milayi ja rahi hai...**\n\nDirect dial karne ke liye Call button dabayein! 📱"
+            else:
+                result_message = f"📞 **{c_name} ({c_num}) को कॉल मिलाई जा रही है...**\n\nसीधे डायल करने के लिए नीचे दिए गए 'Call' बटन पर टैप करें। 📱"
+        else:
+            if lang == "en":
+                result_message = f"📞 **Initiating call to {c_name}:**\nOpening phone dialer... 📱"
+            elif lang == "hinglish":
+                result_message = f"📞 **{c_name} ke liye dialer khol raha hoon:**\nNumber dial karne ke liye Call button dabayein. 📱"
+            else:
+                result_message = f"📞 **{c_name} को कॉल करने के लिए डायलर खोला जा रहा है:**\nकॉल करने के लिए नीचे दिए गए बटन पर टैप करें। 📱"
+
+    elif action == "draft_email":
+        recip = data.get("email_recipient") or "Recipient"
+        subj = data.get("email_subject") or "Follow-up"
+        body = data.get("email_body") or ""
+        import urllib.parse
+        mailto_url = f"mailto:{recip}?subject={urllib.parse.quote(subj)}&body={urllib.parse.quote(body)}"
+        data["mailto_url"] = mailto_url
+        executed = True
+        if lang == "en":
+            result_message = f"✉️ **Email Draft Ready for Review:**\n• **To**: {recip}\n• **Subject**: {subj}\n\nReview or launch draft in your email client below. 📝"
+        elif lang == "hinglish":
+            result_message = f"✉️ **Email draft taiyar hai:**\n• **To**: {recip}\n• **Subject**: {subj}\n\nReview karne ya Gmail me kholne ke liye niche draft card dekhein. 📝"
+        else:
+            result_message = f"✉️ **ईमेल ड्राफ्ट समीक्षा के लिए तैयार है:**\n• **प्राप्तकर्ता**: {recip}\n• **विषय**: {subj}\n\nसमीक्षा करने या सीधे ईमेल क्लाइंट में खोलने के लिए नीचे दिया गया कार्ड देखें। 📝"
 
     # Record AI Response in Chat History (resilient to schema constraints)
     try:
@@ -1520,6 +1603,91 @@ def update_finance_record(
     if req.payment_mode is not None:
         rec.payment_mode = req.payment_mode
     db.commit()
+    return {"status": "success", "updated_record": rec}
+
+@app.post("/api/finance/parse-sms")
+async def parse_and_log_bank_sms(
+    req: ParseSmsRequest,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    """Parses Bank SMS alerts (single or bulk batch), extracts exact transaction details with date/time, and commits to financial records."""
+    try:
+        from ai_engine import parse_bank_sms
+    except ImportError:
+        from .ai_engine import parse_bank_sms
+
+    raw_list = req.sms_list or ([req.sms_text] if req.sms_text else [])
+    eff_email = (req.user_email or user_email or "").strip().lower() or None
+    created_records = []
+
+    for text in raw_list:
+        if not text or not text.strip():
+            continue
+        p = parse_bank_sms(text.strip())
+        if p and p.get("amount", 0) > 0:
+            rec = FinancialRecord(
+                user_email=eff_email,
+                type=p["type"],
+                category=p["category"],
+                amount=p["amount"],
+                currency="INR",
+                payment_mode=p["payment_mode"],
+                note=f"{p['merchant']} (SMS Auto-Log)",
+                date=p["date"]
+            )
+            if req.auto_commit:
+                db.add(rec)
+                created_records.append(rec)
+
+    if req.auto_commit and created_records:
+        db.commit()
+        for r in created_records:
+            db.refresh(r)
+
+    return {
+        "status": "success",
+        "processed_count": len(raw_list),
+        "logged_count": len(created_records),
+        "records": [
+            {
+                "id": r.id if hasattr(r, "id") else None,
+                "type": r.type,
+                "amount": r.amount,
+                "category": r.category,
+                "merchant": r.note,
+                "date": r.date.isoformat() if hasattr(r, "date") else None,
+                "payment_mode": r.payment_mode
+            } for r in created_records
+        ]
+    }
+
+@app.post("/api/email/draft-reply")
+async def draft_email_reply_endpoint(
+    req: EmailDraftRequest,
+    user_email: Optional[str] = Depends(get_user_email)
+):
+    """Generates an executive, polished email reply draft for review and one-click opening in Gmail."""
+    try:
+        from ai_engine import generate_email_draft
+    except ImportError:
+        from .ai_engine import generate_email_draft
+
+    res = await generate_email_draft(
+        sender=req.sender,
+        subject=req.subject,
+        body=req.body,
+        instructions=req.instructions or "",
+        operator_name=req.user_name or "Pawan Dixit",
+        language=req.language or "en"
+    )
+    import urllib.parse
+    mailto_url = f"mailto:{res['recipient']}?subject={urllib.parse.quote(res['subject'])}&body={urllib.parse.quote(res['body'])}"
+    res["mailto_url"] = mailto_url
+    return {
+        "status": "success",
+        "draft": res
+    }
     db.refresh(rec)
     return {"status": "success", "record": {
         "id": rec.id,
@@ -2397,13 +2565,61 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             return {"status": "paired"}
 
         if not user_email:
-            reply_text = (
-                f"⚠️ *Aether खाता लिंक नहीं है*\n\n"
-                f"कृपया पहले अपना Aether ईमेल भेजकर लिंक करें:\n"
-                f"`/login your-email@gmail.com`"
+            # SENDER IS AN EXTERNAL CONTACT (Friend, Client, Colleague)
+            # Find the primary operator email (Pawan Dixit)
+            operator_mem = db.query(MemoryItem).filter(MemoryItem.category == "whatsapp_pairing").first()
+            operator_email = operator_mem.fact.split(":", 1)[1].strip() if operator_mem else "e.pawandixit@gmail.com"
+            operator_phone = operator_mem.fact.split(":", 1)[0].strip() if operator_mem else None
+            
+            operator_context = build_context(db, user_email=operator_email)
+            safe_context = {
+                "tasks": operator_context.get("tasks", []),
+                "user_name": "Pawan Dixit"
+            }
+            
+            from ai_engine import generate_external_contact_reply
+            result = await generate_external_contact_reply(
+                sender_identifier=sender,
+                message_text=user_text,
+                operator_name="Pawan Dixit",
+                operator_context=safe_context,
+                language="auto"
             )
+            reply_text = result.get("reply", "")
+            
+            # Send polite executive reply back to the friend
             await _send_whatsapp_message(sender, reply_text, wa_phone_id, wa_token)
-            return {"status": "unpaired"}
+            
+            # Record notification & follow-up task for Pawan!
+            try:
+                # 1. Log in Pawan's Unified Chat History
+                db.add(ChatMessage(user_email=operator_email, role="user", content=f"📩 [External WhatsApp from +{sender}]: {user_text}", action_type="external_msg"))
+                db.add(ChatMessage(user_email=operator_email, role="aether", content=f"🤖 [Aether Executive Auto-Reply to +{sender}]:\n{reply_text}", action_type="external_reply"))
+                
+                # 2. Add an actionable task in Pawan's list so he never forgets
+                new_t = Task(
+                    user_email=operator_email,
+                    title=f"Follow up with +{sender}: {user_text[:50]}",
+                    priority="medium",
+                    status="pending"
+                )
+                db.add(new_t)
+                db.commit()
+                
+                # 3. If operator's WhatsApp number is paired, ping Pawan with an alert!
+                if operator_phone and operator_phone != sender:
+                    pawan_alert = (
+                        f"📩 *New WhatsApp Message from Friend/Contact!*\n\n"
+                        f"• *From*: `+{sender}`\n"
+                        f"• *Message*: \"{user_text}\"\n"
+                        f"• *Aether Auto-Replied*: \"{reply_text}\"\n\n"
+                        f"✅ आपके एजेंडा में फॉलोअप टास्क जोड़ दिया गया है।"
+                    )
+                    asyncio.create_task(_send_whatsapp_message(operator_phone, pawan_alert, wa_phone_id, wa_token))
+            except Exception as e_log:
+                print(f"[Aether External Auto-Responder Error] {e_log}")
+            
+            return {"status": "external_reply_sent"}
 
         # Process through Aether AI engine
         context = build_context(db, user_email=user_email)
@@ -2543,7 +2759,29 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
             db.commit()
             reply = f"⚡ Aether WhatsApp Linked with {target_email}! Ab aap reminders aur kharch direct WhatsApp par bhej sakte hain."
         elif not user_email:
-            reply = "⚠️ Please link your email first by sending: /login your-email@gmail.com"
+            operator_mem = db.query(MemoryItem).filter(MemoryItem.category == "whatsapp_pairing").first()
+            operator_email = operator_mem.fact.split(":", 1)[1].strip() if operator_mem else "e.pawandixit@gmail.com"
+            operator_context = build_context(db, user_email=operator_email)
+            safe_context = {
+                "tasks": operator_context.get("tasks", []),
+                "user_name": "Pawan Dixit"
+            }
+            from ai_engine import generate_external_contact_reply
+            result = await generate_external_contact_reply(
+                sender_identifier=sender,
+                message_text=body,
+                operator_name="Pawan Dixit",
+                operator_context=safe_context,
+                language="auto"
+            )
+            reply = result.get("reply", "")
+            try:
+                db.add(ChatMessage(user_email=operator_email, role="user", content=f"📩 [External WhatsApp from +{sender}]: {body}", action_type="external_msg"))
+                db.add(ChatMessage(user_email=operator_email, role="aether", content=f"🤖 [Aether Executive Auto-Reply to +{sender}]:\n{reply}", action_type="external_reply"))
+                db.add(Task(user_email=operator_email, title=f"Follow up with +{sender}: {body[:50]}", priority="medium", status="pending"))
+                db.commit()
+            except Exception as e_log:
+                print(f"[Twilio Auto-Responder Log Error] {e_log}")
         else:
             from ai_engine import parse_intent_with_llm
             context = build_context(db, user_email=user_email)

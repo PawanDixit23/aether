@@ -66,8 +66,17 @@ import {
   Upload,
   Radio,
   Home,
-  LayoutDashboard
+  LayoutDashboard,
+  Phone,
+  Mail,
+  Copy
 } from 'lucide-react';
+
+const YoutubeIcon = ({ size = 20, color = "#fff" }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} style={{ display: 'block' }}>
+    <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+  </svg>
+);
 import { supabase } from './supabase';
 import { FormattedMessage } from './components/chat/FormattedMessage';
 import { AetherParticleSphere } from './components/chat/AetherParticleSphere';
@@ -3343,9 +3352,33 @@ export default function App() {
           setApiKey('');
         } catch (e) {}
       }
+
+      const actionType = result.action || result.parsed?.action;
+      const actionData = result.parsed?.data || result.data || {};
+
+      // If YouTube intent: auto open YouTube safely
+      if (actionType === 'youtube' && actionData?.url) {
+        try {
+          window.open(actionData.url, '_blank', 'noopener,noreferrer');
+        } catch (e) {
+          console.warn('YouTube popup notice:', e);
+        }
+      }
+
+      // If Call intent: auto trigger dialer if on mobile
+      if (actionType === 'call' && actionData?.tel_url) {
+        try {
+          window.location.href = actionData.tel_url;
+        } catch (e) {
+          console.warn('Tel dialer notice:', e);
+        }
+      }
+
       setChatHistory(prev => [...prev, {
         role: 'assistant',
         content: assistantReply,
+        action: actionType,
+        actionData: actionData,
         created_at: new Date().toISOString()
       }]);
 
@@ -4724,11 +4757,14 @@ export default function App() {
                   className="no-scrollbar" 
                   style={{ 
                     flex: 1, 
-                    overflowY: 'hidden', 
+                    overflowY: 'auto', 
                     overflowX: 'hidden', 
                     display: 'flex', 
                     flexDirection: 'column',
-                    minHeight: 0
+                    minHeight: 0,
+                    WebkitOverflowScrolling: 'touch',
+                    scrollbarWidth: 'none',
+                    msOverflowStyle: 'none'
                   }}
                 >
                   <DashboardView
@@ -4806,6 +4842,242 @@ export default function App() {
                         </div>
                       )}
                       <FormattedMessage text={msg.content} />
+                      {(() => {
+                        const actType = msg.action || msg.action_type;
+                        let aData = msg.actionData;
+                        if (!aData && typeof msg.action_data === 'string') {
+                          try { aData = JSON.parse(msg.action_data); } catch (e) {}
+                        }
+                        if (actType === 'youtube' || aData?.url?.includes('youtube.com')) {
+                          const ytUrl = aData?.url || `https://www.youtube.com/results?search_query=${encodeURIComponent(aData?.query || 'Trending')}`;
+                          return (
+                            <div style={{
+                              marginTop: '10px',
+                              padding: '10px 14px',
+                              borderRadius: '12px',
+                              background: 'rgba(239, 68, 68, 0.08)',
+                              border: '1px solid rgba(239, 68, 68, 0.25)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: '12px'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                                <div style={{
+                                  width: '34px',
+                                  height: '34px',
+                                  borderRadius: '8px',
+                                  background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  flexShrink: 0,
+                                  boxShadow: '0 2px 8px rgba(239, 68, 68, 0.4)'
+                                }}>
+                                  <YoutubeIcon size={20} color="#fff" />
+                                </div>
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {aData?.query || "YouTube Playback"}
+                                  </div>
+                                  <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                                    YouTube Media Stream
+                                  </div>
+                                </div>
+                              </div>
+                              <a
+                                href={ytUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  background: '#ef4444',
+                                  color: '#fff',
+                                  textDecoration: 'none',
+                                  padding: '6px 12px',
+                                  borderRadius: '8px',
+                                  fontSize: '0.78rem',
+                                  fontWeight: 600,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  flexShrink: 0,
+                                  boxShadow: '0 2px 6px rgba(239, 68, 68, 0.3)'
+                                }}
+                              >
+                                <Play size={13} fill="#fff" />
+                                <span>Play</span>
+                              </a>
+                            </div>
+                          );
+                        }
+                        if (actType === 'call' || aData?.tel_url) {
+                          const telUrl = aData?.tel_url || (aData?.phone_number ? `tel:${aData.phone_number}` : 'tel:');
+                          return (
+                            <div style={{
+                              marginTop: '10px',
+                              padding: '10px 14px',
+                              borderRadius: '12px',
+                              background: 'rgba(34, 197, 94, 0.08)',
+                              border: '1px solid rgba(34, 197, 94, 0.25)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: '12px'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                                <div style={{
+                                  width: '34px',
+                                  height: '34px',
+                                  borderRadius: '8px',
+                                  background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  flexShrink: 0,
+                                  boxShadow: '0 2px 8px rgba(34, 197, 94, 0.4)'
+                                }}>
+                                  <Phone size={18} color="#fff" />
+                                </div>
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {aData?.contact_name || "Phone Call"}
+                                  </div>
+                                  <div style={{ fontSize: '0.72rem', color: '#86efac' }}>
+                                    {aData?.phone_number || "Open Native Dialer"}
+                                  </div>
+                                </div>
+                              </div>
+                              <a
+                                href={telUrl}
+                                style={{
+                                  background: '#22c55e',
+                                  color: '#fff',
+                                  textDecoration: 'none',
+                                  padding: '6px 12px',
+                                  borderRadius: '8px',
+                                  fontSize: '0.78rem',
+                                  fontWeight: 600,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  flexShrink: 0,
+                                  boxShadow: '0 2px 6px rgba(34, 197, 94, 0.3)'
+                                }}
+                              >
+                                <Phone size={13} fill="#fff" />
+                                <span>Call Now</span>
+                              </a>
+                            </div>
+                          );
+                        }
+                        if (actType === 'draft_email' || aData?.email_body) {
+                          const mailtoUrl = aData?.mailto_url || `mailto:${aData?.email_recipient || ''}?subject=${encodeURIComponent(aData?.email_subject || 'Follow-up')}&body=${encodeURIComponent(aData?.email_body || '')}`;
+                          return (
+                            <div style={{
+                              marginTop: '10px',
+                              padding: '12px 14px',
+                              borderRadius: '12px',
+                              background: 'rgba(56, 189, 248, 0.08)',
+                              border: '1px solid rgba(56, 189, 248, 0.25)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '10px'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                                  <div style={{
+                                    width: '34px',
+                                    height: '34px',
+                                    borderRadius: '8px',
+                                    background: 'linear-gradient(135deg, #0284c7, #0369a1)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    flexShrink: 0,
+                                    boxShadow: '0 2px 8px rgba(2, 132, 199, 0.4)'
+                                  }}>
+                                    <Mail size={18} color="#fff" />
+                                  </div>
+                                  <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                      {aData?.email_subject || "Email Draft"}
+                                    </div>
+                                    <div style={{ fontSize: '0.72rem', color: '#7dd3fc' }}>
+                                      To: {aData?.email_recipient || "Recipient"}
+                                    </div>
+                                  </div>
+                                </div>
+                                <span style={{ fontSize: '0.68rem', padding: '2px 8px', borderRadius: '6px', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', fontWeight: 600 }}>
+                                  Draft Review
+                                </span>
+                              </div>
+                              {aData?.email_body && (
+                                <div style={{
+                                  background: 'rgba(15, 23, 42, 0.6)',
+                                  padding: '10px',
+                                  borderRadius: '8px',
+                                  fontSize: '0.78rem',
+                                  color: '#cbd5e1',
+                                  whiteSpace: 'pre-wrap',
+                                  maxHeight: '140px',
+                                  overflowY: 'auto',
+                                  lineHeight: '1.45',
+                                  border: '1px solid rgba(255,255,255,0.06)'
+                                }}>
+                                  {aData.email_body}
+                                </div>
+                              )}
+                              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '2px' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (aData?.email_body) {
+                                      navigator.clipboard?.writeText(aData.email_body);
+                                      showToast("Draft text copied to clipboard! 📋", 'success');
+                                    }
+                                  }}
+                                  style={{
+                                    background: 'rgba(255, 255, 255, 0.08)',
+                                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                                    color: '#f8fafc',
+                                    borderRadius: '8px',
+                                    padding: '6px 12px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 500,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px'
+                                  }}
+                                >
+                                  <Copy size={12} />
+                                  <span>Copy</span>
+                                </button>
+                                <a
+                                  href={mailtoUrl}
+                                  style={{
+                                    background: '#0284c7',
+                                    color: '#fff',
+                                    textDecoration: 'none',
+                                    padding: '6px 12px',
+                                    borderRadius: '8px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    boxShadow: '0 2px 6px rgba(2, 132, 199, 0.3)'
+                                  }}
+                                >
+                                  <ExternalLink size={12} />
+                                  <span>Open in Gmail</span>
+                                </a>
+                              </div>
+                            </div>
+                          );
+                        }
+                        return null;
+                      })()}
                       {msg.role !== 'user' && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
                           <button

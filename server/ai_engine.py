@@ -3,6 +3,7 @@ import json
 import re
 import urllib.request
 import urllib.parse
+from typing import Optional, List, Dict, Any
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 try:
@@ -665,11 +666,14 @@ Determine the action type:
 2. "expense": Logging money spent.
 3. "income": Logging money received.
 4. "memory": Storing a personal preference.
-5. "query": Answering questions (news, weather, general queries, translations).
+5. "youtube": Playing a song, music, video, bhajan, podcast, or opening YouTube (e.g. 'Play Hanuman Chalisa on YouTube', 'YouTube par Arijit Singh ka gana chalao', 'Play Kesariya', 'Open youtube').
+6. "call": Calling someone or dialing a phone number (e.g. 'Call Rahul', 'Rahul ko call lagao', 'Call +919876543210', 'Dial 9876543210', 'Phone lagao').
+7. "draft_email": Drafting an email or preparing an email reply (e.g. 'Draft an email to Rohit about project update', 'Email ka reply draft karo', 'Write an email to client about invoice').
+8. "query": Answering questions (news, weather, general queries, translations).
 
 Output Format (strictly valid JSON with no markdown wrapping):
 {{
-  "action": "task" | "expense" | "income" | "memory" | "query",
+  "action": "task" | "expense" | "income" | "memory" | "youtube" | "call" | "draft_email" | "query",
   "confidence": 0.0 to 1.0,
   "confidence_level": "high" | "medium" | "low",
   "data": {{
@@ -686,6 +690,14 @@ Output Format (strictly valid JSON with no markdown wrapping):
     "payment_mode": "string",
     "note": "string",
     "fact": "string",
+    "query": "string (for youtube search, e.g. 'Hanuman Chalisa')",
+    "url": "string (for youtube url, e.g. 'https://www.youtube.com/results?search_query=Hanuman+Chalisa')",
+    "contact_name": "string (for call, e.g. 'Rahul')",
+    "phone_number": "string (for call, e.g. '+919876543210' or null)",
+    "tel_url": "string (for call, e.g. 'tel:+919876543210' or null)",
+    "email_recipient": "string (for email, e.g. 'rohit@example.com' or 'Rohit')",
+    "email_subject": "string (for email, e.g. 'Project Update')",
+    "email_body": "string (formatted email body text)",
     "response": "Well-formatted text in the requested language"
   }},
   "explanation": "Brief reasoning"
@@ -1157,6 +1169,142 @@ def rule_based_fallback(text: str, context: dict = None) -> dict:
                 "explanation": "Known route distance handled in offline fallback"
             }
 
+    # 12. YouTube Music / Video Playback Intent
+    is_yt = any(w in text_lower for w in [
+        "youtube", "play ", "gana bajao", "gana chalao", "gaana chalao", 
+        "song play", "song chalao", "bhajan chalao", "video chalao", 
+        "suno", "sunao", "chalana", "bajao"
+    ]) or text_lower.startswith("play") or text_lower.startswith("open youtube")
+    if is_yt and not any(w in text_lower for w in ["remind", "reminder", "match", "game", "cricket", "football"]):
+        clean_q = re.sub(r'(?i)\b(play|open|suno|sunao|chalao|chala do|chala|bajao|baja do|gana|gaana|song|songs|video|bhajan|kholo|karo|dekho)\b', '', text)
+        clean_q = re.sub(r'(?i)\b(on|in|par|pe|me|se)\s+youtube\b', '', clean_q)
+        clean_q = re.sub(r'(?i)\byoutube\b', '', clean_q)
+        clean_q = re.sub(r'(?i)\b(ka|ke|ki|for)\b\s*$', '', clean_q).strip()
+        clean_q = re.sub(r'\s+', ' ', clean_q).strip(' :-.,')
+        if not clean_q or clean_q.lower() in ["youtube", "video", "song", "gana", "gaana", "trending"]:
+            clean_q = "Trending"
+            yt_url = "https://www.youtube.com"
+        else:
+            import urllib.parse
+            yt_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(clean_q)}"
+
+        is_hi = any(w in text_lower for w in ["gana", "chalao", "bajao", "par", "pe", "suno", "sunao"]) or any('\u0900' <= ch <= '\u097f' for ch in text)
+        msg = f"🎬 YouTube पर '{clean_q}' खोला जा रहा है..." if is_hi else f"🎬 Playing '{clean_q}' on YouTube..."
+        return {
+            "action": "youtube",
+            "confidence": 0.98,
+            "confidence_level": "high",
+            "data": {
+                "query": clean_q,
+                "url": yt_url,
+                "response": msg
+            },
+            "explanation": "Rule-based YouTube music/video playback detection"
+        }
+
+    # 13. Phone Call / Dialer Intent
+    has_call_kw = any(w in text_lower for w in ["call", "dial", "phone lagao", "phone karo", "call lagao", "call karo", "call milao", "call mila"])
+    has_future_time = bool(re.search(r'\b(?:am|pm|baje|o\'clock|tomorrow|kal|schedule|remind|reminder)\b', text_lower))
+    is_immediate_call = has_call_kw and not has_future_time and not any(w in text_lower for w in ["karna hai", "karni hai"])
+    if is_immediate_call:
+        phone_match = re.search(r'(\+?\d[\d\s\-]{8,14}\d)', text)
+        phone_num = phone_match.group(1).replace(" ", "").replace("-", "") if phone_match else None
+        
+        contact_name = text
+        if phone_match:
+            contact_name = contact_name.replace(phone_match.group(1), "")
+        contact_name = re.sub(r'(?i)\b(call\s+to|call|dial|phone|lagao|karo|milao|bhejo|please)\b', '', contact_name)
+        contact_name = re.sub(r'(?i)\bko\b', '', contact_name)
+        contact_name = re.sub(r'\s+', ' ', contact_name).strip(' :-.,')
+        if not contact_name and phone_num:
+            contact_name = phone_num
+        elif not contact_name:
+            contact_name = "Contact"
+
+        if not phone_num and context:
+            for mem in context.get("memories", []):
+                mem_fact = mem.get("fact", "") if isinstance(mem, dict) else str(mem)
+                if contact_name.lower() in mem_fact.lower():
+                    m_num = re.search(r'(\+?\d[\d\s\-]{8,14}\d)', mem_fact)
+                    if m_num:
+                        phone_num = m_num.group(1).replace(" ", "").replace("-", "")
+                        break
+
+        tel_url = f"tel:{phone_num}" if phone_num else "tel:"
+        is_hi = any(w in text_lower for w in ["ko", "lagao", "karo", "milao"]) or any('\u0900' <= ch <= '\u097f' for ch in text)
+        if phone_num:
+            msg = f"📞 {contact_name} ({phone_num}) को कॉल मिलाई जा रही है..." if is_hi else f"📞 Dialing {contact_name} ({phone_num})..."
+        else:
+            msg = f"📞 {contact_name} के लिए फ़ोन डायलर खोला जा रहा है..." if is_hi else f"📞 Opening phone dialer for {contact_name}..."
+
+        return {
+            "action": "call",
+            "confidence": 0.98,
+            "confidence_level": "high",
+            "data": {
+                "contact_name": contact_name,
+                "phone_number": phone_num,
+                "tel_url": tel_url,
+                "response": msg
+            },
+            "explanation": "Rule-based phone dialer intent"
+        }
+
+    # 14. Automatic Bank SMS Expense / Income Parser
+    if any(w in text_lower for w in ["debited", "credited", "spent", "withdrawn", "deposited", "transferred", "a/c", "acct"]):
+        sms_parsed = parse_bank_sms(text)
+        if sms_parsed and sms_parsed.get("amount", 0) > 0:
+            is_hi = any('\u0900' <= ch <= '\u097f' for ch in text) or any(w in text_lower for w in ["mera", "kharch", "jod", "karo"])
+            if sms_parsed["type"] == "expense":
+                msg = f"🧾 **बैंक एसएमएस से खर्च दर्ज किया गया:**\n• **मर्चेंट/विवरण**: {sms_parsed['merchant']}\n• **राशि**: ₹{sms_parsed['amount']:,.2f}\n• **श्रेणी**: {sms_parsed['category'].title()}\n• **तारीख/समय**: {sms_parsed['date'].strftime('%d %b %Y, %I:%M %p')}\n• **माध्यम**: {sms_parsed['payment_mode'].upper()} ✅" if is_hi else f"🧾 **Expense Auto-Logged from Bank SMS:**\n• **Merchant**: {sms_parsed['merchant']}\n• **Amount**: ₹{sms_parsed['amount']:,.2f}\n• **Category**: {sms_parsed['category'].title()}\n• **Date/Time**: {sms_parsed['date'].strftime('%d %b %Y, %I:%M %p')}\n• **Mode**: {sms_parsed['payment_mode'].upper()} ✅"
+            else:
+                msg = f"💰 **बैंक एसएमएस से आय दर्ज की गई:**\n• **विवरण**: {sms_parsed['merchant']}\n• **राशि**: ₹{sms_parsed['amount']:,.2f}\n• **श्रेणी**: {sms_parsed['category'].title()}\n• **तारीख/समय**: {sms_parsed['date'].strftime('%d %b %Y, %I:%M %p')} ✅" if is_hi else f"💰 **Income Auto-Logged from Bank SMS:**\n• **Details**: {sms_parsed['merchant']}\n• **Amount**: ₹{sms_parsed['amount']:,.2f}\n• **Date/Time**: {sms_parsed['date'].strftime('%d %b %Y, %I:%M %p')} ✅"
+            return {
+                "action": sms_parsed["type"],
+                "confidence": 0.99,
+                "confidence_level": "high",
+                "data": {
+                    "amount": sms_parsed["amount"],
+                    "currency": "INR",
+                    "category": sms_parsed["category"],
+                    "payment_mode": sms_parsed["payment_mode"],
+                    "note": f"{sms_parsed['merchant']} (via Bank SMS)",
+                    "date": sms_parsed["date"].isoformat(),
+                    "response": msg
+                },
+                "explanation": f"Automated Indian Bank SMS {sms_parsed['type']} parser"
+            }
+
+    # 15. Email Drafting Intent
+    is_email_draft = any(w in text_lower for w in ["draft an email", "draft email", "write an email", "write email", "email draft", "email ka reply", "email ka draft", "reply to email", "email likho", "email bhejna"])
+    if is_email_draft:
+        recip_match = re.search(r'(?:to|for|kisko)\s+([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|[A-Za-z]+)', text, re.I)
+        recip = recip_match.group(1).strip() if recip_match else "Recipient"
+        subj_match = re.search(r'(?:regarding|about|subject|par|vishay)\s+([^\.,;:\n]+)', text, re.I)
+        subj = subj_match.group(1).strip().title() if subj_match else "Discussion & Next Steps"
+        body = (
+            f"Dear {recip},\n\n"
+            f"I hope this message finds you well.\n\n"
+            f"Following up regarding {subj}, please review the proposed action items. "
+            f"Let me know if this aligns with your expectations or if you would like to schedule a quick sync.\n\n"
+            f"Warm regards,\n"
+            f"Pawan Dixit"
+        )
+        is_hi = any('\u0900' <= ch <= '\u097f' for ch in text) or any(w in text_lower for w in ["likho", "bana", "karo", "ka"])
+        msg = f"✉️ **ईमेल ड्राफ्ट तैयार किया गया है:**\n• **प्राप्तकर्ता**: {recip}\n• **विषय**: {subj}\n\nसमीक्षा और संपादन के लिए नीचे ड्राफ्ट कार्ड देखें। 📝" if is_hi else f"✉️ **Email Draft Created:**\n• **To**: {recip}\n• **Subject**: {subj}\n\nReview the draft card below before sending. 📝"
+        return {
+            "action": "draft_email",
+            "confidence": 0.98,
+            "confidence_level": "high",
+            "data": {
+                "email_recipient": recip,
+                "email_subject": subj,
+                "email_body": body,
+                "response": msg
+            },
+            "explanation": "Rule-based email draft generation"
+        }
+
     # Financial Expense detection
     expense_match = re.search(r'(?:₹|rs\.?|inr)?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:₹|rs\.?|inr|rupees|rupaye)?\s*(?:खर्च|diye|paid|spent|deducted|advance|de diye)?', text_lower)
     is_expense = any(w in text_lower for w in ["खर्च", "diye", "paid", "spent", "kharch", "bought", "khareeda", "advances", "payment"])
@@ -1265,4 +1413,266 @@ def rule_based_fallback(text: str, context: dict = None) -> dict:
             "recurrence": rec_val
         },
         "explanation": "Extracted task and reminder"
+    }
+
+async def generate_external_contact_reply(
+    sender_identifier: str,
+    message_text: str,
+    operator_name: str = "Pawan Dixit",
+    operator_context: dict = None,
+    language: str = "auto"
+) -> dict:
+    """Generates an executive, privacy-preserving auto-reply when an external contact/friend messages the operator.
+    Safely answers availability, takes messages, and strictly protects all private finances and secrets.
+    """
+    msg_lower = message_text.lower().strip()
+    is_hindi = any(w in msg_lower for w in ["kya", "bhai", "namaste", "kaise", "kab", "mil", "aaj", "kal", "samay", "kahan", "batao"]) or any('\u0900' <= ch <= '\u097f' for ch in message_text)
+    
+    # 1. Fallback response in case LLM is unreachable or timed out
+    if is_hindi:
+        fallback_reply = (
+            f"⚡ *Aether Executive Assistant*\n\n"
+            f"नमस्ते! मैं Aether हूँ, {operator_name} का AI डिजिटल चीफ ऑफ स्टाफ।\n\n"
+            f"आपका संदेश दर्ज कर लिया गया है:\n"
+            f"« {message_text} »\n\n"
+            f"{operator_name} अभी व्यस्त हैं। मैंने उन्हें सूचित कर दिया है, वे जल्द ही आपसे संपर्क करेंगे। 🤝"
+        )
+    else:
+        fallback_reply = (
+            f"⚡ *Aether Executive Assistant*\n\n"
+            f"Hello! I am Aether, Executive AI Chief of Staff for {operator_name}.\n\n"
+            f"I have received and logged your message:\n"
+            f"« {message_text} »\n\n"
+            f"{operator_name} is currently occupied. I have forwarded your message to their agenda for quick followup! 🤝"
+        )
+
+    # 2. Try Gemini LLM for high-intelligence contextual reply
+    server_key = os.getenv("GEMINI_API_KEY", "").strip() or (GEMINI_API_KEY.strip() if GEMINI_API_KEY else "")
+    if server_key:
+        tasks_count = len(operator_context.get("tasks", [])) if operator_context else 0
+        prompt = f"""You are Aether ⚡, the Autonomous Executive Chief of Staff representing {operator_name}.
+A contact/friend ({sender_identifier}) has sent a message for {operator_name}:
+"{message_text}"
+
+Current Date/Time: {datetime.now().strftime('%A, %d %B %Y, %I:%M %p')}
+{operator_name}'s Public Status: Occupied with work/meetings ({tasks_count} scheduled items).
+
+CRITICAL STRICT PRIVACY AND SAFETY RULES:
+1. NEVER disclose bank balances, finances, expenses, income, accounts, or payment amounts.
+2. NEVER disclose passwords, private memory, credentials, or personal secrets.
+3. Be exceedingly polite, courteous, professional, and helpful.
+4. If they ask about availability (e.g. "when can we meet?", "is he free?"), inform them that {operator_name} is currently in meetings and offer to take a message or schedule a call.
+5. Mirror their language naturally (Hindi if they spoke Hindi/Hinglish, English if they spoke English).
+
+You must return a valid JSON response with this exact structure:
+{{
+  "reply": "Clear, polite response to the contact",
+  "summary_for_operator": "One line summary of what the contact wanted",
+  "suggested_task": "Action item title for {operator_name} to follow up"
+}}
+"""
+        models_to_try = [GEMINI_MODEL, "gemini-3-flash-preview", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest"]
+        for m in models_to_try:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={server_key}"
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.2}
+                }
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    resp = await client.post(url, json=payload)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            raw_text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                            json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+                            if json_match:
+                                parsed = json.loads(json_match.group(0))
+                                return {
+                                    "reply": parsed.get("reply", fallback_reply),
+                                    "summary_for_operator": parsed.get("summary_for_operator", f"Message from {sender_identifier}: {message_text}"),
+                                    "suggested_task": parsed.get("suggested_task", f"Call/Message {sender_identifier}")
+                                }
+            except Exception as e:
+                print(f"[Aether External Auto-Responder] LLM notice on {m}: {e}")
+
+    return {
+        "reply": fallback_reply,
+        "summary_for_operator": f"Message from {sender_identifier}: {message_text}",
+        "suggested_task": f"Call/Message {sender_identifier} regarding: {message_text[:40]}"
+    }
+
+def parse_sms_datetime(text: str) -> datetime:
+    """Parses date & time from Indian Bank SMS messages (e.g. '30-OCT-26 14:35:10', '29Oct26', '28-10-2026')."""
+    m = re.search(r'(\d{1,2})[-/]?([A-Za-z]{3})[-/]?(\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?)?', text, re.I)
+    if not m:
+        m = re.search(r'(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?)?', text, re.I)
+    if m:
+        d, mth, y = m.group(1), m.group(2), m.group(3)
+        hr = int(m.group(4) or 12)
+        mn = int(m.group(5) or 0)
+        sec = int(m.group(6) or 0)
+        ampm = (m.group(7) or '').upper()
+        if ampm == 'PM' and hr < 12: hr += 12
+        if ampm == 'AM' and hr == 12: hr = 0
+        month_map = {'jan':1, 'feb':2, 'mar':3, 'apr':4, 'may':5, 'jun':6, 'jul':7, 'aug':8, 'sep':9, 'oct':10, 'nov':11, 'dec':12}
+        month = month_map.get(mth.lower(), int(mth) if mth.isdigit() else 1)
+        year = int(y)
+        if year < 100: year += 2000
+        return datetime(year, month, int(d), hr, mn, sec)
+    return datetime.utcnow()
+
+def parse_bank_sms(text: str) -> Optional[dict]:
+    """Deterministically extracts financial transaction details from Indian Bank SMS alerts."""
+    text_clean = text.replace('\n', ' ')
+    
+    # 1. Detect credit vs debit
+    is_credit = bool(re.search(r'\b(credited|received|deposited|refunded)\b', text_clean, re.I))
+    is_debit = bool(re.search(r'\b(debited|spent|paid|withdrawn|sent|deducted|transferred to)\b', text_clean, re.I))
+    if not is_credit and not is_debit:
+        return None
+    txn_type = 'income' if is_credit else 'expense'
+    
+    # 2. Extract Amount
+    amt_match = re.search(r'(?:inr|rs\.?|₹)\s*([\d,]+(?:\.\d{1,2})?)', text_clean, re.I)
+    if not amt_match:
+        amt_match = re.search(r'\b(?:by|with|for|of)\s+([\d,]+(?:\.\d{1,2})?)\b', text_clean, re.I)
+    if not amt_match:
+        return None
+    try:
+        amount = float(amt_match.group(1).replace(',', ''))
+    except Exception:
+        return None
+        
+    # 3. Extract Merchant / Info
+    merchant = 'Transaction'
+    m_patterns = [
+        r'(?:towards|to|at|info:?|vpa)\s+([A-Za-z0-9\s\.\-_&]+?)(?:\s+(?:on|using|via|ref|bal|available|upi|\.|\,|$))',
+        r'(?:transfer to|paid at)\s+([A-Za-z0-9\s\.\-_&]+?)(?:\s+(?:ref|bal|\.|$))',
+    ]
+    for pat in m_patterns:
+        m_match = re.search(pat, text_clean, re.I)
+        if m_match:
+            candidate = m_match.group(1).strip()
+            if candidate and not any(w in candidate.lower() for w in ['inr', 'rs', 'a/c', 'acct', 'your', 'bank']):
+                merchant = candidate
+                break
+
+    # 4. Extract Category
+    merchant_l = merchant.lower()
+    cat = 'general'
+    if any(w in merchant_l for w in ['swiggy', 'zomato', 'chai', 'coffee', 'food', 'restaurant', 'mcdonald', 'kfc', 'burger']):
+        cat = 'food'
+    elif any(w in merchant_l for w in ['shell', 'petrol', 'fuel', 'hpcl', 'bpcl', 'ioc', 'uber', 'ola', 'rapido', 'metro']):
+        cat = 'fuel' if any(w in merchant_l for w in ['shell', 'petrol', 'fuel', 'hpcl', 'bpcl', 'ioc']) else 'travel'
+    elif any(w in merchant_l for w in ['amazon', 'flipkart', 'myntra', 'blinkit', 'zepto', 'instamart']):
+        cat = 'shopping'
+    elif any(w in merchant_l for w in ['electricity', 'bijli', 'airtel', 'jio', 'vi', 'bill', 'bescom', 'recharge']):
+        cat = 'bills'
+    elif txn_type == 'income' and 'salary' in text_clean.lower():
+        cat = 'salary'
+
+    # 5. Extract Payment Mode
+    mode = 'upi'
+    if 'card' in text_clean.lower():
+        mode = 'card'
+    elif 'neft' in text_clean.lower() or 'rtgs' in text_clean.lower() or 'netbanking' in text_clean.lower():
+        mode = 'netbanking'
+    elif 'atm' in text_clean.lower():
+        mode = 'cash'
+
+    # 6. Extract Date & Time
+    txn_dt = parse_sms_datetime(text_clean)
+
+    return {
+        'type': txn_type,
+        'amount': amount,
+        'merchant': merchant,
+        'category': cat,
+        'payment_mode': mode,
+        'date': txn_dt
+    }
+
+async def generate_email_draft(
+    sender: str,
+    subject: str,
+    body: str,
+    instructions: str = "",
+    operator_name: str = "Pawan Dixit",
+    language: str = "en"
+) -> dict:
+    """Generates a professional, context-aware email draft reply for human review."""
+    clean_subj = subject.strip()
+    if not clean_subj.lower().startswith("re:"):
+        reply_subj = f"Re: {clean_subj}"
+    else:
+        reply_subj = clean_subj
+
+    prompt = f"""You are Aether ⚡, the Chief of Staff drafting an email reply on behalf of {operator_name}.
+
+Original Email Details:
+• From: {sender}
+• Subject: {subject}
+• Content:
+{body}
+
+Operator's Instructions / Intent:
+{instructions or 'Acknowledge politely, accept or request clarification as appropriate, and close warmly.'}
+
+Requirements:
+1. Write a clear, courteous, concise, and professional email body.
+2. Sign off as:
+   Warm regards,
+   {operator_name}
+3. Strictly protect private financial or confidential details.
+4. Output valid JSON with this exact structure:
+{{
+  "recipient": "{sender}",
+  "subject": "{reply_subj}",
+  "body": "Formatted email reply body text",
+  "summary": "1-line summary of what the draft says"
+}}
+"""
+    server_key = os.getenv("GEMINI_API_KEY", "").strip() or (GEMINI_API_KEY.strip() if GEMINI_API_KEY else "")
+    if server_key:
+        models_to_try = [GEMINI_MODEL, "gemini-3-flash-preview", "gemini-3.5-flash", "gemini-2.5-flash"]
+        for m in models_to_try:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={server_key}"
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.3}
+                }
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    resp = await client.post(url, json=payload)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            raw_text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                            j_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+                            if j_match:
+                                parsed = json.loads(j_match.group(0))
+                                return {
+                                    "recipient": parsed.get("recipient", sender),
+                                    "subject": parsed.get("subject", reply_subj),
+                                    "body": parsed.get("body", "").strip(),
+                                    "summary": parsed.get("summary", "Draft email reply prepared.")
+                                }
+            except Exception as e:
+                print(f"[Email Drafter] Notice on {m}: {e}")
+
+    fallback_body = (
+        f"Hi,\n\n"
+        f"Thank you for reaching out regarding \"{clean_subj}\".\n\n"
+        f"I have received your message and will review the details shortly. Let me know if there are any immediate questions in the meantime.\n\n"
+        f"Warm regards,\n"
+        f"{operator_name}"
+    )
+    return {
+        "recipient": sender,
+        "subject": reply_subj,
+        "body": fallback_body,
+        "summary": "Standard executive acknowledgement draft."
     }

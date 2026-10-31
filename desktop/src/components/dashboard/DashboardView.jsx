@@ -99,11 +99,9 @@ export const DashboardView = ({
         margin: '0 auto', 
         display: 'flex', 
         flexDirection: 'column', 
-        height: '100%', 
+        minHeight: '100%', 
         boxSizing: 'border-box', 
-        overflowY: 'auto', 
-        overflowX: 'hidden',
-        padding: '8px 12px 24px',
+        padding: '2px 12px 88px',
         scrollbarWidth: 'none',
         msOverflowStyle: 'none',
         WebkitOverflowScrolling: 'touch'
@@ -111,7 +109,7 @@ export const DashboardView = ({
     >
       
       {/* 1. GREETING & DATE HEADLINE */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', paddingTop: '4px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', paddingTop: '2px' }}>
         <div>
           <h1 style={{ fontSize: '1.45rem', fontWeight: 700, color: '#ffffff', margin: '0 0 2px 0', letterSpacing: '-0.02em' }}>
             {getGreeting()}, {userName || 'Pawan'}
@@ -149,7 +147,7 @@ export const DashboardView = ({
       </div>
 
       {/* 3. CENTER ORB (Holographic Blue Earth with Concentric Orbital Rings) */}
-      <div style={{ position: 'relative', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', margin: '4px 0 12px' }}>
+      <div style={{ position: 'relative', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', margin: '2px 0 6px' }}>
         
         {/* Orbital Ring Background Visual */}
         <div 
@@ -158,8 +156,8 @@ export const DashboardView = ({
           }}
           style={{ 
             position: 'relative', 
-            width: '180px', 
-            height: '175px', 
+            width: '160px', 
+            height: '150px', 
             display: 'flex', 
             alignItems: 'center', 
             justifyContent: 'center',
@@ -170,8 +168,8 @@ export const DashboardView = ({
           {/* Outer glowing orbital rings */}
           <div style={{
             position: 'absolute',
-            width: '175px',
-            height: '70px',
+            width: '155px',
+            height: '62px',
             border: isListening ? '1.5px solid rgba(56, 189, 248, 0.6)' : '1px solid rgba(56, 189, 248, 0.25)',
             borderRadius: '50%',
             transform: 'rotate(-25deg)',
@@ -182,8 +180,8 @@ export const DashboardView = ({
 
           <div style={{
             position: 'absolute',
-            width: '180px',
-            height: '78px',
+            width: '160px',
+            height: '68px',
             border: isSpeaking ? '1.5px solid rgba(168, 85, 247, 0.6)' : '1px solid rgba(56, 189, 248, 0.15)',
             borderRadius: '50%',
             transform: 'rotate(22deg)',
@@ -193,13 +191,13 @@ export const DashboardView = ({
 
           {/* Central Holographic Blue Sphere with Canvas/Particles */}
           <div style={{
-            width: '130px',
-            height: '130px',
+            width: '116px',
+            height: '116px',
             borderRadius: '50%',
             background: 'radial-gradient(circle at 35% 30%, #38bdf8 0%, #1d4ed8 50%, #030712 95%)',
             boxShadow: isListening 
-              ? '0 0 45px rgba(56, 189, 248, 0.8), inset 0 0 25px rgba(255, 255, 255, 0.6)' 
-              : '0 0 35px rgba(37, 99, 235, 0.5), inset 0 0 20px rgba(56, 189, 248, 0.4)',
+              ? '0 0 40px rgba(56, 189, 248, 0.8), inset 0 0 22px rgba(255, 255, 255, 0.6)' 
+              : '0 0 30px rgba(37, 99, 235, 0.5), inset 0 0 18px rgba(56, 189, 248, 0.4)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -214,8 +212,8 @@ export const DashboardView = ({
 
             {/* Glowing Digital Core Atmosphere */}
             <div style={{
-              width: '50px',
-              height: '50px',
+              width: '44px',
+              height: '44px',
               borderRadius: '50%',
               background: 'radial-gradient(circle, rgba(255,255,255,0.7) 0%, rgba(56,189,248,0.2) 60%, transparent 100%)',
               filter: 'blur(4px)',
@@ -225,12 +223,12 @@ export const DashboardView = ({
         </div>
 
         {/* Caption below Orb */}
-        <div style={{ fontSize: '0.74rem', color: '#94a3b8', margin: '8px 0 10px 0', fontWeight: 500 }}>
+        <div style={{ fontSize: '0.72rem', color: '#94a3b8', margin: '6px 0 8px 0', fontWeight: 500 }}>
           Tap to talk • Hold for continuous
         </div>
 
         {/* Mode Switcher Capsule: [Voice] [Ask] [Agent] */}
-        <div style={{ display: 'flex', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '24px', padding: '3px', gap: '4px' }}>
+        <div style={{ display: 'flex', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '24px', padding: '3px', gap: '4px', marginBottom: '10px' }}>
           <button
             type="button"
             onClick={() => {
@@ -308,18 +306,18 @@ export const DashboardView = ({
       </div>
 
       {/* 4. QUICK ACTION CARDS (4 Columns) matching Screenshot 1 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '18px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '12px' }}>
         
         {/* Card 1: Add Task */}
         <button
           type="button"
           onClick={() => setActiveSubModal('reminders')}
-          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '12px 6px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'transform 0.15s' }}
+          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '9px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', transition: 'transform 0.15s' }}
         >
-          <div style={{ width: '38px', height: '38px', borderRadius: '12px', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.35)' }}>
-            <Check size={20} strokeWidth={2.8} />
+          <div style={{ width: '36px', height: '36px', borderRadius: '11px', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.35)' }}>
+            <Check size={19} strokeWidth={2.8} />
           </div>
-          <span style={{ fontSize: '0.72rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: '0.71rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
             Add Task
           </span>
         </button>
@@ -331,12 +329,12 @@ export const DashboardView = ({
             setActiveSubModal('finance');
             setIsAddingExpense(true);
           }}
-          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '12px 6px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'transform 0.15s' }}
+          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '9px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', transition: 'transform 0.15s' }}
         >
-          <div style={{ width: '38px', height: '38px', borderRadius: '12px', background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', boxShadow: '0 4px 12px rgba(245, 158, 11, 0.35)' }}>
-            <Wallet size={19} />
+          <div style={{ width: '36px', height: '36px', borderRadius: '11px', background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', boxShadow: '0 4px 12px rgba(245, 158, 11, 0.35)' }}>
+            <Wallet size={18} />
           </div>
-          <span style={{ fontSize: '0.72rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: '0.71rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
             Add Expense
           </span>
         </button>
@@ -345,12 +343,12 @@ export const DashboardView = ({
         <button
           type="button"
           onClick={() => setIsCameraOpen(true)}
-          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '12px 6px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'transform 0.15s' }}
+          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '9px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', transition: 'transform 0.15s' }}
         >
-          <div style={{ width: '38px', height: '38px', borderRadius: '12px', background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', boxShadow: '0 4px 12px rgba(168, 85, 247, 0.35)' }}>
-            <Camera size={19} />
+          <div style={{ width: '36px', height: '36px', borderRadius: '11px', background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', boxShadow: '0 4px 12px rgba(168, 85, 247, 0.35)' }}>
+            <Camera size={18} />
           </div>
-          <span style={{ fontSize: '0.72rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: '0.71rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
             Scan Bill
           </span>
         </button>
@@ -359,19 +357,19 @@ export const DashboardView = ({
         <button
           type="button"
           onClick={() => setActiveSubModal('memory')}
-          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '12px 6px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'transform 0.15s' }}
+          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '9px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', transition: 'transform 0.15s' }}
         >
-          <div style={{ width: '38px', height: '38px', borderRadius: '12px', background: 'linear-gradient(135deg, #0284c7 0%, #2563eb 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', boxShadow: '0 4px 12px rgba(2, 132, 199, 0.35)' }}>
-            <FileText size={19} />
+          <div style={{ width: '36px', height: '36px', borderRadius: '11px', background: 'linear-gradient(135deg, #0284c7 0%, #2563eb 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', boxShadow: '0 4px 12px rgba(2, 132, 199, 0.35)' }}>
+            <FileText size={18} />
           </div>
-          <span style={{ fontSize: '0.72rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: '0.71rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
             Create Note
           </span>
         </button>
       </div>
 
       {/* 5. TODAY'S OVERVIEW SECTION matching Screenshot 1 */}
-      <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '14px 12px', marginBottom: '14px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
+      <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '12px 10px', marginBottom: '24px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <span style={{ fontSize: '0.94rem', fontWeight: 700, color: '#ffffff' }}>
             Today's Overview
