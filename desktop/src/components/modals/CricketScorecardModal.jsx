@@ -63,6 +63,21 @@ export function CricketScorecardModal({
   const [detailTab, setDetailTab] = useState('scorecard'); // 'scorecard' | 'squads' | 'info' | 'live'
   const [expandedInnings, setExpandedInnings] = useState({});
 
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth <= 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const effectiveApiBase = apiBase || (typeof window !== 'undefined' && window.location.port === '5173'
     ? `http://${window.location.hostname}:8000/api`
     : '/api');
@@ -141,8 +156,6 @@ export function CricketScorecardModal({
       if (feedTimer) clearInterval(feedTimer);
     };
   }, [isOpen, selectedMatch?.id, selectedMatch?.status, effectiveApiBase]);
-
-  if (!isOpen) return null;
 
   // Active matches source
   const displayMatches = (matches && matches.length > 0) ? matches : internalMatches;
@@ -257,44 +270,55 @@ export function CricketScorecardModal({
     return m.name || 'Match Center';
   };
 
+  if (!isOpen) return null;
+
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      background: 'rgba(5, 8, 16, 0.88)',
-      backdropFilter: 'blur(20px)',
-      WebkitBackdropFilter: 'blur(20px)',
-      zIndex: 1100,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '16px',
-      animation: 'fadeIn 0.2s ease-out'
-    }}>
-      <div style={{
-        width: '100%',
-        maxWidth: '820px',
-        maxHeight: '92vh',
-        background: '#0a0f1d',
-        border: '1px solid rgba(56, 189, 248, 0.25)',
-        borderRadius: '24px',
-        boxShadow: '0 25px 70px rgba(0, 0, 0, 0.9), 0 0 35px rgba(56, 189, 248, 0.12)',
+    <div 
+      className="aether-edge-modal-overlay"
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(5, 8, 16, 0.94)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        zIndex: 1100,
         display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden'
-      }}>
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: isMobile ? 0 : '16px',
+        animation: 'fadeIn 0.2s ease-out'
+      }}
+    >
+      <div 
+        className="aether-edge-modal-container"
+        style={{
+          width: '100%',
+          maxWidth: isMobile ? '100%' : '820px',
+          height: isMobile ? '100%' : 'auto',
+          height: isMobile ? '100dvh' : 'auto',
+          maxHeight: isMobile ? '100dvh' : '92vh',
+          background: '#0a0f1d',
+          border: isMobile ? 'none' : '1px solid rgba(56, 189, 248, 0.25)',
+          borderRadius: isMobile ? 0 : '24px',
+          boxShadow: isMobile ? 'none' : '0 25px 70px rgba(0, 0, 0, 0.9), 0 0 35px rgba(56, 189, 248, 0.12)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden'
+        }}
+      >
         {/* Top Header */}
         <div style={{
-          padding: '16px 20px',
+          padding: isMobile ? '12px 14px' : '16px 20px',
+          paddingTop: isMobile ? 'max(12px, env(safe-area-inset-top))' : '16px',
           background: selectedMatch ? '#007953' : 'linear-gradient(180deg, #0e172a 0%, #0a0f1d 100%)',
           borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          gap: '14px',
+          gap: isMobile ? '8px' : '14px',
           color: '#ffffff'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
@@ -1182,7 +1206,8 @@ export function CricketScorecardModal({
 
         {/* Footer */}
         <div style={{
-          padding: '12px 20px',
+          padding: isMobile ? '10px 14px' : '12px 20px',
+          paddingBottom: isMobile ? 'max(14px, env(safe-area-inset-bottom))' : '12px',
           borderTop: '1px solid rgba(255, 255, 255, 0.08)',
           background: 'rgba(0, 0, 0, 0.35)',
           display: 'flex',

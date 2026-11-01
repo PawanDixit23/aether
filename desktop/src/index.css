@@ -98,6 +98,31 @@ body {
   background-color: var(--bg-app);
 }
 
+/* Edge-to-Edge Responsive Modal for Mobile App & Small Screens */
+@media (max-width: 768px) {
+  .aether-edge-modal-overlay {
+    padding: 0 !important;
+    align-items: stretch !important;
+    justify-content: stretch !important;
+  }
+  .aether-edge-modal-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: 100vh !important;
+    min-height: 100dvh !important;
+    height: 100% !important;
+    height: 100dvh !important;
+    max-height: 100% !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  .aether-edge-modal-inner {
+    border-radius: 0 !important;
+  }
+}
+
 /* Day Progression Ambient Overlays */
 .phase-morning {
   background-image: 

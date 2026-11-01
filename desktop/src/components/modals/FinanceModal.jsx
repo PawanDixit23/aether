@@ -72,8 +72,6 @@ export const FinanceModal = ({
   userEmail,
   API_BASE
 }) => {
-  if (!isOpen) return null;
-
   // Active view tab: 'overview' | 'budgets' | 'transactions'
   const [activeTab, setActiveTab] = useState('overview');
   const [isBalanceHidden, setIsBalanceHidden] = useState(false);
@@ -82,6 +80,21 @@ export const FinanceModal = ({
   const [userSelectedWeekIdx, setUserSelectedWeekIdx] = useState(null);
   const [hoveredDayIdx, setHoveredDayIdx] = useState(null);
   const [selectedDayDetail, setSelectedDayDetail] = useState(null);
+
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth <= 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Bank SMS Auto-Log State
   const [isSmsParserOpen, setIsSmsParserOpen] = useState(false);
@@ -427,9 +440,45 @@ export const FinanceModal = ({
   const weeklyData = currentWeek.days || [];
   const maxWeeklyExpense = Math.max(...weeklyData.map(d => d.amountNum), 1);
 
+  if (!isOpen) return null;
+
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.88)', backdropFilter: 'blur(16px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-      <div style={{ background: '#080f1d', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '28px', padding: '22px 20px', width: '100%', maxWidth: '440px', maxHeight: '92vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', boxShadow: '0 24px 64px rgba(0,0,0,0.85)' }}>
+    <div 
+      className="aether-edge-modal-overlay"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0, 0, 0, 0.92)',
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
+        zIndex: 120,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: isMobile ? 0 : '16px'
+      }}
+    >
+      <div 
+        className="aether-edge-modal-container"
+        style={{
+          background: '#080f1d',
+          border: isMobile ? 'none' : '1px solid rgba(255, 255, 255, 0.1)',
+          borderRadius: isMobile ? 0 : '28px',
+          padding: isMobile ? '16px 14px 24px 14px' : '22px 20px',
+          paddingTop: isMobile ? 'max(16px, env(safe-area-inset-top))' : '22px',
+          paddingBottom: isMobile ? 'max(24px, env(safe-area-inset-bottom))' : '20px',
+          width: '100%',
+          maxWidth: isMobile ? '100%' : '440px',
+          height: isMobile ? '100%' : 'auto',
+          height: isMobile ? '100dvh' : 'auto',
+          maxHeight: isMobile ? '100dvh' : '92vh',
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          boxSizing: 'border-box',
+          boxShadow: isMobile ? 'none' : '0 24px 64px rgba(0,0,0,0.85)'
+        }}
+      >
         
         {/* Top Header matching Screenshot 2: Finance [Eye] < Month > [X] */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
@@ -1441,31 +1490,39 @@ export const FinanceModal = ({
 
         {/* Day Breakdown Drawer / Popup on Day Click */}
         {selectedDayDetail && (
-          <div style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0, 0, 0, 0.78)',
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
-            zIndex: 300,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '16px',
-            animation: 'fadeIn 0.2s ease-out'
-          }}>
-            <div style={{
-              background: 'linear-gradient(180deg, #0e172a 0%, #070d19 100%)',
-              border: '1px solid rgba(56, 189, 248, 0.35)',
-              borderRadius: '24px',
-              width: '100%',
-              maxWidth: '420px',
-              maxHeight: '84vh',
+          <div 
+            className="aether-edge-modal-overlay"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0, 0, 0, 0.88)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+              zIndex: 300,
               display: 'flex',
-              flexDirection: 'column',
-              boxShadow: '0 25px 70px rgba(0, 0, 0, 0.9), 0 0 30px rgba(56, 189, 248, 0.2)',
-              overflow: 'hidden'
-            }}>
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: isMobile ? 0 : '16px',
+              animation: 'fadeIn 0.2s ease-out'
+            }}
+          >
+            <div 
+              className="aether-edge-modal-container"
+              style={{
+                background: 'linear-gradient(180deg, #0e172a 0%, #070d19 100%)',
+                border: isMobile ? 'none' : '1px solid rgba(56, 189, 248, 0.35)',
+                borderRadius: isMobile ? 0 : '24px',
+                width: '100%',
+                maxWidth: isMobile ? '100%' : '420px',
+                height: isMobile ? '100%' : 'auto',
+                height: isMobile ? '100dvh' : 'auto',
+                maxHeight: isMobile ? '100dvh' : '84vh',
+                display: 'flex',
+                flexDirection: 'column',
+                boxShadow: isMobile ? 'none' : '0 25px 70px rgba(0, 0, 0, 0.9), 0 0 30px rgba(56, 189, 248, 0.2)',
+                overflow: 'hidden'
+              }}
+            >
               {/* Header */}
               <div style={{
                 padding: '16px 20px',
