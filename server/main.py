@@ -22,8 +22,8 @@ import re
 import traceback
 
 # ─── Web Push (VAPID) Setup ────────────────────────────────────────────────────
-VAPID_PUBLIC_KEY  = os.environ.get("VAPID_PUBLIC_KEY",  "FKhfDseDfQYLoVS-DYrQKtfyIhniBxzPfE2akQQ2oM3lJxakx2Ft_qE-HLnecc4UP6sSTxOLibFELDxorXiMKA")
-VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "WXjuCeVroOHymFzQOF8YGjwF_qaLHkvPJccwf1OOyI")
+VAPID_PUBLIC_KEY  = os.environ.get("VAPID_PUBLIC_KEY",  "BKMr0rTgjRw-7TTPy4rcWo_LTBsRCVDKrwAZD7MpeeOVsF_Vea9LSK13QoXVq3F_fjLWyHrOlG_XVJ3ffKkDxbM")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "iOu5y8PSEFJJev8PPShfr4NdBuLbe9-Ya0bPC3pCeXY")
 VAPID_CLAIMS_EMAIL = os.environ.get("VAPID_CLAIMS_EMAIL", "mailto:aether@pawandixit.com")
 
 # In-memory push subscription store (user_email -> list of subscriptions)
@@ -231,6 +231,7 @@ class ParseSmsRequest(BaseModel):
     sms_list: Optional[List[str]] = None
     auto_commit: bool = True
     user_email: Optional[str] = None
+    custom_note: Optional[str] = None
 
 class EmailDraftRequest(BaseModel):
     sender: str
@@ -1919,6 +1920,12 @@ async def parse_and_log_bank_sms(
             continue
         p = parse_bank_sms(text.strip())
         if p and p.get("amount", 0) > 0:
+            merchant_name = p.get("merchant") or "Store"
+            if req.custom_note and req.custom_note.strip():
+                final_note = f"{req.custom_note.strip()} ({merchant_name})"
+            else:
+                final_note = f"{merchant_name} (SMS Auto-Log)"
+
             rec = FinancialRecord(
                 user_email=eff_email,
                 type=p["type"],
@@ -1926,7 +1933,7 @@ async def parse_and_log_bank_sms(
                 amount=p["amount"],
                 currency="INR",
                 payment_mode=p["payment_mode"],
-                note=f"{p['merchant']} (SMS Auto-Log)",
+                note=final_note,
                 date=p["date"]
             )
             if req.auto_commit:

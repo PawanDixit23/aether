@@ -105,6 +105,7 @@ export const FinanceModal = ({
   // Bank SMS Auto-Log State
   const [isSmsParserOpen, setIsSmsParserOpen] = useState(false);
   const [smsInputText, setSmsInputText] = useState('');
+  const [smsExpensePurpose, setSmsExpensePurpose] = useState('');
   const [isParsingSms, setIsParsingSms] = useState(false);
   const [parsedSmsResult, setParsedSmsResult] = useState(null);
 
@@ -126,6 +127,7 @@ export const FinanceModal = ({
         body: JSON.stringify({
           sms_text: raw,
           user_email: userEmail || null,
+          custom_note: smsExpensePurpose.trim() || undefined,
           auto_commit: true
         })
       });
@@ -134,6 +136,7 @@ export const FinanceModal = ({
         const rec = data.records[0];
         setParsedSmsResult(rec);
         setSmsInputText('');
+        setSmsExpensePurpose('');
         if (showToast) showToast(`✅ ₹${rec.amount} ${rec.category || 'expense'} logged successfully! (${rec.merchant || ''})`, "success");
         if (refreshAllData) refreshAllData();
       } else {
@@ -719,6 +722,31 @@ export const FinanceModal = ({
               }}
             />
 
+            {/* Optional Expense Purpose / What this expense was for */}
+            <div style={{ marginBottom: '12px' }}>
+              <div style={{ fontSize: '0.74rem', color: '#94a3b8', fontWeight: 600, marginBottom: '5px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <span>📝 What was this expense for? / यह खर्च किस लिए किया? (Optional):</span>
+              </div>
+              <input
+                type="text"
+                placeholder="e.g. Dinner with friends, Sneakers, Medicine, Groceries..."
+                value={smsExpensePurpose}
+                onChange={e => setSmsExpensePurpose(e.target.value)}
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  background: '#060d1c',
+                  border: '1px solid rgba(56, 189, 248, 0.25)',
+                  borderRadius: '10px',
+                  padding: '9px 12px',
+                  color: '#f8fafc',
+                  fontSize: '0.80rem',
+                  outline: 'none',
+                  transition: 'border-color 0.15s'
+                }}
+              />
+            </div>
+
             {/* Action Submit Button */}
             <button
               type="button"
@@ -773,6 +801,9 @@ export const FinanceModal = ({
                   <div style={{ color: '#34d399', fontWeight: 700 }}><strong>Amount:</strong> ₹{Number(parsedSmsResult.amount || 0).toLocaleString('en-IN')}</div>
                   <div style={{ color: '#cbd5e1' }}><strong>Category:</strong> {(parsedSmsResult.category || 'shopping').toUpperCase()}</div>
                   <div style={{ color: '#94a3b8' }}><strong>Mode:</strong> {(parsedSmsResult.payment_mode || 'upi').toUpperCase()}</div>
+                  {parsedSmsResult.note && (
+                    <div style={{ color: '#38bdf8', gridColumn: 'span 2' }}><strong>Note/Purpose:</strong> {parsedSmsResult.note}</div>
+                  )}
                 </div>
               </div>
             )}

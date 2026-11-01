@@ -1747,6 +1747,83 @@ export default function App() {
     }
   };
 
+  const ensurePushSubscribed = async (targetEmail) => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null;
+    try {
+      const emailToUse = targetEmail || userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+      if (!emailToUse || !emailToUse.includes('@')) return null;
+
+      // 1. Notification permission check
+      if ('Notification' in window) {
+        setPushPermission(Notification.permission);
+        if (Notification.permission === 'default') {
+          const p = await Notification.requestPermission();
+          setPushPermission(p);
+          if (p !== 'granted') return null;
+        } else if (Notification.permission !== 'granted') {
+          return null;
+        }
+      }
+
+      // 2. Server से VAPID public key fetch करें
+      const keyRes = await fetch(`${API_BASE}/push/vapid-public-key`);
+      if (!keyRes.ok) return null;
+      const { publicKey } = await keyRes.json();
+      if (!publicKey) return null;
+
+      // Base64URL → Uint8Array convert करें (VAPID format)
+      const urlB64ToUint8Array = (base64String) => {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = window.atob(base64);
+        return new Uint8Array([...rawData].map(c => c.charCodeAt(0)));
+      };
+
+      const reg = await navigator.serviceWorker.ready;
+      if (!reg || !reg.pushManager) return null;
+
+      let subscription = await reg.pushManager.getSubscription();
+
+      try {
+        if (!subscription) {
+          subscription = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlB64ToUint8Array(publicKey),
+          });
+          console.log('[Aether Push] ✅ New VAPID push subscription created');
+        }
+      } catch (subErr) {
+        console.warn('[Aether Push] Renewing subscription with updated VAPID key...', subErr);
+        if (subscription) {
+          try { await subscription.unsubscribe(); } catch (_) {}
+        }
+        subscription = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlB64ToUint8Array(publicKey),
+        });
+      }
+
+      // 3. Subscription server को भेजें (Strict isolation: user email)
+      if (subscription) {
+        const subRes = await fetch(`${API_BASE}/push/subscribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_email: emailToUse,
+            subscription: subscription.toJSON(),
+          }),
+        });
+        if (subRes.ok) {
+          console.log('[Aether Push] ✅ Subscription sent to server for', emailToUse);
+          return subscription;
+        }
+      }
+    } catch (err) {
+      console.warn('[Aether Push] ensurePushSubscribed warning:', err?.message || err);
+    }
+    return null;
+  };
+
   const handleSendTestPush = async () => {
     // 1. Foreground local browser alert
     triggerPushNotification(
@@ -1756,11 +1833,16 @@ export default function App() {
     );
 
     // 2. Real Cloud VAPID Web Push from Server to Device (Strict User Isolation)
-    const emailToUse = userEmail || localStorage.getItem('aether_user_email');
-    if (!emailToUse) {
+    const emailToUse = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+    if (!emailToUse || !emailToUse.includes('@')) {
       showToast("⚠️ क्लाउड पुश के लिए कृपया पहले सेटिंग्स में अपना ईमेल दर्ज करें!", 'info');
       return;
     }
+
+    // Auto-register/sync device before testing so "No registered push devices" error never happens
+    showToast("📡 डिवाइस सिंक किया जा रहा है...", 'info');
+    await ensurePushSubscribed(emailToUse);
+
     try {
       const res = await fetch(`${API_BASE}/push/test?user_email=${encodeURIComponent(emailToUse)}`, { method: 'POST' });
       const data = await res.json();
@@ -1932,6 +2014,7 @@ export default function App() {
         } catch (e) {}
       }
       await handleRequestPushPermission();
+      await ensurePushSubscribed();
     }
   };
 
@@ -2313,75 +2396,12 @@ export default function App() {
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
 
-    const serverBase = typeof window !== 'undefined' && window.location.port === '5173'
-      ? `http://${window.location.hostname}:8000`
-      : '';
-
-    const setupPushSubscription = async (reg) => {
-      try {
-        // 1. Notification permission check
-        if ('Notification' in window) {
-          setPushPermission(Notification.permission);
-          if (Notification.permission === 'default') {
-            const p = await Notification.requestPermission();
-            setPushPermission(p);
-            if (p !== 'granted') return;
-          } else if (Notification.permission !== 'granted') {
-            return;
-          }
-        }
-
-        // 2. Server से VAPID public key fetch करें
-        const keyRes = await fetch(`${serverBase}/api/push/vapid-public-key`);
-        if (!keyRes.ok) return;
-        const { publicKey } = await keyRes.json();
-
-        // Base64URL → Uint8Array convert करें (VAPID format)
-        const urlB64ToUint8Array = (base64String) => {
-          const padding = '='.repeat((4 - base64String.length % 4) % 4);
-          const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-          const rawData = window.atob(base64);
-          return new Uint8Array([...rawData].map(c => c.charCodeAt(0)));
-        };
-
-        // 3. Browser को VAPID push subscribe करें
-        const existingSub = await reg.pushManager.getSubscription();
-        let subscription = existingSub;
-
-        if (!subscription) {
-          subscription = await reg.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlB64ToUint8Array(publicKey),
-          });
-          console.log('[Aether Push] ✅ New VAPID push subscription created');
-        } else {
-          console.log('[Aether Push] ♻️ Existing push subscription found');
-        }
-
-        // 4. Subscription server को भेजें (Strict isolation: only when user email is present)
-        const emailToUse = userEmail || localStorage.getItem('aether_user_email');
-        if (emailToUse && subscription) {
-          await fetch(`${serverBase}/api/push/subscribe`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              user_email: emailToUse,
-              subscription: subscription.toJSON(),
-            }),
-          });
-          console.log('[Aether Push] ✅ Subscription sent to server for', emailToUse);
-        }
-      } catch (err) {
-        console.warn('[Aether Push] Setup error:', err?.message);
-      }
-    };
-
     const handleSwMessage = async (event) => {
       if (event.data?.type === 'PUSH_SUBSCRIPTION_CHANGED' && event.data?.subscription) {
         const emailToUse = userEmail || localStorage.getItem('aether_user_email');
         if (emailToUse) {
           try {
-            await fetch(`${serverBase}/api/push/subscribe`, {
+            await fetch(`${API_BASE}/push/subscribe`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -2399,9 +2419,9 @@ export default function App() {
     navigator.serviceWorker.addEventListener('message', handleSwMessage);
 
     navigator.serviceWorker.register('/sw.js')
-      .then(reg => {
+      .then(async (reg) => {
         console.log('Aether SW Active:', reg.scope);
-        setupPushSubscription(reg);
+        await ensurePushSubscribed();
       })
       .catch(err => console.log('Aether SW error:', err));
 
