@@ -92,7 +92,7 @@ export const FinanceModal = ({
   const handleParseSms = async (textToParse = smsInputText) => {
     const raw = (textToParse || '').trim();
     if (!raw) {
-      if (showToast) showToast("कृपया बैंक SMS टेक्स्ट दर्ज करें", "info");
+      if (showToast) showToast("Please paste bank SMS text", "info");
       return;
     }
     setIsParsingSms(true);
@@ -115,13 +115,13 @@ export const FinanceModal = ({
         const rec = data.records[0];
         setParsedSmsResult(rec);
         setSmsInputText('');
-        if (showToast) showToast(`✅ ₹${rec.amount} ${rec.category === 'shopping' ? 'शॉपिंग' : ''} खर्च दर्ज हुआ! (${rec.merchant || ''})`, "success");
+        if (showToast) showToast(`✅ ₹${rec.amount} ${rec.category || 'expense'} logged successfully! (${rec.merchant || ''})`, "success");
         if (refreshAllData) refreshAllData();
       } else {
-        if (showToast) showToast("SMS में वैध वित्तीय लेनदेन नहीं मिला। कृपया टेक्स्ट जांचें।", "info");
+        if (showToast) showToast("No valid financial transaction found in SMS. Please check text.", "info");
       }
     } catch (err) {
-      if (showToast) showToast("SMS पार्स करने में त्रुटि हुई", "error");
+      if (showToast) showToast("Error parsing SMS text", "error");
     } finally {
       setIsParsingSms(false);
     }
@@ -133,15 +133,15 @@ export const FinanceModal = ({
         const text = await navigator.clipboard.readText();
         if (text && text.trim()) {
           setSmsInputText(text.trim());
-          if (showToast) showToast("क्लिपबोर्ड से SMS पेस्ट किया गया! 📋", "info");
+          if (showToast) showToast("SMS pasted from clipboard! 📋", "info");
         } else {
-          if (showToast) showToast("क्लिपबोर्ड खाली है", "info");
+          if (showToast) showToast("Clipboard is empty", "info");
         }
       } else {
-        if (showToast) showToast("क्लिपबोर्ड एक्सेस उपलब्ध नहीं है, कृपया मैन्युअल पेस्ट करें", "info");
+        if (showToast) showToast("Clipboard access unavailable, please paste manually", "info");
       }
     } catch (e) {
-      if (showToast) showToast("कृपया बॉक्स में SMS मैन्युअल रूप से पेस्ट करें", "info");
+      if (showToast) showToast("Please paste SMS text into the box manually", "info");
     }
   };
 
@@ -825,8 +825,8 @@ export const FinanceModal = ({
                   <h3 style={{ fontSize: '0.94rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>
                     Weekly Trend
                   </h3>
-                  <div style={{ fontSize: '0.64rem', color: '#64748b', marginTop: '2px' }}>
-                    Hover पर दिन का खर्च देखें • Click पर संपूर्ण विवरण
+                  <div style={{ fontSize: '0.66rem', color: '#64748b', marginTop: '2px' }}>
+                    Hover for day total • Click for full breakdown
                   </div>
                 </div>
 
@@ -982,7 +982,7 @@ export const FinanceModal = ({
               </div>
             </div>
 
-            {/* Monthly Comprehensive Report Card (मासिक खर्च संपूर्ण रिपोर्ट) */}
+            {/* Monthly Comprehensive Report Card */}
             <div style={{
               background: '#0e172a',
               border: '1px solid rgba(56, 189, 248, 0.25)',
@@ -1016,19 +1016,19 @@ export const FinanceModal = ({
               {/* Metrics grid */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
                 <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div style={{ color: '#94a3b8', fontSize: '0.68rem', marginBottom: '2px' }}>Total Spent (कुल खर्च)</div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.68rem', marginBottom: '2px' }}>Total Spent</div>
                   <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#f87171' }}>₹{effectiveExpense.toLocaleString('en-IN')}</div>
                 </div>
                 <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div style={{ color: '#94a3b8', fontSize: '0.68rem', marginBottom: '2px' }}>Total Income (कुल आय)</div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.68rem', marginBottom: '2px' }}>Total Income</div>
                   <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#34d399' }}>₹{effectiveIncome.toLocaleString('en-IN')}</div>
                 </div>
                 <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div style={{ color: '#94a3b8', fontSize: '0.68rem', marginBottom: '2px' }}>Daily Average (प्रतिदिन औसत)</div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.68rem', marginBottom: '2px' }}>Daily Average</div>
                   <div style={{ fontSize: '0.90rem', fontWeight: 700, color: '#e2e8f0' }}>₹{dailyAvg.toLocaleString('en-IN')}/day</div>
                 </div>
                 <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div style={{ color: '#94a3b8', fontSize: '0.68rem', marginBottom: '2px' }}>Transactions (कुल लेनदेन)</div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.68rem', marginBottom: '2px' }}>Transactions</div>
                   <div style={{ fontSize: '0.90rem', fontWeight: 700, color: '#38bdf8' }}>{monthRecords.length} recorded</div>
                 </div>
               </div>
@@ -1036,9 +1036,9 @@ export const FinanceModal = ({
               {/* Month Status Explanation */}
               <div style={{ fontSize: '0.72rem', color: '#94a3b8', background: 'rgba(56, 189, 248, 0.05)', padding: '9px 12px', borderRadius: '10px', border: '1px solid rgba(56, 189, 248, 0.15)', lineHeight: 1.45 }}>
                 {isCurrentMonth ? (
-                  <span>💡 <strong>चालू माह ({monthTitle}):</strong> आज 1 नवंबर से आपका मासिक खर्च शुरू हुआ है। 30 नवंबर (महीने के अंतिम दिन) तक का संपूर्ण हिसाब यहाँ संकलित रहेगा। 1 दिसंबर को नया महीना ₹0 से स्वतः शुरू होगा।</span>
+                  <span>💡 <strong>Current Month ({monthTitle}):</strong> Monthly tracking starts on the 1st of each month. Your full spending report compiles through the last day of the month. Next month automatically begins fresh at ₹0.</span>
                 ) : (
-                  <span>📁 <strong>अभिलेख माह ({monthTitle}):</strong> इस माह का संपूर्ण हिसाब सुरक्षित है। किसी भी पूर्व माह का खर्च देखने के लिए ऊपर तीर बटन (&lt; व &gt;) का उपयोग करें।</span>
+                  <span>📁 <strong>Archived Month ({monthTitle}):</strong> Full transaction ledger and statement are securely preserved. Use the arrows (&lt; and &gt;) above to navigate between months.</span>
                 )}
               </div>
             </div>
@@ -1159,10 +1159,10 @@ export const FinanceModal = ({
               <div style={{ textAlign: 'center', padding: '32px 10px', color: '#64748b', fontSize: '0.82rem' }}>
                 <div style={{ fontSize: '1.8rem', marginBottom: '8px' }}>💰</div>
                 <div style={{ color: '#e2e8f0', fontWeight: 600, marginBottom: '4px' }}>
-                  {monthTitle} में कोई खर्च दर्ज नहीं है (खर्च: ₹0)
+                  No transactions recorded for {monthTitle} (Spent: ₹0)
                 </div>
                 <div style={{ fontSize: '0.74rem', maxWidth: '300px', margin: '0 auto', lineHeight: 1.4 }}>
-                  आज से किया गया खर्च इस महीने में जुड़ेगा। 1 दिसंबर को नया महीना स्वतः ₹0 से शुरू होगा।
+                  New expenses added will be recorded here. Next month will automatically start fresh at ₹0.
                 </div>
               </div>
             ) : (
@@ -1481,7 +1481,7 @@ export const FinanceModal = ({
                     <span>{selectedDayDetail.fullDateLabel}</span>
                   </div>
                   <div style={{ fontSize: '0.74rem', color: '#38bdf8', marginTop: '3px', fontWeight: 600 }}>
-                    कुल खर्च: {selectedDayDetail.amount} ({selectedDayDetail.transactions.length} रिकॉर्ड)
+                    Total Spent: {selectedDayDetail.amount} ({selectedDayDetail.transactions.length} records)
                   </div>
                 </div>
                 <button
@@ -1511,10 +1511,10 @@ export const FinanceModal = ({
                   <div style={{ textAlign: 'center', padding: '36px 16px', color: '#94a3b8' }}>
                     <div style={{ fontSize: '2.2rem', marginBottom: '8px' }}>🎉</div>
                     <div style={{ fontSize: '0.90rem', fontWeight: 600, color: '#f8fafc' }}>
-                      इस दिन कोई खर्च दर्ज नहीं है
+                      No expenses recorded on this day
                     </div>
                     <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '4px' }}>
-                      No expenses recorded on this day.
+                      All daily transactions will appear here.
                     </div>
                     <button
                       type="button"
@@ -1535,7 +1535,7 @@ export const FinanceModal = ({
                         cursor: 'pointer'
                       }}
                     >
-                      + इस दिन का खर्च जोड़ें
+                      + Add Expense for this day
                     </button>
                   </div>
                 ) : (
@@ -1572,7 +1572,7 @@ export const FinanceModal = ({
                           </div>
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontSize: '0.84rem', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {rec.note || rec.category || (isExp ? 'खर्च' : 'आय')}
+                              {rec.note || rec.category || (isExp ? 'Expense' : 'Income')}
                             </div>
                             <div style={{ fontSize: '0.68rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
                               <span style={{ textTransform: 'capitalize' }}>{rec.category || 'General'}</span>
@@ -1636,7 +1636,7 @@ export const FinanceModal = ({
                     cursor: 'pointer'
                   }}
                 >
-                  Close (बंद करें)
+                  Close
                 </button>
               </div>
             </div>

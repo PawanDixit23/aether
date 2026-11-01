@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { 
   X, RefreshCw, Globe, Trophy, Radio, Clock, CheckCircle2, 
-  Search, ArrowLeft, Award, MapPin, Tv, Users, Info, ChevronRight, Shield
+  Search, ArrowLeft, Award, MapPin, Tv, Users, Info, ChevronRight,
+  ChevronDown, ChevronUp, Shield
 } from 'lucide-react';
 
 function getISTDisplay(match) {
   if (match.ist_time) return match.ist_time;
-  // Fallback regex for "(07:00 GMT)"
   const gmtMatch = (match.status_text || '').match(/(\d{1,2}):(\d{2})\s*GMT/i);
   if (gmtMatch) {
     const h = parseInt(gmtMatch[1], 10);
@@ -60,8 +60,8 @@ export function CricketScorecardModal({
   // Detailed scorecard state
   const [detailData, setDetailData] = useState(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
-  const [activeInningsTab, setActiveInningsTab] = useState(0);
-  const [detailTab, setDetailTab] = useState('scorecard'); // 'scorecard' | 'squads' | 'info'
+  const [detailTab, setDetailTab] = useState('scorecard'); // 'scorecard' | 'squads' | 'info' | 'live'
+  const [expandedInnings, setExpandedInnings] = useState({});
 
   const effectiveApiBase = apiBase || (typeof window !== 'undefined' && window.location.port === '5173'
     ? `http://${window.location.hostname}:8000/api`
@@ -121,7 +121,6 @@ export function CricketScorecardModal({
   useEffect(() => {
     if (!isOpen) return;
 
-    // 1. When a match is selected: auto-poll every 5s if match is live, or 15s if upcoming/finished
     let detailTimer = null;
     if (selectedMatch) {
       const pollMs = selectedMatch.status === 'in' ? 5000 : 15000;
@@ -130,7 +129,6 @@ export function CricketScorecardModal({
       }, pollMs);
     }
 
-    // 2. When in matches feed: auto-poll every 8s to refresh live scores across all matches
     let feedTimer = null;
     if (!selectedMatch) {
       feedTimer = setInterval(() => {
@@ -158,7 +156,7 @@ export function CricketScorecardModal({
     if (scopeFilter === 'leagues') {
       return !m.is_international;
     }
-    return true; // 'all'
+    return true;
   });
 
   // Filter based on Status ('in'=live, 'pre'=upcoming, 'post'=finished)
@@ -208,9 +206,23 @@ export function CricketScorecardModal({
     }
   });
   const inningsList = Object.values(inningsGroups).sort((a, b) => Number(a.innNum) - Number(b.innNum));
-  const currentInnings = inningsList[activeInningsTab] || inningsList[0];
 
-  // Bulletproof Playing XI / Squads fallback
+  // Auto-expand the most recent active innings by default
+  useEffect(() => {
+    if (inningsList.length > 0) {
+      const latest = inningsList[inningsList.length - 1];
+      setExpandedInnings({ [latest.innNum]: true });
+    }
+  }, [detailData?.match_id, inningsList.length]);
+
+  const toggleInnings = (innNum) => {
+    setExpandedInnings(prev => ({
+      ...prev,
+      [innNum]: !prev[innNum]
+    }));
+  };
+
+  // Playing XI / Squads fallback
   const displayRosters = (detailData?.rosters && detailData.rosters.length > 0)
     ? detailData.rosters
     : (inningsList.length > 0
@@ -223,6 +235,27 @@ export function CricketScorecardModal({
             }))
           }))
         : []);
+
+  // Compute Yet to Bat players for an innings
+  const getYetToBat = (inn) => {
+    if (!inn?.battingCard) return [];
+    const battedNames = new Set((inn.battingCard.playerDetails || []).map(p => (p.playerName || '').toLowerCase()));
+    const roster = displayRosters.find(r => 
+      (r.team || '').toLowerCase().includes((inn.teamName || '').toLowerCase()) || 
+      (inn.teamName || '').toLowerCase().includes((r.team || '').toLowerCase())
+    );
+    if (!roster) return [];
+    return (roster.players || []).filter(p => !battedNames.has((p.name || '').toLowerCase()));
+  };
+
+  // Short match title for header (e.g. "NZA v INDA" or "BAN v IND")
+  const getMatchShortTitle = (m) => {
+    if (!m) return 'Match Center';
+    const t1 = m.team1?.short_name || (m.team1?.name || '').split(' ')[0];
+    const t2 = m.team2?.short_name || (m.team2?.name || '').split(' ')[0];
+    if (t1 && t2) return `${t1} v ${t2}`;
+    return m.name || 'Match Center';
+  };
 
   return (
     <div style={{
@@ -239,79 +272,81 @@ export function CricketScorecardModal({
       alignItems: 'center',
       justifyContent: 'center',
       padding: '16px',
-      animation: 'fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1)'
+      animation: 'fadeIn 0.2s ease-out'
     }}>
       <div style={{
         width: '100%',
         maxWidth: '820px',
         maxHeight: '92vh',
-        background: 'linear-gradient(180deg, #0e1526 0%, #070a14 100%)',
+        background: '#0a0f1d',
         border: '1px solid rgba(56, 189, 248, 0.25)',
         borderRadius: '24px',
-        boxShadow: '0 25px 70px rgba(0, 0, 0, 0.85), 0 0 35px rgba(56, 189, 248, 0.15)',
+        boxShadow: '0 25px 70px rgba(0, 0, 0, 0.9), 0 0 35px rgba(56, 189, 248, 0.12)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden'
       }}>
-        {/* Header */}
+        {/* Top Header */}
         <div style={{
-          padding: '18px 24px 14px',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+          padding: '16px 20px',
+          background: selectedMatch ? '#007953' : 'linear-gradient(180deg, #0e172a 0%, #0a0f1d 100%)',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          gap: '16px',
-          background: 'rgba(0, 0, 0, 0.2)'
+          gap: '14px',
+          color: '#ffffff'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
             {selectedMatch ? (
               <button
                 type="button"
                 onClick={() => setSelectedMatch(null)}
                 style={{
-                  background: 'rgba(56, 189, 248, 0.1)',
-                  border: '1px solid rgba(56, 189, 248, 0.25)',
-                  color: '#38bdf8',
-                  borderRadius: '12px',
-                  width: '38px',
-                  height: '38px',
+                  background: 'rgba(255, 255, 255, 0.15)',
+                  border: 'none',
+                  color: '#ffffff',
+                  borderRadius: '10px',
+                  width: '36px',
+                  height: '36px',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   cursor: 'pointer',
-                  transition: 'all 0.2s'
+                  flexShrink: 0
                 }}
-                title="Back to matches list (सूची पर वापस)"
+                title="Back to matches list"
               >
                 <ArrowLeft size={18} />
               </button>
             ) : (
               <div style={{
-                width: '42px',
-                height: '42px',
-                borderRadius: '12px',
+                width: '38px',
+                height: '38px',
+                borderRadius: '10px',
                 background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(56, 189, 248, 0.2) 100%)',
                 border: '1px solid rgba(56, 189, 248, 0.3)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontSize: '1.35rem'
+                fontSize: '1.25rem',
+                flexShrink: 0
               }}>
                 🏏
               </div>
             )}
 
-            <div>
+            <div style={{ minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: '#f8fafc', letterSpacing: '0.3px' }}>
-                  {selectedMatch ? "In-App Match Center" : "Live Cricket Scorecards"}
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {selectedMatch ? getMatchShortTitle(selectedMatch) : "Live Cricket Scorecards"}
                 </h3>
                 {!selectedMatch && liveCount > 0 && (
                   <span style={{
-                    background: 'rgba(239, 68, 68, 0.2)',
+                    background: 'rgba(239, 68, 68, 0.25)',
                     border: '1px solid rgba(239, 68, 68, 0.4)',
-                    color: '#f87171',
-                    fontSize: '0.68rem',
+                    color: '#fca5a5',
+                    fontSize: '0.66rem',
                     fontWeight: 700,
                     padding: '2px 8px',
                     borderRadius: '999px',
@@ -324,67 +359,41 @@ export function CricketScorecardModal({
                   </span>
                 )}
               </div>
-              <div style={{ fontSize: '0.74rem', color: '#94a3b8', marginTop: '2px' }}>
-                {selectedMatch ? selectedMatch.name : "Real-time ball updates • 100% inside Aether"}
+              <div style={{ fontSize: '0.72rem', color: selectedMatch ? '#e0f2fe' : '#94a3b8', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {selectedMatch ? selectedMatch.series : "Real-time ball updates • 100% inside Aether"}
               </div>
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {selectedMatch ? (
-              <button
-                type="button"
-                onClick={() => fetchMatchDetail(selectedMatch)}
-                disabled={isDetailLoading}
-                title="Refresh Scorecard (स्कोरकार्ड रीफ्रेश करें)"
-                style={{
-                  background: 'rgba(56, 189, 248, 0.1)',
-                  border: '1px solid rgba(56, 189, 248, 0.25)',
-                  color: '#38bdf8',
-                  borderRadius: '10px',
-                  padding: '0 12px',
-                  height: '36px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontSize: '0.76rem',
-                  fontWeight: 600,
-                  cursor: isDetailLoading ? 'not-allowed' : 'pointer'
-                }}
-              >
-                <RefreshCw size={14} className={isDetailLoading ? 'animate-spin' : ''} />
-                <span>Refresh Score</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => refreshScores(false)}
-                disabled={isCurrentlyLoading}
-                title="Refresh Live Scores"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid rgba(255, 255, 255, 0.12)',
-                  color: isCurrentlyLoading ? '#64748b' : '#38bdf8',
-                  borderRadius: '10px',
-                  width: '36px',
-                  height: '36px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: isCurrentlyLoading ? 'not-allowed' : 'pointer'
-                }}
-              >
-                <RefreshCw size={16} className={isCurrentlyLoading ? 'animate-spin' : ''} />
-              </button>
-            )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={() => selectedMatch ? fetchMatchDetail(selectedMatch) : refreshScores(false)}
+              disabled={isCurrentlyLoading || isDetailLoading}
+              title="Refresh Scores"
+              style={{
+                background: 'rgba(255, 255, 255, 0.15)',
+                border: 'none',
+                color: '#ffffff',
+                borderRadius: '10px',
+                width: '36px',
+                height: '36px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: (isCurrentlyLoading || isDetailLoading) ? 'not-allowed' : 'pointer'
+              }}
+            >
+              <RefreshCw size={16} className={(isCurrentlyLoading || isDetailLoading) ? 'animate-spin' : ''} />
+            </button>
             <button
               type="button"
               onClick={onClose}
               title="Close"
               style={{
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(255, 255, 255, 0.12)',
-                color: '#94a3b8',
+                background: 'rgba(255, 255, 255, 0.15)',
+                border: 'none',
+                color: '#ffffff',
                 borderRadius: '10px',
                 width: '36px',
                 height: '36px',
@@ -399,763 +408,440 @@ export function CricketScorecardModal({
           </div>
         </div>
 
-        {/* VIEW A: DETAILED MATCH CENTER (When a specific match is clicked) */}
+        {/* -------------------- VIEW 1: MATCH DETAIL CENTER (CRICBUZZ STYLE) -------------------- */}
         {selectedMatch ? (
-          <div style={{
-            padding: '20px',
-            overflowY: 'auto',
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '16px'
-          }}>
-            {/* Match Header Hero Card */}
-            <div style={{
-              background: 'rgba(255, 255, 255, 0.03)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-              borderRadius: '20px',
-              padding: '18px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '14px'
-            }}>
-              {/* Tournament & Status Badge */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {selectedMatch.is_international && (
-                    <span style={{
-                      background: 'rgba(56, 189, 248, 0.15)',
-                      border: '1px solid rgba(56, 189, 248, 0.3)',
-                      color: '#38bdf8',
-                      fontSize: '0.68rem',
-                      fontWeight: 700,
-                      padding: '2px 8px',
-                      borderRadius: '6px'
-                    }}>
-                      INTERNATIONAL
-                    </span>
-                  )}
-                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#94a3b8' }}>
-                    {selectedMatch.series}
-                  </span>
-                </div>
-
-                <div>
-                  {selectedMatch.status === 'in' && (
-                    <span style={{
-                      background: 'rgba(239, 68, 68, 0.2)',
-                      border: '1px solid rgba(239, 68, 68, 0.4)',
-                      color: '#f87171',
-                      fontSize: '0.72rem',
-                      fontWeight: 700,
-                      padding: '3px 10px',
-                      borderRadius: '8px',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '5px'
-                    }}>
-                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#ef4444', animation: 'pulse 1.2s infinite' }}></span>
-                      LIVE MATCH
-                    </span>
-                  )}
-                  {selectedMatch.status === 'pre' && (
-                    <span style={{
-                      background: 'rgba(245, 158, 11, 0.15)',
-                      border: '1px solid rgba(245, 158, 11, 0.35)',
-                      color: '#fbbf24',
-                      fontSize: '0.72rem',
-                      fontWeight: 600,
-                      padding: '3px 10px',
-                      borderRadius: '8px'
-                    }}>
-                      UPCOMING SCHEDULE
-                    </span>
-                  )}
-                  {selectedMatch.status === 'post' && (
-                    <span style={{
-                      background: 'rgba(52, 211, 153, 0.15)',
-                      border: '1px solid rgba(52, 211, 153, 0.35)',
-                      color: '#34d399',
-                      fontSize: '0.72rem',
-                      fontWeight: 600,
-                      padding: '3px 10px',
-                      borderRadius: '8px'
-                    }}>
-                      COMPLETED RESULT
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Match Score Display */}
-              <div style={{
-                background: 'rgba(0, 0, 0, 0.42)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: '16px',
-                padding: '16px 20px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px'
-              }}>
-                {/* Team 1 */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
-                    {selectedMatch.team1?.logo ? (
-                      <img
-                        src={selectedMatch.team1.logo}
-                        alt={selectedMatch.team1.name}
-                        style={{ width: '34px', height: '34px', objectFit: 'contain' }}
-                      />
-                    ) : (
-                      <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.95rem' }}>
-                        🏏
-                      </div>
-                    )}
-                    <div>
-                      <div style={{ fontSize: '1.05rem', fontWeight: 700, color: selectedMatch.team1?.is_winner ? '#34d399' : '#f8fafc' }}>
-                        {selectedMatch.team1?.name} {selectedMatch.team1?.is_winner && '🏆'}
-                      </div>
-                      <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
-                        {selectedMatch.team1?.short_name || 'Team 1'}
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ fontSize: '1.3rem', fontWeight: 800, color: selectedMatch.status === 'in' ? '#38bdf8' : '#f8fafc', letterSpacing: '0.5px' }}>
-                    {selectedMatch.team1?.score || (selectedMatch.status === 'pre' ? 'Yet to bat' : '-')}
-                  </div>
-                </div>
-
-                <div style={{ height: '1px', background: 'rgba(255, 255, 255, 0.06)' }} />
-
-                {/* Team 2 */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
-                    {selectedMatch.team2?.logo ? (
-                      <img
-                        src={selectedMatch.team2.logo}
-                        alt={selectedMatch.team2.name}
-                        style={{ width: '34px', height: '34px', objectFit: 'contain' }}
-                      />
-                    ) : (
-                      <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.95rem' }}>
-                        🏏
-                      </div>
-                    )}
-                    <div>
-                      <div style={{ fontSize: '1.05rem', fontWeight: 700, color: selectedMatch.team2?.is_winner ? '#34d399' : '#f8fafc' }}>
-                        {selectedMatch.team2?.name} {selectedMatch.team2?.is_winner && '🏆'}
-                      </div>
-                      <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
-                        {selectedMatch.team2?.short_name || 'Team 2'}
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ fontSize: '1.3rem', fontWeight: 800, color: selectedMatch.status === 'in' ? '#38bdf8' : '#f8fafc', letterSpacing: '0.5px' }}>
-                    {selectedMatch.team2?.score || (selectedMatch.status === 'pre' ? 'Yet to bat' : '-')}
-                  </div>
-                </div>
-              </div>
-
-              {/* Status Note */}
-              <div style={{
-                background: selectedMatch.status === 'in' ? 'rgba(239, 68, 68, 0.12)' : (selectedMatch.status === 'post' ? 'rgba(52, 211, 153, 0.1)' : 'rgba(245, 158, 11, 0.1)'),
-                border: selectedMatch.status === 'in' ? '1px solid rgba(239, 68, 68, 0.3)' : (selectedMatch.status === 'post' ? '1px solid rgba(52, 211, 153, 0.25)' : '1px solid rgba(245, 158, 11, 0.25)'),
-                borderRadius: '12px',
-                padding: '12px 14px',
-                fontSize: '0.84rem',
-                fontWeight: 600,
-                color: selectedMatch.status === 'in' ? '#f87171' : (selectedMatch.status === 'post' ? '#34d399' : '#fbbf24')
-              }}>
-                📊 {selectedMatch.status_text || selectedMatch.description}
-              </div>
-
-              {/* IST TIME & LIVE STREAMING BADGES */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-                gap: '10px'
-              }}>
-                {/* IST Time Box */}
-                <div style={{
-                  background: 'rgba(56, 189, 248, 0.08)',
-                  border: '1px solid rgba(56, 189, 248, 0.22)',
-                  borderRadius: '12px',
-                  padding: '12px 14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px'
-                }}>
-                  <div style={{
-                    width: '36px',
-                    height: '36px',
-                    borderRadius: '10px',
-                    background: 'rgba(56, 189, 248, 0.18)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#38bdf8',
-                    flexShrink: 0
-                  }}>
-                    <Clock size={18} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '0.70rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                      🇮🇳 Match Timing (IST)
-                    </div>
-                    <div style={{ fontSize: '0.96rem', fontWeight: 700, color: '#38bdf8', marginTop: '1px' }}>
-                      {getISTDisplay(selectedMatch) || "Scheduled Time"}
-                    </div>
-                    {selectedMatch.venue && (
-                      <div style={{ fontSize: '0.70rem', color: '#64748b', marginTop: '1px' }}>
-                        Venue: {selectedMatch.venue}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Live Streaming Box */}
-                {(() => {
-                  const streaming = getStreamingDisplay(selectedMatch);
-                  return (
-                    <div style={{
-                      background: 'rgba(239, 68, 68, 0.08)',
-                      border: '1px solid rgba(239, 68, 68, 0.22)',
-                      borderRadius: '12px',
-                      padding: '12px 14px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '12px'
-                    }}>
-                      <div style={{
-                        width: '36px',
-                        height: '36px',
-                        borderRadius: '10px',
-                        background: 'rgba(239, 68, 68, 0.18)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: '#f87171',
-                        flexShrink: 0
-                      }}>
-                        <Tv size={18} />
-                      </div>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ fontSize: '0.70rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                          📺 Live Broadcast & Streaming
-                        </div>
-                        <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#f87171', marginTop: '1px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {streaming.platform}
-                        </div>
-                        <div style={{ fontSize: '0.70rem', color: '#94a3b8', marginTop: '1px' }}>
-                          OTT: {streaming.ott}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* Match Extra Info: Toss, Session, Venue */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px', fontSize: '0.76rem', color: '#94a3b8' }}>
-                {selectedMatch.toss && (
-                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '8px 10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    🪙 <strong style={{ color: '#cbd5e1' }}>Toss:</strong> {selectedMatch.toss}
-                  </div>
-                )}
-                {selectedMatch.session && (
-                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '8px 10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    🕒 <strong style={{ color: '#cbd5e1' }}>Session:</strong> {selectedMatch.session}
-                  </div>
-                )}
-                {selectedMatch.venue && (
-                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '8px 10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <MapPin size={12} style={{ display: 'inline', marginRight: '4px' }} />
-                    <strong style={{ color: '#cbd5e1' }}>Venue:</strong> {selectedMatch.venue}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* In-App Match Center Section Tabs */}
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflowY: 'auto' }}>
+            {/* Cricbuzz Sub-Tabs Bar */}
             <div style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
+              background: '#08111e',
               borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-              paddingBottom: '8px'
+              padding: '0 12px',
+              overflowX: 'auto'
             }}>
-              <button
-                type="button"
-                onClick={() => setDetailTab('scorecard')}
-                style={{
-                  background: detailTab === 'scorecard' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                  border: detailTab === 'scorecard' ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.06)',
-                  color: detailTab === 'scorecard' ? '#38bdf8' : '#94a3b8',
-                  padding: '7px 16px',
-                  borderRadius: '10px',
-                  fontSize: '0.82rem',
-                  fontWeight: 600,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  cursor: 'pointer'
-                }}
-              >
-                <span>📊 Full Scorecard</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setDetailTab('squads')}
-                style={{
-                  background: detailTab === 'squads' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                  border: detailTab === 'squads' ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.06)',
-                  color: detailTab === 'squads' ? '#38bdf8' : '#94a3b8',
-                  padding: '7px 16px',
-                  borderRadius: '10px',
-                  fontSize: '0.82rem',
-                  fontWeight: 600,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  cursor: 'pointer'
-                }}
-              >
-                <Users size={14} />
-                <span>Playing XI / Squads</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setDetailTab('info')}
-                style={{
-                  background: detailTab === 'info' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                  border: detailTab === 'info' ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.06)',
-                  color: detailTab === 'info' ? '#38bdf8' : '#94a3b8',
-                  padding: '7px 16px',
-                  borderRadius: '10px',
-                  fontSize: '0.82rem',
-                  fontWeight: 600,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  cursor: 'pointer'
-                }}
-              >
-                <Info size={14} />
-                <span>Highlights & Info</span>
-              </button>
+              {[
+                { id: 'scorecard', label: 'SCORECARD' },
+                { id: 'squads', label: 'SQUADS' },
+                { id: 'info', label: 'INFO' },
+                { id: 'live', label: 'LIVE' }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setDetailTab(tab.id)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    borderBottom: detailTab === tab.id ? '3px solid #009270' : '3px solid transparent',
+                    color: detailTab === tab.id ? '#34d399' : '#94a3b8',
+                    padding: '11px 18px',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    letterSpacing: '0.6px',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
 
-            {/* TAB 1: FULL DETAILED SCORECARD (Batting & Bowling Tables) */}
-            {detailTab === 'scorecard' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {isDetailLoading ? (
-                  <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94a3b8' }}>
-                    <div style={{ fontSize: '2rem', marginBottom: '8px', animation: 'spin 1.5s infinite linear' }}>⏳</div>
-                    <div style={{ fontSize: '0.88rem' }}>Loading live scorecard tables inside Aether...</div>
-                  </div>
-                ) : inningsList.length > 0 ? (
-                  <>
-                    {/* Innings Switcher Tabs */}
-                    {inningsList.length > 1 && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
-                        {inningsList.map((inn, idx) => (
-                          <button
-                            key={inn.innNum}
-                            type="button"
-                            onClick={() => setActiveInningsTab(idx)}
+            {/* Cricbuzz Red Status Banner */}
+            <div style={{
+              background: 'rgba(239, 68, 68, 0.08)',
+              borderBottom: '1px solid rgba(239, 68, 68, 0.2)',
+              padding: '10px 18px',
+              fontSize: '0.84rem',
+              fontWeight: 600,
+              color: '#f87171',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px'
+            }}>
+              <span>{selectedMatch.status_text || selectedMatch.description || 'Live Match Coverage'}</span>
+              {selectedMatch.status === 'in' && (
+                <span style={{
+                  background: '#ef4444',
+                  color: '#ffffff',
+                  fontSize: '0.62rem',
+                  fontWeight: 800,
+                  padding: '2px 7px',
+                  borderRadius: '4px',
+                  letterSpacing: '0.5px'
+                }}>
+                  LIVE
+                </span>
+              )}
+            </div>
+
+            {/* Sub-tab Content */}
+            <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '14px', flex: 1 }}>
+              {/* TAB 1: SCORECARD (Accordion Innings Cricbuzz Style) */}
+              {detailTab === 'scorecard' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  {isDetailLoading ? (
+                    <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94a3b8' }}>
+                      <div style={{ fontSize: '2rem', marginBottom: '8px', animation: 'spin 1.5s infinite linear' }}>⏳</div>
+                      <div style={{ fontSize: '0.88rem' }}>Loading live scorecard tables inside Aether...</div>
+                    </div>
+                  ) : inningsList.length > 0 ? (
+                    inningsList.map((inn) => {
+                      const isExpanded = Boolean(expandedInnings[inn.innNum]);
+                      const yetToBat = getYetToBat(inn);
+                      return (
+                        <div
+                          key={inn.innNum}
+                          style={{
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            borderRadius: '12px',
+                            overflow: 'hidden',
+                            boxShadow: '0 4px 16px rgba(0,0,0,0.25)'
+                          }}
+                        >
+                          {/* Accordion Header Bar */}
+                          <div
+                            onClick={() => toggleInnings(inn.innNum)}
                             style={{
-                              background: activeInningsTab === idx ? 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)' : 'rgba(255, 255, 255, 0.04)',
-                              border: activeInningsTab === idx ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.08)',
-                              color: activeInningsTab === idx ? '#fff' : '#94a3b8',
-                              padding: '6px 14px',
-                              borderRadius: '8px',
-                              fontSize: '0.78rem',
-                              fontWeight: 600,
+                              background: isExpanded ? '#009270' : '#1e293b',
+                              color: '#ffffff',
+                              padding: '12px 16px',
                               cursor: 'pointer',
-                              whiteSpace: 'nowrap'
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              userSelect: 'none',
+                              transition: 'background 0.2s'
                             }}
                           >
-                            {inn.teamName} ({inn.battingCard?.runs ? `${inn.battingCard.runs} r` : `Innings ${inn.innNum}`})
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Batting Scorecard Table */}
-                    {currentInnings?.battingCard && (
-                      <div style={{
-                        background: 'rgba(255, 255, 255, 0.02)',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        borderRadius: '16px',
-                        overflow: 'hidden'
-                      }}>
-                        <div style={{
-                          padding: '12px 16px',
-                          background: 'rgba(56, 189, 248, 0.06)',
-                          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: '10px'
-                        }}>
-                          <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span>🏏 Batting: {currentInnings.battingCard.teamName || currentInnings.teamName}</span>
+                            <div style={{ fontWeight: 700, fontSize: '0.90rem' }}>
+                              {inn.teamName} {inn.innNum ? `${inn.innNum === '1' ? '1st' : (inn.innNum === '2' ? '2nd' : `${inn.innNum}th`)} inn` : ''}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.88rem', fontWeight: 700 }}>
+                              <span>{inn.battingCard?.runs || ''} {inn.battingCard?.total || ''}</span>
+                              {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                            </div>
                           </div>
-                          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#38bdf8' }}>
-                            {currentInnings.battingCard.runs} {currentInnings.battingCard.total}
-                          </div>
-                        </div>
 
-                        <div style={{ overflowX: 'auto' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', textAlign: 'left' }}>
-                            <thead>
-                              <tr style={{ background: 'rgba(0, 0, 0, 0.3)', color: '#94a3b8', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                                <th style={{ padding: '8px 14px' }}>BATTER</th>
-                                <th style={{ padding: '8px 12px' }}>DISMISSAL</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'right' }}>R</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'right' }}>B</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'right' }}>4s</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'right' }}>6s</th>
-                                <th style={{ padding: '8px 12px', textAlign: 'right' }}>SR</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(currentInnings.battingCard.playerDetails || []).map((p, pIdx) => {
-                                const runs = Number(p.runs || 0);
-                                const balls = Number(p.ballsFaced || 0);
-                                const sr = p.strikeRate || (balls > 0 ? ((runs / balls) * 100).toFixed(1) : '-');
-                                return (
-                                  <tr
-                                    key={pIdx}
-                                    style={{
-                                      borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
-                                      background: pIdx % 2 === 0 ? 'transparent' : 'rgba(255, 255, 255, 0.015)'
-                                    }}
-                                  >
-                                    <td style={{ padding: '10px 14px', fontWeight: 700, color: '#f8fafc', whiteSpace: 'nowrap' }}>
-                                      {p.playerName}
-                                    </td>
-                                    <td style={{ padding: '10px 12px', color: '#94a3b8', fontSize: '0.74rem' }}>
-                                      {p.dismissal || 'not out'}
-                                    </td>
-                                    <td style={{ padding: '10px 10px', textAlign: 'right', fontWeight: 800, color: '#38bdf8', fontSize: '0.84rem' }}>
-                                      {p.runs}
-                                    </td>
-                                    <td style={{ padding: '10px 10px', textAlign: 'right', color: '#cbd5e1' }}>
-                                      {p.ballsFaced || 0}
-                                    </td>
-                                    <td style={{ padding: '10px 10px', textAlign: 'right', color: '#cbd5e1' }}>
-                                      {p.fours || 0}
-                                    </td>
-                                    <td style={{ padding: '10px 10px', textAlign: 'right', color: '#cbd5e1' }}>
-                                      {p.sixes || 0}
-                                    </td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'right', color: '#94a3b8', fontSize: '0.74rem' }}>
-                                      {sr}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
+                          {/* Accordion Body */}
+                          {isExpanded && (
+                            <div style={{ background: '#0e1726' }}>
+                              {/* Batting Table */}
+                              {inn.battingCard?.playerDetails?.length > 0 && (
+                                <div style={{ width: '100%', overflowX: 'auto' }}>
+                                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.80rem' }}>
+                                    <thead>
+                                      <tr style={{ background: 'rgba(255, 255, 255, 0.04)', color: '#94a3b8', borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                                        <th style={{ padding: '8px 14px', textAlign: 'left', fontWeight: 600 }}>Batter</th>
+                                        <th style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 600, width: '38px' }}>R</th>
+                                        <th style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 600, width: '36px' }}>B</th>
+                                        <th style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 600, width: '32px' }}>4s</th>
+                                        <th style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 600, width: '32px' }}>6s</th>
+                                        <th style={{ padding: '8px 14px', textAlign: 'right', fontWeight: 600, width: '56px' }}>SR</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {inn.battingCard.playerDetails.map((p, pIdx) => {
+                                        const isDismissed = Boolean(p.dismissal && !p.dismissal.toLowerCase().includes('not out'));
+                                        const isBatting = !isDismissed && p.runs !== undefined;
+                                        return (
+                                          <tr key={pIdx} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}>
+                                            <td style={{ padding: '8px 14px', verticalAlign: 'top' }}>
+                                              <div style={{ color: '#38bdf8', fontWeight: 600, fontSize: '0.84rem' }}>
+                                                {p.playerName}
+                                              </div>
+                                              <div style={{ color: isBatting ? '#34d399' : '#94a3b8', fontSize: '0.72rem', marginTop: '2px', fontWeight: isBatting ? 600 : 400 }}>
+                                                {p.dismissal || (isBatting ? 'batting' : 'not out')}
+                                              </div>
+                                            </td>
+                                            <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 700, color: '#f8fafc', fontSize: '0.86rem', verticalAlign: 'middle' }}>
+                                              {p.runs}
+                                            </td>
+                                            <td style={{ padding: '8px 8px', textAlign: 'right', color: '#cbd5e1', fontSize: '0.80rem', verticalAlign: 'middle' }}>
+                                              {p.ballsFaced || 0}
+                                            </td>
+                                            <td style={{ padding: '8px 8px', textAlign: 'right', color: '#94a3b8', fontSize: '0.80rem', verticalAlign: 'middle' }}>
+                                              {p.fours || 0}
+                                            </td>
+                                            <td style={{ padding: '8px 8px', textAlign: 'right', color: '#94a3b8', fontSize: '0.80rem', verticalAlign: 'middle' }}>
+                                              {p.sixes || 0}
+                                            </td>
+                                            <td style={{ padding: '8px 14px', textAlign: 'right', color: '#94a3b8', fontSize: '0.80rem', verticalAlign: 'middle' }}>
+                                              {p.strikeRate || '-'}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
 
-                        {/* Extras & Total Summary */}
-                        <div style={{
-                          padding: '10px 16px',
-                          background: 'rgba(0, 0, 0, 0.25)',
-                          borderTop: '1px solid rgba(255, 255, 255, 0.06)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: '12px',
-                          fontSize: '0.76rem',
-                          color: '#94a3b8',
-                          flexWrap: 'wrap'
-                        }}>
-                          <div>
-                            <strong>Extras:</strong> {currentInnings.battingCard.extras || 'None'}
-                          </div>
-                          <div>
-                            <strong>Total:</strong> <span style={{ color: '#34d399', fontWeight: 700 }}>{currentInnings.battingCard.runs}</span> {currentInnings.battingCard.total}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Bowling Scorecard Table */}
-                    {currentInnings?.bowlingCard && (
-                      <div style={{
-                        background: 'rgba(255, 255, 255, 0.02)',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        borderRadius: '16px',
-                        overflow: 'hidden'
-                      }}>
-                        <div style={{
-                          padding: '12px 16px',
-                          background: 'rgba(239, 68, 68, 0.06)',
-                          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-                          fontSize: '0.86rem',
-                          fontWeight: 700,
-                          color: '#f8fafc'
-                        }}>
-                          🎯 Bowling: {currentInnings.bowlingCard.teamName || 'Opposition'}
-                        </div>
-
-                        <div style={{ overflowX: 'auto' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', textAlign: 'left' }}>
-                            <thead>
-                              <tr style={{ background: 'rgba(0, 0, 0, 0.3)', color: '#94a3b8', borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-                                <th style={{ padding: '8px 14px' }}>BOWLER</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'right' }}>O</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'right' }}>M</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'right' }}>R</th>
-                                <th style={{ padding: '8px 10px', textAlign: 'right' }}>W</th>
-                                <th style={{ padding: '8px 12px', textAlign: 'right' }}>ECON</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(currentInnings.bowlingCard.playerDetails || []).map((b, bIdx) => (
-                                <tr
-                                  key={bIdx}
-                                  style={{
-                                    borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
-                                    background: bIdx % 2 === 0 ? 'transparent' : 'rgba(255, 255, 255, 0.015)'
-                                  }}
-                                >
-                                  <td style={{ padding: '10px 14px', fontWeight: 700, color: '#f8fafc', whiteSpace: 'nowrap' }}>
-                                    {b.playerName}
-                                  </td>
-                                  <td style={{ padding: '10px 10px', textAlign: 'right', color: '#cbd5e1' }}>
-                                    {b.overs}
-                                  </td>
-                                  <td style={{ padding: '10px 10px', textAlign: 'right', color: '#cbd5e1' }}>
-                                    {b.maidens || 0}
-                                  </td>
-                                  <td style={{ padding: '10px 10px', textAlign: 'right', color: '#cbd5e1' }}>
-                                    {b.conceded || 0}
-                                  </td>
-                                  <td style={{ padding: '10px 10px', textAlign: 'right', fontWeight: 800, color: '#34d399', fontSize: '0.84rem' }}>
-                                    {b.wickets || 0}
-                                  </td>
-                                  <td style={{ padding: '10px 12px', textAlign: 'right', color: '#94a3b8', fontSize: '0.74rem' }}>
-                                    {b.economyRate || '-'}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  /* Fallback when match is upcoming or no matchcards yet */
-                  <div style={{
-                    textAlign: 'center',
-                    padding: '36px 20px',
-                    background: 'rgba(255, 255, 255, 0.02)',
-                    borderRadius: '16px',
-                    border: '1px dashed rgba(255, 255, 255, 0.1)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: '10px'
-                  }}>
-                    <div style={{ fontSize: '2.5rem' }}>🏏</div>
-                    <div style={{ fontSize: '1rem', fontWeight: 700, color: '#f8fafc' }}>
-                      {selectedMatch.status === 'pre' ? 'यह मैच अभी शुरू होने वाला है' : 'लाइव स्कोरकार्ड अपडेट हो रहा है'}
-                    </div>
-                    <div style={{ fontSize: '0.80rem', color: '#94a3b8', maxWidth: '420px', lineHeight: '1.4' }}>
-                      {selectedMatch.status === 'pre'
-                        ? `मैच का भारतीय समय: ${getISTDisplay(selectedMatch) || selectedMatch.status_text}। मैच शुरू होते ही लाइव गेंद-दर-गेंद स्कोरकार्ड यहाँ दिखेगा।`
-                        : `मैच की ताज़ा स्थिति: ${selectedMatch.status_text || 'In Progress'}। आप ऊपर 'Playing XI / Squads' टैब में दोनों टीमों की प्लेइंग 11 देख सकते हैं।`}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setDetailTab('squads')}
-                      style={{
-                        marginTop: '8px',
-                        background: 'rgba(56, 189, 248, 0.12)',
-                        border: '1px solid rgba(56, 189, 248, 0.3)',
-                        color: '#38bdf8',
-                        padding: '6px 14px',
-                        borderRadius: '8px',
-                        fontSize: '0.78rem',
-                        fontWeight: 600,
-                        cursor: 'pointer'
-                      }}
-                    >
-                      View Playing XI / Squads →
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* TAB 2: PLAYING XI / SQUADS */}
-            {detailTab === 'squads' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {displayRosters && displayRosters.length > 0 ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
-                    {displayRosters.map((rost, rIdx) => (
-                      <div
-                        key={rIdx}
-                        style={{
-                          background: 'rgba(255, 255, 255, 0.02)',
-                          border: '1px solid rgba(255, 255, 255, 0.08)',
-                          borderRadius: '16px',
-                          padding: '16px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '12px'
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '10px' }}>
-                          {rost.logo && <img src={rost.logo} alt={rost.team} style={{ width: '24px', height: '24px', objectFit: 'contain' }} />}
-                          <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#f8fafc' }}>
-                            {rost.team}
-                          </div>
-                          <span style={{ fontSize: '0.70rem', color: '#94a3b8', marginLeft: 'auto' }}>
-                            {rost.players?.length || 0} Players
-                          </span>
-                        </div>
-
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          {(rost.players || []).map((pl, pIdx) => (
-                            <div
-                              key={pIdx}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                padding: '6px 8px',
-                                borderRadius: '6px',
-                                background: pIdx % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
-                                fontSize: '0.78rem'
-                              }}
-                            >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ color: '#64748b', fontSize: '0.70rem', width: '16px' }}>{pIdx + 1}.</span>
-                                <span style={{ color: '#f8fafc', fontWeight: 600 }}>{pl.name}</span>
+                              {/* Extras & Total Summary */}
+                              <div style={{ padding: '10px 14px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', background: 'rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.80rem' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#94a3b8' }}>
+                                  <span style={{ fontWeight: 600, color: '#cbd5e1' }}>Extras</span>
+                                  <span>{inn.battingCard?.extras || '0 (b 0, lb 0, w 0, nb 0, p 0)'}</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ fontWeight: 700, color: '#f8fafc' }}>Total</span>
+                                  <span style={{ fontWeight: 800, color: '#34d399', fontSize: '0.90rem' }}>
+                                    {inn.battingCard?.runs || ''} {inn.battingCard?.total || ''}
+                                  </span>
+                                </div>
                               </div>
-                              {pl.position && (
-                                <span style={{ color: '#94a3b8', fontSize: '0.70rem' }}>{pl.position}</span>
+
+                              {/* Yet to Bat Row */}
+                              {yetToBat.length > 0 && (
+                                <div style={{ padding: '10px 14px', borderTop: '1px solid rgba(255, 255, 255, 0.06)', fontSize: '0.78rem' }}>
+                                  <div style={{ color: '#94a3b8', fontWeight: 600, marginBottom: '4px' }}>Yet to bat</div>
+                                  <div style={{ color: '#cbd5e1', lineHeight: '1.4' }}>
+                                    {yetToBat.map(p => p.name).join(', ')}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Bowling Table */}
+                              {inn.bowlingCard?.playerDetails?.length > 0 && (
+                                <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)', marginTop: '4px' }}>
+                                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.80rem' }}>
+                                    <thead>
+                                      <tr style={{ background: 'rgba(255, 255, 255, 0.04)', color: '#94a3b8', borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                                        <th style={{ padding: '8px 14px', textAlign: 'left', fontWeight: 600 }}>Bowler</th>
+                                        <th style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 600, width: '38px' }}>O</th>
+                                        <th style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 600, width: '32px' }}>M</th>
+                                        <th style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 600, width: '36px' }}>R</th>
+                                        <th style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 600, width: '32px' }}>W</th>
+                                        <th style={{ padding: '8px 14px', textAlign: 'right', fontWeight: 600, width: '56px' }}>ECO</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {inn.bowlingCard.playerDetails.map((b, bIdx) => (
+                                        <tr key={bIdx} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}>
+                                          <td style={{ padding: '8px 14px', color: '#38bdf8', fontWeight: 600 }}>
+                                            {b.playerName}
+                                          </td>
+                                          <td style={{ padding: '8px 8px', textAlign: 'right', color: '#cbd5e1' }}>{b.overs}</td>
+                                          <td style={{ padding: '8px 8px', textAlign: 'right', color: '#94a3b8' }}>{b.maidens || 0}</td>
+                                          <td style={{ padding: '8px 8px', textAlign: 'right', color: '#cbd5e1' }}>{b.conceded || 0}</td>
+                                          <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 700, color: '#34d399' }}>{b.wickets || 0}</td>
+                                          <td style={{ padding: '8px 14px', textAlign: 'right', color: '#94a3b8' }}>{b.economyRate || '-'}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
                               )}
                             </div>
-                          ))}
+                          )}
                         </div>
+                      );
+                    })
+                  ) : (
+                    <div style={{
+                      textAlign: 'center',
+                      padding: '40px 20px',
+                      background: 'rgba(255, 255, 255, 0.02)',
+                      borderRadius: '16px',
+                      border: '1px dashed rgba(255, 255, 255, 0.1)',
+                      color: '#94a3b8'
+                    }}>
+                      <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>🏏</div>
+                      <div style={{ fontSize: '0.96rem', fontWeight: 700, color: '#f8fafc' }}>
+                        Scorecard is being updated
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ textAlign: 'center', padding: '36px 20px', color: '#94a3b8' }}>
-                    <Users size={32} style={{ margin: '0 auto 8px', opacity: 0.5 }} />
-                    <div style={{ fontSize: '0.88rem' }}>Squad details are being updated by Cricinfo.</div>
-                  </div>
-                )}
-              </div>
-            )}
+                      <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '4px' }}>
+                        {selectedMatch.status_text || 'Ball-by-ball commentary and full scorecard will update live as the match progresses.'}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
-            {/* TAB 3: HIGHLIGHTS & MATCH INFO */}
-            {detailTab === 'info' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {/* Match Notes & Highlights */}
-                {((detailData?.notes && detailData.notes.length > 0) || (selectedMatch.highlights && selectedMatch.highlights.length > 0)) && (
+              {/* TAB 2: SQUADS */}
+              {detailTab === 'squads' && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+                  {displayRosters.map((rost, rIdx) => (
+                    <div
+                      key={rIdx}
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.02)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: '16px',
+                        padding: '16px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '12px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '10px' }}>
+                        {rost.logo && <img src={rost.logo} alt={rost.team} style={{ width: '24px', height: '24px', objectFit: 'contain' }} />}
+                        <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#f8fafc' }}>
+                          {rost.team}
+                        </div>
+                        <span style={{ fontSize: '0.70rem', color: '#94a3b8', marginLeft: 'auto' }}>
+                          {rost.players?.length || 0} Players
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {(rost.players || []).map((pl, pIdx) => (
+                          <div
+                            key={pIdx}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '6px 8px',
+                              borderRadius: '6px',
+                              background: pIdx % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent',
+                              fontSize: '0.78rem'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ color: '#64748b', fontSize: '0.70rem', width: '16px' }}>{pIdx + 1}.</span>
+                              <span style={{ color: '#f8fafc', fontWeight: 600 }}>{pl.name}</span>
+                            </div>
+                            {pl.position && (
+                              <span style={{ color: '#94a3b8', fontSize: '0.70rem' }}>{pl.position}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* TAB 3: INFO */}
+              {detailTab === 'info' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  {/* Match Info Grid */}
                   <div style={{
                     background: 'rgba(255, 255, 255, 0.02)',
                     border: '1px solid rgba(255, 255, 255, 0.08)',
                     borderRadius: '16px',
-                    padding: '16px'
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                    fontSize: '0.80rem'
                   }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: '#f59e0b', fontWeight: 700, fontSize: '0.86rem' }}>
-                      <Award size={16} />
-                      <span>MATCH HIGHLIGHTS & SESSIONS</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>
+                      <span style={{ color: '#94a3b8' }}>Match</span>
+                      <span style={{ color: '#f8fafc', fontWeight: 600 }}>{selectedMatch.name}</span>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {(detailData?.notes || selectedMatch.highlights || []).map((note, nIdx) => (
-                        <div
-                          key={nIdx}
-                          style={{
-                            padding: '8px 12px',
-                            background: 'rgba(0, 0, 0, 0.25)',
-                            borderLeft: '3px solid #38bdf8',
-                            borderRadius: '0 8px 8px 0',
-                            fontSize: '0.80rem',
-                            color: '#e2e8f0'
-                          }}
-                        >
-                          {note}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>
+                      <span style={{ color: '#94a3b8' }}>Series</span>
+                      <span style={{ color: '#f8fafc', fontWeight: 600 }}>{selectedMatch.series}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>
+                      <span style={{ color: '#94a3b8' }}>Date & Time</span>
+                      <span style={{ color: '#38bdf8', fontWeight: 600 }}>{getISTDisplay(selectedMatch) || selectedMatch.date || 'TBD'}</span>
+                    </div>
+                    {selectedMatch.venue && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>
+                        <span style={{ color: '#94a3b8' }}>Venue</span>
+                        <span style={{ color: '#f8fafc' }}>{selectedMatch.venue}</span>
+                      </div>
+                    )}
+                    {selectedMatch.toss && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>
+                        <span style={{ color: '#94a3b8' }}>Toss</span>
+                        <span style={{ color: '#cbd5e1' }}>{selectedMatch.toss}</span>
+                      </div>
+                    )}
+                    {(() => {
+                      const streaming = getStreamingDisplay(selectedMatch);
+                      return (
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#94a3b8' }}>Broadcast / Live OTT</span>
+                          <span style={{ color: '#f87171', fontWeight: 600 }}>{streaming.platform} ({streaming.ott})</span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Highlights Notes */}
+                  {((detailData?.notes && detailData.notes.length > 0) || (selectedMatch.highlights && selectedMatch.highlights.length > 0)) && (
+                    <div style={{
+                      background: 'rgba(255, 255, 255, 0.02)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      borderRadius: '16px',
+                      padding: '16px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px'
+                    }}>
+                      <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#f59e0b', marginBottom: '4px' }}>
+                        Key Highlights & Session Notes
+                      </div>
+                      {(detailData?.notes || selectedMatch.highlights || []).map((nt, idx) => (
+                        <div key={idx} style={{ fontSize: '0.78rem', color: '#cbd5e1', padding: '6px 10px', background: 'rgba(0,0,0,0.2)', borderRadius: '6px' }}>
+                          • {nt}
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
+              )}
 
-                {/* Additional Match Details */}
-                <div style={{
-                  background: 'rgba(255, 255, 255, 0.02)',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                  borderRadius: '16px',
-                  padding: '16px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '10px'
-                }}>
-                  <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#f8fafc', marginBottom: '4px' }}>
-                    Match Details & Officials
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '8px', fontSize: '0.78rem' }}>
-                    <div style={{ color: '#94a3b8' }}>
-                      <strong style={{ color: '#f8fafc' }}>Match:</strong> {selectedMatch.name}
+              {/* TAB 4: LIVE */}
+              {detailTab === 'live' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '16px',
+                    padding: '18px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}>
+                    <div style={{ fontSize: '0.90rem', fontWeight: 700, color: '#38bdf8' }}>
+                      Current Match Situation
                     </div>
-                    <div style={{ color: '#94a3b8' }}>
-                      <strong style={{ color: '#f8fafc' }}>Series:</strong> {selectedMatch.series}
+                    <div style={{ fontSize: '0.84rem', color: '#f8fafc', lineHeight: '1.5' }}>
+                      {selectedMatch.status_text || selectedMatch.description || 'Live cricket stream in progress'}
                     </div>
-                    <div style={{ color: '#94a3b8' }}>
-                      <strong style={{ color: '#f8fafc' }}>Venue:</strong> {selectedMatch.venue || 'International Ground'}
-                    </div>
-                    <div style={{ color: '#94a3b8' }}>
-                      <strong style={{ color: '#f8fafc' }}>Toss:</strong> {selectedMatch.toss || 'Not conducted yet'}
-                    </div>
-                    <div style={{ color: '#94a3b8' }}>
-                      <strong style={{ color: '#f8fafc' }}>IST Time:</strong> {getISTDisplay(selectedMatch) || '-'}
-                    </div>
-                    <div style={{ color: '#94a3b8' }}>
-                      <strong style={{ color: '#f8fafc' }}>Broadcast:</strong> {getStreamingDisplay(selectedMatch).platform}
-                    </div>
+                    {selectedMatch.session && (
+                      <div style={{ fontSize: '0.78rem', color: '#94a3b8' }}>
+                        Session: <strong style={{ color: '#cbd5e1' }}>{selectedMatch.session}</strong>
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         ) : (
-          /* VIEW B: ALL MATCHES FEED (With standard separation) */
+          /* -------------------- VIEW 2: MATCHES LIST FEED -------------------- */
           <>
-            {/* Scope Tabs */}
+            {/* Filter Tabs & Search Bar */}
             <div style={{
-              padding: '12px 20px 8px',
-              background: 'rgba(0, 0, 0, 0.25)',
-              borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+              padding: '14px 20px',
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
               display: 'flex',
               flexDirection: 'column',
-              gap: '10px'
+              gap: '12px'
             }}>
+              {/* Category Scope Tabs */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflowX: 'auto', paddingBottom: '2px' }}>
                 <button
                   type="button"
                   onClick={() => setScopeFilter('international')}
                   style={{
-                    background: scopeFilter === 'international' ? 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)' : 'rgba(255, 255, 255, 0.04)',
-                    border: scopeFilter === 'international' ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.08)',
-                    color: scopeFilter === 'international' ? '#fff' : '#94a3b8',
+                    background: scopeFilter === 'international' ? '#009270' : 'rgba(255, 255, 255, 0.04)',
+                    border: scopeFilter === 'international' ? '1px solid #34d399' : '1px solid rgba(255, 255, 255, 0.08)',
+                    color: scopeFilter === 'international' ? '#ffffff' : '#94a3b8',
                     padding: '6px 14px',
-                    borderRadius: '10px',
-                    fontSize: '0.80rem',
+                    borderRadius: '20px',
+                    fontSize: '0.78rem',
                     fontWeight: 600,
-                    display: 'inline-flex',
+                    display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
                     cursor: 'pointer',
@@ -1170,35 +856,35 @@ export function CricketScorecardModal({
                   type="button"
                   onClick={() => setScopeFilter('all')}
                   style={{
-                    background: scopeFilter === 'all' ? 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)' : 'rgba(255, 255, 255, 0.04)',
-                    border: scopeFilter === 'all' ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.08)',
-                    color: scopeFilter === 'all' ? '#fff' : '#94a3b8',
+                    background: scopeFilter === 'all' ? '#009270' : 'rgba(255, 255, 255, 0.04)',
+                    border: scopeFilter === 'all' ? '1px solid #34d399' : '1px solid rgba(255, 255, 255, 0.08)',
+                    color: scopeFilter === 'all' ? '#ffffff' : '#94a3b8',
                     padding: '6px 14px',
-                    borderRadius: '10px',
-                    fontSize: '0.80rem',
+                    borderRadius: '20px',
+                    fontSize: '0.78rem',
                     fontWeight: 600,
-                    display: 'inline-flex',
+                    display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
                     cursor: 'pointer',
                     whiteSpace: 'nowrap'
                   }}
                 >
-                  <span>🏏 All Matches ({matches.length})</span>
+                  <span>🔥 All Matches ({displayMatches.length})</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setScopeFilter('leagues')}
                   style={{
-                    background: scopeFilter === 'leagues' ? 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)' : 'rgba(255, 255, 255, 0.04)',
-                    border: scopeFilter === 'leagues' ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.08)',
-                    color: scopeFilter === 'leagues' ? '#fff' : '#94a3b8',
+                    background: scopeFilter === 'leagues' ? '#009270' : 'rgba(255, 255, 255, 0.04)',
+                    border: scopeFilter === 'leagues' ? '1px solid #34d399' : '1px solid rgba(255, 255, 255, 0.08)',
+                    color: scopeFilter === 'leagues' ? '#ffffff' : '#94a3b8',
                     padding: '6px 14px',
-                    borderRadius: '10px',
-                    fontSize: '0.80rem',
+                    borderRadius: '20px',
+                    fontSize: '0.78rem',
                     fontWeight: 600,
-                    display: 'inline-flex',
+                    display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
                     cursor: 'pointer',
@@ -1206,115 +892,60 @@ export function CricketScorecardModal({
                   }}
                 >
                   <Trophy size={14} />
-                  <span>T20 & Domestic Leagues ({Math.max(0, matches.length - intlCount)})</span>
+                  <span>T20 & Domestic ({displayMatches.length - intlCount})</span>
                 </button>
               </div>
 
-              {/* Status Sub-Filters & Quick Search */}
+              {/* Status Filters & Search Bar */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setStatusFilter('all')}
-                    style={{
-                      background: statusFilter === 'all' ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
-                      border: statusFilter === 'all' ? '1px solid rgba(56, 189, 248, 0.3)' : '1px solid transparent',
-                      color: statusFilter === 'all' ? '#38bdf8' : '#64748b',
-                      padding: '4px 10px',
-                      borderRadius: '8px',
-                      fontSize: '0.74rem',
-                      fontWeight: 600,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    All Status
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStatusFilter('in')}
-                    style={{
-                      background: statusFilter === 'in' ? 'rgba(239, 68, 68, 0.15)' : 'transparent',
-                      border: statusFilter === 'in' ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid transparent',
-                      color: statusFilter === 'in' ? '#f87171' : '#64748b',
-                      padding: '4px 10px',
-                      borderRadius: '8px',
-                      fontSize: '0.74rem',
-                      fontWeight: 600,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    <Radio size={12} />
-                    Live Now ({liveCount})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStatusFilter('pre')}
-                    style={{
-                      background: statusFilter === 'pre' ? 'rgba(245, 158, 11, 0.15)' : 'transparent',
-                      border: statusFilter === 'pre' ? '1px solid rgba(245, 158, 11, 0.4)' : '1px solid transparent',
-                      color: statusFilter === 'pre' ? '#fbbf24' : '#64748b',
-                      padding: '4px 10px',
-                      borderRadius: '8px',
-                      fontSize: '0.74rem',
-                      fontWeight: 600,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    <Clock size={12} />
-                    Upcoming ({upcomingCount})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStatusFilter('post')}
-                    style={{
-                      background: statusFilter === 'post' ? 'rgba(52, 211, 153, 0.15)' : 'transparent',
-                      border: statusFilter === 'post' ? '1px solid rgba(52, 211, 153, 0.4)' : '1px solid transparent',
-                      color: statusFilter === 'post' ? '#34d399' : '#64748b',
-                      padding: '4px 10px',
-                      borderRadius: '8px',
-                      fontSize: '0.74rem',
-                      fontWeight: 600,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    <CheckCircle2 size={12} />
-                    Completed ({completedCount})
-                  </button>
+                  {[
+                    { id: 'all', label: 'All Status' },
+                    { id: 'in', label: `Live Now (${liveCount})`, isLive: true },
+                    { id: 'pre', label: `Upcoming (${upcomingCount})` },
+                    { id: 'post', label: `Completed (${completedCount})` }
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setStatusFilter(tab.id)}
+                      style={{
+                        background: statusFilter === tab.id ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
+                        border: statusFilter === tab.id ? '1px solid #38bdf8' : '1px solid transparent',
+                        color: statusFilter === tab.id ? '#38bdf8' : (tab.isLive && liveCount > 0 ? '#f87171' : '#94a3b8'),
+                        padding: '4px 10px',
+                        borderRadius: '8px',
+                        fontSize: '0.74rem',
+                        fontWeight: statusFilter === tab.id ? 700 : 500,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
                 </div>
 
-                {/* Quick Search */}
                 <div style={{
+                  position: 'relative',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px',
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                  borderRadius: '8px',
-                  padding: '3px 8px',
-                  maxWidth: '180px'
+                  minWidth: '180px'
                 }}>
-                  <Search size={13} color="#64748b" />
+                  <Search size={14} style={{ position: 'absolute', left: '10px', color: '#64748b' }} />
                   <input
                     type="text"
-                    placeholder="Team / Series..."
+                    placeholder="Search teams / series..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     style={{
-                      background: 'transparent',
-                      border: 'none',
-                      outline: 'none',
-                      color: '#fff',
+                      width: '100%',
+                      background: 'rgba(0, 0, 0, 0.3)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      borderRadius: '8px',
+                      padding: '5px 10px 5px 30px',
                       fontSize: '0.74rem',
-                      width: '100%'
+                      color: '#f8fafc',
+                      outline: 'none'
                     }}
                   />
                 </div>
@@ -1345,10 +976,10 @@ export function CricketScorecardModal({
                 }}>
                   <div style={{ fontSize: '2.4rem', marginBottom: '8px' }}>🏏</div>
                   <div style={{ fontSize: '0.92rem', fontWeight: 600, color: '#f8fafc' }}>
-                    इस फ़िल्टर में कोई मैच उपलब्ध नहीं है
+                    No matches found for this filter
                   </div>
                   <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '6px' }}>
-                    ऊपर दिए गए "International" या "All Matches" टैब पर स्विच करके अन्य लाइव मैच देखें।
+                    Switch to "International" or "All Matches" to see other active games.
                   </div>
                   <button
                     type="button"
@@ -1365,7 +996,7 @@ export function CricketScorecardModal({
                       cursor: 'pointer'
                     }}
                   >
-                    रिफ्रेश करें (Refresh Matches)
+                    Refresh Matches
                   </button>
                 </div>
               ) : (
@@ -1378,208 +1009,120 @@ export function CricketScorecardModal({
 
                   return (
                     <div
-                      key={m.id || m.name}
+                      key={m.id}
                       onClick={() => setSelectedMatch(m)}
                       style={{
-                        background: isLive ? 'rgba(239, 68, 68, 0.04)' : 'rgba(255, 255, 255, 0.03)',
-                        border: isLive ? '1px solid rgba(239, 68, 68, 0.28)' : '1px solid rgba(255, 255, 255, 0.07)',
+                        background: 'rgba(255, 255, 255, 0.02)',
+                        border: isLive ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid rgba(255, 255, 255, 0.08)',
                         borderRadius: '16px',
                         padding: '14px 16px',
-                        boxShadow: isLive ? '0 4px 20px rgba(239, 68, 68, 0.08)' : 'none',
                         display: 'flex',
                         flexDirection: 'column',
                         gap: '10px',
                         cursor: 'pointer',
-                        transition: 'transform 0.15s, border-color 0.15s'
+                        transition: 'all 0.2s',
+                        boxShadow: isLive ? '0 4px 20px rgba(239, 68, 68, 0.12)' : 'none'
                       }}
                     >
-                      {/* Card Header: Tournament & Status Badge */}
+                      {/* Match Header */}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                        <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          {m.is_international && (
-                            <span style={{
-                              background: 'rgba(56, 189, 248, 0.15)',
-                              border: '1px solid rgba(56, 189, 248, 0.3)',
-                              color: '#38bdf8',
-                              fontSize: '0.66rem',
-                              fontWeight: 700,
-                              padding: '1px 6px',
-                              borderRadius: '4px',
-                              textTransform: 'uppercase'
-                            }}>
-                              INTL
-                            </span>
-                          )}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                           <span style={{
-                            fontSize: '0.78rem',
-                            fontWeight: 600,
-                            color: '#94a3b8',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis'
+                            background: m.is_international ? 'rgba(56, 189, 248, 0.12)' : 'rgba(255, 255, 255, 0.06)',
+                            border: m.is_international ? '1px solid rgba(56, 189, 248, 0.25)' : '1px solid rgba(255, 255, 255, 0.1)',
+                            color: m.is_international ? '#38bdf8' : '#94a3b8',
+                            fontSize: '0.66rem',
+                            fontWeight: 700,
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            textTransform: 'uppercase'
                           }}>
-                            {m.series || "Cricket Match"}
+                            {m.is_international ? 'International' : 'League'}
+                          </span>
+                          <span style={{ fontSize: '0.78rem', color: '#cbd5e1', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {m.series}
                           </span>
                         </div>
 
-                        <div>
-                          {isLive && (
-                            <span style={{
-                              background: 'rgba(239, 68, 68, 0.2)',
-                              border: '1px solid rgba(239, 68, 68, 0.4)',
-                              color: '#f87171',
-                              fontSize: '0.68rem',
-                              fontWeight: 700,
-                              padding: '2px 8px',
-                              borderRadius: '6px',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}>
-                              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#ef4444', animation: 'pulse 1.2s infinite' }}></span>
-                              LIVE
-                            </span>
-                          )}
-                          {isUpcoming && (
-                            <span style={{
-                              background: 'rgba(245, 158, 11, 0.12)',
-                              border: '1px solid rgba(245, 158, 11, 0.3)',
-                              color: '#fbbf24',
-                              fontSize: '0.68rem',
-                              fontWeight: 600,
-                              padding: '2px 8px',
-                              borderRadius: '6px'
-                            }}>
-                              UPCOMING
-                            </span>
-                          )}
-                          {isFinished && (
-                            <span style={{
-                              background: 'rgba(52, 211, 153, 0.12)',
-                              border: '1px solid rgba(52, 211, 153, 0.3)',
-                              color: '#34d399',
-                              fontSize: '0.68rem',
-                              fontWeight: 600,
-                              padding: '2px 8px',
-                              borderRadius: '6px'
-                            }}>
-                              RESULT
-                            </span>
-                          )}
-                        </div>
+                        <span style={{
+                          background: isLive ? '#ef4444' : (isFinished ? 'rgba(52, 211, 153, 0.15)' : 'rgba(245, 158, 11, 0.15)'),
+                          border: isLive ? 'none' : (isFinished ? '1px solid rgba(52, 211, 153, 0.3)' : '1px solid rgba(245, 158, 11, 0.3)'),
+                          color: isLive ? '#ffffff' : (isFinished ? '#34d399' : '#fbbf24'),
+                          fontSize: '0.66rem',
+                          fontWeight: 700,
+                          padding: '2px 8px',
+                          borderRadius: '999px',
+                          letterSpacing: '0.3px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}>
+                          {isLive && <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#fff', animation: 'pulse 1s infinite' }}></span>}
+                          {isLive ? 'LIVE' : (isFinished ? 'COMPLETED' : 'UPCOMING')}
+                        </span>
                       </div>
 
-                      {/* Scoreboard Body */}
-                      <div style={{
-                        background: 'rgba(0, 0, 0, 0.32)',
-                        border: '1px solid rgba(255, 255, 255, 0.05)',
-                        borderRadius: '12px',
-                        padding: '10px 14px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '8px'
-                      }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                      {/* Teams & Scores */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {/* Team 1 */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             {m.team1?.logo ? (
-                              <img
-                                src={m.team1.logo}
-                                alt={m.team1.name}
-                                style={{ width: '24px', height: '24px', objectFit: 'contain' }}
-                                onError={(e) => { e.target.style.display = 'none'; }}
-                              />
+                              <img src={m.team1.logo} alt={m.team1.name} style={{ width: '20px', height: '20px', objectFit: 'contain' }} />
                             ) : (
-                              <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.70rem' }}>
-                                🏏
-                              </div>
+                              <span style={{ fontSize: '1rem' }}>🏏</span>
                             )}
-                            <span style={{
-                              fontSize: '0.88rem',
-                              fontWeight: m.team1?.is_winner ? 700 : 600,
-                              color: m.team1?.is_winner ? '#34d399' : '#f8fafc',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis'
-                            }}>
+                            <span style={{ fontSize: '0.88rem', fontWeight: 700, color: m.team1?.is_winner ? '#34d399' : '#f8fafc' }}>
                               {m.team1?.name} {m.team1?.is_winner && '🏆'}
                             </span>
                           </div>
-                          <div style={{
-                            fontSize: '0.94rem',
-                            fontWeight: 700,
-                            color: isLive ? '#38bdf8' : '#e2e8f0',
-                            letterSpacing: '0.4px',
-                            whiteSpace: 'nowrap'
-                          }}>
+                          <span style={{ fontSize: '0.94rem', fontWeight: 800, color: isLive ? '#38bdf8' : '#f8fafc' }}>
                             {m.team1?.score || (isUpcoming ? 'Yet to bat' : '-')}
-                          </div>
+                          </span>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                        {/* Team 2 */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             {m.team2?.logo ? (
-                              <img
-                                src={m.team2.logo}
-                                alt={m.team2.name}
-                                style={{ width: '24px', height: '24px', objectFit: 'contain' }}
-                                onError={(e) => { e.target.style.display = 'none'; }}
-                              />
+                              <img src={m.team2.logo} alt={m.team2.name} style={{ width: '20px', height: '20px', objectFit: 'contain' }} />
                             ) : (
-                              <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.70rem' }}>
-                                🏏
-                              </div>
+                              <span style={{ fontSize: '1rem' }}>🏏</span>
                             )}
-                            <span style={{
-                              fontSize: '0.88rem',
-                              fontWeight: m.team2?.is_winner ? 700 : 600,
-                              color: m.team2?.is_winner ? '#34d399' : '#f8fafc',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis'
-                            }}>
+                            <span style={{ fontSize: '0.88rem', fontWeight: 700, color: m.team2?.is_winner ? '#34d399' : '#f8fafc' }}>
                               {m.team2?.name} {m.team2?.is_winner && '🏆'}
                             </span>
                           </div>
-                          <div style={{
-                            fontSize: '0.94rem',
-                            fontWeight: 700,
-                            color: isLive ? '#38bdf8' : '#e2e8f0',
-                            letterSpacing: '0.4px',
-                            whiteSpace: 'nowrap'
-                          }}>
+                          <span style={{ fontSize: '0.94rem', fontWeight: 800, color: isLive ? '#38bdf8' : '#f8fafc' }}>
                             {m.team2?.score || (isUpcoming ? 'Yet to bat' : '-')}
-                          </div>
+                          </span>
                         </div>
                       </div>
 
-                      {/* IST TIME & LIVE STREAMING BADGES ON LIST CARD */}
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: '8px',
-                        flexWrap: 'wrap',
-                        background: 'rgba(0, 0, 0, 0.2)',
-                        padding: '6px 10px',
-                        borderRadius: '8px'
-                      }}>
-                        {/* IST Time */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.74rem' }}>
-                          <span style={{ color: '#38bdf8', fontWeight: 700 }}>🇮🇳 {istTime || 'IST Time'}</span>
-                          {m.status_text && m.status_text.includes('local time') && (
-                            <span style={{ color: '#64748b', fontSize: '0.70rem' }}>
-                              ({m.status_text.replace('Match scheduled to begin at ', '')})
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Streaming Platform */}
+                      {/* IST Timing & OTT Pill */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', paddingTop: '2px' }}>
                         <div style={{
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: '4px',
-                          background: 'rgba(239, 68, 68, 0.12)',
-                          border: '1px solid rgba(239, 68, 68, 0.25)',
+                          background: 'rgba(56, 189, 248, 0.08)',
+                          border: '1px solid rgba(56, 189, 248, 0.2)',
+                          color: '#38bdf8',
+                          padding: '2px 7px',
+                          borderRadius: '6px',
+                          fontSize: '0.68rem',
+                          fontWeight: 600
+                        }}>
+                          <Clock size={11} />
+                          <span>{istTime || m.ist_time || 'IST Time'}</span>
+                        </div>
+
+                        <div style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          background: 'rgba(239, 68, 68, 0.08)',
+                          border: '1px solid rgba(239, 68, 68, 0.2)',
                           color: '#f87171',
                           padding: '2px 7px',
                           borderRadius: '6px',
@@ -1591,17 +1134,19 @@ export function CricketScorecardModal({
                         </div>
                       </div>
 
-                      {/* Match Situation & In-App View Button */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div style={{
-                            fontSize: '0.76rem',
-                            color: isLive ? '#f87171' : (isFinished ? '#34d399' : '#fbbf24'),
-                            fontWeight: 500
-                          }}>
-                            {m.status_text || m.description || "Live cricket coverage"}
-                          </div>
-                        </div>
+                      {/* Situation Note & View Scorecard Button */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                        <span style={{
+                          fontSize: '0.74rem',
+                          color: isLive ? '#f87171' : (isFinished ? '#34d399' : '#fbbf24'),
+                          fontWeight: 500,
+                          flex: 1,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}>
+                          {m.status_text || m.description || "Live cricket coverage"}
+                        </span>
 
                         <button
                           type="button"
@@ -1610,13 +1155,13 @@ export function CricketScorecardModal({
                             setSelectedMatch(m);
                           }}
                           style={{
-                            background: 'rgba(56, 189, 248, 0.12)',
-                            border: '1px solid rgba(56, 189, 248, 0.3)',
-                            color: '#38bdf8',
+                            background: '#009270',
+                            border: 'none',
+                            color: '#ffffff',
                             padding: '5px 12px',
                             borderRadius: '8px',
                             fontSize: '0.72rem',
-                            fontWeight: 600,
+                            fontWeight: 700,
                             cursor: 'pointer',
                             display: 'inline-flex',
                             alignItems: 'center',
@@ -1648,11 +1193,11 @@ export function CricketScorecardModal({
         }}>
           <div>
             {selectedMatch ? (
-              <span style={{ color: '#38bdf8', cursor: 'pointer' }} onClick={() => setSelectedMatch(null)}>
+              <span style={{ color: '#38bdf8', cursor: 'pointer', fontWeight: 600 }} onClick={() => setSelectedMatch(null)}>
                 ← Back to matches list
               </span>
             ) : (
-              <span>Showing {finalMatches.length} of {matches.length} matches</span>
+              <span>Showing {finalMatches.length} of {displayMatches.length} matches</span>
             )}
           </div>
           <button
@@ -1669,7 +1214,7 @@ export function CricketScorecardModal({
               cursor: 'pointer'
             }}
           >
-            Close (बंद करें)
+            Close
           </button>
         </div>
       </div>

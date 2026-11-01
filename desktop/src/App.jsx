@@ -883,12 +883,12 @@ export default function App() {
 
   const handleDeleteFinanceRecord = (id) => {
     const target = financeRecords.find(r => r.id === id);
-    const label = target ? `${target.note || target.category || 'खर्च'} (₹${Number(target.amount || 0).toLocaleString('en-IN')})` : 'यह रिकॉर्ड';
+    const label = target ? `${target.note || target.category || 'Transaction'} (₹${Number(target.amount || 0).toLocaleString('en-IN')})` : 'this record';
     showConfirm({
-      title: "खर्च/आय रिकॉर्ड हटाएं?",
-      message: `क्या आप "${label}" को स्थायी रूप से हटाना चाहते हैं? यह वित्तीय लेजर से हट जाएगा।`,
-      confirmText: "हटाएं (Delete)",
-      cancelText: "रद्द करें",
+      title: "Delete Financial Record?",
+      message: `Are you sure you want to permanently delete "${label}"? This will be removed from your ledger.`,
+      confirmText: "Delete",
+      cancelText: "Cancel",
       isDestructive: true,
       onConfirm: async () => {
         try {
@@ -944,16 +944,16 @@ export default function App() {
           amount: parseFloat(editingFinanceRecord.amount) || 0 
         } : r));
         setEditingFinanceRecord(null);
-        showToast("खर्च अपडेट हो गया!", "success");
+        showToast("Expense updated successfully!", "success");
         fetch(`${API_BASE}/finance/summary`, { headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) } })
           .then(r => r.json())
           .then(data => setFinanceSummary(data))
           .catch(() => {});
       } else {
-        showToast("अपडेट विफल रहा", "error");
+        showToast("Failed to update expense", "error");
       }
     } catch (e) {
-      showToast("नेटवर्क त्रुटि", "error");
+      showToast("Network error", "error");
     }
   };
 

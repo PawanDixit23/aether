@@ -5,10 +5,10 @@ export const ConfirmModal = ({
   isOpen,
   onClose,
   onConfirm,
-  title = "रिकॉर्ड हटाएं? (Delete Record)",
-  message = "क्या आप इस रिकॉर्ड को स्थायी रूप से हटाना चाहते हैं?",
-  confirmText = "हटाएं (Delete)",
-  cancelText = "रद्द करें (Cancel)",
+  title = "Delete Record?",
+  message = "Are you sure you want to permanently delete this item?",
+  confirmText = "Delete",
+  cancelText = "Cancel",
   isDestructive = true
 }) => {
   if (!isOpen) return null;
