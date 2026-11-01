@@ -1228,13 +1228,13 @@ def get_live_news(limit: int = 5, category: str = None):
     return get_structured_news(limit=limit, category=category)
 
 @app.get("/api/cricket/live")
-def get_live_cricket(filter_intl: bool = False):
+def get_live_cricket(filter_intl: bool = False, force: bool = False):
     """Returns real-time live cricket scorecards and upcoming matches from ESPNcricinfo."""
     try:
         from ai_engine import fetch_cricinfo_live_matches
     except ImportError:
         from .ai_engine import fetch_cricinfo_live_matches
-    matches = fetch_cricinfo_live_matches()
+    matches = fetch_cricinfo_live_matches(force=force)
     if filter_intl:
         matches = [m for m in matches if m.get("is_international")]
     
@@ -1251,13 +1251,13 @@ def get_live_cricket(filter_intl: bool = False):
     }
 
 @app.get("/api/cricket/match/{match_id}")
-def get_cricket_match_detail(match_id: str, league_id: Optional[str] = None):
+def get_cricket_match_detail(match_id: str, league_id: Optional[str] = None, force: bool = False):
     """Fetches comprehensive batting, bowling scorecards, rosters and notes for a specific match."""
     try:
         from ai_engine import fetch_cricinfo_match_scorecard
     except ImportError:
         from .ai_engine import fetch_cricinfo_match_scorecard
-    return fetch_cricinfo_match_scorecard(match_id=match_id, league_id=league_id)
+    return fetch_cricinfo_match_scorecard(match_id=match_id, league_id=league_id, force=force)
 
 
 # ----------------- Reminders & Notification Engine -----------------

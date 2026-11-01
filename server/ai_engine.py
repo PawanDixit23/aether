@@ -490,14 +490,15 @@ def get_match_streaming(series: str = '', name: str = '') -> dict:
         'badge': 'Live OTT'
     }
 
-def fetch_cricinfo_live_matches() -> list:
+def fetch_cricinfo_live_matches(force: bool = False) -> list:
     """
     Fetch live cricket match scorecards and upcoming international fixtures
     via ESPN Cricinfo official live scoreboard API, with XML RSS fallback.
     """
     import time
     now_ts = time.time()
-    if _cricket_cache["data"] and (now_ts - _cricket_cache["timestamp"]) < 15:
+    # High performance 3-second cache TTL for zero-lag live updates
+    if not force and _cricket_cache["data"] and (now_ts - _cricket_cache["timestamp"]) < 3:
         return _cricket_cache["data"]
 
     matches = []
@@ -746,17 +747,30 @@ def fetch_cricinfo_live_matches() -> list:
     _cricket_cache["timestamp"] = now_ts
     return fallback_defaults
 
-def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None) -> dict:
+_scorecard_cache = {}
+_match_league_map = {}
+
+def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: bool = False) -> dict:
     """Fetches detailed batting and bowling scorecard, fall of wickets, rosters, and commentary for a match."""
-    league_candidates = [league_id] if league_id else []
-    league_candidates.extend(['8768', '24805', '8814', '8838', '15599', '15439', '8820', '8840'])
+    import time
+    now_ts = time.time()
+    if not force and match_id in _scorecard_cache:
+        cached_ts, cached_result = _scorecard_cache[match_id]
+        if (now_ts - cached_ts) < 3.0:
+            return cached_result
+
+    known_lid = league_id or _match_league_map.get(match_id)
+    if known_lid:
+        league_candidates = [known_lid]
+    else:
+        league_candidates = ['8768', '24805', '8814', '8838', '15599', '15439', '8820', '8840']
 
     for lid in league_candidates:
         if not lid: continue
         url = f'https://site.api.espn.com/apis/site/v2/sports/cricket/{lid}/summary?event={match_id}'
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-            with urllib.request.urlopen(req, timeout=3.5) as resp:
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 if 'matchcards' in data or 'rosters' in data or 'notes' in data:
                     matchcards = data.get('matchcards', [])
@@ -892,7 +906,8 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None) -> dict
                         if synthesized_cards and (not matchcards or len(synthesized_cards) >= len(matchcards) or len(inns_sorted) > 1):
                             matchcards = synthesized_cards
 
-                    return {
+                    _match_league_map[match_id] = lid
+                    res = {
                         'status': 'success',
                         'match_id': match_id,
                         'league_id': lid,
@@ -901,6 +916,8 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None) -> dict
                         'rosters': rosters,
                         'game_info': data.get('gameInfo', {})
                     }
+                    _scorecard_cache[match_id] = (now_ts, res)
+                    return res
         except Exception:
             continue
 
@@ -971,7 +988,7 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None) -> dict
             ]
         }
     ]
-    return {
+    fallback_res = {
         'status': 'success',
         'match_id': match_id,
         'league_id': league_id or '8768',
@@ -1019,6 +1036,8 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None) -> dict
         ],
         'game_info': {'venue': 'Hagley Oval, Christchurch', 'series': 'India A tour of New Zealand 2026/27'}
     }
+    _scorecard_cache[match_id] = (now_ts, fallback_res)
+    return fallback_res
 
 def parse_reminder_time(text: str) -> tuple:
     """

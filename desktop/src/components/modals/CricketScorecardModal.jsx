@@ -60,6 +60,7 @@ export function CricketScorecardModal({
   // Detailed scorecard state
   const [detailData, setDetailData] = useState(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [detailTab, setDetailTab] = useState('scorecard'); // 'scorecard' | 'squads' | 'info' | 'live'
   const [expandedInnings, setExpandedInnings] = useState({});
 
@@ -83,11 +84,12 @@ export function CricketScorecardModal({
     : '/api');
 
   // Trigger matches refresh and direct fetch whenever modal opens
-  const refreshScores = async (isSilent = false) => {
-    if (!isSilent) setInternalLoading(true);
+  const refreshScores = async (isSilent = false, isForce = false) => {
+    if (!isSilent && internalMatches.length === 0) setInternalLoading(true);
+    setIsRefreshing(true);
     try {
       if (onRefresh) onRefresh();
-      const res = await fetch(`${effectiveApiBase}/cricket/live`);
+      const res = await fetch(`${effectiveApiBase}/cricket/live${isForce ? '?force=true' : ''}`);
       if (res.ok) {
         const data = await res.json();
         if (data && data.matches && data.matches.length > 0) {
@@ -97,7 +99,8 @@ export function CricketScorecardModal({
     } catch (e) {
       console.warn("Direct cricket live fetch warning:", e);
     } finally {
-      if (!isSilent) setInternalLoading(false);
+      setInternalLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -116,11 +119,13 @@ export function CricketScorecardModal({
     fetchMatchDetail(selectedMatch);
   }, [selectedMatch?.id, effectiveApiBase]);
 
-  const fetchMatchDetail = async (match, isSilent = false) => {
+  const fetchMatchDetail = async (match, isSilent = false, isForce = false) => {
     if (!match?.id) return;
-    if (!isSilent) setIsDetailLoading(true);
+    // Only display full-panel loader on cold start if no match detail exists yet
+    if (!isSilent && !detailData) setIsDetailLoading(true);
+    setIsRefreshing(true);
     try {
-      const res = await fetch(`${effectiveApiBase}/cricket/match/${match.id}?league_id=${match.league_id || ''}`);
+      const res = await fetch(`${effectiveApiBase}/cricket/match/${match.id}?league_id=${match.league_id || ''}${isForce ? '&force=true' : ''}`);
       if (res.ok) {
         const json = await res.json();
         setDetailData(json);
@@ -128,17 +133,19 @@ export function CricketScorecardModal({
     } catch (e) {
       console.error("Failed to load match detail:", e);
     } finally {
-      if (!isSilent) setIsDetailLoading(false);
+      setIsDetailLoading(false);
+      setIsRefreshing(false);
     }
   };
 
-  // Real-time live auto-refresh without user interaction (zero latency)
+  // Real-time live auto-refresh without user interaction (ultra-low 3s latency for live games)
   useEffect(() => {
     if (!isOpen) return;
 
     let detailTimer = null;
     if (selectedMatch) {
-      const pollMs = selectedMatch.status === 'in' ? 5000 : 15000;
+      // 3 seconds for live matches; 6 seconds for breaks / post match
+      const pollMs = selectedMatch.status === 'in' ? 3000 : 6000;
       detailTimer = setInterval(() => {
         fetchMatchDetail(selectedMatch, true);
       }, pollMs);
@@ -148,7 +155,7 @@ export function CricketScorecardModal({
     if (!selectedMatch) {
       feedTimer = setInterval(() => {
         refreshScores(true);
-      }, 8000);
+      }, 5000);
     }
 
     return () => {
@@ -395,9 +402,9 @@ export function CricketScorecardModal({
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
             <button
               type="button"
-              onClick={() => selectedMatch ? fetchMatchDetail(selectedMatch) : refreshScores(false)}
-              disabled={isCurrentlyLoading || isDetailLoading}
-              title="Refresh Scores"
+              onClick={() => selectedMatch ? fetchMatchDetail(selectedMatch, true, true) : refreshScores(true, true)}
+              disabled={isRefreshing}
+              title="Refresh Scores (Instant Zero-Lag)"
               style={{
                 background: 'rgba(255, 255, 255, 0.15)',
                 border: 'none',
@@ -408,10 +415,10 @@ export function CricketScorecardModal({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                cursor: (isCurrentlyLoading || isDetailLoading) ? 'not-allowed' : 'pointer'
+                cursor: isRefreshing ? 'not-allowed' : 'pointer'
               }}
             >
-              <RefreshCw size={16} className={(isCurrentlyLoading || isDetailLoading) ? 'animate-spin' : ''} />
+              <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
             </button>
             <button
               type="button"
@@ -510,7 +517,7 @@ export function CricketScorecardModal({
               {/* TAB 1: SCORECARD (Accordion Innings Cricbuzz Style) */}
               {detailTab === 'scorecard' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                  {isDetailLoading ? (
+                  {isDetailLoading && !detailData ? (
                     <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94a3b8' }}>
                       <div style={{ fontSize: '2rem', marginBottom: '8px', animation: 'spin 1.5s infinite linear' }}>⏳</div>
                       <div style={{ fontSize: '0.88rem' }}>Loading live scorecard tables inside Aether...</div>
