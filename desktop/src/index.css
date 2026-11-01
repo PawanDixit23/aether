@@ -121,6 +121,12 @@ body {
   .aether-edge-modal-inner {
     border-radius: 0 !important;
   }
+  .aether-edge-header {
+    padding-top: max(52px, calc(env(safe-area-inset-top, 0px) + 16px)) !important;
+  }
+  .aether-edge-content-container {
+    padding-top: max(52px, calc(env(safe-area-inset-top, 0px) + 16px)) !important;
+  }
 }
 
 /* Day Progression Ambient Overlays */

@@ -310,17 +310,20 @@ export function CricketScorecardModal({
         }}
       >
         {/* Top Header */}
-        <div style={{
-          padding: isMobile ? '12px 14px' : '16px 20px',
-          paddingTop: isMobile ? 'max(12px, env(safe-area-inset-top))' : '16px',
-          background: selectedMatch ? '#007953' : 'linear-gradient(180deg, #0e172a 0%, #0a0f1d 100%)',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: isMobile ? '8px' : '14px',
-          color: '#ffffff'
-        }}>
+        <div 
+          className="aether-edge-header"
+          style={{
+            padding: isMobile ? '12px 14px' : '16px 20px',
+            paddingTop: isMobile ? 'max(52px, calc(env(safe-area-inset-top, 0px) + 16px))' : '16px',
+            background: selectedMatch ? '#007953' : 'linear-gradient(180deg, #0e172a 0%, #0a0f1d 100%)',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: isMobile ? '8px' : '14px',
+            color: '#ffffff'
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
             {selectedMatch ? (
               <button

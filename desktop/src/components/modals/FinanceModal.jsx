@@ -459,13 +459,13 @@ export const FinanceModal = ({
       }}
     >
       <div 
-        className="aether-edge-modal-container"
+        className="aether-edge-content-container aether-edge-modal-container"
         style={{
           background: '#080f1d',
           border: isMobile ? 'none' : '1px solid rgba(255, 255, 255, 0.1)',
           borderRadius: isMobile ? 0 : '28px',
           padding: isMobile ? '16px 14px 24px 14px' : '22px 20px',
-          paddingTop: isMobile ? 'max(16px, env(safe-area-inset-top))' : '22px',
+          paddingTop: isMobile ? 'max(52px, calc(env(safe-area-inset-top, 0px) + 16px))' : '22px',
           paddingBottom: isMobile ? 'max(24px, env(safe-area-inset-bottom))' : '20px',
           width: '100%',
           maxWidth: isMobile ? '100%' : '440px',
@@ -1524,14 +1524,18 @@ export const FinanceModal = ({
               }}
             >
               {/* Header */}
-              <div style={{
-                padding: '16px 20px',
-                borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                background: 'rgba(0, 0, 0, 0.25)'
-              }}>
+              <div 
+                className="aether-edge-header"
+                style={{
+                  padding: isMobile ? '12px 14px' : '16px 20px',
+                  paddingTop: isMobile ? 'max(52px, calc(env(safe-area-inset-top, 0px) + 16px))' : '16px',
+                  borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  background: 'rgba(0, 0, 0, 0.25)'
+                }}
+              >
                 <div>
                   <div style={{ fontSize: '0.94rem', fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <span>📅</span>
