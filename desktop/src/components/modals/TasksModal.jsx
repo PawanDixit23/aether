@@ -243,15 +243,16 @@ export const TasksModal = ({
   // Filter tasks based on selected tab, date, priority, and search query
   const filteredTasks = useMemo(() => {
     return combinedTasks.filter(t => {
-      const done = isTaskDone(t, selectedDateStr);
-      const overdue = isTaskOverdue(t, selectedDateStr);
+      const isOverdueNow = isTaskOverdue(t, todayStr);
+      const done = isTaskDone(t, agendaFilter === 'overdue' ? todayStr : selectedDateStr);
+      const overdue = agendaFilter === 'overdue' ? isOverdueNow : isTaskOverdue(t, selectedDateStr);
       const tDateStr = getTaskDateStr(t);
       const daily = isDaily(t);
       const isForSelectedDate = daily || tDateStr === selectedDateStr || (!tDateStr && isSelectedDateToday && !t.is_google_calendar);
 
       // Status filter
       if (agendaFilter === 'completed' && !done) return false;
-      if (agendaFilter === 'overdue' && !overdue) return false;
+      if (agendaFilter === 'overdue') return isOverdueNow;
       if (agendaFilter === 'upcoming' && (done || daily || !tDateStr || tDateStr <= todayStr)) return false;
       if (agendaFilter === 'today' && !isForSelectedDate) return false;
 
@@ -271,8 +272,8 @@ export const TasksModal = ({
 
       return true;
     }).sort((a, b) => {
-      const aDone = isTaskDone(a);
-      const bDone = isTaskDone(b);
+      const aDone = isTaskDone(a, agendaFilter === 'overdue' ? todayStr : selectedDateStr);
+      const bDone = isTaskDone(b, agendaFilter === 'overdue' ? todayStr : selectedDateStr);
       if (aDone !== bDone) return aDone ? 1 : -1;
 
       const aOverdue = isTaskOverdue(a);
@@ -618,7 +619,12 @@ export const TasksModal = ({
                 <button
                   key={tab.key}
                   type="button"
-                  onClick={() => setAgendaFilter(tab.key)}
+                  onClick={() => {
+                    setAgendaFilter(tab.key);
+                    if (tab.key === 'overdue' && setCalSelectedDate) {
+                      setCalSelectedDate(new Date());
+                    }
+                  }}
                   style={{
                     background: isSelected 
                       ? '#0D9488' 
@@ -822,11 +828,21 @@ export const TasksModal = ({
             justifyContent: 'space-between',
             gap: '10px'
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+            <div
+              onClick={() => {
+                setAgendaFilter('overdue');
+                if (setCalSelectedDate) setCalSelectedDate(new Date());
+              }}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, cursor: 'pointer', flex: 1 }}
+              title="Click to view all overdue tasks"
+            >
               <span style={{ fontSize: '1rem' }}>⚠️</span>
               <div style={{ fontSize: '0.76rem', fontWeight: 700, color: '#FCA5A5' }}>
                 {overdueCount} task{overdueCount > 1 ? 's are' : ' is'} overdue
               </div>
+              <span style={{ fontSize: '0.68rem', color: '#f87171', textDecoration: 'underline', marginLeft: '4px', fontWeight: 600 }}>
+                View All ↗
+              </span>
             </div>
             <button
               type="button"
@@ -893,9 +909,9 @@ export const TasksModal = ({
             </div>
           ) : (
             filteredTasks.map(t => {
-              const done = isTaskDone(t, selectedDateStr);
+              const done = isTaskDone(t, agendaFilter === 'overdue' ? todayStr : selectedDateStr);
               const taskDateStr = getTaskDateStr(t);
-              const overdue = isTaskOverdue(t, selectedDateStr);
+              const overdue = agendaFilter === 'overdue' ? isTaskOverdue(t, todayStr) : isTaskOverdue(t, selectedDateStr);
               const daily = isDaily(t);
               const priorityAccent = getPriorityAccent(t.priority);
               const hasSubtasks = t.subtasks && t.subtasks.length > 0;
