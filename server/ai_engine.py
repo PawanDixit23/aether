@@ -808,9 +808,14 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
                         comp_map = {str(c.get('team', {}).get('id', '')): c for c in competitors}
                         
                         situation = data.get('situation') or comp0.get('situation', {})
-                        striker_ath = situation.get('batter', {}).get('athlete', {}) or situation.get('batter', {})
-                        striker_id = str(striker_ath.get('id', ''))
-                        striker_name = striker_ath.get('displayName', '') or striker_ath.get('name', '')
+                        striker_ath = (
+                            situation.get('batter', {}).get('athlete', {}) or
+                            situation.get('batter', {}) or
+                            situation.get('striker', {}).get('athlete', {}) or
+                            situation.get('striker', {})
+                        )
+                        striker_id = str(striker_ath.get('id', '')) if striker_ath.get('id') else ''
+                        striker_name = striker_ath.get('displayName', '') or striker_ath.get('name', '') or striker_ath.get('shortName', '')
 
                         # 1. Discover all innings played so far
                         all_inns = set()
@@ -938,7 +943,11 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
                         'matchcards': matchcards,
                         'notes': notes,
                         'rosters': rosters,
-                        'game_info': data.get('gameInfo', {})
+                        'game_info': data.get('gameInfo', {}),
+                        'situation': {
+                            'striker_id': striker_id,
+                            'striker_name': striker_name
+                        } if (striker_id or striker_name) else {}
                     }
                     _scorecard_cache[match_id] = (now_ts, res)
                     return res

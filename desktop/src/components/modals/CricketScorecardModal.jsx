@@ -63,11 +63,6 @@ export function CricketScorecardModal({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [detailTab, setDetailTab] = useState('scorecard'); // 'scorecard' | 'squads' | 'info' | 'live'
   const [expandedInnings, setExpandedInnings] = useState({});
-  const [manualStriker, setManualStriker] = useState(null);
-
-  useEffect(() => {
-    setManualStriker(null);
-  }, [selectedMatch?.id]);
 
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -577,46 +572,49 @@ export function CricketScorecardModal({
                         )
                       ];
 
-                      // Calculate dynamic strike among active batters
+                      // Calculate dynamic strike among active batters AUTOMATICALLY (purely data-driven, NO manual clicking)
                       let currentStrikerName = null;
-                      if (manualStriker && activeBatters.some(ab => (ab.playerName || '').replace(/\*/g, '').trim().toLowerCase() === manualStriker.toLowerCase())) {
-                        currentStrikerName = manualStriker.toLowerCase();
-                      } else if (detailData?.situation?.striker_name) {
-                        const match = activeBatters.find(ab =>
-                          (ab.playerName || '').toLowerCase().includes(detailData.situation.striker_name.toLowerCase()) ||
-                          detailData.situation.striker_name.toLowerCase().includes((ab.playerName || '').toLowerCase())
-                        );
+
+                      // Priority 1: Explicit onStrike / facing boolean from live backend or athlete data
+                      const onStrikePlayer = activeBatters.find(ab =>
+                        ab.onStrike === true || ab.isStriker === true || ab.facing === '1' || ab.facing === 1 || ab.facing === true ||
+                        (ab.playerName && ab.playerName.includes('*')) ||
+                        (ab.dismissal && ab.dismissal.includes('*'))
+                      );
+                      if (onStrikePlayer) {
+                        currentStrikerName = (onStrikePlayer.playerName || '').replace(/\*/g, '').trim().toLowerCase();
+                      }
+
+                      // Priority 2: Situation striker name from live commentary/situation API
+                      if (!currentStrikerName && detailData?.situation?.striker_name) {
+                        const sName = detailData.situation.striker_name.toLowerCase();
+                        const match = activeBatters.find(ab => {
+                          const abName = (ab.playerName || '').toLowerCase();
+                          return abName.includes(sName) || sName.includes(abName);
+                        });
                         if (match) currentStrikerName = (match.playerName || '').replace(/\*/g, '').trim().toLowerCase();
                       }
 
-                      if (!currentStrikerName) {
-                        const onStrikePlayer = activeBatters.find(ab =>
-                          ab.onStrike || ab.isStriker || ab.facing ||
-                          (ab.playerName && ab.playerName.includes('*')) ||
-                          (ab.dismissal && ab.dismissal.includes('*'))
-                        );
-                        if (onStrikePlayer) {
-                          currentStrikerName = (onStrikePlayer.playerName || '').replace(/\*/g, '').trim().toLowerCase();
-                        }
-                      }
-
+                      // Priority 3: Automatic parity rotation based on live match deliveries and score updates
                       if (!currentStrikerName && activeBatters.length > 0) {
                         if (activeBatters.length === 1) {
                           currentStrikerName = (activeBatters[0].playerName || '').replace(/\*/g, '').trim().toLowerCase();
                         } else {
-                          // Dynamic rotation based on ball and over parity
                           const totalStr = inn.battingCard?.total || inn.battingCard?.runs || selectedMatch?.current_score || '';
                           const m = totalStr.match(/\((\d+)(?:\.(\d+))?/);
-                          let ballParity = 0;
+                          let ballCount = 0;
                           if (m) {
                             const ov = parseInt(m[1], 10) || 0;
                             const bl = parseInt(m[2], 10) || 0;
-                            ballParity = (ov * 6 + bl) % 2;
+                            ballCount = ov * 6 + bl;
                           } else {
                             const b0 = Number(activeBatters[0].ballsFaced) || 0;
                             const b1 = Number(activeBatters[1].ballsFaced) || 0;
-                            ballParity = (b0 + b1) % 2;
+                            ballCount = b0 + b1;
                           }
+                          const r0 = Number(activeBatters[0].runs) || 0;
+                          const r1 = Number(activeBatters[1].runs) || 0;
+                          const ballParity = (ballCount + r0 + r1) % 2;
                           const selectedStriker = activeBatters[ballParity] || activeBatters[0];
                           currentStrikerName = (selectedStriker.playerName || '').replace(/\*/g, '').trim().toLowerCase();
                         }
@@ -682,13 +680,7 @@ export function CricketScorecardModal({
 
                                         return (
                                           <tr key={pIdx} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}>
-                                            <td 
-                                              style={{ padding: '8px 14px', verticalAlign: 'top', cursor: isBatting ? 'pointer' : 'default' }}
-                                              onClick={() => {
-                                                if (isBatting) setManualStriker(cleanName);
-                                              }}
-                                              title={isBatting ? "Tap to switch strike" : undefined}
-                                            >
+                                            <td style={{ padding: '8px 14px', verticalAlign: 'top' }}>
                                               <div style={{ color: '#38bdf8', fontWeight: 600, fontSize: '0.84rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                 {isOnStrike && (
                                                   <span style={{ color: '#34d399', fontWeight: 900, fontSize: '1rem', lineHeight: 1 }} title="On strike">
