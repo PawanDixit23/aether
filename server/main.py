@@ -2372,12 +2372,14 @@ def get_vapid_public_key():
 
 @app.post("/api/push/subscribe")
 def subscribe_push(req: PushSubscribeRequest, db: Session = Depends(get_db)):
-    """Browser push subscription server पर store करें (Memory + Database persistence)."""
-    email = (req.user_email or "").strip().lower() or DEFAULT_OWNER_EMAIL
-    if not req.subscription:
-        raise HTTPException(status_code=400, detail="Subscription object required")
+    """Browser push subscription server पर store करें (Strict User Isolation)."""
+    email = (req.user_email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid user email required to register push subscription")
+    if not req.subscription or not req.subscription.get("endpoint"):
+        raise HTTPException(status_code=400, detail="Valid subscription object required")
     
-    # 1. Update in-memory cache
+    # 1. Update in-memory cache strictly for this email
     if email not in _push_subscriptions:
         _push_subscriptions[email] = []
     endpoint = req.subscription.get("endpoint", "")
@@ -2406,17 +2408,19 @@ def subscribe_push(req: PushSubscribeRequest, db: Session = Depends(get_db)):
     except Exception as dbe:
         print(f"[PushSubscribe DB Error] {dbe}")
     
-    print(f"[WebPush] ✅ Subscription saved in DB & Memory for {email}")
+    print(f"[WebPush] ✅ Subscription saved in DB & Memory strictly for {email}")
     return {"status": "subscribed", "user": email, "total_subscriptions": len(_push_subscriptions[email])}
 
 @app.post("/api/push/test")
-def send_test_push(user_email: Optional[str] = None, db: Session = Depends(get_db)):
-    """Send an immediate test VAPID push notification to all devices registered for this user."""
-    email = (user_email or "").strip().lower() or DEFAULT_OWNER_EMAIL
+def send_test_push(user_email: str, db: Session = Depends(get_db)):
+    """Send an immediate test VAPID push notification strictly to the verified requesting user's devices."""
+    email = (user_email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid user email required for targeted test push")
     
-    # Reload from DB if needed
-    if email not in _push_subscriptions or not _push_subscriptions[email]:
-        db_subs = db.query(PushSubscription).filter(PushSubscription.user_email == email).all()
+    # Reload from DB strictly for this email
+    db_subs = db.query(PushSubscription).filter(PushSubscription.user_email == email).all()
+    if db_subs:
         _push_subscriptions[email] = [
             {"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}}
             for s in db_subs
@@ -2424,12 +2428,7 @@ def send_test_push(user_email: Optional[str] = None, db: Session = Depends(get_d
         
     subs = _push_subscriptions.get(email, [])
     if not subs:
-        all_subs = db.query(PushSubscription).all()
-        if all_subs:
-            subs = [{"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}} for s in all_subs]
-
-    if not subs:
-        return {"status": "error", "message": "No registered push devices found. Please open Aether on mobile to connect!"}
+        return {"status": "error", "message": f"No registered push devices found for {email}. Please open Aether on mobile and enable notifications."}
 
     sent = 0
     errors = []
@@ -2539,7 +2538,9 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
     try:
         db_subs = db.query(PushSubscription).all()
         for s in db_subs:
-            em = (s.user_email or "").strip().lower() or DEFAULT_OWNER_EMAIL
+            em = (s.user_email or "").strip().lower()
+            if not em:
+                continue
             if em not in _push_subscriptions:
                 _push_subscriptions[em] = []
             if not any(sub.get("endpoint") == s.endpoint for sub in _push_subscriptions[em]):
@@ -2553,25 +2554,15 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
     except Exception as dbe:
         print(f"[PushCheck DB Load Error] {dbe}")
 
-    from sqlalchemy import or_
-    # 2. सभी subscribed users के लिए check करें
+    # 2. सभी subscribed users के लिए strictly isolated check करें
     for email, subscriptions in list(_push_subscriptions.items()):
-        if not subscriptions:
+        if not subscriptions or not email:
             continue
         
         try:
-            # इस user के due reminders fetch करें
-            if email == DEFAULT_OWNER_EMAIL:
-                email_filter = or_(
-                    Task.user_email == email,
-                    Task.user_email == None,
-                    Task.user_email == ""
-                )
-            else:
-                email_filter = (Task.user_email == email)
-
+            # Strictly isolated: each user only receives their own due tasks
             tasks = db.query(Task).filter(
-                email_filter,
+                Task.user_email == email,
                 Task.status == "pending",
                 Task.notified == False
             ).all()

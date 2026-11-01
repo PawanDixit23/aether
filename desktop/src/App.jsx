@@ -1755,8 +1755,12 @@ export default function App() {
       "aether-test"
     );
 
-    // 2. Real Cloud VAPID Web Push from Server to Device
-    const emailToUse = userEmail || localStorage.getItem('aether_user_email') || 'e.pawandixit@gmail.com';
+    // 2. Real Cloud VAPID Web Push from Server to Device (Strict User Isolation)
+    const emailToUse = userEmail || localStorage.getItem('aether_user_email');
+    if (!emailToUse) {
+      showToast("⚠️ क्लाउड पुश के लिए कृपया पहले सेटिंग्स में अपना ईमेल दर्ज करें!", 'info');
+      return;
+    }
     try {
       const res = await fetch(`${API_BASE}/push/test?user_email=${encodeURIComponent(emailToUse)}`, { method: 'POST' });
       const data = await res.json();
@@ -2354,9 +2358,9 @@ export default function App() {
           console.log('[Aether Push] ♻️ Existing push subscription found');
         }
 
-        // 4. Subscription server को भेजें (userEmail जब available हो, अन्यथा owner fallback)
-        const emailToUse = userEmail || localStorage.getItem('aether_user_email') || 'e.pawandixit@gmail.com';
-        if (subscription) {
+        // 4. Subscription server को भेजें (Strict isolation: only when user email is present)
+        const emailToUse = userEmail || localStorage.getItem('aether_user_email');
+        if (emailToUse && subscription) {
           await fetch(`${serverBase}/api/push/subscribe`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2374,7 +2378,7 @@ export default function App() {
 
     const handleSwMessage = async (event) => {
       if (event.data?.type === 'PUSH_SUBSCRIPTION_CHANGED' && event.data?.subscription) {
-        const emailToUse = userEmail || localStorage.getItem('aether_user_email') || 'e.pawandixit@gmail.com';
+        const emailToUse = userEmail || localStorage.getItem('aether_user_email');
         if (emailToUse) {
           try {
             await fetch(`${serverBase}/api/push/subscribe`, {
@@ -6702,6 +6706,7 @@ export default function App() {
         setVoiceOutputEnabled={setVoiceOutputEnabled}
         wakeWordEnabled={wakeWordEnabled}
         handleToggleWakeWord={handleToggleWakeWord}
+        userEmail={userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || ''}
         showToast={showToast}
       />
 
