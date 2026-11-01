@@ -50,6 +50,8 @@ export function CricketScorecardModal({
   onRefresh,
   apiBase
 }) {
+  const [internalMatches, setInternalMatches] = useState([]);
+  const [internalLoading, setInternalLoading] = useState(false);
   const [scopeFilter, setScopeFilter] = useState('international'); // 'international' | 'all' | 'leagues'
   const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'in' | 'pre' | 'post'
   const [searchQuery, setSearchQuery] = useState('');
@@ -64,6 +66,31 @@ export function CricketScorecardModal({
   const effectiveApiBase = apiBase || (typeof window !== 'undefined' && window.location.port === '5173'
     ? `http://${window.location.hostname}:8000/api`
     : '/api');
+
+  // Trigger matches refresh and direct fetch whenever modal opens
+  const refreshScores = async (isSilent = false) => {
+    if (!isSilent) setInternalLoading(true);
+    try {
+      if (onRefresh) onRefresh();
+      const res = await fetch(`${effectiveApiBase}/cricket/live`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.matches && data.matches.length > 0) {
+          setInternalMatches(data.matches);
+        }
+      }
+    } catch (e) {
+      console.warn("Direct cricket live fetch warning:", e);
+    } finally {
+      if (!isSilent) setInternalLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      refreshScores(matches && matches.length > 0);
+    }
+  }, [isOpen, effectiveApiBase]);
 
   // Fetch detailed scorecard when match is selected
   useEffect(() => {
@@ -105,9 +132,9 @@ export function CricketScorecardModal({
 
     // 2. When in matches feed: auto-poll every 8s to refresh live scores across all matches
     let feedTimer = null;
-    if (onRefresh && !selectedMatch) {
+    if (!selectedMatch) {
       feedTimer = setInterval(() => {
-        onRefresh();
+        refreshScores(true);
       }, 8000);
     }
 
@@ -119,8 +146,12 @@ export function CricketScorecardModal({
 
   if (!isOpen) return null;
 
+  // Active matches source
+  const displayMatches = (matches && matches.length > 0) ? matches : internalMatches;
+  const isCurrentlyLoading = (isLoading || internalLoading) && displayMatches.length === 0;
+
   // Filter matches based on Scope
-  const scopeFiltered = matches.filter(m => {
+  const scopeFiltered = displayMatches.filter(m => {
     if (scopeFilter === 'international') {
       return Boolean(m.is_international);
     }
@@ -149,10 +180,10 @@ export function CricketScorecardModal({
     );
   });
 
-  const liveCount = matches.filter(m => m.status === 'in').length;
-  const intlCount = matches.filter(m => m.is_international).length;
-  const upcomingCount = matches.filter(m => m.status === 'pre').length;
-  const completedCount = matches.filter(m => m.status === 'post').length;
+  const liveCount = displayMatches.filter(m => m.status === 'in').length;
+  const intlCount = displayMatches.filter(m => m.is_international).length;
+  const upcomingCount = displayMatches.filter(m => m.status === 'pre').length;
+  const completedCount = displayMatches.filter(m => m.status === 'post').length;
 
   // Group matchcards into innings
   const inningsGroups = {};
@@ -325,28 +356,26 @@ export function CricketScorecardModal({
                 <span>Refresh Score</span>
               </button>
             ) : (
-              onRefresh && (
-                <button
-                  type="button"
-                  onClick={onRefresh}
-                  disabled={isLoading}
-                  title="Refresh Live Scores"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
-                    color: '#94a3b8',
-                    borderRadius: '10px',
-                    width: '36px',
-                    height: '36px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: isLoading ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
-                </button>
-              )
+              <button
+                type="button"
+                onClick={() => refreshScores(false)}
+                disabled={isCurrentlyLoading}
+                title="Refresh Live Scores"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  color: isCurrentlyLoading ? '#64748b' : '#38bdf8',
+                  borderRadius: '10px',
+                  width: '36px',
+                  height: '36px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: isCurrentlyLoading ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <RefreshCw size={16} className={isCurrentlyLoading ? 'animate-spin' : ''} />
+              </button>
             )}
             <button
               type="button"
@@ -1301,7 +1330,7 @@ export function CricketScorecardModal({
               flexDirection: 'column',
               gap: '12px'
             }}>
-              {isLoading && matches.length === 0 ? (
+              {isCurrentlyLoading ? (
                 <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94a3b8' }}>
                   <div style={{ fontSize: '2rem', marginBottom: '8px', animation: 'spin 1.5s infinite linear' }}>⏳</div>
                   <div style={{ fontSize: '0.88rem' }}>Loading live scorecards inside Aether...</div>
@@ -1309,7 +1338,7 @@ export function CricketScorecardModal({
               ) : finalMatches.length === 0 ? (
                 <div style={{
                   textAlign: 'center',
-                  padding: '48px 20px',
+                  padding: '40px 20px',
                   background: 'rgba(255, 255, 255, 0.02)',
                   borderRadius: '16px',
                   border: '1px dashed rgba(255, 255, 255, 0.1)'
@@ -1318,9 +1347,26 @@ export function CricketScorecardModal({
                   <div style={{ fontSize: '0.92rem', fontWeight: 600, color: '#f8fafc' }}>
                     इस फ़िल्टर में कोई मैच उपलब्ध नहीं है
                   </div>
-                  <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '4px' }}>
+                  <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '6px' }}>
                     ऊपर दिए गए "International" या "All Matches" टैब पर स्विच करके अन्य लाइव मैच देखें।
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => refreshScores(false)}
+                    style={{
+                      marginTop: '12px',
+                      background: 'rgba(56, 189, 248, 0.15)',
+                      border: '1px solid rgba(56, 189, 248, 0.35)',
+                      color: '#38bdf8',
+                      padding: '6px 14px',
+                      borderRadius: '10px',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    रिफ्रेश करें (Refresh Matches)
+                  </button>
                 </div>
               ) : (
                 finalMatches.map((m) => {

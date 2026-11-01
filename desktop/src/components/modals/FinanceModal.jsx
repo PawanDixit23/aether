@@ -79,6 +79,9 @@ export const FinanceModal = ({
   const [isBalanceHidden, setIsBalanceHidden] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [isCategoryPickerOpen, setIsCategoryPickerOpen] = useState(false);
+  const [userSelectedWeekIdx, setUserSelectedWeekIdx] = useState(null);
+  const [hoveredDayIdx, setHoveredDayIdx] = useState(null);
+  const [selectedDayDetail, setSelectedDayDetail] = useState(null);
 
   // Bank SMS Auto-Log State
   const [isSmsParserOpen, setIsSmsParserOpen] = useState(false);
@@ -160,12 +163,18 @@ export const FinanceModal = ({
     const prev = new Date(currentDate);
     prev.setMonth(prev.getMonth() - 1);
     setCurrentDate(prev);
+    setUserSelectedWeekIdx(null);
+    setHoveredDayIdx(null);
+    setSelectedDayDetail(null);
   };
 
   const handleNextMonth = () => {
     const next = new Date(currentDate);
     next.setMonth(next.getMonth() + 1);
     setCurrentDate(next);
+    setUserSelectedWeekIdx(null);
+    setHoveredDayIdx(null);
+    setSelectedDayDetail(null);
   };
 
   const handleSaveBudgetLimit = (id, newLimit) => {
@@ -318,33 +327,104 @@ export const FinanceModal = ({
   const circumference = 2 * Math.PI * radius;
   let accumulatedPercent = 0;
 
-  // Real Weekly Trend for Current Week (Monday through Sunday)
-  const now = new Date();
-  const currentDayOfWeek = (now.getDay() + 6) % 7; // 0 = Mon, 6 = Sun
-  const mondayDate = new Date(now);
-  mondayDate.setDate(now.getDate() - currentDayOfWeek);
+  // =========================================================================
+  // DYNAMIC WEEKLY CALCULATION ACROSS ALL MONTHS (Hover & Click Breakdown)
+  // =========================================================================
+  const firstDayOfMonth = new Date(selectedYear, selectedMonth, 1);
+  const startDayOffset = (firstDayOfMonth.getDay() + 6) % 7; // Monday = 0
+  const firstMonday = new Date(selectedYear, selectedMonth, 1 - startDayOffset);
 
-  const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const weeklyData = dayNames.map((dName, dayIdx) => {
-    const targetDate = new Date(mondayDate);
-    targetDate.setDate(mondayDate.getDate() + dayIdx);
-    const targetDateStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
-    const dayDateLabel = targetDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+  const monthWeeks = [];
+  let currMonday = new Date(firstMonday);
+  let wIndex = 0;
 
-    const dayExpenseSum = monthExpenseRecords
-      .filter(r => (r.date || r.created_at || '').slice(0, 10) === targetDateStr)
-      .reduce((acc, r) => acc + Number(r.amount || 0), 0);
+  while (true) {
+    const weekDays = [];
+    let hasDayInMonth = false;
+    let weekTotalExpense = 0;
 
-    const isToday = dayIdx === currentDayOfWeek && isCurrentMonth;
-    return {
-      day: dName,
-      date: dayDateLabel,
-      amountNum: dayExpenseSum,
-      amount: `₹${dayExpenseSum.toLocaleString('en-IN')}`,
-      isHighlight: isToday
-    };
-  });
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(currMonday);
+      d.setDate(currMonday.getDate() + i);
+      const isDayInThisMonth = d.getFullYear() === selectedYear && d.getMonth() === selectedMonth;
+      if (isDayInThisMonth) hasDayInMonth = true;
 
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const dayDateLabel = d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+      const fullDateLabel = d.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+
+      // Find all transactions on this exact date from monthRecords
+      const dayTransactions = monthRecords.filter(r => (r.date || r.created_at || '').slice(0, 10) === dateStr);
+      const dayExpenseSum = dayTransactions
+        .filter(r => (r.type || 'expense').toLowerCase() === 'expense')
+        .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+
+      weekTotalExpense += dayExpenseSum;
+
+      const isToday = isCurrentMonth && d.getDate() === today.getDate() && d.getMonth() === today.getMonth();
+
+      weekDays.push({
+        dayIndex: i,
+        day: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][i],
+        date: dayDateLabel,
+        fullDateLabel,
+        dateStr,
+        inMonth: isDayInThisMonth,
+        amountNum: dayExpenseSum,
+        amount: `₹${dayExpenseSum.toLocaleString('en-IN')}`,
+        isHighlight: isToday,
+        transactions: dayTransactions
+      });
+    }
+
+    if (!hasDayInMonth && currMonday.getMonth() > selectedMonth && currMonday.getFullYear() >= selectedYear) {
+      break;
+    }
+
+    const startLabel = weekDays[0].date;
+    const endLabel = weekDays[6].date;
+
+    monthWeeks.push({
+      weekNum: wIndex + 1,
+      label: `Week ${wIndex + 1} (${startLabel} - ${endLabel})`,
+      shortLabel: `W${wIndex + 1}`,
+      days: weekDays,
+      totalExpense: weekTotalExpense
+    });
+
+    wIndex++;
+    currMonday.setDate(currMonday.getDate() + 7);
+    if (currMonday > new Date(selectedYear, selectedMonth + 1, 7)) {
+      break;
+    }
+  }
+
+  // Determine active week index for this month
+  let defaultWeekIdx = 0;
+  if (monthWeeks.length > 0) {
+    if (isCurrentMonth) {
+      const todayIdx = monthWeeks.findIndex(w => w.days.some(d => d.isHighlight));
+      defaultWeekIdx = todayIdx !== -1 ? todayIdx : 0;
+    } else {
+      // For past/future months, default to the week with highest expenses (or last week)
+      let bestIdx = monthWeeks.length - 1;
+      let maxExp = -1;
+      monthWeeks.forEach((w, idx) => {
+        if (w.totalExpense > maxExp) {
+          maxExp = w.totalExpense;
+          bestIdx = idx;
+        }
+      });
+      defaultWeekIdx = bestIdx;
+    }
+  }
+
+  const activeWeekIdx = userSelectedWeekIdx !== null && userSelectedWeekIdx < monthWeeks.length
+    ? userSelectedWeekIdx
+    : defaultWeekIdx;
+
+  const currentWeek = monthWeeks[activeWeekIdx] || monthWeeks[0] || { days: [] };
+  const weeklyData = currentWeek.days || [];
   const maxWeeklyExpense = Math.max(...weeklyData.map(d => d.amountNum), 1);
 
   return (
@@ -738,16 +818,54 @@ export const FinanceModal = ({
               )}
             </div>
 
-            {/* Weekly Trend Card */}
+            {/* Weekly Trend Card with Interactive Day Hover & Click */}
             <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '18px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                <h3 style={{ fontSize: '0.94rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>
-                  Weekly Trend
-                </h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', gap: '8px' }}>
+                <div>
+                  <h3 style={{ fontSize: '0.94rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>
+                    Weekly Trend
+                  </h3>
+                  <div style={{ fontSize: '0.64rem', color: '#64748b', marginTop: '2px' }}>
+                    Hover पर दिन का खर्च देखें • Click पर संपूर्ण विवरण
+                  </div>
+                </div>
+
+                {/* Week switcher for any month */}
+                {monthWeeks.length > 1 && (
+                  <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255, 255, 255, 0.06)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '12px', padding: '3px 6px', gap: '4px' }}>
+                    <button
+                      type="button"
+                      disabled={activeWeekIdx === 0}
+                      onClick={() => {
+                        setUserSelectedWeekIdx(Math.max(0, activeWeekIdx - 1));
+                        setHoveredDayIdx(null);
+                      }}
+                      style={{ background: 'none', border: 'none', color: activeWeekIdx === 0 ? '#475569' : '#38bdf8', cursor: activeWeekIdx === 0 ? 'default' : 'pointer', padding: '2px', display: 'flex' }}
+                      title="Previous Week"
+                    >
+                      <ChevronLeft size={13} />
+                    </button>
+                    <span style={{ fontSize: '0.66rem', fontWeight: 600, color: '#e2e8f0', minWidth: '42px', textAlign: 'center' }}>
+                      {currentWeek.shortLabel || `W${activeWeekIdx + 1}`}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={activeWeekIdx >= monthWeeks.length - 1}
+                      onClick={() => {
+                        setUserSelectedWeekIdx(Math.min(monthWeeks.length - 1, activeWeekIdx + 1));
+                        setHoveredDayIdx(null);
+                      }}
+                      style={{ background: 'none', border: 'none', color: activeWeekIdx >= monthWeeks.length - 1 ? '#475569' : '#38bdf8', cursor: activeWeekIdx >= monthWeeks.length - 1 ? 'default' : 'pointer', padding: '2px', display: 'flex' }}
+                      title="Next Week"
+                    >
+                      <ChevronRight size={13} />
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Chart container with Y-axis and bars */}
-              <div style={{ display: 'flex', gap: '10px', height: '140px', alignItems: 'flex-end', paddingTop: '30px' }}>
+              <div style={{ display: 'flex', gap: '10px', height: '146px', alignItems: 'flex-end', paddingTop: '36px' }}>
                 {/* Y-axis markers */}
                 <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100px', fontSize: '0.66rem', color: '#64748b', paddingBottom: '20px' }}>
                   <span>₹{Math.round(maxWeeklyExpense).toLocaleString('en-IN')}</span>
@@ -757,44 +875,110 @@ export const FinanceModal = ({
 
                 {/* Bars */}
                 <div style={{ flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', height: '100px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '2px' }}>
-                  {weeklyData.map((d, idx) => (
-                    <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, height: '100%', justifyContent: 'flex-end', position: 'relative' }}>
-                      {/* Active Tooltip over Today */}
-                      {d.isHighlight && (
-                        <div style={{ position: 'absolute', top: '-34px', background: 'rgba(15, 23, 42, 0.92)', border: '1px solid #38bdf8', borderRadius: '8px', padding: '3px 7px', fontSize: '0.66rem', color: '#fff', textAlign: 'center', whiteSpace: 'nowrap', zIndex: 5, boxShadow: '0 4px 12px rgba(56,189,248,0.3)' }}>
-                          <div style={{ fontWeight: 700, color: '#38bdf8' }}>{d.amount}</div>
-                          <div style={{ fontSize: '0.6rem', color: '#94a3b8' }}>{d.date}</div>
-                        </div>
-                      )}
-
-                      {/* Bar Pillar */}
+                  {weeklyData.map((d, idx) => {
+                    const isHovered = hoveredDayIdx === idx;
+                    const showTooltip = isHovered || (hoveredDayIdx === null && d.isHighlight);
+                    return (
                       <div
+                        key={idx}
+                        onMouseEnter={() => setHoveredDayIdx(idx)}
+                        onMouseLeave={() => setHoveredDayIdx(null)}
+                        onClick={() => setSelectedDayDetail(d)}
                         style={{
-                          width: '14px',
-                          height: d.amountNum > 0 ? `${Math.max(10, (d.amountNum / maxWeeklyExpense) * 100)}%` : '4px',
-                          borderRadius: '6px',
-                          background: d.isHighlight 
-                            ? 'linear-gradient(180deg, #38bdf8 0%, #2563eb 100%)' 
-                            : d.amountNum > 0
-                              ? 'linear-gradient(180deg, rgba(56, 189, 248, 0.4) 0%, rgba(37, 99, 235, 0.25) 100%)'
-                              : 'rgba(255, 255, 255, 0.08)',
-                          border: d.isHighlight ? '1px solid #38bdf8' : 'none',
-                          boxShadow: d.isHighlight ? '0 0 14px rgba(56, 189, 248, 0.5)' : 'none',
-                          transition: 'all 0.3s'
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          flex: 1,
+                          height: '100%',
+                          justifyContent: 'flex-end',
+                          position: 'relative',
+                          cursor: 'pointer'
                         }}
-                      />
-                    </div>
-                  ))}
+                      >
+                        {/* Interactive Hover Tooltip */}
+                        {showTooltip && (
+                          <div style={{
+                            position: 'absolute',
+                            top: '-44px',
+                            background: isHovered ? '#0284c7' : 'rgba(15, 23, 42, 0.95)',
+                            border: `1px solid ${isHovered ? '#38bdf8' : 'rgba(56, 189, 248, 0.5)'}`,
+                            borderRadius: '8px',
+                            padding: '3px 8px',
+                            fontSize: '0.66rem',
+                            color: '#fff',
+                            textAlign: 'center',
+                            whiteSpace: 'nowrap',
+                            zIndex: 25,
+                            boxShadow: isHovered ? '0 8px 24px rgba(56, 189, 248, 0.5)' : '0 4px 12px rgba(56,189,248,0.25)',
+                            transform: isHovered ? 'scale(1.08)' : 'scale(1)',
+                            transition: 'all 0.15s ease',
+                            pointerEvents: 'none'
+                          }}>
+                            <div style={{ fontWeight: 800, color: isHovered ? '#ffffff' : '#38bdf8' }}>
+                              {d.amount}
+                            </div>
+                            <div style={{ fontSize: '0.58rem', color: isHovered ? '#f0f9ff' : '#94a3b8' }}>
+                              {d.date}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Bar Pillar */}
+                        <div
+                          style={{
+                            width: isHovered ? '16px' : '14px',
+                            height: d.amountNum > 0 ? `${Math.max(12, (d.amountNum / maxWeeklyExpense) * 100)}%` : '5px',
+                            borderRadius: '6px',
+                            background: isHovered
+                              ? 'linear-gradient(180deg, #38bdf8 0%, #0284c7 100%)'
+                              : d.isHighlight 
+                                ? 'linear-gradient(180deg, #38bdf8 0%, #2563eb 100%)' 
+                                : d.amountNum > 0
+                                  ? 'linear-gradient(180deg, rgba(56, 189, 248, 0.5) 0%, rgba(37, 99, 235, 0.3) 100%)'
+                                  : 'rgba(255, 255, 255, 0.08)',
+                            border: (isHovered || d.isHighlight) ? '1px solid #38bdf8' : (d.amountNum > 0 ? '1px solid rgba(56, 189, 248, 0.3)' : 'none'),
+                            boxShadow: isHovered 
+                              ? '0 0 16px rgba(56, 189, 248, 0.8)' 
+                              : d.isHighlight 
+                                ? '0 0 14px rgba(56, 189, 248, 0.5)' 
+                                : 'none',
+                            transform: isHovered ? 'scaleY(1.04)' : 'scaleY(1)',
+                            transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
               {/* Day Labels below bars */}
               <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '34px', marginTop: '6px', fontSize: '0.68rem', color: '#64748b' }}>
-                {weeklyData.map((d, idx) => (
-                  <span key={idx} style={{ flex: 1, textAlign: 'center', color: d.isHighlight ? '#38bdf8' : '#64748b', fontWeight: d.isHighlight ? 700 : 500 }}>
-                    {d.day}
-                  </span>
-                ))}
+                {weeklyData.map((d, idx) => {
+                  const isHovered = hoveredDayIdx === idx;
+                  return (
+                    <span
+                      key={idx}
+                      onMouseEnter={() => setHoveredDayIdx(idx)}
+                      onMouseLeave={() => setHoveredDayIdx(null)}
+                      onClick={() => setSelectedDayDetail(d)}
+                      style={{
+                        flex: 1,
+                        textAlign: 'center',
+                        color: isHovered ? '#38bdf8' : (d.isHighlight ? '#38bdf8' : (d.amountNum > 0 ? '#cbd5e1' : '#64748b')),
+                        fontWeight: (isHovered || d.isHighlight || d.amountNum > 0) ? 700 : 500,
+                        cursor: 'pointer',
+                        padding: '2px 0',
+                        borderRadius: '6px',
+                        background: isHovered ? 'rgba(56, 189, 248, 0.12)' : 'transparent',
+                        transition: 'all 0.15s'
+                      }}
+                      title={`Click for ${d.fullDateLabel} expenses`}
+                    >
+                      {d.day}
+                    </span>
+                  );
+                })}
               </div>
             </div>
 
@@ -1254,6 +1438,210 @@ export const FinanceModal = ({
             <span>SMS ⚡</span>
           </button>
         </div>
+
+        {/* Day Breakdown Drawer / Popup on Day Click */}
+        {selectedDayDetail && (
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.78)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            zIndex: 300,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+            animation: 'fadeIn 0.2s ease-out'
+          }}>
+            <div style={{
+              background: 'linear-gradient(180deg, #0e172a 0%, #070d19 100%)',
+              border: '1px solid rgba(56, 189, 248, 0.35)',
+              borderRadius: '24px',
+              width: '100%',
+              maxWidth: '420px',
+              maxHeight: '84vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 25px 70px rgba(0, 0, 0, 0.9), 0 0 30px rgba(56, 189, 248, 0.2)',
+              overflow: 'hidden'
+            }}>
+              {/* Header */}
+              <div style={{
+                padding: '16px 20px',
+                borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                background: 'rgba(0, 0, 0, 0.25)'
+              }}>
+                <div>
+                  <div style={{ fontSize: '0.94rem', fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>📅</span>
+                    <span>{selectedDayDetail.fullDateLabel}</span>
+                  </div>
+                  <div style={{ fontSize: '0.74rem', color: '#38bdf8', marginTop: '3px', fontWeight: 600 }}>
+                    कुल खर्च: {selectedDayDetail.amount} ({selectedDayDetail.transactions.length} रिकॉर्ड)
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDayDetail(null)}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.08)',
+                    border: 'none',
+                    borderRadius: '50%',
+                    width: '32px',
+                    height: '32px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#94a3b8',
+                    cursor: 'pointer',
+                    fontSize: '1.1rem'
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Transactions List */}
+              <div style={{ padding: '16px 18px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {selectedDayDetail.transactions.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '36px 16px', color: '#94a3b8' }}>
+                    <div style={{ fontSize: '2.2rem', marginBottom: '8px' }}>🎉</div>
+                    <div style={{ fontSize: '0.90rem', fontWeight: 600, color: '#f8fafc' }}>
+                      इस दिन कोई खर्च दर्ज नहीं है
+                    </div>
+                    <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '4px' }}>
+                      No expenses recorded on this day.
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewExpenseForm(prev => ({ ...prev, date: selectedDayDetail.dateStr }));
+                        setIsAddingExpense(true);
+                        setSelectedDayDetail(null);
+                      }}
+                      style={{
+                        marginTop: '16px',
+                        background: 'rgba(56, 189, 248, 0.15)',
+                        border: '1px solid rgba(56, 189, 248, 0.35)',
+                        color: '#38bdf8',
+                        padding: '8px 16px',
+                        borderRadius: '12px',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      + इस दिन का खर्च जोड़ें
+                    </button>
+                  </div>
+                ) : (
+                  selectedDayDetail.transactions.map((rec, rIdx) => {
+                    const isExp = (rec.type || 'expense').toLowerCase() === 'expense';
+                    const icon = getCategoryIcon(rec.category);
+                    return (
+                      <div
+                        key={rec.id || rIdx}
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.03)',
+                          border: '1px solid rgba(255, 255, 255, 0.06)',
+                          borderRadius: '14px',
+                          padding: '12px 14px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '12px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                          <div style={{
+                            width: '38px',
+                            height: '38px',
+                            borderRadius: '10px',
+                            background: isExp ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '1.2rem',
+                            flexShrink: 0
+                          }}>
+                            {icon}
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: '0.84rem', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {rec.note || rec.category || (isExp ? 'खर्च' : 'आय')}
+                            </div>
+                            <div style={{ fontSize: '0.68rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                              <span style={{ textTransform: 'capitalize' }}>{rec.category || 'General'}</span>
+                              <span>•</span>
+                              <span style={{ textTransform: 'uppercase', color: '#38bdf8' }}>{rec.payment_mode || 'UPI'}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                          <span style={{ fontSize: '0.94rem', fontWeight: 700, color: isExp ? '#ef4444' : '#10b981' }}>
+                            {isExp ? '-' : '+'}₹{Number(rec.amount || 0).toLocaleString('en-IN')}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              handleDeleteFinanceRecord(rec.id);
+                              setSelectedDayDetail(prev => prev ? ({
+                                ...prev,
+                                transactions: prev.transactions.filter(t => t.id !== rec.id),
+                                amountNum: Math.max(0, prev.amountNum - Number(rec.amount || 0)),
+                                amount: `₹${Math.max(0, prev.amountNum - Number(rec.amount || 0)).toLocaleString('en-IN')}`
+                              }) : null);
+                            }}
+                            title="Delete this record"
+                            style={{
+                              background: 'rgba(239, 68, 68, 0.1)',
+                              border: '1px solid rgba(239, 68, 68, 0.2)',
+                              color: '#ef4444',
+                              borderRadius: '8px',
+                              width: '28px',
+                              height: '28px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Footer */}
+              <div style={{ padding: '12px 20px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', display: 'flex', justifyContent: 'flex-end', background: 'rgba(0, 0, 0, 0.2)' }}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDayDetail(null)}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.08)',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    color: '#e2e8f0',
+                    padding: '8px 18px',
+                    borderRadius: '12px',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Close (बंद करें)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>
