@@ -581,14 +581,66 @@ export function CricketScorecardModal({
                                       {inn.battingCard.playerDetails.map((p, pIdx) => {
                                         const isDismissed = Boolean(p.dismissal && !p.dismissal.toLowerCase().includes('not out'));
                                         const isBatting = !isDismissed && p.runs !== undefined;
+                                        
+                                        // Find active batters in the middle for this innings
+                                        const activeBatters = inn.battingCard.playerDetails.filter(pl => {
+                                          const isD = Boolean(pl.dismissal && !pl.dismissal.toLowerCase().includes('not out'));
+                                          return !isD && (pl.runs !== undefined || (pl.dismissal || '').toLowerCase().includes('batting'));
+                                        });
+
+                                        const cleanName = (p.playerName || '').replace(/\*/g, '').trim();
+
+                                        const hasExplicitStrikeFlag = Boolean(
+                                          p.onStrike ||
+                                          p.isStriker ||
+                                          p.facing ||
+                                          (p.playerName && p.playerName.includes('*')) ||
+                                          (p.dismissal && p.dismissal.includes('*')) ||
+                                          (detailData?.situation?.striker_name && cleanName.toLowerCase().includes(detailData.situation.striker_name.toLowerCase()))
+                                        );
+
+                                        const anyHasStrike = activeBatters.some(pl => 
+                                          pl.onStrike || pl.isStriker || pl.facing || (pl.playerName && pl.playerName.includes('*')) || (pl.dismissal && pl.dismissal.includes('*'))
+                                        );
+
+                                        const isOnStrike = isBatting && (
+                                          hasExplicitStrikeFlag || (!anyHasStrike && activeBatters.length > 0 && activeBatters[0].playerName === p.playerName)
+                                        );
+
                                         return (
                                           <tr key={pIdx} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}>
                                             <td style={{ padding: '8px 14px', verticalAlign: 'top' }}>
-                                              <div style={{ color: '#38bdf8', fontWeight: 600, fontSize: '0.84rem' }}>
-                                                {p.playerName}
+                                              <div style={{ color: '#38bdf8', fontWeight: 600, fontSize: '0.84rem', display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                                {isOnStrike && (
+                                                  <span style={{ color: '#34d399', fontWeight: 900, fontSize: '0.96rem', lineHeight: 1 }} title="On Strike">
+                                                    *
+                                                  </span>
+                                                )}
+                                                <span>{cleanName}</span>
+                                                {isOnStrike && (
+                                                  <span style={{ color: '#34d399', fontWeight: 900, fontSize: '0.96rem', lineHeight: 1 }} title="On Strike">
+                                                    *
+                                                  </span>
+                                                )}
+                                                {isOnStrike && (
+                                                  <span style={{
+                                                    background: 'rgba(52, 211, 153, 0.15)',
+                                                    border: '1px solid rgba(52, 211, 153, 0.35)',
+                                                    color: '#34d399',
+                                                    fontSize: '0.58rem',
+                                                    fontWeight: 800,
+                                                    padding: '1px 5px',
+                                                    borderRadius: '4px',
+                                                    marginLeft: '3px',
+                                                    letterSpacing: '0.3px',
+                                                    textTransform: 'uppercase'
+                                                  }}>
+                                                    Strike
+                                                  </span>
+                                                )}
                                               </div>
                                               <div style={{ color: isBatting ? '#34d399' : '#94a3b8', fontSize: '0.72rem', marginTop: '2px', fontWeight: isBatting ? 600 : 400 }}>
-                                                {p.dismissal || (isBatting ? 'batting' : 'not out')}
+                                                {isOnStrike ? 'batting * (on strike)' : (p.dismissal || (isBatting ? 'not out' : ''))}
                                               </div>
                                             </td>
                                             <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 700, color: '#f8fafc', fontSize: '0.86rem', verticalAlign: 'middle' }}>

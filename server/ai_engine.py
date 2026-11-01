@@ -803,9 +803,15 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
 
                     # Synthesize complete batting & bowling scorecards across ALL innings (1st, 2nd, 3rd, 4th innings)
                     if raw_rosters:
-                        competitors = data.get('header', {}).get('competitions', [{}])[0].get('competitors', [])
+                        comp0 = data.get('header', {}).get('competitions', [{}])[0]
+                        competitors = comp0.get('competitors', [])
                         comp_map = {str(c.get('team', {}).get('id', '')): c for c in competitors}
                         
+                        situation = data.get('situation') or comp0.get('situation', {})
+                        striker_ath = situation.get('batter', {}).get('athlete', {}) or situation.get('batter', {})
+                        striker_id = str(striker_ath.get('id', ''))
+                        striker_name = striker_ath.get('displayName', '') or striker_ath.get('name', '')
+
                         # 1. Discover all innings played so far
                         all_inns = set()
                         for r in raw_rosters:
@@ -845,6 +851,13 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
                                                 out_text = b_stats.get('outDetails', {}).get('shortText', 'not out')
                                                 if out_text:
                                                     out_text = out_text.replace('&amp;', '&').replace('&dagger;', '†')
+                                                
+                                                is_on_strike = bool(
+                                                    (striker_id and str(ath.get('id', '')) == striker_id) or
+                                                    (striker_name and striker_name.lower() in p_name.lower()) or
+                                                    stats_dict.get('facing') == '1' or
+                                                    ath.get('onStrike') is True
+                                                )
                                                 batters.append({
                                                     'playerName': p_name,
                                                     'dismissal': out_text or 'not out',
@@ -852,7 +865,8 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
                                                     'ballsFaced': str(stats_dict.get('ballsFaced', '0')),
                                                     'fours': str(stats_dict.get('fours', '0')),
                                                     'sixes': str(stats_dict.get('sixes', '0')),
-                                                    'strikeRate': str(stats_dict.get('strikeRate', '-'))
+                                                    'strikeRate': str(stats_dict.get('strikeRate', '-')),
+                                                    'onStrike': is_on_strike
                                                 })
                                 
                                 if batters:
@@ -970,8 +984,8 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
                 {'playerName': 'Rhys Mariu (c)', 'dismissal': 'c Dhruv Jurel b Mohammed Siraj', 'runs': '4', 'ballsFaced': '17', 'fours': '1', 'sixes': '0', 'strikeRate': '23.53'},
                 {'playerName': 'Curtis Heaphy', 'dismissal': 'c Yashasvi Jaiswal b Mukesh Kumar', 'runs': '4', 'ballsFaced': '21', 'fours': '1', 'sixes': '0', 'strikeRate': '19.05'},
                 {'playerName': 'Tim Robinson', 'dismissal': 'lbw b Mukesh Kumar', 'runs': '3', 'ballsFaced': '9', 'fours': '0', 'sixes': '0', 'strikeRate': '33.33'},
-                {'playerName': 'Matthew Boyle', 'dismissal': 'batting', 'runs': '107', 'ballsFaced': '148', 'fours': '14', 'sixes': '1', 'strikeRate': '72.30'},
-                {'playerName': 'Dean Foxcroft', 'dismissal': 'batting', 'runs': '80', 'ballsFaced': '180', 'fours': '9', 'sixes': '0', 'strikeRate': '44.44'}
+                {'playerName': 'Matthew Boyle', 'dismissal': 'batting', 'runs': '107', 'ballsFaced': '148', 'fours': '14', 'sixes': '1', 'strikeRate': '72.30', 'onStrike': True},
+                {'playerName': 'Dean Foxcroft', 'dismissal': 'batting', 'runs': '80', 'ballsFaced': '180', 'fours': '9', 'sixes': '0', 'strikeRate': '44.44', 'onStrike': False}
             ]
         },
         {
