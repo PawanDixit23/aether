@@ -2373,9 +2373,9 @@ def get_vapid_public_key():
 @app.post("/api/push/subscribe")
 def subscribe_push(req: PushSubscribeRequest, db: Session = Depends(get_db)):
     """Browser push subscription server पर store करें (Memory + Database persistence)."""
-    email = req.user_email.strip().lower()
-    if not email or not req.subscription:
-        raise HTTPException(status_code=400, detail="Email and subscription required")
+    email = (req.user_email or "").strip().lower() or DEFAULT_OWNER_EMAIL
+    if not req.subscription:
+        raise HTTPException(status_code=400, detail="Subscription object required")
     
     # 1. Update in-memory cache
     if email not in _push_subscriptions:
@@ -2408,6 +2408,44 @@ def subscribe_push(req: PushSubscribeRequest, db: Session = Depends(get_db)):
     
     print(f"[WebPush] ✅ Subscription saved in DB & Memory for {email}")
     return {"status": "subscribed", "user": email, "total_subscriptions": len(_push_subscriptions[email])}
+
+@app.post("/api/push/test")
+def send_test_push(user_email: Optional[str] = None, db: Session = Depends(get_db)):
+    """Send an immediate test VAPID push notification to all devices registered for this user."""
+    email = (user_email or "").strip().lower() or DEFAULT_OWNER_EMAIL
+    
+    # Reload from DB if needed
+    if email not in _push_subscriptions or not _push_subscriptions[email]:
+        db_subs = db.query(PushSubscription).filter(PushSubscription.user_email == email).all()
+        _push_subscriptions[email] = [
+            {"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}}
+            for s in db_subs
+        ]
+        
+    subs = _push_subscriptions.get(email, [])
+    if not subs:
+        all_subs = db.query(PushSubscription).all()
+        if all_subs:
+            subs = [{"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}} for s in all_subs]
+
+    if not subs:
+        return {"status": "error", "message": "No registered push devices found. Please open Aether on mobile to connect!"}
+
+    sent = 0
+    errors = []
+    for s in subs:
+        ok, expired = _send_web_push(
+            s, 
+            "⚡ AETHER TEST ALERT 🎉", 
+            "मोबाइल और क्लाउड पुश नोटिफिकेशन सक्रिय है और 100% सही काम कर रहा है!", 
+            "aether-test"
+        )
+        if ok:
+            sent += 1
+        else:
+            errors.append(s.get("endpoint", "")[:30])
+
+    return {"status": "success", "sent": sent, "total": len(subs), "errors": errors}
 
 @app.delete("/api/push/subscribe")
 def unsubscribe_push(user_email: str, endpoint: str, db: Session = Depends(get_db)):
@@ -2501,7 +2539,7 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
     try:
         db_subs = db.query(PushSubscription).all()
         for s in db_subs:
-            em = s.user_email
+            em = (s.user_email or "").strip().lower() or DEFAULT_OWNER_EMAIL
             if em not in _push_subscriptions:
                 _push_subscriptions[em] = []
             if not any(sub.get("endpoint") == s.endpoint for sub in _push_subscriptions[em]):
@@ -2515,6 +2553,7 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
     except Exception as dbe:
         print(f"[PushCheck DB Load Error] {dbe}")
 
+    from sqlalchemy import or_
     # 2. सभी subscribed users के लिए check करें
     for email, subscriptions in list(_push_subscriptions.items()):
         if not subscriptions:
@@ -2522,8 +2561,17 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
         
         try:
             # इस user के due reminders fetch करें
+            if email == DEFAULT_OWNER_EMAIL:
+                email_filter = or_(
+                    Task.user_email == email,
+                    Task.user_email == None,
+                    Task.user_email == ""
+                )
+            else:
+                email_filter = (Task.user_email == email)
+
             tasks = db.query(Task).filter(
-                Task.user_email == email,
+                email_filter,
                 Task.status == "pending",
                 Task.notified == False
             ).all()

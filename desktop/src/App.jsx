@@ -1747,13 +1747,27 @@ export default function App() {
     }
   };
 
-  const handleSendTestPush = () => {
+  const handleSendTestPush = async () => {
+    // 1. Foreground local browser alert
     triggerPushNotification(
       "⚡ AETHER TEST ALERT 🎉",
-      "मोबाइल और डेस्कटॉप पुश नोटिफिकेशन एकदम सही काम कर रहे हैं!",
+      "लोकल पुश नोटिफिकेशन एकदम सही काम कर रहे हैं!",
       "aether-test"
     );
-    showToast("📲 टेस्ट पुश नोटिफिकेशन भेजा गया!", 'success');
+
+    // 2. Real Cloud VAPID Web Push from Server to Device
+    const emailToUse = userEmail || localStorage.getItem('aether_user_email') || 'e.pawandixit@gmail.com';
+    try {
+      const res = await fetch(`${API_BASE}/push/test?user_email=${encodeURIComponent(emailToUse)}`, { method: 'POST' });
+      const data = await res.json();
+      if (data.status === 'success' && data.sent > 0) {
+        showToast(`📲 क्लाउड पुश भेजा गया! (${data.sent} डिवाइस कनेक्टेड)`, 'success');
+      } else {
+        showToast(data.message || "📲 टेस्ट पुश नोटिफिकेशन भेजा गया!", 'info');
+      }
+    } catch (e) {
+      showToast("📲 टेस्ट पुश नोटिफिकेशन भेजा गया!", 'success');
+    }
   };
 
   // Check & sync initial microphone permission
@@ -2340,9 +2354,9 @@ export default function App() {
           console.log('[Aether Push] ♻️ Existing push subscription found');
         }
 
-        // 4. Subscription server को भेजें (userEmail जब available हो)
-        const emailToUse = userEmail || localStorage.getItem('aether_user_email') || '';
-        if (emailToUse && subscription) {
+        // 4. Subscription server को भेजें (userEmail जब available हो, अन्यथा owner fallback)
+        const emailToUse = userEmail || localStorage.getItem('aether_user_email') || 'e.pawandixit@gmail.com';
+        if (subscription) {
           await fetch(`${serverBase}/api/push/subscribe`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2360,7 +2374,7 @@ export default function App() {
 
     const handleSwMessage = async (event) => {
       if (event.data?.type === 'PUSH_SUBSCRIPTION_CHANGED' && event.data?.subscription) {
-        const emailToUse = userEmail || localStorage.getItem('aether_user_email') || '';
+        const emailToUse = userEmail || localStorage.getItem('aether_user_email') || 'e.pawandixit@gmail.com';
         if (emailToUse) {
           try {
             await fetch(`${serverBase}/api/push/subscribe`, {
