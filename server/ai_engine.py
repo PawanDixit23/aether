@@ -669,81 +669,110 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None) -> dict
                             'players': players
                         })
 
-                    # If ESPN's raw matchcards are empty, synthesize full batting & bowling tables from rosters
-                    if not matchcards and raw_rosters:
+                    # Synthesize complete batting & bowling scorecards across ALL innings (1st, 2nd, 3rd, 4th innings)
+                    if raw_rosters:
                         competitors = data.get('header', {}).get('competitions', [{}])[0].get('competitors', [])
-                        comp_map = {str(c.get('team', {}).get('id')): c for c in competitors}
-                        synthesized_cards = []
+                        comp_map = {str(c.get('team', {}).get('id', '')): c for c in competitors}
                         
-                        for idx, r in enumerate(raw_rosters):
-                            team_info = r.get('team', {})
-                            t_id = str(team_info.get('id', ''))
-                            t_name = team_info.get('displayName', f'Team {idx+1}')
-                            comp = comp_map.get(t_id, {})
-                            total_score = comp.get('score', '')
-                            
-                            batters = []
-                            bowlers = []
+                        # 1. Discover all innings played so far
+                        all_inns = set()
+                        for r in raw_rosters:
                             for p in r.get('roster', []):
-                                ath = p.get('athlete', {})
-                                p_name = ath.get('displayName') or ath.get('name', 'Player')
                                 for ls in p.get('linescores', []):
                                     for sub_ls in ls.get('linescores', []):
                                         st = sub_ls.get('statistics', {})
                                         stats_dict = {s.get('name'): s.get('displayValue') for cat in st.get('categories', []) for s in cat.get('stats', [])}
-                                        b_stats = st.get('batting', {})
-                                        bw_stats = st.get('bowling', {})
-                                        
-                                        # Batting data
-                                        if stats_dict.get('batted') == '1' or stats_dict.get('runs') is not None:
-                                            out_text = b_stats.get('outDetails', {}).get('shortText', 'not out')
-                                            if out_text:
-                                                out_text = out_text.replace('&amp;', '&')
-                                            batters.append({
-                                                'playerName': p_name,
-                                                'dismissal': out_text or 'not out',
-                                                'runs': str(stats_dict.get('runs', '0')),
-                                                'ballsFaced': str(stats_dict.get('ballsFaced', '0')),
-                                                'fours': str(stats_dict.get('fours', '0')),
-                                                'sixes': str(stats_dict.get('sixes', '0')),
-                                                'strikeRate': str(stats_dict.get('strikeRate', '-'))
-                                            })
-                                        
-                                        # Bowling data
-                                        overs_val = stats_dict.get('overs') or bw_stats.get('overs')
-                                        if overs_val and float(overs_val) > 0:
-                                            bowlers.append({
-                                                'playerName': p_name,
-                                                'overs': str(overs_val),
-                                                'maidens': str(stats_dict.get('maidens', '0')),
-                                                'conceded': str(stats_dict.get('conceded', '0')),
-                                                'wickets': str(stats_dict.get('wickets', '0')),
-                                                'economyRate': str(stats_dict.get('economyRate', '-'))
-                                            })
-                            
-                            if batters:
-                                synthesized_cards.append({
-                                    'typeID': '11',
-                                    'headline': 'Batting',
-                                    'inningsNumber': str(idx + 1),
-                                    'teamName': t_name,
-                                    'runs': total_score,
-                                    'total': '',
-                                    'extras': '',
-                                    'playerDetails': batters
-                                })
-                            if bowlers:
-                                # Bowling card belongs to the opposite team's innings
-                                opp_inn = str(2 if idx == 0 else 1)
-                                synthesized_cards.append({
-                                    'typeID': '12',
-                                    'headline': 'Bowling',
-                                    'inningsNumber': opp_inn,
-                                    'teamName': t_name,
-                                    'playerDetails': bowlers
-                                })
+                                        inn = stats_dict.get('inningsNumber') or ls.get('period')
+                                        if inn:
+                                            all_inns.add(str(inn))
                         
-                        matchcards = synthesized_cards
+                        inns_sorted = sorted(list(all_inns), key=lambda x: int(x) if x.isdigit() else 1)
+                        synthesized_cards = []
+                        
+                        for inn_str in inns_sorted:
+                            for r_idx, r in enumerate(raw_rosters):
+                                team_info = r.get('team', {})
+                                t_id = str(team_info.get('id', ''))
+                                t_name = team_info.get('displayName', f'Team {r_idx+1}')
+                                comp = comp_map.get(t_id, {})
+                                opp_r = raw_rosters[1 - r_idx] if len(raw_rosters) == 2 else None
+                                opp_name = opp_r.get('team', {}).get('displayName', 'Opposition') if opp_r else 'Opposition'
+                                
+                                batters = []
+                                for p in r.get('roster', []):
+                                    ath = p.get('athlete', {})
+                                    p_name = ath.get('displayName') or ath.get('name', 'Player')
+                                    for ls in p.get('linescores', []):
+                                        for sub_ls in ls.get('linescores', []):
+                                            st = sub_ls.get('statistics', {})
+                                            stats_dict = {s.get('name'): s.get('displayValue') for cat in st.get('categories', []) for s in cat.get('stats', [])}
+                                            b_stats = st.get('batting', {})
+                                            p_inn = str(stats_dict.get('inningsNumber') or ls.get('period') or '1')
+                                            
+                                            if p_inn == inn_str and (stats_dict.get('batted') == '1' or stats_dict.get('runs') is not None):
+                                                out_text = b_stats.get('outDetails', {}).get('shortText', 'not out')
+                                                if out_text:
+                                                    out_text = out_text.replace('&amp;', '&').replace('&dagger;', '†')
+                                                batters.append({
+                                                    'playerName': p_name,
+                                                    'dismissal': out_text or 'not out',
+                                                    'runs': str(stats_dict.get('runs', '0')),
+                                                    'ballsFaced': str(stats_dict.get('ballsFaced', '0')),
+                                                    'fours': str(stats_dict.get('fours', '0')),
+                                                    'sixes': str(stats_dict.get('sixes', '0')),
+                                                    'strikeRate': str(stats_dict.get('strikeRate', '-'))
+                                                })
+                                
+                                if batters:
+                                    # Fetch team total score for this innings
+                                    team_score = comp.get('score', '')
+                                    synthesized_cards.append({
+                                        'typeID': '11',
+                                        'headline': 'Batting',
+                                        'inningsNumber': inn_str,
+                                        'teamName': t_name,
+                                        'runs': team_score,
+                                        'total': '',
+                                        'extras': '',
+                                        'playerDetails': batters
+                                    })
+                                    
+                                    # Bowlers from opposing team for this innings
+                                    bowlers = []
+                                    if opp_r:
+                                        for p in opp_r.get('roster', []):
+                                            ath = p.get('athlete', {})
+                                            p_name = ath.get('displayName') or ath.get('name', 'Player')
+                                            for ls in p.get('linescores', []):
+                                                for sub_ls in ls.get('linescores', []):
+                                                    st = sub_ls.get('statistics', {})
+                                                    stats_dict = {s.get('name'): s.get('displayValue') for cat in st.get('categories', []) for s in cat.get('stats', [])}
+                                                    bw_stats = st.get('bowling', {})
+                                                    p_inn = str(stats_dict.get('inningsNumber') or ls.get('period') or '1')
+                                                    overs_val = stats_dict.get('overs') or bw_stats.get('overs')
+                                                    
+                                                    if p_inn == inn_str and overs_val and float(overs_val) > 0:
+                                                        bowlers.append({
+                                                            'playerName': p_name,
+                                                            'overs': str(overs_val),
+                                                            'maidens': str(stats_dict.get('maidens', '0')),
+                                                            'conceded': str(stats_dict.get('conceded', '0')),
+                                                            'wickets': str(stats_dict.get('wickets', '0')),
+                                                            'economyRate': str(stats_dict.get('economyRate', '-'))
+                                                        })
+                                    
+                                    if bowlers:
+                                        synthesized_cards.append({
+                                            'typeID': '12',
+                                            'headline': 'Bowling',
+                                            'inningsNumber': inn_str,
+                                            'teamName': opp_name,
+                                            'playerDetails': bowlers
+                                        })
+                        
+                        # Use synthesized multi-innings cards if they provide more complete match history than raw partial cards
+                        if synthesized_cards and (not matchcards or len(synthesized_cards) >= len(matchcards) or len(inns_sorted) > 1):
+                            matchcards = synthesized_cards
 
                     return {
                         'status': 'success',

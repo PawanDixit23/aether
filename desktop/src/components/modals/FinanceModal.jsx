@@ -208,12 +208,12 @@ export const FinanceModal = ({
   };
 
   const handleExportCSV = () => {
-    if (!financeRecords || financeRecords.length === 0) {
-      if (showToast) showToast("No transactions to export.", "info");
+    if (!monthRecords || monthRecords.length === 0) {
+      if (showToast) showToast(`No transactions found for ${monthTitle} to export.`, "info");
       return;
     }
     const headers = ["Record ID", "Date", "Type", "Category", "Amount (INR)", "Payment Mode", "Notes"];
-    const rows = financeRecords.map(r => [
+    const rows = monthRecords.map(r => [
       r.id,
       r.date ? new Date(r.date).toLocaleDateString('en-IN') : '',
       r.type || 'expense',
@@ -227,35 +227,53 @@ export const FinanceModal = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `aether_finance_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute("download", `aether_finance_${monthTitle.replace(/\s+/g, '_')}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    if (showToast) showToast("Finance CSV exported successfully! 📥", "success");
+    if (showToast) showToast(`Finance CSV for ${monthTitle} exported successfully! 📥`, "success");
   };
 
   // =========================================================================
-  // 100% REAL & DYNAMIC FINANCE CALCULATIONS
+  // 100% REAL & DYNAMIC MONTH-BY-MONTH FINANCE CALCULATIONS
   // =========================================================================
+  const selectedYear = currentDate.getFullYear();
+  const selectedMonth = currentDate.getMonth(); // 0-indexed: 0=Jan, 9=Oct, 10=Nov, 11=Dec
 
-  // Calculate real Income, Expenses, Balance and Savings from records & server summary
-  const recordsIncome = (financeRecords || [])
+  // Filter records strictly by the selected month
+  const monthRecords = (financeRecords || []).filter(r => {
+    const rawDate = r.date || r.created_at;
+    if (!rawDate) return false;
+    const d = new Date(rawDate);
+    if (isNaN(d.getTime())) return false;
+    return d.getFullYear() === selectedYear && d.getMonth() === selectedMonth;
+  });
+
+  const monthIncome = monthRecords
     .filter(r => (r.type || '').toLowerCase() === 'income')
     .reduce((sum, r) => sum + Number(r.amount || 0), 0);
-  const recordsExpense = (financeRecords || [])
+  const monthExpense = monthRecords
     .filter(r => (r.type || 'expense').toLowerCase() === 'expense')
     .reduce((sum, r) => sum + Number(r.amount || 0), 0);
 
-  const effectiveIncome = recordsIncome > 0 ? recordsIncome : Number(financeSummary?.total_income || 0);
-  const effectiveExpense = recordsExpense > 0 ? recordsExpense : Number(financeSummary?.total_expense || 0);
+  const effectiveIncome = monthIncome;
+  const effectiveExpense = monthExpense;
   const effectiveBalance = effectiveIncome - effectiveExpense;
   const effectiveSavings = effectiveIncome > effectiveExpense ? effectiveIncome - effectiveExpense : 0;
 
-  // Real Category Breakdown computed dynamically from financeRecords
+  // Month date metrics
+  const today = new Date();
+  const isCurrentMonth = today.getFullYear() === selectedYear && today.getMonth() === selectedMonth;
+  const isPastMonth = selectedYear < today.getFullYear() || (selectedYear === today.getFullYear() && selectedMonth < today.getMonth());
+  const lastDayOfMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+  const daysElapsedInMonth = isCurrentMonth ? Math.max(1, today.getDate()) : lastDayOfMonth;
+  const dailyAvg = monthExpense > 0 ? Math.round(monthExpense / daysElapsedInMonth) : 0;
+
+  // Real Category Breakdown computed dynamically from monthRecords strictly
   const categoryTotals = {};
-  const expenseRecords = (financeRecords || []).filter(r => (r.type || 'expense').toLowerCase() === 'expense');
-  expenseRecords.forEach(r => {
+  const monthExpenseRecords = monthRecords.filter(r => (r.type || 'expense').toLowerCase() === 'expense');
+  monthExpenseRecords.forEach(r => {
     const rawCat = (r.category || 'other').toLowerCase();
     categoryTotals[rawCat] = (categoryTotals[rawCat] || 0) + Number(r.amount || 0);
   });
@@ -313,11 +331,11 @@ export const FinanceModal = ({
     const targetDateStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${String(targetDate.getDate()).padStart(2, '0')}`;
     const dayDateLabel = targetDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
 
-    const dayExpenseSum = expenseRecords
+    const dayExpenseSum = monthExpenseRecords
       .filter(r => (r.date || r.created_at || '').slice(0, 10) === targetDateStr)
       .reduce((acc, r) => acc + Number(r.amount || 0), 0);
 
-    const isToday = dayIdx === currentDayOfWeek;
+    const isToday = dayIdx === currentDayOfWeek && isCurrentMonth;
     return {
       day: dName,
       date: dayDateLabel,
@@ -780,6 +798,67 @@ export const FinanceModal = ({
               </div>
             </div>
 
+            {/* Monthly Comprehensive Report Card (मासिक खर्च संपूर्ण रिपोर्ट) */}
+            <div style={{
+              background: '#0e172a',
+              border: '1px solid rgba(56, 189, 248, 0.25)',
+              borderRadius: '22px',
+              padding: '18px',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '1rem' }}>📊</span>
+                  <span style={{ fontSize: '0.90rem', fontWeight: 700, color: '#f8fafc' }}>
+                    {monthTitle} Statement Report
+                  </span>
+                </div>
+                <span style={{
+                  fontSize: '0.68rem',
+                  fontWeight: 700,
+                  padding: '3px 8px',
+                  borderRadius: '8px',
+                  background: isPastMonth ? 'rgba(148, 163, 184, 0.15)' : 'rgba(56, 189, 248, 0.15)',
+                  color: isPastMonth ? '#94a3b8' : '#38bdf8',
+                  border: isPastMonth ? '1px solid rgba(148, 163, 184, 0.25)' : '1px solid rgba(56, 189, 248, 0.35)'
+                }}>
+                  {isPastMonth ? '🔒 Month Closed' : `📅 Day ${today.getDate()} of ${lastDayOfMonth}`}
+                </span>
+              </div>
+
+              {/* Metrics grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ color: '#94a3b8', fontSize: '0.68rem', marginBottom: '2px' }}>Total Spent (कुल खर्च)</div>
+                  <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#f87171' }}>₹{effectiveExpense.toLocaleString('en-IN')}</div>
+                </div>
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ color: '#94a3b8', fontSize: '0.68rem', marginBottom: '2px' }}>Total Income (कुल आय)</div>
+                  <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#34d399' }}>₹{effectiveIncome.toLocaleString('en-IN')}</div>
+                </div>
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ color: '#94a3b8', fontSize: '0.68rem', marginBottom: '2px' }}>Daily Average (प्रतिदिन औसत)</div>
+                  <div style={{ fontSize: '0.90rem', fontWeight: 700, color: '#e2e8f0' }}>₹{dailyAvg.toLocaleString('en-IN')}/day</div>
+                </div>
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ color: '#94a3b8', fontSize: '0.68rem', marginBottom: '2px' }}>Transactions (कुल लेनदेन)</div>
+                  <div style={{ fontSize: '0.90rem', fontWeight: 700, color: '#38bdf8' }}>{monthRecords.length} recorded</div>
+                </div>
+              </div>
+
+              {/* Month Status Explanation */}
+              <div style={{ fontSize: '0.72rem', color: '#94a3b8', background: 'rgba(56, 189, 248, 0.05)', padding: '9px 12px', borderRadius: '10px', border: '1px solid rgba(56, 189, 248, 0.15)', lineHeight: 1.45 }}>
+                {isCurrentMonth ? (
+                  <span>💡 <strong>चालू माह ({monthTitle}):</strong> आज 1 नवंबर से आपका मासिक खर्च शुरू हुआ है। 30 नवंबर (महीने के अंतिम दिन) तक का संपूर्ण हिसाब यहाँ संकलित रहेगा। 1 दिसंबर को नया महीना ₹0 से स्वतः शुरू होगा।</span>
+                ) : (
+                  <span>📁 <strong>अभिलेख माह ({monthTitle}):</strong> इस माह का संपूर्ण हिसाब सुरक्षित है। किसी भी पूर्व माह का खर्च देखने के लिए ऊपर तीर बटन (&lt; व &gt;) का उपयोग करें।</span>
+                )}
+              </div>
+            </div>
+
           </div>
         )}
 
@@ -787,7 +866,7 @@ export const FinanceModal = ({
         {activeTab === 'budgets' && (
           <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '18px', marginBottom: '16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <span style={{ fontSize: '0.86rem', color: '#e2e8f0', fontWeight: 700 }}>Monthly Budgets</span>
+              <span style={{ fontSize: '0.86rem', color: '#e2e8f0', fontWeight: 700 }}>Monthly Budgets ({monthTitle})</span>
               <button
                 type="button"
                 onClick={() => setIsEditingBudgets(!isEditingBudgets)}
@@ -851,7 +930,7 @@ export const FinanceModal = ({
             {/* Budgets List with Progress Bars */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {budgets.map(b => {
-                const spent = (financeRecords || [])
+                const spent = (monthRecords || [])
                   .filter(r => (r.type || 'expense') === 'expense' && (r.category || '').toLowerCase() === b.cat.toLowerCase())
                   .reduce((acc, cur) => acc + Number(cur.amount || 0), 0);
                 const percent = Math.min(100, Math.round((spent / (b.limit || 1)) * 100));
@@ -880,7 +959,7 @@ export const FinanceModal = ({
           <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '18px', marginBottom: '16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <span style={{ fontSize: '0.86rem', color: '#e2e8f0', fontWeight: 700 }}>
-                Recent Transactions ({financeRecords.length})
+                Transactions in {monthTitle} ({monthRecords.length})
               </span>
               <button
                 type="button"
@@ -892,13 +971,19 @@ export const FinanceModal = ({
               </button>
             </div>
 
-            {financeRecords.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '24px 0', color: '#64748b', fontSize: '0.82rem' }}>
-                No transaction records found yet. Record an expense or income below to see history.
+            {monthRecords.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '32px 10px', color: '#64748b', fontSize: '0.82rem' }}>
+                <div style={{ fontSize: '1.8rem', marginBottom: '8px' }}>💰</div>
+                <div style={{ color: '#e2e8f0', fontWeight: 600, marginBottom: '4px' }}>
+                  {monthTitle} में कोई खर्च दर्ज नहीं है (खर्च: ₹0)
+                </div>
+                <div style={{ fontSize: '0.74rem', maxWidth: '300px', margin: '0 auto', lineHeight: 1.4 }}>
+                  आज से किया गया खर्च इस महीने में जुड़ेगा। 1 दिसंबर को नया महीना स्वतः ₹0 से शुरू होगा।
+                </div>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
-                {financeRecords.map(rec => {
+                {monthRecords.map(rec => {
                   const isExp = (rec.type || 'expense') === 'expense';
                   return (
                     <div key={rec.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px' }}>
