@@ -43,7 +43,20 @@ export const TasksModal = ({
   toggleSubtasksExpand,
   setShowGCalConnectModal
 }) => {
-  if (!isOpen) return null;
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth <= 768 || !!window.ReactNativeWebView || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768 || !!window.ReactNativeWebView || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Local state for UI filters & inputs
   const [localTaskInput, setLocalTaskInput] = useState(newTaskInput || '');
@@ -319,36 +332,42 @@ export const TasksModal = ({
     { text: 'Take daily vitamins at 9 PM', label: '💊 Vitamins' }
   ];
 
+  if (!isOpen) return null;
+
   return (
     <div style={{
       position: 'fixed',
       inset: 0,
-      background: 'rgba(10, 15, 29, 0.92)',
+      background: 'rgba(10, 15, 29, 0.94)',
       backdropFilter: 'blur(20px)',
       WebkitBackdropFilter: 'blur(20px)',
       zIndex: 120,
       display: 'flex',
-      alignItems: 'center',
+      alignItems: isMobile ? 'stretch' : 'center',
       justifyContent: 'center',
-      padding: '12px'
+      padding: isMobile ? 0 : '12px'
     }}>
       <div style={{
         background: '#0F172A',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-        borderRadius: '24px',
+        border: isMobile ? 'none' : '1px solid rgba(255, 255, 255, 0.1)',
+        borderRadius: isMobile ? 0 : '24px',
         width: '100%',
-        maxWidth: '560px',
-        maxHeight: '92vh',
+        maxWidth: isMobile ? '100%' : '560px',
+        height: isMobile ? '100%' : 'auto',
+        height: isMobile ? '100dvh' : 'auto',
+        maxHeight: isMobile ? '100dvh' : '92vh',
         display: 'flex',
         flexDirection: 'column',
         boxSizing: 'border-box',
-        boxShadow: '0 25px 70px rgba(0, 0, 0, 0.85)',
-        overflow: 'hidden'
+        boxShadow: isMobile ? 'none' : '0 25px 70px rgba(0, 0, 0, 0.85)',
+        overflow: 'hidden',
+        paddingTop: isMobile ? 'max(40px, env(safe-area-inset-top, 0px))' : 0,
+        paddingBottom: isMobile ? 'max(16px, env(safe-area-inset-bottom, 0px))' : 0
       }}>
         
         {/* ── 1. HEADER & DATE TITLE ── */}
         <div style={{
-          padding: '16px 18px 12px',
+          padding: isMobile ? '12px 14px 10px' : '16px 18px 12px',
           borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
           background: 'linear-gradient(180deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%)'
         }}>
@@ -440,7 +459,7 @@ export const TasksModal = ({
 
         {/* ── 2. CALENDAR DATE RIBBON (Select previous/upcoming dates) ── */}
         <div style={{
-          padding: '12px 18px 0',
+          padding: isMobile ? '10px 14px 0' : '12px 18px 0',
           display: 'flex',
           flexDirection: 'column',
           gap: '8px'
@@ -602,7 +621,7 @@ export const TasksModal = ({
         </div>
 
         {/* ── 3. STATUS FILTERS & PRIORITY BAR ── */}
-        <div style={{ padding: '10px 18px 0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ padding: isMobile ? '8px 14px 0' : '10px 18px 0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           
           {/* Status Tabs */}
           <div style={{
@@ -725,7 +744,7 @@ export const TasksModal = ({
         </div>
 
         {/* ── 4. QUICK ADD TASK BAR WITH BULLETPROOF SUBMISSION ── */}
-        <div style={{ padding: '10px 18px 4px' }}>
+        <div style={{ padding: isMobile ? '8px 14px 4px' : '10px 18px 4px' }}>
           <form 
             onSubmit={onSubmitTask}
             style={{
@@ -818,29 +837,30 @@ export const TasksModal = ({
         {/* ── 5. OVERDUE RECOVERY BANNER (When Overdue exists) ── */}
         {overdueCount > 0 && agendaFilter !== 'completed' && (
           <div style={{
-            margin: '6px 18px 0',
+            margin: isMobile ? '6px 14px 0' : '6px 18px 0',
             padding: '8px 12px',
             borderRadius: '12px',
-            background: 'rgba(239, 68, 68, 0.1)',
-            border: '1px solid rgba(239, 68, 68, 0.25)',
+            background: 'rgba(239, 68, 68, 0.12)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            gap: '10px'
+            gap: '8px',
+            boxSizing: 'border-box'
           }}>
             <div
               onClick={() => {
                 setAgendaFilter('overdue');
                 if (setCalSelectedDate) setCalSelectedDate(new Date());
               }}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, cursor: 'pointer', flex: 1 }}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, cursor: 'pointer', flex: 1, overflow: 'hidden' }}
               title="Click to view all overdue tasks"
             >
-              <span style={{ fontSize: '1rem' }}>⚠️</span>
-              <div style={{ fontSize: '0.76rem', fontWeight: 700, color: '#FCA5A5' }}>
-                {overdueCount} task{overdueCount > 1 ? 's are' : ' is'} overdue
+              <span style={{ fontSize: '0.95rem', flexShrink: 0 }}>⚠️</span>
+              <div style={{ fontSize: '0.76rem', fontWeight: 700, color: '#FCA5A5', whiteSpace: 'nowrap' }}>
+                {overdueCount} {overdueCount > 1 ? 'tasks are' : 'task is'} overdue
               </div>
-              <span style={{ fontSize: '0.68rem', color: '#f87171', textDecoration: 'underline', marginLeft: '4px', fontWeight: 600 }}>
+              <span style={{ fontSize: '0.68rem', color: '#f87171', textDecoration: 'underline', marginLeft: '3px', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0 }}>
                 View All ↗
               </span>
             </div>
@@ -852,11 +872,13 @@ export const TasksModal = ({
                 color: '#FFFFFF',
                 border: 'none',
                 borderRadius: '8px',
-                padding: '4px 10px',
+                padding: '5px 10px',
                 fontSize: '0.70rem',
                 fontWeight: 700,
                 cursor: 'pointer',
-                whiteSpace: 'nowrap'
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+                boxShadow: '0 2px 8px rgba(239, 68, 68, 0.3)'
               }}
             >
               Reschedule All ⚡
@@ -868,7 +890,7 @@ export const TasksModal = ({
         <div style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '8px 18px 20px',
+          padding: isMobile ? '8px 14px 20px' : '8px 18px 20px',
           display: 'flex',
           flexDirection: 'column',
           gap: '8px'

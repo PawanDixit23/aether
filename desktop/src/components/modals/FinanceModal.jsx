@@ -255,27 +255,58 @@ export const FinanceModal = ({
       if (showToast) showToast(`No transactions found for ${monthTitle} to export.`, "info");
       return;
     }
-    const headers = ["Record ID", "Date", "Type", "Category", "Amount (INR)", "Payment Mode", "Notes"];
-    const rows = monthRecords.map(r => [
-      r.id,
-      r.date ? new Date(r.date).toLocaleDateString('en-IN') : '',
-      r.type || 'expense',
-      r.category || 'general',
-      r.amount || 0,
-      r.payment_mode || 'upi',
-      `"${(r.note || '').replace(/"/g, '""')}"`
-    ]);
-    const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(row => row.join(","))].join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `aether_finance_${monthTitle.replace(/\s+/g, '_')}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    if (showToast) showToast(`Finance CSV for ${monthTitle} exported successfully! 📥`, "success");
+    const filename = `aether_finance_${monthTitle.replace(/\s+/g, '_')}.csv`;
+    const effApi = API_BASE || (typeof window !== 'undefined' && window.location.port === '5173'
+      ? `http://${window.location.hostname}:8000/api`
+      : '/api');
+    const downloadUrl = `${effApi}/finance/export-csv?user_email=${encodeURIComponent(userEmail || '')}&year=${selectedYear}&month=${selectedMonth}`;
+
+    // 1. Mobile App (React Native WebView): delegates download to Android system browser/download manager
+    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'OPEN_EXTERNAL_URL',
+          url: downloadUrl
+        }));
+        if (showToast) showToast(`Finance CSV for ${monthTitle} exported! 📥`, "success");
+        return;
+      } catch (err) {}
+    }
+
+    // 2. Web browser: direct download via link to backend
+    try {
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.setAttribute("download", filename);
+      link.target = "_blank";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      if (showToast) showToast(`Finance CSV for ${monthTitle} exported successfully! 📥`, "success");
+    } catch (e) {
+      // 3. In-memory Blob fallback
+      const headers = ["Record ID", "Date", "Type", "Category", "Amount (INR)", "Payment Mode", "Notes"];
+      const rows = monthRecords.map(r => [
+        r.id,
+        r.date ? new Date(r.date).toLocaleDateString('en-IN') : '',
+        r.type || 'expense',
+        r.category || 'general',
+        r.amount || 0,
+        r.payment_mode || 'upi',
+        `"${(r.note || '').replace(/"/g, '""')}"`
+      ]);
+      const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(row => row.join(","))].join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      if (showToast) showToast(`Finance CSV for ${monthTitle} exported successfully! 📥`, "success");
+    }
   };
 
   // =========================================================================

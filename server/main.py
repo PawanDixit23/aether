@@ -8,6 +8,8 @@ if _SERVER_DIR not in sys.path:
     sys.path.insert(0, _SERVER_DIR)
 
 import json
+import csv
+import io
 from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import FastAPI, Depends, HTTPException, Header, Request
@@ -1868,6 +1870,71 @@ def get_finance_summary(
         "balance": balance,
         "record_count": len(records)
     }
+
+@app.get("/api/finance/export-csv")
+def export_finance_csv(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = (user_email or "").strip().lower()
+    query = db.query(FinancialRecord)
+    if eff_email:
+        query = query.filter(FinancialRecord.user_email == eff_email)
+    else:
+        query = query.filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == ""))
+    records = query.order_by(FinancialRecord.date.desc()).all()
+
+    # If year and month are provided, filter records (month is 0-indexed: 0=Jan, 10=Nov)
+    if year is not None and month is not None:
+        filtered = []
+        for r in records:
+            if not r.date:
+                continue
+            try:
+                if hasattr(r.date, 'year'):
+                    r_year = r.date.year
+                    r_month = r.date.month - 1
+                else:
+                    dt = datetime.fromisoformat(str(r.date))
+                    r_year = dt.year
+                    r_month = dt.month - 1
+                if r_year == year and r_month == month:
+                    filtered.append(r)
+            except Exception:
+                continue
+        records = filtered
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Record ID", "Date", "Type", "Category", "Amount (INR)", "Payment Mode", "Notes"])
+    for r in records:
+        d_str = r.date.strftime("%d/%m/%Y") if hasattr(r.date, 'strftime') else str(r.date or '')
+        writer.writerow([
+            r.id,
+            d_str,
+            r.type or "expense",
+            r.category or "general",
+            r.amount or 0,
+            r.payment_mode or "upi",
+            r.note or ""
+        ])
+
+    csv_text = "\ufeff" + output.getvalue()
+    month_names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    m_name = month_names[month] if (month is not None and 0 <= month < 12) else "All"
+    y_name = str(year) if year is not None else ""
+    filename = f"aether_finance_{m_name}_{y_name}.csv" if y_name else f"aether_finance_{m_name}.csv"
+
+    return Response(
+        content=csv_text.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )
 
 @app.delete("/api/finance/records/{record_id}")
 def delete_finance_record(
