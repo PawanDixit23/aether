@@ -975,12 +975,12 @@ def resolve_youtube_playback(query: str) -> dict:
 
     if video_id:
         watch_url = f"https://www.youtube.com/watch?v={video_id}"
-        play_url = f"https://www.youtube.com/watch?v={video_id}&autoplay=1"
-        embed_url = f"https://www.youtube.com/embed/{video_id}?autoplay=1&enablejsapi=1"
+        play_url = f"https://www.youtube.com/watch?v={video_id}"
+        embed_url = f"https://www.youtube.com/embed/{video_id}?enablejsapi=1"
     else:
         watch_url = search_url
         play_url = search_url
-        embed_url = f"https://www.youtube.com/embed?listType=search&list={urllib.parse.quote_plus(clean_q)}&autoplay=1"
+        embed_url = f"https://www.youtube.com/embed?listType=search&list={urllib.parse.quote_plus(clean_q)}"
 
     return {
         "query": clean_q,

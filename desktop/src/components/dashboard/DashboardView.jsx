@@ -79,9 +79,29 @@ export const DashboardView = ({
     return false;
   });
 
+  // Date-aware task completion check (Daily recurring tasks completed yesterday start fresh/pending today!)
+  const getIsTaskDoneForDate = (t, dateStr = todayDateStr) => {
+    if (!t) return false;
+    const isDaily = t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily');
+    if (isDaily) {
+      try {
+        const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('aether_task_date_completions') : null;
+        if (saved) {
+          const map = JSON.parse(saved);
+          if (map[t.id] && map[t.id][dateStr] !== undefined) {
+            return Boolean(map[t.id][dateStr]);
+          }
+        }
+      } catch (e) {}
+      // If not explicitly completed on dateStr, daily task is PENDING (never carries over yesterday's completion!)
+      return false;
+    }
+    return Boolean(t.is_completed || t.status === 'completed');
+  };
+
   // Strict Overdue Tasks (Uncompleted past tasks from previous days)
   const overdueTasksList = allTasksList.filter(t => {
-    const isDone = t.is_completed || t.status === 'completed';
+    const isDone = getIsTaskDoneForDate(t, todayDateStr);
     if (isDone) return false;
     const isDaily = t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily');
     if (isDaily) return false;
@@ -93,7 +113,7 @@ export const DashboardView = ({
   });
 
   // 1. Dynamic Tasks Left Count (Only today's pending tasks)
-  const tasksLeftCount = todayTasks.filter(t => !t.is_completed && t.status !== 'completed').length;
+  const tasksLeftCount = todayTasks.filter(t => !getIsTaskDoneForDate(t, todayDateStr)).length;
 
   // 2. Dynamic Events Today Count (Only calendar events or meetings strictly for today)
   const eventsTodayCount = allTasksList.filter(t => {
@@ -122,12 +142,12 @@ export const DashboardView = ({
   const weatherWind = weatherData?.wind || '4.2 km/h';
 
   // 5. Dynamic Next Event from real tasks
-  const pendingUpcoming = allTasksList.filter(t => !t.is_completed && t.status !== 'completed');
+  const pendingUpcoming = allTasksList.filter(t => !getIsTaskDoneForDate(t, todayDateStr));
   const nextEvent = pendingUpcoming.length > 0 ? pendingUpcoming[0] : null;
 
   // Helper to determine status and display properties
   const getTaskStatusInfo = (t) => {
-    const isDone = t.is_completed || t.status === 'completed';
+    const isDone = getIsTaskDoneForDate(t, todayDateStr);
     if (isDone) {
       return {
         key: 'completed',
@@ -185,8 +205,8 @@ export const DashboardView = ({
 
   // Sort today's tasks: Pending first (by reminder_time), then Completed
   todayTasks.sort((a, b) => {
-    const aDone = a.is_completed || a.status === 'completed';
-    const bDone = b.is_completed || b.status === 'completed';
+    const aDone = getIsTaskDoneForDate(a, todayDateStr);
+    const bDone = getIsTaskDoneForDate(b, todayDateStr);
     if (aDone !== bDone) return aDone ? 1 : -1;
     return (a.reminder_time || '').localeCompare(b.reminder_time || '');
   });

@@ -91,6 +91,7 @@ import { AuditModal } from './components/modals/AuditModal';
 import { ObservabilityModal } from './components/modals/ObservabilityModal';
 import { PermissionsModal } from './components/modals/PermissionsModal';
 import { SettingsSubModals } from './components/modals/SettingsSubModals';
+import { ConfirmModal } from './components/modals/ConfirmModal';
 
 const API_BASE = typeof window !== 'undefined' && window.location.port === '5173'
   ? `http://${window.location.hostname}:8000/api`
@@ -422,6 +423,32 @@ export default function App() {
   const wakeWordRecognitionRef = useRef(null);
   const [attachedMedia, setAttachedMedia] = useState(null); // { type: 'image' | 'file' | 'drive' | 'map', name: string, url?: string, size?: string }
 
+  // Modern Confirmation Dialog State (Zero ugly window.confirm popups)
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    confirmText: 'हटाएं (Delete)',
+    cancelText: 'रद्द करें',
+    isDestructive: true,
+    onConfirm: () => {}
+  });
+
+  const showConfirm = ({ title, message, confirmText = "हटाएं (Delete)", cancelText = "रद्द करें", isDestructive = true, onConfirm }) => {
+    setConfirmDialog({
+      isOpen: true,
+      title,
+      message,
+      confirmText,
+      cancelText,
+      isDestructive,
+      onConfirm
+    });
+  };
+
+  // Video Playback on-demand (Prevents historical songs from auto-playing on app reopen)
+  const [activePlayingVideoId, setActivePlayingVideoId] = useState(null);
+
   const [isDriveModalOpen, setIsDriveModalOpen] = useState(false);
   const [driveInputUrl, setDriveInputUrl] = useState('');
   const [driveDocName, setDriveDocName] = useState('');
@@ -504,6 +531,7 @@ export default function App() {
 
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const isProcessingRef = useRef(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [selectedLang, setSelectedLang] = useState(() => localStorage.getItem('aether_language') || 'auto');
@@ -832,34 +860,44 @@ export default function App() {
     return '🏷️';
   };
 
-  const handleDeleteFinanceRecord = async (id) => {
-    if (!window.confirm("क्या आप इस खर्च/आय रिकॉर्ड को हटाना चाहते हैं?")) return;
-    try {
-      const resp = await fetch(`${API_BASE}/finance/records/${id}`, {
-        method: 'DELETE',
-        headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
-      });
-      if (resp.ok) {
-        const deleted = financeRecords.find(r => r.id === id);
-        setFinanceRecords(prev => prev.filter(r => r.id !== id));
-        if (deleted) {
-          const amt = Number(deleted.amount || 0);
-          const isExp = (deleted.type === 'expense' || deleted.record_type === 'expense' || !deleted.type);
-          setFinanceSummary(prev => ({
-            ...prev,
-            total_expense: isExp ? Math.max(0, prev.total_expense - amt) : prev.total_expense,
-            total_income: !isExp ? Math.max(0, prev.total_income - amt) : prev.total_income,
-            balance: isExp ? prev.balance + amt : prev.balance - amt,
-            record_count: Math.max(0, (prev.record_count || 1) - 1)
-          }));
+  const handleDeleteFinanceRecord = (id) => {
+    const target = financeRecords.find(r => r.id === id);
+    const label = target ? `${target.note || target.category || 'खर्च'} (₹${Number(target.amount || 0).toLocaleString('en-IN')})` : 'यह रिकॉर्ड';
+    showConfirm({
+      title: "खर्च/आय रिकॉर्ड हटाएं?",
+      message: `क्या आप "${label}" को स्थायी रूप से हटाना चाहते हैं? यह वित्तीय लेजर से हट जाएगा।`,
+      confirmText: "हटाएं (Delete)",
+      cancelText: "रद्द करें",
+      isDestructive: true,
+      onConfirm: async () => {
+        try {
+          const resp = await fetch(`${API_BASE}/finance/records/${id}`, {
+            method: 'DELETE',
+            headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
+          });
+          if (resp.ok) {
+            const deleted = financeRecords.find(r => r.id === id);
+            setFinanceRecords(prev => prev.filter(r => r.id !== id));
+            if (deleted) {
+              const amt = Number(deleted.amount || 0);
+              const isExp = (deleted.type === 'expense' || deleted.record_type === 'expense' || !deleted.type);
+              setFinanceSummary(prev => ({
+                ...prev,
+                total_expense: isExp ? Math.max(0, prev.total_expense - amt) : prev.total_expense,
+                total_income: !isExp ? Math.max(0, prev.total_income - amt) : prev.total_income,
+                balance: isExp ? prev.balance + amt : prev.balance - amt,
+                record_count: Math.max(0, (prev.record_count || 1) - 1)
+              }));
+            }
+            showToast("रिकॉर्ड हटा दिया गया", "success");
+          } else {
+            showToast("रिकॉर्ड हटाने में समस्या आई", "error");
+          }
+        } catch (e) {
+          showToast("नेटवर्क त्रुटि", "error");
         }
-        showToast("रिकॉर्ड हटा दिया गया", "success");
-      } else {
-        showToast("रिकॉर्ड हटाने में समस्या आई", "error");
       }
-    } catch (e) {
-      showToast("नेटवर्क त्रुटि", "error");
-    }
+    });
   };
 
   const handleSaveFinanceEdit = async () => {
@@ -2746,13 +2784,16 @@ export default function App() {
   }, []);
 
   // Fetch all backend data and check due reminders with Multi-Tenant Isolation
-  const refreshAllData = async () => {
+  const refreshAllData = async (opts = {}) => {
+    // If prompt is actively generating, skip to prevent screen flicker or uncommitted history overwriting
+    if (isProcessingRef.current && !opts.force) return;
+
     try {
       const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
       const authHeaders = currentEmail ? { 'X-User-Email': currentEmail } : {};
       const [resBrief, resChat, resTasks, resFin, resFinSum, resMem, resAudit, resNews, resDue] = await Promise.all([
         fetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}`, { headers: authHeaders }),
-        fetch(`${API_BASE}/chat/history`, { headers: authHeaders }),
+        opts.skipChatHistory ? Promise.resolve({ ok: false }) : fetch(`${API_BASE}/chat/history`, { headers: authHeaders }),
         fetch(`${API_BASE}/tasks`, { headers: authHeaders }),
         fetch(`${API_BASE}/finance/records`, { headers: authHeaders }),
         fetch(`${API_BASE}/finance/summary`, { headers: authHeaders }),
@@ -2763,7 +2804,7 @@ export default function App() {
       ]);
 
       if (resBrief.ok) setBriefing(await resBrief.json());
-      if (resChat.ok) {
+      if (resChat.ok && !opts.skipChatHistory) {
         const chats = await resChat.json();
         // Normalize role for rendering: 'aether' -> 'assistant'
         const normalizedChats = Array.isArray(chats) ? chats.map(c => ({
@@ -2774,6 +2815,9 @@ export default function App() {
         setChatHistory(prev => {
           if (isClearingChatRef.current) {
             return [];
+          }
+          if (isProcessingRef.current) {
+            return prev;
           }
           if (normalizedChats.length === 0) {
             return [];
@@ -2960,7 +3004,7 @@ export default function App() {
 
   useEffect(() => {
     refreshAllData();
-    const interval = setInterval(refreshAllData, 3500);
+    const interval = setInterval(refreshAllData, 15000);
     return () => clearInterval(interval);
   }, []);
 
@@ -3366,6 +3410,7 @@ export default function App() {
       created_at: new Date().toISOString() 
     }]);
     setInputText('');
+    isProcessingRef.current = true;
     setIsProcessing(true);
     setShowConversation(true);
 
@@ -3422,9 +3467,11 @@ export default function App() {
 
       const actionType = result.action || result.parsed?.action;
       const actionData = result.parsed?.data || result.data || {};
+      const newAssistantMsgId = `yt-${Date.now()}`;
 
       // If YouTube intent: mark media active to protect audio focus; let embedded player play directly
       if (actionType === 'youtube') {
+        setActivePlayingVideoId(newAssistantMsgId);
         activeMediaPlayingRef.current = true;
         if (wakeWordRecognitionRef.current) {
           try { wakeWordRecognitionRef.current.stop(); } catch (e) {}
@@ -3444,6 +3491,7 @@ export default function App() {
       // Call action is presented via the interactive call action card with dial buttons
 
       setChatHistory(prev => [...prev, {
+        id: newAssistantMsgId,
         role: 'assistant',
         content: assistantReply,
         action: actionType,
@@ -3456,7 +3504,8 @@ export default function App() {
         speakText(assistantReply);
       }
 
-      await refreshAllData();
+      // Refresh tasks and finances quietly in the background without rewriting chatHistory
+      refreshAllData({ skipChatHistory: true });
     } catch (err) {
       setChatHistory(prev => [...prev, {
         role: 'assistant',
@@ -3465,6 +3514,7 @@ export default function App() {
       }]);
       showToast("Aether कोर से संपर्क नहीं हो पाया", 'error');
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
     }
   };
@@ -3494,6 +3544,20 @@ export default function App() {
   };
 
   const handleToggleTask = async (taskId) => {
+    // Record date-aware completion for recurring/daily tasks
+    const todayDateKey = formatLocalDateStr ? formatLocalDateStr(new Date()) : new Date().toISOString().slice(0, 10);
+    const targetTask = tasks.find(t => t.id === taskId) || (typeof combinedTasks !== 'undefined' ? combinedTasks.find(t => t.id === taskId) : null);
+    const isDaily = targetTask && (targetTask.recurrence === 'daily' || targetTask.repeat === 'daily' || String(targetTask.recurrence || '').toLowerCase().includes('daily'));
+    if (isDaily) {
+      try {
+        const saved = localStorage.getItem('aether_task_date_completions');
+        const map = saved ? JSON.parse(saved) : {};
+        const currentDone = map[taskId]?.[todayDateKey] || false;
+        map[taskId] = { ...(map[taskId] || {}), [todayDateKey]: !currentDone };
+        localStorage.setItem('aether_task_date_completions', JSON.stringify(map));
+      } catch (e) {}
+    }
+
     // Optimistically toggle task in local state immediately so UI updates with zero delay
     setTasks(prev => prev.map(t => {
       if (t.id === taskId) {
@@ -3546,26 +3610,37 @@ export default function App() {
     }
   };
 
-  const handleDeleteTask = async (taskId) => {
-    // Optimistically remove from local state
-    setTasks(prev => prev.filter(t => t.id !== taskId).map(t => {
-      if (t.subtasks && t.subtasks.some(s => s.id === taskId)) {
-        return { ...t, subtasks: t.subtasks.filter(s => s.id !== taskId) };
-      }
-      return t;
-    }));
+  const handleDeleteTask = (taskId) => {
+    const target = tasks.find(t => t.id === taskId);
+    const title = target?.title || 'यह कार्य';
+    showConfirm({
+      title: "कार्य हटाएं?",
+      message: `क्या आप "${title}" को हटाना चाहते हैं?`,
+      confirmText: "हटाएं (Delete)",
+      cancelText: "रद्द करें",
+      isDestructive: true,
+      onConfirm: async () => {
+        // Optimistically remove from local state
+        setTasks(prev => prev.filter(t => t.id !== taskId).map(t => {
+          if (t.subtasks && t.subtasks.some(s => s.id === taskId)) {
+            return { ...t, subtasks: t.subtasks.filter(s => s.id !== taskId) };
+          }
+          return t;
+        }));
 
-    try {
-      await fetch(`${API_BASE}/tasks/${taskId}`, { 
-        method: 'DELETE',
-        headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
-      });
-      refreshAllData();
-      showToast("कार्य हटा दिया गया", 'info');
-    } catch (err) {
-      console.error(err);
-      refreshAllData();
-    }
+        try {
+          await fetch(`${API_BASE}/tasks/${taskId}`, { 
+            method: 'DELETE',
+            headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
+          });
+          refreshAllData();
+          showToast("कार्य हटा दिया गया", 'info');
+        } catch (err) {
+          console.error(err);
+          refreshAllData();
+        }
+      }
+    });
   };
 
   const handleCreateTask = async (e, customTitle, customDateStr, customPriority) => {
@@ -3639,17 +3714,28 @@ export default function App() {
     }
   };
 
-  const handleDeleteMemory = async (memId) => {
-    try {
-      await fetch(`${API_BASE}/memory/${memId}`, { 
-        method: 'DELETE',
-        headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
-      });
-      refreshAllData();
-      showToast("स्मृति वॉल्ट से हटा दी गई", 'info');
-    } catch (err) {
-      console.error(err);
-    }
+  const handleDeleteMemory = (memId) => {
+    const mem = memories.find(m => m.id === memId);
+    const key = mem?.key || 'यह स्मृति';
+    showConfirm({
+      title: "स्मृति हटाएं?",
+      message: `क्या आप स्मृति "${key}" को हमेशा के लिए हटाना चाहते हैं?`,
+      confirmText: "हटाएं (Delete)",
+      cancelText: "रद्द करें",
+      isDestructive: true,
+      onConfirm: async () => {
+        try {
+          await fetch(`${API_BASE}/memory/${memId}`, { 
+            method: 'DELETE',
+            headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
+          });
+          refreshAllData();
+          showToast("स्मृति वॉल्ट से हटा दी गई", 'info');
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    });
   };
 
   const handleUndo = async (logId) => {
@@ -4962,7 +5048,11 @@ export default function App() {
                         }
                         if (actType === 'youtube' || aData?.url?.includes('youtube.com') || aData?.embed_url || aData?.watch_url) {
                           const directPlayUrl = aData?.play_url || aData?.watch_url || aData?.url || `https://www.youtube.com/results?search_query=${encodeURIComponent(aData?.query || 'Trending')}`;
-                          const embedUrl = aData?.embed_url || (aData?.video_id ? `https://www.youtube.com/embed/${aData.video_id}?autoplay=1&enablejsapi=1` : (aData?.query ? `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(aData.query)}&autoplay=1` : null));
+                          const rawEmbed = aData?.embed_url || (aData?.video_id ? `https://www.youtube.com/embed/${aData.video_id}` : (aData?.query ? `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(aData.query)}` : null));
+                          const videoKey = msg.id || (msg.created_at ? `yt-${msg.created_at}` : `yt-idx-${idx}`);
+                          const isCurrentlyPlaying = activePlayingVideoId === videoKey;
+                          const activeEmbedUrl = rawEmbed ? (rawEmbed.includes('?') ? `${rawEmbed}&autoplay=1&enablejsapi=1` : `${rawEmbed}?autoplay=1&enablejsapi=1`) : null;
+
                           return (
                             <div style={{
                               marginTop: '10px',
@@ -4993,37 +5083,83 @@ export default function App() {
                                     <div style={{ fontSize: '0.84rem', fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                       {aData?.query || "YouTube Playback"}
                                     </div>
-                                    <div style={{ fontSize: '0.70rem', color: '#f87171' }}>
-                                      Live Video Stream
+                                    <div style={{ fontSize: '0.70rem', color: isCurrentlyPlaying ? '#34d399' : '#94a3b8', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                      {isCurrentlyPlaying ? (
+                                        <>
+                                          <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#34d399', display: 'inline-block' }}></span>
+                                          Now Playing
+                                        </>
+                                      ) : 'चलाने के लिए प्ले दबाएं (Click Play)'}
                                     </div>
                                   </div>
                                 </div>
-                                <a
-                                  href={directPlayUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{
-                                    background: '#ef4444',
-                                    color: '#fff',
-                                    textDecoration: 'none',
-                                    padding: '6px 12px',
-                                    borderRadius: '8px',
-                                    fontSize: '0.78rem',
-                                    fontWeight: 600,
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '6px',
-                                    flexShrink: 0,
-                                    boxShadow: '0 2px 6px rgba(239, 68, 68, 0.3)'
-                                  }}
-                                >
-                                  <Play size={13} fill="#fff" />
-                                  <span>Play</span>
-                                </a>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                                  {isCurrentlyPlaying ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setActivePlayingVideoId(null)}
+                                      style={{
+                                        background: 'rgba(239, 68, 68, 0.2)',
+                                        border: '1px solid rgba(239, 68, 68, 0.5)',
+                                        color: '#f87171',
+                                        padding: '6px 12px',
+                                        borderRadius: '8px',
+                                        fontSize: '0.78rem',
+                                        fontWeight: 600,
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      <span>⏹ रोकें (Stop)</span>
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => setActivePlayingVideoId(videoKey)}
+                                      style={{
+                                        background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                                        border: 'none',
+                                        color: '#fff',
+                                        padding: '6px 14px',
+                                        borderRadius: '8px',
+                                        fontSize: '0.78rem',
+                                        fontWeight: 600,
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        cursor: 'pointer',
+                                        boxShadow: '0 2px 6px rgba(239, 68, 68, 0.4)'
+                                      }}
+                                    >
+                                      <Play size={13} fill="#fff" />
+                                      <span>Play</span>
+                                    </button>
+                                  )}
+                                  <a
+                                    href={directPlayUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title="Open on YouTube"
+                                    style={{
+                                      background: 'rgba(255, 255, 255, 0.08)',
+                                      color: '#94a3b8',
+                                      padding: '6px 8px',
+                                      borderRadius: '8px',
+                                      fontSize: '0.75rem',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      textDecoration: 'none'
+                                    }}
+                                  >
+                                    <ExternalLink size={13} />
+                                  </a>
+                                </div>
                               </div>
 
-                              {/* Embedded In-Chat YouTube Player */}
-                              {embedUrl && (
+                              {/* Embedded In-Chat YouTube Player - ONLY rendered when actively requested/played */}
+                              {isCurrentlyPlaying && activeEmbedUrl && (
                                 <div style={{
                                   position: 'relative',
                                   width: '100%',
@@ -5031,12 +5167,12 @@ export default function App() {
                                   height: 0,
                                   borderRadius: '10px',
                                   overflow: 'hidden',
-                                  margin: '4px 0 2px',
-                                  border: '1px solid rgba(255, 255, 255, 0.12)',
-                                  boxShadow: '0 4px 14px rgba(0, 0, 0, 0.45)'
+                                  margin: '6px 0 2px',
+                                  border: '1px solid rgba(239, 68, 68, 0.35)',
+                                  boxShadow: '0 4px 16px rgba(239, 68, 68, 0.25)'
                                 }}>
                                   <iframe
-                                    src={embedUrl}
+                                    src={activeEmbedUrl}
                                     title={aData?.query || "YouTube Video"}
                                     style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0 }}
                                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -6320,6 +6456,18 @@ export default function App() {
         driveInputUrl={driveInputUrl}
         setDriveInputUrl={setDriveInputUrl}
         handleAttachDriveFromModal={handleAttachDriveFromModal}
+      />
+
+      {/* Universal Futuristic Dark Glass Confirm Dialog */}
+      <ConfirmModal
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmText={confirmDialog.confirmText}
+        cancelText={confirmDialog.cancelText}
+        isDestructive={confirmDialog.isDestructive}
+        onConfirm={confirmDialog.onConfirm}
+        onClose={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
       />
 
       {/* Floating Toast Notification */}

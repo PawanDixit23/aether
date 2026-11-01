@@ -87,22 +87,12 @@ export const TasksModal = ({
     }
 
     // Daily / recurring task:
-    // 1. Explicit user override for this specific date
+    // Strict per-date isolation: only true if explicitly marked done on this exact date!
     if (taskDateCompletions[t.id] && taskDateCompletions[t.id][targetDateStr] !== undefined) {
       return Boolean(taskDateCompletions[t.id][targetDateStr]);
     }
 
-    // 2. Future dates (targetDateStr > todayStr): ALWAYS FALSE (cannot be completed in advance)
-    if (targetDateStr > todayStr) {
-      return false;
-    }
-
-    // 3. Today (targetDateStr === todayStr): follow the task's today status
-    if (targetDateStr === todayStr) {
-      return Boolean(t.is_completed || t.status === 'completed');
-    }
-
-    // 4. Past dates (targetDateStr < todayStr): false unless recorded
+    // A daily task on any new date (whether today, yesterday, or future) starts fresh and uncompleted by default!
     return false;
   };
 

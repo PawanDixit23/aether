@@ -6,8 +6,8 @@ name: ⚡ Aether Keep-Alive & Push Notifications
 
 on:
   schedule:
-    - cron: '*/10 * * * *'   # हर 10 मिनट पर (GitHub Actions min interval = 5 min)
-  workflow_dispatch:           # Manual trigger भी कर सकते हैं
+    - cron: '*/5 * * * *'   # हर 5 मिनट पर पिंग (Render 15 min स्लीप से हमेशा पहले)
+  workflow_dispatch:        # Manual trigger भी कर सकते हैं
 
 jobs:
   keep-alive-and-push:
@@ -20,15 +20,16 @@ jobs:
         run: |
           echo "⚡ Pinging Aether server to prevent cold start..."
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "User-Agent: AetherPingBot/2.0 (KeepAlive)" \
             --max-time 30 \
             --retry 3 \
-            --retry-delay 5 \
+            --retry-delay 3 \
             "https://aether-kjrj.onrender.com/api/health")
           echo "Server response status: $STATUS"
           if [ "$STATUS" = "200" ]; then
             echo "✅ Server is awake and healthy!"
           else
-            echo "⚠️ Server returned $STATUS — may be waking up from cold sleep"
+            echo "⚠️ Server returned $STATUS — waking up from sleep"
           fi
 
       - name: 🔔 Trigger Due Reminder Push Notifications
