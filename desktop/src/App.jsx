@@ -6801,6 +6801,51 @@ export default function App() {
       />
       </React.Suspense>
 
+      {/* Floating Cricket Live Match Ribbon */}
+      {!isCricketModalOpen && cricketMatches && cricketMatches.some(m => m.status === 'in') && (() => {
+        const liveMatch = cricketMatches.find(m => m.status === 'in');
+        if (!liveMatch) return null;
+        return (
+          <div
+            onClick={() => {
+              playReminderChime();
+              setIsCricketModalOpen(true);
+            }}
+            style={{
+              position: 'fixed',
+              top: '16px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 85,
+              background: 'rgba(9, 14, 26, 0.94)',
+              backdropFilter: 'blur(16px)',
+              border: '1px solid rgba(239, 68, 68, 0.4)',
+              borderRadius: '24px',
+              padding: '6px 14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 8px 28px rgba(0,0,0,0.65), 0 0 12px rgba(239, 68, 68, 0.2)',
+              cursor: 'pointer',
+              maxWidth: '90vw',
+              transition: 'all 0.2s'
+            }}
+          >
+            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444', display: 'inline-block', boxShadow: '0 0 8px #ef4444' }} />
+            <span style={{ color: '#ef4444', fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>LIVE</span>
+            <span style={{ color: '#ffffff', fontSize: '0.78rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px' }}>
+              {liveMatch.name || 'Match'}
+            </span>
+            <span style={{ color: '#38bdf8', fontSize: '0.78rem', fontWeight: 700 }}>
+              {liveMatch.status_text || 'In Progress'}
+            </span>
+            <span style={{ color: '#94a3b8', fontSize: '0.70rem', marginLeft: '2px' }}>
+              ↗
+            </span>
+          </div>
+        );
+      })()}
+
       {/* Floating Toast Notification */}
       {toast && (
         <div style={{

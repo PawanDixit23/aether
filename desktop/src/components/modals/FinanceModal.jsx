@@ -21,7 +21,8 @@ import {
   Sparkles,
   Clipboard,
   CheckCircle2,
-  ShieldCheck
+  ShieldCheck,
+  AlertTriangle
 } from 'lucide-react';
 
 export const FINANCE_CATEGORIES = [
@@ -52,6 +53,17 @@ const DEFAULT_BUDGETS = [
   { id: 'food', cat: 'food', name: '🍔 Food & Dining', limit: 5000 },
   { id: 'shopping', cat: 'shopping', name: '🛒 Shopping', limit: 10000 },
   { id: 'bills', cat: 'bills', name: '⚡ Utility Bills', limit: 3000 }
+];
+
+export const QUICK_EXPENSE_CHIPS = [
+  { id: 'food', label: '🍔 Lunch/Dinner', text: 'Lunch/Dinner', cat: 'food' },
+  { id: 'fuel', label: '⛽ Petrol', text: 'Petrol / Fuel', cat: 'fuel' },
+  { id: 'grocery', label: '🛒 Grocery', text: 'Grocery', cat: 'shopping' },
+  { id: 'cab', label: '🚕 Uber/Cab', text: 'Uber / Cab', cat: 'travel' },
+  { id: 'medicine', label: '💊 Medicine', text: 'Medicine', cat: 'health' },
+  { id: 'coffee', label: '☕ Chai/Snacks', text: 'Chai & Snacks', cat: 'food' },
+  { id: 'bills', label: '⚡ Bills', text: 'Utility Bill', cat: 'bills' },
+  { id: 'shopping', label: '🛍️ Shopping', text: 'Shopping', cat: 'shopping' },
 ];
 
 export const FinanceModal = ({
@@ -344,6 +356,15 @@ export const FinanceModal = ({
     return { name: displayName, percent: pct, amount: catAmt, color };
   }).sort((a, b) => b.amount - a.amount);
 
+  // Dynamic budget alerts for categories exceeding 80% or 100% of limit
+  const budgetAlerts = (budgets || []).map(b => {
+    const spent = (monthExpenseRecords || [])
+      .filter(r => (r.category || '').toLowerCase() === b.cat.toLowerCase())
+      .reduce((acc, cur) => acc + Number(cur.amount || 0), 0);
+    const percent = Math.round((spent / (b.limit || 1)) * 100);
+    return { ...b, spent, percent, isOver: spent > b.limit, isWarning: percent >= 80 && spent <= b.limit };
+  }).filter(b => b.isOver || b.isWarning);
+
   // SVG Donut Slices calculation
   const radius = 54;
   const circumference = 2 * Math.PI * radius;
@@ -526,6 +547,30 @@ export const FinanceModal = ({
                 <ChevronRight size={15} />
               </button>
             </div>
+
+            {/* Quick CSV Export Button */}
+            <button
+              type="button"
+              onClick={handleExportCSV}
+              title={`Export ${monthTitle} to CSV`}
+              style={{
+                background: 'rgba(56, 189, 248, 0.12)',
+                border: '1px solid rgba(56, 189, 248, 0.25)',
+                borderRadius: '20px',
+                padding: '4px 10px',
+                color: '#38bdf8',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                transition: 'all 0.15s'
+              }}
+            >
+              <Download size={13} />
+              {!isMobile && <span>Export CSV</span>}
+            </button>
 
             <button
               type="button"
@@ -722,10 +767,57 @@ export const FinanceModal = ({
               }}
             />
 
-            {/* Optional Expense Purpose / What this expense was for */}
+            {/* Quick Purpose Chips (त्वरित टैग्स) */}
+            <div style={{ marginBottom: '10px' }}>
+              <div style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: 600, marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>⚡ 1-Tap Quick Tags (त्वरित टैग्स):</span>
+                {smsExpensePurpose && (
+                  <button
+                    type="button"
+                    onClick={() => setSmsExpensePurpose('')}
+                    style={{ background: 'none', border: 'none', color: '#38bdf8', fontSize: '0.68rem', cursor: 'pointer', padding: 0 }}
+                  >
+                    Clear ✕
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {QUICK_EXPENSE_CHIPS.map(chip => {
+                  const isSelected = smsExpensePurpose === chip.text;
+                  return (
+                    <button
+                      key={chip.id}
+                      type="button"
+                      onClick={() => {
+                        triggerHaptic(10);
+                        setSmsExpensePurpose(chip.text);
+                      }}
+                      style={{
+                        background: isSelected ? 'rgba(56, 189, 248, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                        border: isSelected ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.1)',
+                        color: isSelected ? '#38bdf8' : '#e2e8f0',
+                        borderRadius: '8px',
+                        padding: '5px 9px',
+                        fontSize: '0.73rem',
+                        fontWeight: isSelected ? 700 : 500,
+                        cursor: 'pointer',
+                        transition: 'all 0.15s',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                    >
+                      {chip.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Custom Expense Purpose / What this expense was for */}
             <div style={{ marginBottom: '12px' }}>
               <div style={{ fontSize: '0.74rem', color: '#94a3b8', fontWeight: 600, marginBottom: '5px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <span>📝 What was this expense for? / यह खर्च किस लिए किया? (Optional):</span>
+                <span>📝 Custom Reason / खर्च का कारण (Optional):</span>
               </div>
               <input
                 type="text"
@@ -844,6 +936,33 @@ export const FinanceModal = ({
         {/* TAB 1: OVERVIEW */}
         {activeTab === 'overview' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '16px' }}>
+
+            {/* Smart Budget Warning Alerts */}
+            {budgetAlerts.length > 0 && (
+              <div style={{
+                background: 'rgba(239, 68, 68, 0.08)',
+                border: '1px solid rgba(239, 68, 68, 0.25)',
+                borderRadius: '16px',
+                padding: '12px 14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#f87171', fontSize: '0.80rem', fontWeight: 700 }}>
+                    <AlertTriangle size={15} />
+                    <span>Budget Limit Alerts ({budgetAlerts.length})</span>
+                  </div>
+                  <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Monthly Limit</span>
+                </div>
+                {budgetAlerts.map(a => (
+                  <div key={a.id} style={{ fontSize: '0.74rem', color: '#cbd5e1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '6px 10px', borderRadius: '8px' }}>
+                    <span>{a.name}: <strong style={{ color: a.isOver ? '#ef4444' : '#f59e0b' }}>{a.percent}% used</strong> {a.isOver ? '(Exceeded!)' : ''}</span>
+                    <span style={{ color: '#94a3b8', fontSize: '0.72rem' }}>₹{a.spent.toLocaleString('en-IN')} / ₹{a.limit.toLocaleString('en-IN')}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             
             {/* Spending Breakdown Card */}
             <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '22px', padding: '18px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
@@ -1404,11 +1523,44 @@ export const FinanceModal = ({
               </div>
             )}
 
+            {/* 1-Tap Quick Tags */}
+            <div style={{ marginBottom: '10px' }}>
+              <div style={{ fontSize: '0.68rem', color: '#94a3b8', display: 'block', marginBottom: '5px' }}>⚡ 1-Tap Quick Tags:</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
+                {QUICK_EXPENSE_CHIPS.map(chip => (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic(10);
+                      setNewExpenseForm({
+                        ...newExpenseForm,
+                        note: chip.text,
+                        category: chip.cat || newExpenseForm.category
+                      });
+                    }}
+                    style={{
+                      background: newExpenseForm.note === chip.text ? 'rgba(56, 189, 248, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                      border: newExpenseForm.note === chip.text ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.1)',
+                      color: newExpenseForm.note === chip.text ? '#38bdf8' : '#e2e8f0',
+                      borderRadius: '8px',
+                      padding: '4px 8px',
+                      fontSize: '0.70rem',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div style={{ marginBottom: '12px' }}>
-              <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Note / Description</label>
+              <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Note / Description (या कस्टम कारण दर्ज करें)</label>
               <input
                 type="text"
-                placeholder="e.g. Swiggy lunch, petrol refill..."
+                placeholder="e.g. Swiggy lunch, petrol refill, dinner with friends..."
                 value={newExpenseForm.note}
                 onChange={e => setNewExpenseForm({ ...newExpenseForm, note: e.target.value })}
                 style={{ width: '100%', boxSizing: 'border-box', background: '#060a14', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '0.82rem' }}
