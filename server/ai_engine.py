@@ -713,7 +713,7 @@ Output Format (strictly valid JSON with no markdown wrapping):
 }}
 """
 
-async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat: float = None, user_lon: float = None, language: str = "auto", api_key: str = None, user_name: str = "Operator", image_data: str = None) -> dict:
+async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat: float = None, user_lon: float = None, language: str = "auto", api_key: str = None, user_name: str = "Operator", image_data: str = None, user_email: str = None) -> dict:
     """Parse intent with live weather for user's actual location or requested city, news with links, match results, image/vision analysis, and language control."""
     user_lower = user_input.lower().strip()
     
@@ -752,21 +752,26 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
     has_image = bool(image_data and image_data.strip())
     sys_prompt = build_system_prompt(context, live_feed, language=effective_lang, user_name=user_name, user_query=user_input, has_image=has_image)
     
-    # Candidate keys in priority order:
-    # 1. Server's GEMINI_API_KEY (configured in Render environment / .env)
-    # 2. Client-provided api_key (from request, if different and not known revoked)
+    # Strict Multi-Tenant BYOK (Bring Your Own Key) & Owner Account Quota Protection:
+    # 1. Top Priority: Client-provided personal API key (from device App Settings / Onboarding)
     KNOWN_REVOKED_KEYS = {
         "AIzaSyCR3ZKXaMEGRU02hCrhhn4O978zMnDk0vU"
     }
 
     candidate_keys = []
-    server_key = os.getenv("GEMINI_API_KEY", "").strip() or (GEMINI_API_KEY.strip() if GEMINI_API_KEY else "")
-    if server_key and server_key not in KNOWN_REVOKED_KEYS:
-        candidate_keys.append(server_key)
-
-    client_key = api_key.strip() if api_key else ""
-    if client_key and client_key not in KNOWN_REVOKED_KEYS and client_key not in candidate_keys:
+    client_key = (api_key or "").strip()
+    if client_key and client_key not in KNOWN_REVOKED_KEYS:
         candidate_keys.append(client_key)
+
+    # 2. Server's Master GEMINI_API_KEY (Strictly Owner-Only Access):
+    # Only the verified primary owner (DEFAULT_USER_EMAIL / e.pawandixit@gmail.com) can use the server's key.
+    # Non-owner users on other devices MUST provide their own free Gemini API key so the owner's personal quota is never consumed!
+    default_owner = os.environ.get("DEFAULT_USER_EMAIL", "e.pawandixit@gmail.com").strip().lower()
+    is_owner = bool(user_email and user_email.strip().lower() == default_owner)
+
+    server_key = os.getenv("GEMINI_API_KEY", "").strip() or (GEMINI_API_KEY.strip() if GEMINI_API_KEY else "")
+    if is_owner and server_key and server_key not in KNOWN_REVOKED_KEYS and server_key not in candidate_keys:
+        candidate_keys.append(server_key)
 
     # Try Gemini API with multimodal vision support and seamless model failover
     if candidate_keys:
@@ -1427,9 +1432,21 @@ def rule_based_fallback(text: str, context: dict = None) -> dict:
         # Do not create random tasks for general queries (like 'Capital of india')!
         is_hindi = any(w in text_lower for w in ["kya", "kaise", "kisko", "kyun", "kahan", "kab", "batao", "hai", "hain"]) or any('\u0900' <= ch <= '\u097f' for ch in text)
         if is_hindi:
-            fallback_msg = f"मैं आपके सवाल '{text}' का उत्तर देने के लिए तैयार हूँ, लेकिन विस्तृत जानकारी के लिए इंटरनेट या AI कोटा सक्रिय होना आवश्यक है।"
+            fallback_msg = (
+                f"🔒 **Google Gemini API Key आवश्यक है (BYOK)**\n\n"
+                f"विस्तृत AI उत्तर व बातचीत के लिए कृपया अपनी मुफ़्त (Free) Gemini API Key जोड़ें:\n\n"
+                f"1. [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) पर जाकर 1 मिनट में Free Key बनाएं।\n"
+                f"2. ऐप में ऊपर **Profile / Settings ⚙️** खोलें और 'Gemini API Key' में सेव करें।\n\n"
+                f"*(💡 मौसम, समाचार, यूट्यूब, दैनिक कार्य और खर्च बिना API Key के चालू हैं!)*"
+            )
         else:
-            fallback_msg = f"I am ready to assist, but answering '{text}' requires an active internet connection or AI model quota. How else may I help with your tasks or finances?"
+            fallback_msg = (
+                f"🔒 **Google Gemini API Key Required (BYOK)**\n\n"
+                f"To unlock full conversational AI answers for '{text}', please add your free Gemini API key:\n\n"
+                f"1. Generate your free key in 1 minute at [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey).\n"
+                f"2. Open **Profile / Settings ⚙️** in the top bar and paste it under 'Google Gemini API Key'.\n\n"
+                f"*(💡 Weather, news, YouTube, basic tasks & expenses work 100% free without any key!)*"
+            )
         return {
             "action": "query",
             "confidence": 0.90,

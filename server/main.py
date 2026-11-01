@@ -634,7 +634,8 @@ async def _execute_quick_capture(
         language=lang,
         api_key=req.api_key,
         user_name=req.user_name or "Operator",
-        image_data=req.image_data
+        image_data=req.image_data,
+        user_email=eff_email
     )
     
     action = parsed.get("action", "query")
@@ -2706,7 +2707,8 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
             text,
             context=context,
             user_name=first_name,
-            language="hi"
+            language="hi",
+            user_email=user_email
         )
         action = parsed.get("action", "query")
         data_inner = parsed.get("data", {})
@@ -3037,7 +3039,8 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             user_text,
             context=context,
             user_name=display_user_name,
-            language="auto"
+            language="auto",
+            user_email=user_email
         )
         action = parsed.get("action", "query")
         data_inner = parsed.get("data", {})
@@ -3212,7 +3215,8 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
                 body,
                 context=context,
                 user_name="Pawan Dixit",
-                language="auto"
+                language="auto",
+                user_email=user_email
             )
             action = parsed.get("action", "query")
             data_inner = parsed.get("data", {})

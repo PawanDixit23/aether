@@ -4264,7 +4264,7 @@ export default function App() {
                   textDecoration: 'underline'
                 }}
               >
-                Skip for now (Use Default Cloud Intelligence) →
+                Skip for now (Basic Mode: Weather, News, Finance & Tasks) →
               </button>
 
               {/* Accordion Guide: How to get key */}
