@@ -63,6 +63,7 @@ export function CricketScorecardModal({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [detailTab, setDetailTab] = useState('scorecard'); // 'scorecard' | 'squads' | 'info' | 'live'
   const [expandedInnings, setExpandedInnings] = useState({});
+  const detailCacheRef = useRef({});
 
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -116,24 +117,31 @@ export function CricketScorecardModal({
     }
   }, [isOpen, effectiveApiBase]);
 
-  // Fetch detailed scorecard when match is selected
+  // Fetch detailed scorecard when match is selected with 0-lag optimistic cache
   useEffect(() => {
     if (!selectedMatch) {
       setDetailData(null);
       return;
     }
-    fetchMatchDetail(selectedMatch);
+    const cached = detailCacheRef.current[selectedMatch.id];
+    if (cached) {
+      setDetailData(cached);
+    } else {
+      setDetailData(null);
+    }
+    fetchMatchDetail(selectedMatch, Boolean(cached));
   }, [selectedMatch?.id, effectiveApiBase]);
 
   const fetchMatchDetail = async (match, isSilent = false, isForce = false) => {
     if (!match?.id) return;
     // Only display full-panel loader on cold start if no match detail exists yet
-    if (!isSilent && !detailData) setIsDetailLoading(true);
+    if (!isSilent && !detailData && !detailCacheRef.current[match.id]) setIsDetailLoading(true);
     setIsRefreshing(true);
     try {
       const res = await fetch(`${effectiveApiBase}/cricket/match/${match.id}?league_id=${match.league_id || ''}${isForce ? '&force=true' : ''}`);
       if (res.ok) {
         const json = await res.json();
+        detailCacheRef.current[match.id] = json;
         setDetailData(json);
       }
     } catch (e) {

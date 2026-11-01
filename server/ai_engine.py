@@ -401,6 +401,49 @@ _cricket_cache = {
     "timestamp": 0
 }
 
+import threading
+_refreshing_lock = threading.Lock()
+_active_refresh_threads = set()
+
+def _trigger_async_live_cricket():
+    if "live_cricket" in _active_refresh_threads:
+        return
+    with _refreshing_lock:
+        if "live_cricket" in _active_refresh_threads:
+            return
+        _active_refresh_threads.add("live_cricket")
+    
+    def _run():
+        try:
+            fetch_cricinfo_live_matches(force=True)
+        except Exception as e:
+            print(f"[Async Cricket Refresh Error] {e}")
+        finally:
+            with _refreshing_lock:
+                _active_refresh_threads.discard("live_cricket")
+                
+    threading.Thread(target=_run, daemon=True).start()
+
+def _trigger_async_scorecard(match_id: str, league_id: str = None):
+    key = f"scorecard_{match_id}"
+    if key in _active_refresh_threads:
+        return
+    with _refreshing_lock:
+        if key in _active_refresh_threads:
+            return
+        _active_refresh_threads.add(key)
+        
+    def _run():
+        try:
+            fetch_cricinfo_match_scorecard(match_id, league_id, force=True)
+        except Exception as e:
+            print(f"[Async Scorecard Refresh Error {match_id}] {e}")
+        finally:
+            with _refreshing_lock:
+                _active_refresh_threads.discard(key)
+                
+    threading.Thread(target=_run, daemon=True).start()
+
 def parse_ist_time(date_str: str = '', status_text: str = '') -> str:
     """Calculates exact Indian Standard Time (IST) from GMT/UTC timestamps or status text."""
     gmt_m = re.search(r'(\d{1,2}):(\d{2})\s*GMT', status_text or '')
@@ -497,9 +540,14 @@ def fetch_cricinfo_live_matches(force: bool = False) -> list:
     """
     import time
     now_ts = time.time()
-    # High performance 3-second cache TTL for zero-lag live updates
-    if not force and _cricket_cache["data"] and (now_ts - _cricket_cache["timestamp"]) < 3:
-        return _cricket_cache["data"]
+    # High performance 0-lag SWR: return cached data in <1ms, refresh asynchronously
+    if not force and _cricket_cache["data"]:
+        age = now_ts - _cricket_cache["timestamp"]
+        if age < 3.0:
+            return _cricket_cache["data"]
+        elif age < 120.0:
+            _trigger_async_live_cricket()
+            return _cricket_cache["data"]
 
     matches = []
     
@@ -754,12 +802,15 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
     """Fetches detailed batting and bowling scorecard, fall of wickets, rosters, and commentary for a match."""
     import time
     now_ts = time.time()
+    known_lid = league_id or _match_league_map.get(match_id)
     if not force and match_id in _scorecard_cache:
         cached_ts, cached_result = _scorecard_cache[match_id]
-        if (now_ts - cached_ts) < 3.0:
+        age = now_ts - cached_ts
+        if age < 3.0:
             return cached_result
-
-    known_lid = league_id or _match_league_map.get(match_id)
+        elif age < 120.0:
+            _trigger_async_scorecard(match_id, known_lid)
+            return cached_result
     if known_lid:
         league_candidates = [known_lid]
     else:
