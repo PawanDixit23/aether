@@ -847,17 +847,27 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
                                             b_stats = st.get('batting', {})
                                             p_inn = str(stats_dict.get('inningsNumber') or ls.get('period') or '1')
                                             
-                                            if p_inn == inn_str and (stats_dict.get('batted') == '1' or stats_dict.get('runs') is not None):
-                                                out_text = b_stats.get('outDetails', {}).get('shortText', 'not out')
-                                                if out_text:
-                                                    out_text = out_text.replace('&amp;', '&').replace('&dagger;', '†')
-                                                
-                                                is_on_strike = bool(
-                                                    (striker_id and str(ath.get('id', '')) == striker_id) or
-                                                    (striker_name and striker_name.lower() in p_name.lower()) or
-                                                    stats_dict.get('facing') == '1' or
-                                                    ath.get('onStrike') is True
-                                                )
+                                            out_text = b_stats.get('outDetails', {}).get('shortText', 'not out')
+                                            if out_text:
+                                                out_text = out_text.replace('&amp;', '&').replace('&dagger;', '†')
+
+                                            is_on_strike = bool(
+                                                (striker_id and str(ath.get('id', '')) == striker_id) or
+                                                (striker_name and striker_name.lower() in p_name.lower()) or
+                                                stats_dict.get('facing') == '1' or
+                                                ath.get('onStrike') is True
+                                            )
+                                            
+                                            b_faced = int(stats_dict.get('ballsFaced', '0') or 0)
+                                            r_scored = int(stats_dict.get('runs', '0') or 0)
+                                            has_batted = (
+                                                stats_dict.get('batted') == '1' or
+                                                (out_text and 'not out' not in out_text.lower()) or
+                                                b_faced > 0 or
+                                                r_scored > 0 or
+                                                is_on_strike
+                                            )
+                                            if p_inn == inn_str and has_batted:
                                                 batters.append({
                                                     'playerName': p_name,
                                                     'dismissal': out_text or 'not out',

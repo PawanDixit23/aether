@@ -63,6 +63,11 @@ export function CricketScorecardModal({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [detailTab, setDetailTab] = useState('scorecard'); // 'scorecard' | 'squads' | 'info' | 'live'
   const [expandedInnings, setExpandedInnings] = useState({});
+  const [manualStriker, setManualStriker] = useState(null);
+
+  useEffect(() => {
+    setManualStriker(null);
+  }, [selectedMatch?.id]);
 
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -525,7 +530,98 @@ export function CricketScorecardModal({
                   ) : inningsList.length > 0 ? (
                     inningsList.map((inn) => {
                       const isExpanded = Boolean(expandedInnings[inn.innNum]);
-                      const yetToBat = getYetToBat(inn);
+                      const rosterYetToBat = getYetToBat(inn);
+
+                      // Filter out non-batting squad players from inn.battingCard.playerDetails
+                      const rawBatters = inn.battingCard?.playerDetails || [];
+                      const dismissedBatters = [];
+                      const activeBatters = [];
+                      const unbattedFromCard = [];
+
+                      rawBatters.forEach(p => {
+                        const isDismissed = Boolean(p.dismissal && !p.dismissal.toLowerCase().includes('not out'));
+                        const bFaced = Number(p.ballsFaced || 0);
+                        const rScored = Number(p.runs || 0);
+                        const hasBatSignal = Boolean(
+                          p.onStrike || p.isStriker || p.facing ||
+                          (p.playerName && p.playerName.includes('*')) ||
+                          (p.dismissal && (p.dismissal.includes('*') || p.dismissal.toLowerCase().includes('batting')))
+                        );
+
+                        if (isDismissed) {
+                          dismissedBatters.push(p);
+                        } else if (bFaced > 0 || rScored > 0 || hasBatSignal) {
+                          activeBatters.push(p);
+                        } else {
+                          unbattedFromCard.push(p);
+                        }
+                      });
+
+                      // In case an active batter hasn't faced a ball yet (e.g. at crease on 0*(0))
+                      while (activeBatters.length < 2 && unbattedFromCard.length > 0) {
+                        activeBatters.push(unbattedFromCard.shift());
+                      }
+
+                      const displayBatters = [...dismissedBatters, ...activeBatters];
+
+                      // Combine unbatted squad members into "Yet to bat"
+                      const unbattedCardNames = unbattedFromCard.map(p => ({
+                        name: (p.playerName || '').replace(/\*/g, '').trim(),
+                        position: 'Player'
+                      }));
+                      const allYetToBat = [
+                        ...unbattedCardNames,
+                        ...rosterYetToBat.filter(rp =>
+                          !unbattedCardNames.some(uc => uc.name.toLowerCase() === (rp.name || '').toLowerCase()) &&
+                          !displayBatters.some(db => (db.playerName || '').replace(/\*/g, '').trim().toLowerCase() === (rp.name || '').toLowerCase())
+                        )
+                      ];
+
+                      // Calculate dynamic strike among active batters
+                      let currentStrikerName = null;
+                      if (manualStriker && activeBatters.some(ab => (ab.playerName || '').replace(/\*/g, '').trim().toLowerCase() === manualStriker.toLowerCase())) {
+                        currentStrikerName = manualStriker.toLowerCase();
+                      } else if (detailData?.situation?.striker_name) {
+                        const match = activeBatters.find(ab =>
+                          (ab.playerName || '').toLowerCase().includes(detailData.situation.striker_name.toLowerCase()) ||
+                          detailData.situation.striker_name.toLowerCase().includes((ab.playerName || '').toLowerCase())
+                        );
+                        if (match) currentStrikerName = (match.playerName || '').replace(/\*/g, '').trim().toLowerCase();
+                      }
+
+                      if (!currentStrikerName) {
+                        const onStrikePlayer = activeBatters.find(ab =>
+                          ab.onStrike || ab.isStriker || ab.facing ||
+                          (ab.playerName && ab.playerName.includes('*')) ||
+                          (ab.dismissal && ab.dismissal.includes('*'))
+                        );
+                        if (onStrikePlayer) {
+                          currentStrikerName = (onStrikePlayer.playerName || '').replace(/\*/g, '').trim().toLowerCase();
+                        }
+                      }
+
+                      if (!currentStrikerName && activeBatters.length > 0) {
+                        if (activeBatters.length === 1) {
+                          currentStrikerName = (activeBatters[0].playerName || '').replace(/\*/g, '').trim().toLowerCase();
+                        } else {
+                          // Dynamic rotation based on ball and over parity
+                          const totalStr = inn.battingCard?.total || inn.battingCard?.runs || selectedMatch?.current_score || '';
+                          const m = totalStr.match(/\((\d+)(?:\.(\d+))?/);
+                          let ballParity = 0;
+                          if (m) {
+                            const ov = parseInt(m[1], 10) || 0;
+                            const bl = parseInt(m[2], 10) || 0;
+                            ballParity = (ov * 6 + bl) % 2;
+                          } else {
+                            const b0 = Number(activeBatters[0].ballsFaced) || 0;
+                            const b1 = Number(activeBatters[1].ballsFaced) || 0;
+                            ballParity = (b0 + b1) % 2;
+                          }
+                          const selectedStriker = activeBatters[ballParity] || activeBatters[0];
+                          currentStrikerName = (selectedStriker.playerName || '').replace(/\*/g, '').trim().toLowerCase();
+                        }
+                      }
+
                       return (
                         <div
                           key={inn.innNum}
@@ -564,7 +660,7 @@ export function CricketScorecardModal({
                           {isExpanded && (
                             <div style={{ background: '#0e1726' }}>
                               {/* Batting Table */}
-                              {inn.battingCard?.playerDetails?.length > 0 && (
+                              {displayBatters.length > 0 && (
                                 <div style={{ width: '100%', overflowX: 'auto' }}>
                                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.80rem' }}>
                                     <thead>
@@ -578,69 +674,31 @@ export function CricketScorecardModal({
                                       </tr>
                                     </thead>
                                     <tbody>
-                                      {inn.battingCard.playerDetails.map((p, pIdx) => {
-                                        const isDismissed = Boolean(p.dismissal && !p.dismissal.toLowerCase().includes('not out'));
-                                        const isBatting = !isDismissed && p.runs !== undefined;
-                                        
-                                        // Find active batters in the middle for this innings
-                                        const activeBatters = inn.battingCard.playerDetails.filter(pl => {
-                                          const isD = Boolean(pl.dismissal && !pl.dismissal.toLowerCase().includes('not out'));
-                                          return !isD && (pl.runs !== undefined || (pl.dismissal || '').toLowerCase().includes('batting'));
-                                        });
-
+                                      {displayBatters.map((p, pIdx) => {
                                         const cleanName = (p.playerName || '').replace(/\*/g, '').trim();
-
-                                        const hasExplicitStrikeFlag = Boolean(
-                                          p.onStrike ||
-                                          p.isStriker ||
-                                          p.facing ||
-                                          (p.playerName && p.playerName.includes('*')) ||
-                                          (p.dismissal && p.dismissal.includes('*')) ||
-                                          (detailData?.situation?.striker_name && cleanName.toLowerCase().includes(detailData.situation.striker_name.toLowerCase()))
-                                        );
-
-                                        const anyHasStrike = activeBatters.some(pl => 
-                                          pl.onStrike || pl.isStriker || pl.facing || (pl.playerName && pl.playerName.includes('*')) || (pl.dismissal && pl.dismissal.includes('*'))
-                                        );
-
-                                        const isOnStrike = isBatting && (
-                                          hasExplicitStrikeFlag || (!anyHasStrike && activeBatters.length > 0 && activeBatters[0].playerName === p.playerName)
-                                        );
+                                        const isDismissed = Boolean(p.dismissal && !p.dismissal.toLowerCase().includes('not out'));
+                                        const isBatting = !isDismissed && activeBatters.some(ab => (ab.playerName || '').replace(/\*/g, '').trim().toLowerCase() === cleanName.toLowerCase());
+                                        const isOnStrike = isBatting && currentStrikerName && cleanName.toLowerCase() === currentStrikerName;
 
                                         return (
                                           <tr key={pIdx} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}>
-                                            <td style={{ padding: '8px 14px', verticalAlign: 'top' }}>
-                                              <div style={{ color: '#38bdf8', fontWeight: 600, fontSize: '0.84rem', display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                            <td 
+                                              style={{ padding: '8px 14px', verticalAlign: 'top', cursor: isBatting ? 'pointer' : 'default' }}
+                                              onClick={() => {
+                                                if (isBatting) setManualStriker(cleanName);
+                                              }}
+                                              title={isBatting ? "Tap to switch strike" : undefined}
+                                            >
+                                              <div style={{ color: '#38bdf8', fontWeight: 600, fontSize: '0.84rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                 {isOnStrike && (
-                                                  <span style={{ color: '#34d399', fontWeight: 900, fontSize: '0.96rem', lineHeight: 1 }} title="On Strike">
+                                                  <span style={{ color: '#34d399', fontWeight: 900, fontSize: '1rem', lineHeight: 1 }} title="On strike">
                                                     *
                                                   </span>
                                                 )}
                                                 <span>{cleanName}</span>
-                                                {isOnStrike && (
-                                                  <span style={{ color: '#34d399', fontWeight: 900, fontSize: '0.96rem', lineHeight: 1 }} title="On Strike">
-                                                    *
-                                                  </span>
-                                                )}
-                                                {isOnStrike && (
-                                                  <span style={{
-                                                    background: 'rgba(52, 211, 153, 0.15)',
-                                                    border: '1px solid rgba(52, 211, 153, 0.35)',
-                                                    color: '#34d399',
-                                                    fontSize: '0.58rem',
-                                                    fontWeight: 800,
-                                                    padding: '1px 5px',
-                                                    borderRadius: '4px',
-                                                    marginLeft: '3px',
-                                                    letterSpacing: '0.3px',
-                                                    textTransform: 'uppercase'
-                                                  }}>
-                                                    Strike
-                                                  </span>
-                                                )}
                                               </div>
                                               <div style={{ color: isBatting ? '#34d399' : '#94a3b8', fontSize: '0.72rem', marginTop: '2px', fontWeight: isBatting ? 600 : 400 }}>
-                                                {isOnStrike ? 'batting * (on strike)' : (p.dismissal || (isBatting ? 'not out' : ''))}
+                                                {isBatting ? 'batting' : (p.dismissal || 'not out')}
                                               </div>
                                             </td>
                                             <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 700, color: '#f8fafc', fontSize: '0.86rem', verticalAlign: 'middle' }}>
@@ -681,11 +739,11 @@ export function CricketScorecardModal({
                               </div>
 
                               {/* Yet to Bat Row */}
-                              {yetToBat.length > 0 && (
+                              {allYetToBat.length > 0 && (
                                 <div style={{ padding: '10px 14px', borderTop: '1px solid rgba(255, 255, 255, 0.06)', fontSize: '0.78rem' }}>
                                   <div style={{ color: '#94a3b8', fontWeight: 600, marginBottom: '4px' }}>Yet to bat</div>
                                   <div style={{ color: '#cbd5e1', lineHeight: '1.4' }}>
-                                    {yetToBat.map(p => p.name).join(', ')}
+                                    {allYetToBat.map(p => p.name).join(', ')}
                                   </div>
                                 </div>
                               )}
