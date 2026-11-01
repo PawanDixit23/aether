@@ -5051,6 +5051,83 @@ export default function App() {
                 </div>
               </header>
 
+              {/* LIVE CRICKET TICKER IN NORMAL FLOW — ZERO OVERLAP */}
+              {!isCricketModalOpen && cricketMatches && cricketMatches.some(m => m.status === 'in') && (() => {
+                const liveMatch = cricketMatches.find(m => m.status === 'in');
+                if (!liveMatch || dismissedCricketMatchId === (liveMatch.id || 'dismissed')) return null;
+                return (
+                  <div style={{
+                    width: '100%',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    padding: '4px 12px 6px',
+                    boxSizing: 'border-box',
+                    flexShrink: 0,
+                    zIndex: 20
+                  }}>
+                    <div
+                      onClick={() => {
+                        playReminderChime();
+                        setIsCricketModalOpen(true);
+                      }}
+                      style={{
+                        background: 'rgba(9, 14, 26, 0.95)',
+                        border: '1px solid rgba(239, 68, 68, 0.4)',
+                        borderRadius: '20px',
+                        padding: '4px 10px 4px 12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        boxShadow: '0 4px 16px rgba(0,0,0,0.5), 0 0 10px rgba(239, 68, 68, 0.2)',
+                        cursor: 'pointer',
+                        maxWidth: 'min(420px, calc(100vw - 28px))',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        boxSizing: 'border-box',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#ef4444', display: 'inline-block', boxShadow: '0 0 6px #ef4444', flexShrink: 0 }} />
+                      <span style={{ color: '#ef4444', fontSize: '0.66rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px', flexShrink: 0 }}>LIVE</span>
+                      <span style={{ color: '#ffffff', fontSize: '0.76rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px', flexShrink: 0 }}>
+                        {liveMatch.name || 'Match'}
+                      </span>
+                      <span style={{ color: '#38bdf8', fontSize: '0.72rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px', flexShrink: 1 }}>
+                        {liveMatch.status_text || 'In Progress'}
+                      </span>
+                      <span style={{ color: '#94a3b8', fontSize: '0.68rem', marginLeft: '2px', flexShrink: 0 }}>
+                        ↗
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDismissedCricketMatchId(liveMatch.id || 'dismissed');
+                        }}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#94a3b8',
+                          padding: '0 3px',
+                          cursor: 'pointer',
+                          fontSize: '0.74rem',
+                          lineHeight: 1,
+                          marginLeft: '3px',
+                          borderRadius: '50%',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0
+                        }}
+                        title="Dismiss match banner"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* CENTER STAGE OR CONVERSATION STREAM */}
               {showDashboard ? (
                 <div 
@@ -6801,81 +6878,6 @@ export default function App() {
         apiBase={API_BASE}
       />
       </React.Suspense>
-
-      {/* Floating Cricket Live Match Ribbon */}
-      {!isCricketModalOpen && cricketMatches && cricketMatches.some(m => m.status === 'in') && (() => {
-        const liveMatch = cricketMatches.find(m => m.status === 'in');
-        if (!liveMatch || dismissedCricketMatchId === (liveMatch.id || 'dismissed')) return null;
-        return (
-          <div
-            onClick={() => {
-              playReminderChime();
-              setIsCricketModalOpen(true);
-            }}
-            style={{
-              position: 'fixed',
-              top: '64px',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              zIndex: 85,
-              background: 'rgba(9, 14, 26, 0.94)',
-              backdropFilter: 'blur(16px)',
-              WebkitBackdropFilter: 'blur(16px)',
-              border: '1px solid rgba(239, 68, 68, 0.4)',
-              borderRadius: '24px',
-              padding: '5px 10px 5px 12px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              boxShadow: '0 8px 28px rgba(0,0,0,0.65), 0 0 12px rgba(239, 68, 68, 0.2)',
-              cursor: 'pointer',
-              maxWidth: 'calc(100vw - 32px)',
-              width: 'max-content',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              boxSizing: 'border-box',
-              transition: 'all 0.2s'
-            }}
-          >
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444', display: 'inline-block', boxShadow: '0 0 8px #ef4444', flexShrink: 0 }} />
-            <span style={{ color: '#ef4444', fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px', flexShrink: 0 }}>LIVE</span>
-            <span style={{ color: '#ffffff', fontSize: '0.78rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px', flexShrink: 0 }}>
-              {liveMatch.name || 'Match'}
-            </span>
-            <span style={{ color: '#38bdf8', fontSize: '0.74rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px', flexShrink: 1 }}>
-              {liveMatch.status_text || 'In Progress'}
-            </span>
-            <span style={{ color: '#94a3b8', fontSize: '0.70rem', marginLeft: '2px', flexShrink: 0 }}>
-              ↗
-            </span>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setDismissedCricketMatchId(liveMatch.id || 'dismissed');
-              }}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#94a3b8',
-                padding: '1px 3px',
-                cursor: 'pointer',
-                fontSize: '0.76rem',
-                lineHeight: 1,
-                marginLeft: '3px',
-                borderRadius: '50%',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0
-              }}
-              title="Dismiss match banner"
-            >
-              ✕
-            </button>
-          </div>
-        );
-      })()}
 
       {/* Floating Toast Notification */}
       {toast && (
