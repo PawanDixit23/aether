@@ -92,6 +92,7 @@ import { ObservabilityModal } from './components/modals/ObservabilityModal';
 import { PermissionsModal } from './components/modals/PermissionsModal';
 import { SettingsSubModals } from './components/modals/SettingsSubModals';
 import { ConfirmModal } from './components/modals/ConfirmModal';
+import { CricketScorecardModal } from './components/modals/CricketScorecardModal';
 
 const API_BASE = typeof window !== 'undefined' && window.location.port === '5173'
   ? `http://${window.location.hostname}:8000/api`
@@ -448,6 +449,26 @@ export default function App() {
 
   // Video Playback on-demand (Prevents historical songs from auto-playing on app reopen)
   const [activePlayingVideoId, setActivePlayingVideoId] = useState(null);
+
+  // ESPNcricinfo Live Scorecards & International Fixtures
+  const [isCricketModalOpen, setIsCricketModalOpen] = useState(false);
+  const [cricketMatches, setCricketMatches] = useState([]);
+  const [isCricketLoading, setIsCricketLoading] = useState(false);
+
+  const fetchLiveCricketScores = async () => {
+    setIsCricketLoading(true);
+    try {
+      const resp = await fetch(`${API_BASE}/cricket/live`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setCricketMatches(data.matches || []);
+      }
+    } catch (e) {
+      console.warn("Live cricket fetch notice:", e);
+    } finally {
+      setIsCricketLoading(false);
+    }
+  };
 
   const [isDriveModalOpen, setIsDriveModalOpen] = useState(false);
   const [driveInputUrl, setDriveInputUrl] = useState('');
@@ -2791,7 +2812,7 @@ export default function App() {
     try {
       const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
       const authHeaders = currentEmail ? { 'X-User-Email': currentEmail } : {};
-      const [resBrief, resChat, resTasks, resFin, resFinSum, resMem, resAudit, resNews, resDue] = await Promise.all([
+      const [resBrief, resChat, resTasks, resFin, resFinSum, resMem, resAudit, resNews, resDue, resCricket] = await Promise.all([
         fetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}`, { headers: authHeaders }),
         opts.skipChatHistory ? Promise.resolve({ ok: false }) : fetch(`${API_BASE}/chat/history`, { headers: authHeaders }),
         fetch(`${API_BASE}/tasks`, { headers: authHeaders }),
@@ -2800,7 +2821,8 @@ export default function App() {
         fetch(`${API_BASE}/memory`, { headers: authHeaders }),
         fetch(`${API_BASE}/audit-logs`, { headers: authHeaders }),
         fetch(`${API_BASE}/news?limit=4`),
-        fetch(`${API_BASE}/reminders/due`, { headers: authHeaders })
+        fetch(`${API_BASE}/reminders/due`, { headers: authHeaders }),
+        fetch(`${API_BASE}/cricket/live`).catch(() => ({ ok: false }))
       ]);
 
       if (resBrief.ok) setBriefing(await resBrief.json());
@@ -2909,6 +2931,10 @@ export default function App() {
       }
       if (resAudit.ok) setAuditLogs(await resAudit.json());
       if (resNews.ok) setNewsItems(await resNews.json());
+      if (resCricket && resCricket.ok) {
+        const cData = await resCricket.json();
+        setCricketMatches(cData.matches || []);
+      }
       
       // Auto-backup / restore client data so memory never disappears across Render container reboots
       if (currentEmail) {
@@ -4905,6 +4931,31 @@ export default function App() {
                     type="button" 
                     className="gemini-icon-btn" 
                     onClick={() => {
+                      setIsCricketModalOpen(true);
+                      fetchLiveCricketScores();
+                    }}
+                    title="Cricinfo Live Cricket Scorecards (क्रिकेट स्कोरकार्ड)"
+                    style={{ position: 'relative' }}
+                  >
+                    <span style={{ fontSize: '1.05rem', lineHeight: 1 }}>🏏</span>
+                    {cricketMatches.some(m => m.status === 'in') && (
+                      <span style={{
+                        position: 'absolute',
+                        top: '5px',
+                        right: '5px',
+                        width: '7px',
+                        height: '7px',
+                        borderRadius: '50%',
+                        background: '#ef4444',
+                        boxShadow: '0 0 6px #ef4444'
+                      }}></span>
+                    )}
+                  </button>
+
+                  <button 
+                    type="button" 
+                    className="gemini-icon-btn" 
+                    onClick={() => {
                       setActiveSubModal('reminders');
                       setRemindersViewMode('list');
                     }}
@@ -5180,6 +5231,108 @@ export default function App() {
                                   />
                                 </div>
                               )}
+                            </div>
+                          );
+                        }
+                        if (actType === 'cricket_scorecard' || aData?.matches?.length > 0) {
+                          const matchesToShow = (aData?.matches && aData.matches.length > 0) ? aData.matches : cricketMatches;
+                          const intlMatches = matchesToShow.filter(m => m.is_international);
+                          const topMatches = intlMatches.length > 0 ? intlMatches.slice(0, 3) : matchesToShow.slice(0, 3);
+
+                          return (
+                            <div style={{
+                              marginTop: '12px',
+                              padding: '12px 14px',
+                              borderRadius: '16px',
+                              background: 'rgba(56, 189, 248, 0.05)',
+                              border: '1px solid rgba(56, 189, 248, 0.25)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '10px'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '1.2rem' }}>🏏</span>
+                                  <div>
+                                    <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#f8fafc' }}>
+                                      Live Match Scorecards
+                                    </div>
+                                    <div style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+                                      ESPNcricinfo Official Live Feed
+                                    </div>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsCricketModalOpen(true);
+                                    fetchLiveCricketScores();
+                                  }}
+                                  style={{
+                                    background: 'rgba(56, 189, 248, 0.15)',
+                                    border: '1px solid rgba(56, 189, 248, 0.3)',
+                                    color: '#38bdf8',
+                                    padding: '5px 10px',
+                                    borderRadius: '8px',
+                                    fontSize: '0.74rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  All Scorecards ({matchesToShow.length}) ↗
+                                </button>
+                              </div>
+
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                {topMatches.map((m, mIdx) => (
+                                  <div
+                                    key={m.id || mIdx}
+                                    style={{
+                                      background: 'rgba(0, 0, 0, 0.35)',
+                                      border: '1px solid rgba(255, 255, 255, 0.06)',
+                                      borderRadius: '10px',
+                                      padding: '8px 12px',
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '4px'
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.72rem', color: '#94a3b8' }}>
+                                      <span style={{ fontWeight: 600, color: m.is_international ? '#38bdf8' : '#94a3b8' }}>
+                                        {m.series}
+                                      </span>
+                                      {m.status === 'in' ? (
+                                        <span style={{ color: '#f87171', fontWeight: 700 }}>● LIVE</span>
+                                      ) : (
+                                        <span>{m.status === 'post' ? 'Result' : 'Scheduled'}</span>
+                                      )}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: 600, color: '#f8fafc' }}>
+                                      <span>{m.team1?.name}</span>
+                                      <span style={{ color: '#38bdf8' }}>{m.team1?.score || '-'}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: 600, color: '#f8fafc' }}>
+                                      <span>{m.team2?.name}</span>
+                                      <span style={{ color: '#38bdf8' }}>{m.team2?.score || '-'}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '2px' }}>
+                                      <span style={{ fontSize: '0.70rem', color: m.status === 'in' ? '#f87171' : '#94a3b8' }}>
+                                        {m.status_text}
+                                      </span>
+                                      {m.cricinfo_url && (
+                                        <a
+                                          href={m.cricinfo_url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          style={{ fontSize: '0.68rem', color: '#38bdf8', textDecoration: 'none' }}
+                                        >
+                                          Cricinfo ↗
+                                        </a>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           );
                         }
@@ -6118,6 +6271,118 @@ export default function App() {
                 );
               })()}
 
+              {/* Cricinfo Live Match Scorecards Widget */}
+              {cricketMatches.length > 0 && (
+                <div style={{
+                  background: 'linear-gradient(135deg, rgba(14, 21, 38, 0.95) 0%, rgba(7, 10, 20, 0.95) 100%)',
+                  border: '1px solid rgba(56, 189, 248, 0.25)',
+                  borderRadius: '18px',
+                  padding: '16px 18px',
+                  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.35)',
+                  marginBottom: '16px'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '1.25rem' }}>🏏</span>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: '#38bdf8', fontWeight: 700, fontSize: '0.85rem', letterSpacing: '0.4px' }}>
+                            CRICINFO LIVE SCORECARD
+                          </span>
+                          {cricketMatches.some(m => m.status === 'in') && (
+                            <span style={{
+                              background: 'rgba(239, 68, 68, 0.2)',
+                              border: '1px solid rgba(239, 68, 68, 0.4)',
+                              color: '#f87171',
+                              fontSize: '0.64rem',
+                              fontWeight: 700,
+                              padding: '1px 6px',
+                              borderRadius: '999px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}>
+                              <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#ef4444', animation: 'pulse 1.2s infinite' }}></span>
+                              LIVE
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: '0.70rem', color: '#64748b' }}>
+                          Real-time International & League Match Scores
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCricketModalOpen(true);
+                        fetchLiveCricketScores();
+                      }}
+                      style={{
+                        background: 'rgba(56, 189, 248, 0.12)',
+                        border: '1px solid rgba(56, 189, 248, 0.3)',
+                        color: '#38bdf8',
+                        padding: '4px 10px',
+                        borderRadius: '8px',
+                        fontSize: '0.74rem',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      View All ({cricketMatches.length}) ↗
+                    </button>
+                  </div>
+
+                  {/* Highlights of Top Live or International Matches */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {(cricketMatches.filter(m => m.status === 'in').length > 0
+                      ? cricketMatches.filter(m => m.status === 'in').slice(0, 2)
+                      : (cricketMatches.filter(m => m.is_international).slice(0, 2).length > 0
+                          ? cricketMatches.filter(m => m.is_international).slice(0, 2)
+                          : cricketMatches.slice(0, 2))
+                    ).map((m, mIdx) => (
+                      <div
+                        key={m.id || mIdx}
+                        onClick={() => {
+                          setIsCricketModalOpen(true);
+                          fetchLiveCricketScores();
+                        }}
+                        style={{
+                          background: 'rgba(0, 0, 0, 0.3)',
+                          border: '1px solid rgba(255, 255, 255, 0.06)',
+                          borderRadius: '12px',
+                          padding: '10px 12px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.74rem' }}>
+                          <span style={{ color: m.is_international ? '#38bdf8' : '#94a3b8', fontWeight: 600 }}>
+                            {m.series}
+                          </span>
+                          <span style={{ color: m.status === 'in' ? '#f87171' : (m.status === 'post' ? '#34d399' : '#fbbf24'), fontWeight: 600 }}>
+                            {m.status === 'in' ? '● LIVE' : (m.status === 'post' ? 'Result' : 'Scheduled')}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.86rem', fontWeight: 600, color: '#f8fafc' }}>
+                          <span>{m.team1?.name}</span>
+                          <span style={{ color: '#38bdf8' }}>{m.team1?.score || (m.status === 'pre' ? 'Upcoming' : '-')}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.86rem', fontWeight: 600, color: '#f8fafc' }}>
+                          <span>{m.team2?.name}</span>
+                          <span style={{ color: '#38bdf8' }}>{m.team2?.score || (m.status === 'pre' ? 'Upcoming' : '-')}</span>
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                          {m.status_text}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* News & Market Briefing */}
               {newsItems.length > 0 && (
                 <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px' }}>
@@ -6468,6 +6733,15 @@ export default function App() {
         isDestructive={confirmDialog.isDestructive}
         onConfirm={confirmDialog.onConfirm}
         onClose={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
+
+      {/* ESPNcricinfo Live Cricket Scorecard & Fixtures Modal */}
+      <CricketScorecardModal
+        isOpen={isCricketModalOpen}
+        onClose={() => setIsCricketModalOpen(false)}
+        matches={cricketMatches}
+        isLoading={isCricketLoading}
+        onRefresh={fetchLiveCricketScores}
       />
 
       {/* Floating Toast Notification */}

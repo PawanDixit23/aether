@@ -395,6 +395,130 @@ def get_structured_news(limit: int = 5, category: str = None) -> list:
             {"title": "तकनीक, AI, कारोबार और शेयर बाजार के मुख्य समाचार", "source": "मार्केट वॉच", "link": "https://news.google.com", "pubDate": "ताज़ा अपडेट"}
         ]
 
+# In-memory cache for live cricket scorecards (15s TTL to prevent rate limits)
+_cricket_cache = {
+    "data": [],
+    "timestamp": 0
+}
+
+def fetch_cricinfo_live_matches() -> list:
+    """
+    Fetch live cricket match scorecards and upcoming international fixtures
+    via ESPN Cricinfo official live scoreboard API, with XML RSS fallback.
+    """
+    import time
+    now_ts = time.time()
+    if _cricket_cache["data"] and (now_ts - _cricket_cache["timestamp"]) < 15:
+        return _cricket_cache["data"]
+
+    matches = []
+    
+    # 1. Primary: Official ESPN Cricinfo Live Scoreboard API
+    try:
+        req = urllib.request.Request(
+            'https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket',
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+        )
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        
+        sports = data.get('sports', [])
+        if sports:
+            leagues = sports[0].get('leagues', [])
+            for lg in leagues:
+                series_name = lg.get('name', 'Cricket Series')
+                for ev in lg.get('events', []):
+                    ev_id = ev.get('id')
+                    name = ev.get('name', '')
+                    raw_status = ev.get('status', 'pre') # 'in', 'pre', 'post'
+                    summary = ev.get('summary', '')
+                    full_status = ev.get('fullStatus', {})
+                    status_detail = full_status.get('longSummary') or full_status.get('summary') or summary or ''
+                    desc = ev.get('description', '')
+                    venue = ev.get('location', '')
+                    ev_date = ev.get('date', '')
+                    cricinfo_link = ev.get('link') or (ev.get('links', [{}])[0].get('href', 'https://www.espncricinfo.com'))
+                    
+                    is_intl = (
+                        ev.get('class', {}).get('internationalClassId') not in ['0', None, ''] or 
+                        any(c.get('isNational') for c in ev.get('competitors', [])) or
+                        any(k in series_name.lower() for k in ['tour', 'cup', 'international', 'icc', 'sixes', 'test', 'odi', 't20i', 'series'])
+                    )
+                    
+                    competitors = ev.get('competitors', [])
+                    t1 = competitors[0] if len(competitors) > 0 else {}
+                    t2 = competitors[1] if len(competitors) > 1 else {}
+                    
+                    matches.append({
+                        'id': str(ev_id),
+                        'name': name,
+                        'series': series_name,
+                        'description': desc,
+                        'venue': venue,
+                        'is_international': is_intl,
+                        'status': raw_status, # 'in'=live, 'pre'=upcoming, 'post'=finished
+                        'status_text': status_detail or summary or ('Live' if raw_status == 'in' else ('Scheduled' if raw_status == 'pre' else 'Completed')),
+                        'date': ev_date,
+                        'cricinfo_url': cricinfo_link,
+                        'team1': {
+                            'name': t1.get('displayName') or t1.get('name', 'Team 1'),
+                            'short_name': t1.get('abbreviation') or t1.get('name', ''),
+                            'score': t1.get('score', ''),
+                            'logo': t1.get('logo', ''),
+                            'is_winner': bool(t1.get('winner'))
+                        },
+                        'team2': {
+                            'name': t2.get('displayName') or t2.get('name', 'Team 2'),
+                            'short_name': t2.get('abbreviation') or t2.get('name', ''),
+                            'score': t2.get('score', ''),
+                            'logo': t2.get('logo', ''),
+                            'is_winner': bool(t2.get('winner'))
+                        }
+                    })
+    except Exception as e:
+        print(f"[Aether Engine] Cricinfo scoreboard JSON error: {e}")
+
+    # 2. Secondary fallback: Cricinfo XML RSS Feed
+    if not matches:
+        try:
+            req_rss = urllib.request.Request(
+                'https://static.cricinfo.com/rss/livescores.xml',
+                headers={'User-Agent': 'Mozilla/5.0'}
+            )
+            with urllib.request.urlopen(req_rss, timeout=4) as resp:
+                root = ET.fromstring(resp.read())
+                for idx, it in enumerate(root.findall('.//item')):
+                    title = it.find('title').text.strip() if it.find('title') is not None else ''
+                    link = it.find('link').text.strip() if it.find('link') is not None else ''
+                    guid = it.find('guid').text.strip() if it.find('guid') is not None else str(idx)
+                    parts = title.split(' v ')
+                    t1_str = parts[0].strip() if len(parts) > 0 else 'Team 1'
+                    t2_str = parts[1].strip() if len(parts) > 1 else 'Team 2'
+                    is_live = '*' in title
+                    matches.append({
+                        'id': guid,
+                        'name': title,
+                        'series': 'Live Cricket',
+                        'description': title,
+                        'venue': '',
+                        'is_international': any(c in title.lower() for c in ['india', 'australia', 'england', 'pakistan', 'new zealand', 'south africa', 'sri lanka', 'bangladesh', 'west indies', 'afghanistan']),
+                        'status': 'in' if is_live else 'pre',
+                        'status_text': 'Live Now • In Progress' if is_live else 'Scorecard Update',
+                        'date': datetime.now().isoformat(),
+                        'cricinfo_url': link,
+                        'team1': {'name': t1_str, 'short_name': '', 'score': '', 'logo': ''},
+                        'team2': {'name': t2_str, 'short_name': '', 'score': '', 'logo': ''}
+                    })
+        except Exception as e:
+            print(f"[Aether Engine] Cricinfo RSS error: {e}")
+
+    if matches:
+        _cricket_cache["data"] = matches
+        _cricket_cache["timestamp"] = now_ts
+        return matches
+
+    return _cricket_cache["data"] or []
+
 def parse_reminder_time(text: str) -> tuple:
     """
     Extracts reminder time:
@@ -738,6 +862,24 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
     is_news_query = is_general_news or is_sports_query or any(w in user_lower for w in ["technology", "business", "market", "economy"])
     is_weather_query = any(w in user_lower for w in ["weather", "mausam", "rain", "baarish", "temperature", "tapman", "climate", "garmi", "thand", "forecast"])
     
+    is_cricket_query = any(w in user_lower for w in [
+        "cricinfo", "crickinfo", "cricket", "scorecard", "score card", 
+        "ipl", "wpl", "t20i", "odi", "test match", "live score", "match score", 
+        "india score", "aaj ka match", "live match", "cricket match", "cricket update",
+        "match scorecard"
+    ])
+    live_cricket_matches = []
+    if is_cricket_query:
+        live_cricket_matches = fetch_cricinfo_live_matches()
+        if live_cricket_matches:
+            cric_lines = ["[LIVE CRICINFO CRICKET SCORECARD & FIXTURES]:"]
+            for cm in live_cricket_matches[:8]:
+                t1 = f"{cm['team1']['name']} {cm['team1']['score']}".strip()
+                t2 = f"{cm['team2']['name']} {cm['team2']['score']}".strip()
+                intl_str = " (International)" if cm.get('is_international') else ""
+                cric_lines.append(f"- [{cm['status'].upper()}]{intl_str} {cm['series']} | {t1} vs {t2} | Status: {cm['status_text']} | Cricinfo: {cm['cricinfo_url']}")
+            live_feed += "\n".join(cric_lines) + "\n\n"
+
     if is_weather_query:
         # Pass user_input so any mentioned city (London, Mumbai, etc.) is detected!
         weather_info = fetch_live_weather(user_query=user_input, lat=user_lat, lon=user_lon)
@@ -841,6 +983,13 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
                                     json_str = json_match.group(0)
                                     json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
                                     parsed = json.loads(json_str)
+                                    # Attach live cricket scorecard if cricket query
+                                    if is_cricket_query and live_cricket_matches:
+                                        if not parsed.get("data"):
+                                            parsed["data"] = {}
+                                        parsed["data"]["matches"] = live_cricket_matches
+                                        parsed["action"] = "cricket_scorecard"
+
                                     # Ensure reminder time is captured even if LLM left it out
                                     if parsed.get("action") == "task":
                                         try:
@@ -1001,6 +1150,33 @@ def rule_based_fallback(text: str, context: dict = None) -> dict:
         if m.get('role') in ['Aether', 'Assistant']:
             last_assistant_msg = m.get('content', '')
             break
+
+    # Check Cricket Scorecard Query
+    is_cric = any(w in text_lower for w in [
+        "cricinfo", "crickinfo", "cricket", "scorecard", "score card",
+        "live score", "match score", "india score", "aaj ka match", "live match", "cricket match"
+    ])
+    if is_cric:
+        matches = fetch_cricinfo_live_matches()
+        if matches:
+            top_intl = [m for m in matches if m.get("is_international")] or matches[:6]
+            summary_parts = []
+            for m in top_intl[:4]:
+                t1 = f"{m['team1']['name']} {m['team1']['score']}".strip()
+                t2 = f"{m['team2']['name']} {m['team2']['score']}".strip()
+                summary_parts.append(f"🏏 **{m['series']}**\n• {t1} vs {t2}\n• स्थिति: {m['status_text']}\n• [Cricinfo Scorecard]({m['cricinfo_url']})")
+            
+            resp_text = "🏏 **ESPNcricinfo लाइव क्रिकेट स्कोरकार्ड**\n\n" + "\n\n".join(summary_parts)
+            return {
+                "action": "cricket_scorecard",
+                "confidence": 0.99,
+                "confidence_level": "high",
+                "data": {
+                    "response": resp_text,
+                    "matches": matches
+                },
+                "explanation": "Live Cricinfo cricket scorecard"
+            }
 
     # 1. Multi-turn step 1: User replies with time after being asked "when/what time"
     if any(q in last_assistant_msg for q in ["कब के लिए रिमाइंडर", "what time or date should i set", "when should i set"]):

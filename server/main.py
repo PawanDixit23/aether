@@ -1227,6 +1227,29 @@ def get_live_news(limit: int = 5, category: str = None):
         from .ai_engine import get_structured_news
     return get_structured_news(limit=limit, category=category)
 
+@app.get("/api/cricket/live")
+def get_live_cricket(filter_intl: bool = False):
+    """Returns real-time live cricket scorecards and upcoming matches from ESPNcricinfo."""
+    try:
+        from ai_engine import fetch_cricinfo_live_matches
+    except ImportError:
+        from .ai_engine import fetch_cricinfo_live_matches
+    matches = fetch_cricinfo_live_matches()
+    if filter_intl:
+        matches = [m for m in matches if m.get("is_international")]
+    
+    live_count = sum(1 for m in matches if m.get("status") == "in")
+    intl_count = sum(1 for m in matches if m.get("is_international"))
+    
+    return {
+        "status": "success",
+        "matches": matches,
+        "live_count": live_count,
+        "intl_count": intl_count,
+        "total_count": len(matches),
+        "last_updated": datetime.now().isoformat()
+    }
+
 # ----------------- Reminders & Notification Engine -----------------
 def get_next_weekday(dt: datetime) -> datetime:
     next_day = dt + timedelta(days=1)
