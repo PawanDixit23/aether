@@ -1765,11 +1765,18 @@ export default function App() {
         }
       }
 
-      // 2. Server से VAPID public key fetch करें
-      const keyRes = await fetch(`${API_BASE}/push/vapid-public-key`);
-      if (!keyRes.ok) return null;
-      const { publicKey } = await keyRes.json();
-      if (!publicKey) return null;
+      // 2. Server से VAPID public key fetch करें (65-byte NIST P-256 standard)
+      const FALLBACK_VAPID_PUBLIC_KEY = "BKMr0rTgjRw-7TTPy4rcWo_LTBsRCVDKrwAZD7MpeeOVsF_Vea9LSK13QoXVq3F_fjLWyHrOlG_XVJ3ffKkDxbM";
+      let keyToUse = FALLBACK_VAPID_PUBLIC_KEY;
+      try {
+        const keyRes = await fetch(`${API_BASE}/push/vapid-public-key`);
+        if (keyRes.ok) {
+          const { publicKey } = await keyRes.json();
+          if (publicKey && typeof publicKey === 'string' && publicKey.startsWith('B') && publicKey.length === 87) {
+            keyToUse = publicKey;
+          }
+        }
+      } catch (_) {}
 
       // Base64URL → Uint8Array convert करें (VAPID format)
       const urlB64ToUint8Array = (base64String) => {
@@ -1780,7 +1787,10 @@ export default function App() {
       };
 
       const reg = await navigator.serviceWorker.ready;
-      if (!reg || !reg.pushManager) return null;
+      if (!reg || !reg.pushManager) {
+        console.warn('[Aether Push] PushManager not available in this environment');
+        return null;
+      }
 
       let subscription = await reg.pushManager.getSubscription();
 
@@ -1788,7 +1798,7 @@ export default function App() {
         if (!subscription) {
           subscription = await reg.pushManager.subscribe({
             userVisibleOnly: true,
-            applicationServerKey: urlB64ToUint8Array(publicKey),
+            applicationServerKey: urlB64ToUint8Array(keyToUse),
           });
           console.log('[Aether Push] ✅ New VAPID push subscription created');
         }
@@ -1799,7 +1809,7 @@ export default function App() {
         }
         subscription = await reg.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlB64ToUint8Array(publicKey),
+          applicationServerKey: urlB64ToUint8Array(keyToUse),
         });
       }
 
@@ -1841,7 +1851,11 @@ export default function App() {
 
     // Auto-register/sync device before testing so "No registered push devices" error never happens
     showToast("📡 डिवाइस सिंक किया जा रहा है...", 'info');
-    await ensurePushSubscribed(emailToUse);
+    const registeredSub = await ensurePushSubscribed(emailToUse);
+    if (!registeredSub) {
+      showToast("⚠️ डिवाइस सिंक नहीं हो सका। कृपया ब्राउज़र नोटिफिकेशन अनुमति जांचें!", 'error');
+      return;
+    }
 
     try {
       const res = await fetch(`${API_BASE}/push/test?user_email=${encodeURIComponent(emailToUse)}`, { method: 'POST' });

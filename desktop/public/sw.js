@@ -1,7 +1,7 @@
 // ⚡ Aether Service Worker — Background Push Notifications (VAPID)
 // Browser बंद होने पर भी GitHub Actions → Server → यह SW → OS Notification!
 
-const CACHE_NAME = 'aether-v2';
+const CACHE_NAME = 'aether-v3';
 const AETHER_ORIGIN = self.location.origin;
 
 self.addEventListener('install', (event) => {
@@ -9,7 +9,13 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys().then((keys) => {
+      return Promise.all(
+        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+      );
+    }).then(() => self.clients.claim())
+  );
 });
 
 // ─── Background Push Event Handler ──────────────────────────────────────────
@@ -125,10 +131,26 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   if (url.pathname.startsWith('/api/chat/stream') || url.pathname.startsWith('/ws')) return;
 
-  // 1. Static Assets (JS, CSS, fonts, images) -> Cache-First with Network fallback
+  // 1. Code Assets (JS, CSS) -> Stale-While-Revalidate for instant load + automatic updates
+  if (url.pathname.endsWith('.js') || url.pathname.endsWith('.css')) {
+    event.respondWith(
+      caches.open(CACHE_NAME).then((cache) => {
+        return cache.match(event.request).then((cached) => {
+          const fetchPromise = fetch(event.request).then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              cache.put(event.request, networkResponse.clone());
+            }
+            return networkResponse;
+          }).catch(() => cached);
+          return cached || fetchPromise;
+        });
+      })
+    );
+    return;
+  }
+
+  // 2. Media Assets (fonts, images) -> Cache-First
   if (
-    url.pathname.endsWith('.js') ||
-    url.pathname.endsWith('.css') ||
     url.pathname.endsWith('.woff2') ||
     url.pathname.endsWith('.png') ||
     url.pathname.endsWith('.svg') ||

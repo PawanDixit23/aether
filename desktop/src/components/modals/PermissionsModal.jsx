@@ -82,9 +82,15 @@ export const PermissionsModal = ({
               <div style={{ minWidth: 0 }}>
                 <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>Push Notifications</div>
                 <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>8 AM briefing & task reminders</div>
-                <div style={{ color: userEmail ? '#34d399' : '#f59e0b', fontSize: '0.70rem', marginTop: '3px', fontWeight: 600 }}>
-                  {userEmail ? `🔒 Linked to ${userEmail}` : '⚠️ Log in with email to link cloud reminders'}
-                </div>
+                {pushEnabled ? (
+                  <div style={{ color: userEmail ? '#34d399' : '#f59e0b', fontSize: '0.70rem', marginTop: '3px', fontWeight: 600 }}>
+                    {userEmail ? `🔒 Linked to ${userEmail}` : '⚠️ Log in with email to link cloud reminders'}
+                  </div>
+                ) : (
+                  <div style={{ color: '#94a3b8', fontSize: '0.70rem', marginTop: '3px', fontWeight: 500 }}>
+                    ⚠️ Push notifications are turned off
+                  </div>
+                )}
                 {pushEnabled && (
                   <button type="button" onClick={handleSendTestPush}
                     style={{ marginTop: '8px', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: '#fbbf24', padding: '4px 12px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}>
