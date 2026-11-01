@@ -112,6 +112,18 @@ async def security_and_observability_middleware(request: Request, call_next):
     obs_tracker.record_request(request.url.path, duration_ms, response.status_code)
     response.headers["X-Response-Time-Ms"] = str(round(duration_ms, 2))
     
+    # Security Hardening Headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    # High-Performance Stale-While-Revalidate (SWR) Caching
+    if request.url.path in ("/api/cricket/live", "/api/finance/summary", "/api/news"):
+        response.headers["Cache-Control"] = "public, max-age=3, stale-while-revalidate=15"
+    elif request.url.path.startswith("/api/") and "Cache-Control" not in response.headers:
+        response.headers["Cache-Control"] = "private, no-cache"
+    
     return response
 
 @app.get("/api/metrics")

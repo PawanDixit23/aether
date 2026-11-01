@@ -79,6 +79,12 @@ export function CricketScorecardModal({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  const triggerHaptic = (duration = 15) => {
+    if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try { navigator.vibrate(duration); } catch (_) {}
+    }
+  };
+
   const effectiveApiBase = apiBase || (typeof window !== 'undefined' && window.location.port === '5173'
     ? `http://${window.location.hostname}:8000/api`
     : '/api');
@@ -402,7 +408,10 @@ export function CricketScorecardModal({
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
             <button
               type="button"
-              onClick={() => selectedMatch ? fetchMatchDetail(selectedMatch, true, true) : refreshScores(true, true)}
+              onClick={() => {
+                triggerHaptic(20);
+                selectedMatch ? fetchMatchDetail(selectedMatch, true, true) : refreshScores(true, true);
+              }}
               disabled={isRefreshing}
               title="Refresh Scores (Instant Zero-Lag)"
               style={{
@@ -463,7 +472,10 @@ export function CricketScorecardModal({
                 <button
                   key={tab.id}
                   type="button"
-                  onClick={() => setDetailTab(tab.id)}
+                  onClick={() => {
+                    triggerHaptic(10);
+                    setDetailTab(tab.id);
+                  }}
                   style={{
                     background: 'none',
                     border: 'none',

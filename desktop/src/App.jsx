@@ -82,17 +82,19 @@ import { FormattedMessage } from './components/chat/FormattedMessage';
 import { AetherParticleSphere } from './components/chat/AetherParticleSphere';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { TasksModal } from './components/modals/TasksModal';
-import { HistoryModal } from './components/modals/HistoryModal';
-import { CameraModal } from './components/modals/CameraModal';
-import { DriveModal } from './components/modals/DriveModal';
-import { FinanceModal } from './components/modals/FinanceModal';
-import { BriefingModal } from './components/modals/BriefingModal';
-import { AuditModal } from './components/modals/AuditModal';
-import { ObservabilityModal } from './components/modals/ObservabilityModal';
-import { PermissionsModal } from './components/modals/PermissionsModal';
-import { SettingsSubModals } from './components/modals/SettingsSubModals';
 import { ConfirmModal } from './components/modals/ConfirmModal';
-import { CricketScorecardModal } from './components/modals/CricketScorecardModal';
+
+// Code-split heavy modals for instant mobile loading & 0-lag startup
+const FinanceModal = React.lazy(() => import('./components/modals/FinanceModal').then(m => ({ default: m.FinanceModal })));
+const CricketScorecardModal = React.lazy(() => import('./components/modals/CricketScorecardModal').then(m => ({ default: m.CricketScorecardModal })));
+const HistoryModal = React.lazy(() => import('./components/modals/HistoryModal').then(m => ({ default: m.HistoryModal })));
+const CameraModal = React.lazy(() => import('./components/modals/CameraModal').then(m => ({ default: m.CameraModal })));
+const DriveModal = React.lazy(() => import('./components/modals/DriveModal').then(m => ({ default: m.DriveModal })));
+const BriefingModal = React.lazy(() => import('./components/modals/BriefingModal').then(m => ({ default: m.BriefingModal })));
+const AuditModal = React.lazy(() => import('./components/modals/AuditModal').then(m => ({ default: m.AuditModal })));
+const ObservabilityModal = React.lazy(() => import('./components/modals/ObservabilityModal').then(m => ({ default: m.ObservabilityModal })));
+const PermissionsModal = React.lazy(() => import('./components/modals/PermissionsModal').then(m => ({ default: m.PermissionsModal })));
+const SettingsSubModals = React.lazy(() => import('./components/modals/SettingsSubModals').then(m => ({ default: m.SettingsSubModals })));
 
 const API_BASE = typeof window !== 'undefined' && window.location.port === '5173'
   ? `http://${window.location.hostname}:8000/api`
@@ -6578,25 +6580,27 @@ export default function App() {
         </div>
       )}
 
-      {/* 3. Executive Finance & Ledger Modal */}
-      <FinanceModal
-        isOpen={activeSubModal === 'finance'}
-        onClose={() => { setActiveSubModal(null); setEditingFinanceRecord(null); setIsAddingExpense(false); }}
-        financeSummary={financeSummary}
-        financeRecords={financeRecords}
-        isAddingExpense={isAddingExpense}
-        setIsAddingExpense={setIsAddingExpense}
-        newExpenseForm={newExpenseForm}
-        setNewExpenseForm={setNewExpenseForm}
-        editingFinanceRecord={editingFinanceRecord}
-        setEditingFinanceRecord={setEditingFinanceRecord}
-        handleSaveFinanceEdit={handleSaveFinanceEdit}
-        handleDeleteFinanceRecord={handleDeleteFinanceRecord}
-        showToast={showToast}
-        refreshAllData={refreshAllData}
-        userEmail={userEmail}
-        API_BASE={API_BASE}
-      />
+      {/* Lazy Loaded Heavy Modals wrapped in Suspense for instant 0-lag load */}
+      <React.Suspense fallback={null}>
+        {/* 3. Executive Finance & Ledger Modal */}
+        <FinanceModal
+          isOpen={activeSubModal === 'finance'}
+          onClose={() => { setActiveSubModal(null); setEditingFinanceRecord(null); setIsAddingExpense(false); }}
+          financeSummary={financeSummary}
+          financeRecords={financeRecords}
+          isAddingExpense={isAddingExpense}
+          setIsAddingExpense={setIsAddingExpense}
+          newExpenseForm={newExpenseForm}
+          setNewExpenseForm={setNewExpenseForm}
+          editingFinanceRecord={editingFinanceRecord}
+          setEditingFinanceRecord={setEditingFinanceRecord}
+          handleSaveFinanceEdit={handleSaveFinanceEdit}
+          handleDeleteFinanceRecord={handleDeleteFinanceRecord}
+          showToast={showToast}
+          refreshAllData={refreshAllData}
+          userEmail={userEmail}
+          API_BASE={API_BASE}
+        />
 
       {/* 4. Dedicated Executive Briefing Modal */}
       <BriefingModal
@@ -6735,6 +6739,7 @@ export default function App() {
         onRefresh={fetchLiveCricketScores}
         apiBase={API_BASE}
       />
+      </React.Suspense>
 
       {/* Floating Toast Notification */}
       {toast && (

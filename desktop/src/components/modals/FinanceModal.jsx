@@ -81,6 +81,12 @@ export const FinanceModal = ({
   const [hoveredDayIdx, setHoveredDayIdx] = useState(null);
   const [selectedDayDetail, setSelectedDayDetail] = useState(null);
 
+  const triggerHaptic = (duration = 15) => {
+    if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try { navigator.vibrate(duration); } catch (_) {}
+    }
+  };
+
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window !== 'undefined') {
       return window.innerWidth <= 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
@@ -781,7 +787,10 @@ export const FinanceModal = ({
             <button
               key={tab.id}
               type="button"
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                triggerHaptic(10);
+                setActiveTab(tab.id);
+              }}
               style={{
                 flex: 1,
                 padding: '8px 0',

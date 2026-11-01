@@ -17,13 +17,26 @@ if DATABASE_URL.startswith("postgres://"):
 elif DATABASE_URL.startswith("postgresql://") and not DATABASE_URL.startswith("postgresql+"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
 
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+connect_args = {"check_same_thread": False, "timeout": 15} if DATABASE_URL.startswith("sqlite") else {}
 
 engine = create_engine(
     DATABASE_URL, 
     connect_args=connect_args,
     pool_pre_ping=True
 )
+
+# Concurrency & Reliability Hardening for SQLite:
+# WAL (Write-Ahead Logging) allows simultaneous reads and writes without blocking.
+# busy_timeout=5000 prevents any 'database is locked' errors under high load.
+if DATABASE_URL.startswith("sqlite"):
+    from sqlalchemy import event
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
