@@ -47,7 +47,8 @@ export function CricketScorecardModal({
   onClose,
   matches = [],
   isLoading = false,
-  onRefresh
+  onRefresh,
+  apiBase
 }) {
   const [scopeFilter, setScopeFilter] = useState('international'); // 'international' | 'all' | 'leagues'
   const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'in' | 'pre' | 'post'
@@ -60,6 +61,10 @@ export function CricketScorecardModal({
   const [activeInningsTab, setActiveInningsTab] = useState(0);
   const [detailTab, setDetailTab] = useState('scorecard'); // 'scorecard' | 'squads' | 'info'
 
+  const effectiveApiBase = apiBase || (typeof window !== 'undefined' && window.location.port === '5173'
+    ? `http://${window.location.hostname}:8000/api`
+    : '/api');
+
   // Fetch detailed scorecard when match is selected
   useEffect(() => {
     if (!selectedMatch) {
@@ -67,24 +72,50 @@ export function CricketScorecardModal({
       return;
     }
     fetchMatchDetail(selectedMatch);
-  }, [selectedMatch?.id]);
+  }, [selectedMatch?.id, effectiveApiBase]);
 
-  const fetchMatchDetail = async (match) => {
+  const fetchMatchDetail = async (match, isSilent = false) => {
     if (!match?.id) return;
-    setIsDetailLoading(true);
+    if (!isSilent) setIsDetailLoading(true);
     try {
-      const res = await fetch(`/api/cricket/match/${match.id}?league_id=${match.league_id || ''}`);
+      const res = await fetch(`${effectiveApiBase}/cricket/match/${match.id}?league_id=${match.league_id || ''}`);
       if (res.ok) {
         const json = await res.json();
         setDetailData(json);
-        setActiveInningsTab(0);
       }
     } catch (e) {
       console.error("Failed to load match detail:", e);
     } finally {
-      setIsDetailLoading(false);
+      if (!isSilent) setIsDetailLoading(false);
     }
   };
+
+  // Real-time live auto-refresh without user interaction (zero latency)
+  useEffect(() => {
+    if (!isOpen) return;
+
+    // 1. When a match is selected: auto-poll every 5s if match is live, or 15s if upcoming/finished
+    let detailTimer = null;
+    if (selectedMatch) {
+      const pollMs = selectedMatch.status === 'in' ? 5000 : 15000;
+      detailTimer = setInterval(() => {
+        fetchMatchDetail(selectedMatch, true);
+      }, pollMs);
+    }
+
+    // 2. When in matches feed: auto-poll every 8s to refresh live scores across all matches
+    let feedTimer = null;
+    if (onRefresh && !selectedMatch) {
+      feedTimer = setInterval(() => {
+        onRefresh();
+      }, 8000);
+    }
+
+    return () => {
+      if (detailTimer) clearInterval(detailTimer);
+      if (feedTimer) clearInterval(feedTimer);
+    };
+  }, [isOpen, selectedMatch?.id, selectedMatch?.status, effectiveApiBase]);
 
   if (!isOpen) return null;
 
@@ -147,6 +178,20 @@ export function CricketScorecardModal({
   });
   const inningsList = Object.values(inningsGroups).sort((a, b) => Number(a.innNum) - Number(b.innNum));
   const currentInnings = inningsList[activeInningsTab] || inningsList[0];
+
+  // Bulletproof Playing XI / Squads fallback
+  const displayRosters = (detailData?.rosters && detailData.rosters.length > 0)
+    ? detailData.rosters
+    : (inningsList.length > 0
+        ? inningsList.map(inn => ({
+            team: inn.teamName,
+            logo: '',
+            players: (inn.battingCard?.playerDetails || []).map(p => ({
+              name: p.playerName,
+              position: p.dismissal && p.dismissal.includes('†') ? 'Wicketkeeper' : 'Player'
+            }))
+          }))
+        : []);
 
   return (
     <div style={{
@@ -924,9 +969,9 @@ export function CricketScorecardModal({
             {/* TAB 2: PLAYING XI / SQUADS */}
             {detailTab === 'squads' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {detailData?.rosters && detailData.rosters.length > 0 ? (
+                {displayRosters && displayRosters.length > 0 ? (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
-                    {detailData.rosters.map((rost, rIdx) => (
+                    {displayRosters.map((rost, rIdx) => (
                       <div
                         key={rIdx}
                         style={{

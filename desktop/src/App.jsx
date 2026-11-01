@@ -6733,6 +6733,7 @@ export default function App() {
         matches={cricketMatches}
         isLoading={isCricketLoading}
         onRefresh={fetchLiveCricketScores}
+        apiBase={API_BASE}
       />
 
       {/* Floating Toast Notification */}

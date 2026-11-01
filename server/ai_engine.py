@@ -631,7 +631,7 @@ def fetch_cricinfo_live_matches() -> list:
 def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None) -> dict:
     """Fetches detailed batting and bowling scorecard, fall of wickets, rosters, and commentary for a match."""
     league_candidates = [league_id] if league_id else []
-    league_candidates.extend(['24805', '8814', '8838', '15599', '15439', '8820', '8840'])
+    league_candidates.extend(['8768', '24805', '8814', '8838', '15599', '15439', '8820', '8840'])
 
     for lid in league_candidates:
         if not lid: continue
@@ -643,17 +643,24 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None) -> dict
                 if 'matchcards' in data or 'rosters' in data or 'notes' in data:
                     matchcards = data.get('matchcards', [])
                     notes = [n.get('text') for n in data.get('notes', []) if n.get('text')]
+                    raw_rosters = data.get('rosters', [])
                     rosters = []
-                    for r in data.get('rosters', []):
+                    
+                    for r in raw_rosters:
                         team_name = r.get('team', {}).get('displayName', 'Team')
-                        team_logo = r.get('team', {}).get('logo', '')
+                        logos = r.get('team', {}).get('logos', [])
+                        team_logo = logos[0].get('href', '') if logos else r.get('team', {}).get('logo', '')
                         players = []
                         for p in r.get('roster', []):
                             ath = p.get('athlete', {})
+                            pos_name = ath.get('position', {}).get('name') or p.get('position', {}).get('name')
+                            if not pos_name or pos_name == 'Unknown':
+                                styles = ath.get('style', [])
+                                pos_name = styles[0].get('description') if styles else 'Player'
                             players.append({
                                 'name': ath.get('displayName') or ath.get('name', 'Player'),
                                 'short_name': ath.get('shortName', ''),
-                                'position': p.get('position', {}).get('name', ''),
+                                'position': pos_name,
                                 'jersey': p.get('jersey', '')
                             })
                         rosters.append({
@@ -661,6 +668,82 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None) -> dict
                             'logo': team_logo,
                             'players': players
                         })
+
+                    # If ESPN's raw matchcards are empty, synthesize full batting & bowling tables from rosters
+                    if not matchcards and raw_rosters:
+                        competitors = data.get('header', {}).get('competitions', [{}])[0].get('competitors', [])
+                        comp_map = {str(c.get('team', {}).get('id')): c for c in competitors}
+                        synthesized_cards = []
+                        
+                        for idx, r in enumerate(raw_rosters):
+                            team_info = r.get('team', {})
+                            t_id = str(team_info.get('id', ''))
+                            t_name = team_info.get('displayName', f'Team {idx+1}')
+                            comp = comp_map.get(t_id, {})
+                            total_score = comp.get('score', '')
+                            
+                            batters = []
+                            bowlers = []
+                            for p in r.get('roster', []):
+                                ath = p.get('athlete', {})
+                                p_name = ath.get('displayName') or ath.get('name', 'Player')
+                                for ls in p.get('linescores', []):
+                                    for sub_ls in ls.get('linescores', []):
+                                        st = sub_ls.get('statistics', {})
+                                        stats_dict = {s.get('name'): s.get('displayValue') for cat in st.get('categories', []) for s in cat.get('stats', [])}
+                                        b_stats = st.get('batting', {})
+                                        bw_stats = st.get('bowling', {})
+                                        
+                                        # Batting data
+                                        if stats_dict.get('batted') == '1' or stats_dict.get('runs') is not None:
+                                            out_text = b_stats.get('outDetails', {}).get('shortText', 'not out')
+                                            if out_text:
+                                                out_text = out_text.replace('&amp;', '&')
+                                            batters.append({
+                                                'playerName': p_name,
+                                                'dismissal': out_text or 'not out',
+                                                'runs': str(stats_dict.get('runs', '0')),
+                                                'ballsFaced': str(stats_dict.get('ballsFaced', '0')),
+                                                'fours': str(stats_dict.get('fours', '0')),
+                                                'sixes': str(stats_dict.get('sixes', '0')),
+                                                'strikeRate': str(stats_dict.get('strikeRate', '-'))
+                                            })
+                                        
+                                        # Bowling data
+                                        overs_val = stats_dict.get('overs') or bw_stats.get('overs')
+                                        if overs_val and float(overs_val) > 0:
+                                            bowlers.append({
+                                                'playerName': p_name,
+                                                'overs': str(overs_val),
+                                                'maidens': str(stats_dict.get('maidens', '0')),
+                                                'conceded': str(stats_dict.get('conceded', '0')),
+                                                'wickets': str(stats_dict.get('wickets', '0')),
+                                                'economyRate': str(stats_dict.get('economyRate', '-'))
+                                            })
+                            
+                            if batters:
+                                synthesized_cards.append({
+                                    'typeID': '11',
+                                    'headline': 'Batting',
+                                    'inningsNumber': str(idx + 1),
+                                    'teamName': t_name,
+                                    'runs': total_score,
+                                    'total': '',
+                                    'extras': '',
+                                    'playerDetails': batters
+                                })
+                            if bowlers:
+                                # Bowling card belongs to the opposite team's innings
+                                opp_inn = str(2 if idx == 0 else 1)
+                                synthesized_cards.append({
+                                    'typeID': '12',
+                                    'headline': 'Bowling',
+                                    'inningsNumber': opp_inn,
+                                    'teamName': t_name,
+                                    'playerDetails': bowlers
+                                })
+                        
+                        matchcards = synthesized_cards
 
                     return {
                         'status': 'success',
