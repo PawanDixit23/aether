@@ -449,6 +449,12 @@ def fetch_cricinfo_live_matches() -> list:
                     t1 = competitors[0] if len(competitors) > 0 else {}
                     t2 = competitors[1] if len(competitors) > 1 else {}
                     
+                    notes_list = ev.get('notes', [])
+                    toss_note = next((n.get('text') for n in notes_list if n.get('type') == 'toss'), '')
+                    match_notes = [n.get('text') for n in notes_list if n.get('type') in ['matchnote', 'closeofplay'] and n.get('text')]
+                    session_info = full_status.get('session', '')
+                    day_num = full_status.get('dayNumber', '')
+
                     matches.append({
                         'id': str(ev_id),
                         'name': name,
@@ -460,6 +466,10 @@ def fetch_cricinfo_live_matches() -> list:
                         'status_text': status_detail or summary or ('Live' if raw_status == 'in' else ('Scheduled' if raw_status == 'pre' else 'Completed')),
                         'date': ev_date,
                         'cricinfo_url': cricinfo_link,
+                        'toss': toss_note,
+                        'session': session_info,
+                        'day_number': day_num,
+                        'highlights': match_notes[-8:] if match_notes else [],
                         'team1': {
                             'name': t1.get('displayName') or t1.get('name', 'Team 1'),
                             'short_name': t1.get('abbreviation') or t1.get('name', ''),

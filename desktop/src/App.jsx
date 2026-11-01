@@ -4754,6 +4754,24 @@ export default function App() {
               </div>
             </div>
 
+            <div className="settings-row-item" onClick={() => {
+              setIsCricketModalOpen(true);
+              fetchLiveCricketScores();
+            }}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box" style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>
+                  <span style={{ fontSize: '1.05rem', lineHeight: 1 }}>🏏</span>
+                </div>
+                <span>Live Cricket & Sports</span>
+              </div>
+              <div className="settings-row-right">
+                <span style={{ color: cricketMatches.some(m => m.status === 'in') ? '#ef4444' : '#38bdf8', fontWeight: 600, fontSize: '0.84rem' }}>
+                  {cricketMatches.some(m => m.status === 'in') ? '● Live Scores' : 'Scorecards'}
+                </span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
             <div className="settings-row-item" onClick={() => setActiveSubModal('permissions')}>
               <div className="settings-row-left">
                 <div className="settings-row-icon-box" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
@@ -4927,31 +4945,6 @@ export default function App() {
                 </div>
 
                 <div className="gemini-top-right">
-                  <button 
-                    type="button" 
-                    className="gemini-icon-btn" 
-                    onClick={() => {
-                      setIsCricketModalOpen(true);
-                      fetchLiveCricketScores();
-                    }}
-                    title="Cricinfo Live Cricket Scorecards (क्रिकेट स्कोरकार्ड)"
-                    style={{ position: 'relative' }}
-                  >
-                    <span style={{ fontSize: '1.05rem', lineHeight: 1 }}>🏏</span>
-                    {cricketMatches.some(m => m.status === 'in') && (
-                      <span style={{
-                        position: 'absolute',
-                        top: '5px',
-                        right: '5px',
-                        width: '7px',
-                        height: '7px',
-                        borderRadius: '50%',
-                        background: '#ef4444',
-                        boxShadow: '0 0 6px #ef4444'
-                      }}></span>
-                    )}
-                  </button>
-
                   <button 
                     type="button" 
                     className="gemini-icon-btn" 
@@ -5287,6 +5280,10 @@ export default function App() {
                                 {topMatches.map((m, mIdx) => (
                                   <div
                                     key={m.id || mIdx}
+                                    onClick={() => {
+                                      setIsCricketModalOpen(true);
+                                      fetchLiveCricketScores();
+                                    }}
                                     style={{
                                       background: 'rgba(0, 0, 0, 0.35)',
                                       border: '1px solid rgba(255, 255, 255, 0.06)',
@@ -5294,7 +5291,8 @@ export default function App() {
                                       padding: '8px 12px',
                                       display: 'flex',
                                       flexDirection: 'column',
-                                      gap: '4px'
+                                      gap: '4px',
+                                      cursor: 'pointer'
                                     }}
                                   >
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.72rem', color: '#94a3b8' }}>
@@ -5319,16 +5317,9 @@ export default function App() {
                                       <span style={{ fontSize: '0.70rem', color: m.status === 'in' ? '#f87171' : '#94a3b8' }}>
                                         {m.status_text}
                                       </span>
-                                      {m.cricinfo_url && (
-                                        <a
-                                          href={m.cricinfo_url}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          style={{ fontSize: '0.68rem', color: '#38bdf8', textDecoration: 'none' }}
-                                        >
-                                          Cricinfo ↗
-                                        </a>
-                                      )}
+                                      <span style={{ fontSize: '0.70rem', color: '#38bdf8', fontWeight: 600 }}>
+                                        View In-App →
+                                      </span>
                                     </div>
                                   </div>
                                 ))}
