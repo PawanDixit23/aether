@@ -1835,14 +1835,21 @@ export default function App() {
   };
 
   const handleSendTestPush = async () => {
-    // 1. Foreground local browser alert
+    // 1. Foreground local browser alert & Native Mobile Alert
     triggerPushNotification(
       "⚡ AETHER TEST ALERT 🎉",
       "लोकल पुश नोटिफिकेशन एकदम सही काम कर रहे हैं!",
       "aether-test"
     );
 
-    // 2. Real Cloud VAPID Web Push from Server to Device (Strict User Isolation)
+    // If on native React Native WebView, native notification was already delivered!
+    const isReactNative = typeof window !== 'undefined' && !!window.ReactNativeWebView;
+    if (isReactNative) {
+      showToast("📲 मोबाइल ऐप नोटिफिकेशन सक्रिय व कनेक्टेड है! 🎉", 'success');
+      return;
+    }
+
+    // 2. Real Cloud VAPID Web Push from Server to Device (Browser / Desktop / PWA)
     const emailToUse = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
     if (!emailToUse || !emailToUse.includes('@')) {
       showToast("⚠️ क्लाउड पुश के लिए कृपया पहले सेटिंग्स में अपना ईमेल दर्ज करें!", 'info');
