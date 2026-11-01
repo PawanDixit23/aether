@@ -249,6 +249,11 @@ export default function App() {
 
             // 6. Open all external news links and 3rd-party websites in external device browser (Chrome)
             // This prevents external news sites from replacing the app or failing inside WebView
+            if (url.includes('/export-csv') || url.includes('/download') || url.endsWith('.csv')) {
+              Linking.openURL(url).catch(() => {});
+              return false;
+            }
+
             if (
               !url.startsWith(AETHER_URL) &&
               !url.startsWith('http://localhost') &&
@@ -346,9 +351,13 @@ export default function App() {
                 } else {
                   Linking.openURL('tel:').catch(() => {});
                 }
-              } else if (data.type === 'OPEN_EXTERNAL_URL') {
-                if (data.url) {
-                  Linking.openURL(data.url).catch(() => {});
+              } else if (data.type === 'OPEN_EXTERNAL_URL' || data.type === 'DOWNLOAD_FILE') {
+                let targetUrl = data.url || '';
+                if (targetUrl && !targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+                  targetUrl = `${AETHER_URL}${targetUrl.startsWith('/') ? '' : '/'}${targetUrl}`;
+                }
+                if (targetUrl) {
+                  Linking.openURL(targetUrl).catch(() => {});
                 }
               } else if (data.type === 'OPEN_MAP') {
                 webViewRef.current?.injectJavaScript(`window.__mapOpenedByNative = true; true;`);

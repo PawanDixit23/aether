@@ -256,19 +256,38 @@ export const FinanceModal = ({
       return;
     }
     const filename = `aether_finance_${monthTitle.replace(/\s+/g, '_')}.csv`;
-    const effApi = API_BASE || (typeof window !== 'undefined' && window.location.port === '5173'
-      ? `http://${window.location.hostname}:8000/api`
-      : '/api');
-    const downloadUrl = `${effApi}/finance/export-csv?user_email=${encodeURIComponent(userEmail || '')}&year=${selectedYear}&month=${selectedMonth}`;
+    
+    // Resolve origin and absolute API URL so Android WebView Linking.openURL never receives a relative URL
+    const origin = (typeof window !== 'undefined' && window.location.origin && window.location.origin !== 'null' && !window.location.origin.startsWith('file:'))
+      ? window.location.origin
+      : 'https://aether-kjrj.onrender.com';
+
+    let effApi = API_BASE || '';
+    if (!effApi) {
+      if (typeof window !== 'undefined' && window.location.port === '5173') {
+        effApi = `http://${window.location.hostname}:8000/api`;
+      } else {
+        effApi = `${origin}/api`;
+      }
+    } else if (!effApi.startsWith('http://') && !effApi.startsWith('https://')) {
+      effApi = `${origin}${effApi.startsWith('/') ? '' : '/'}${effApi}`;
+    }
+
+    const absoluteDownloadUrl = `${effApi}/finance/export-csv?user_email=${encodeURIComponent(userEmail || '')}&year=${selectedYear}&month=${selectedMonth}`;
 
     // 1. Mobile App (React Native WebView): delegates download to Android system browser/download manager
     if (typeof window !== 'undefined' && window.ReactNativeWebView) {
       try {
         window.ReactNativeWebView.postMessage(JSON.stringify({
           type: 'OPEN_EXTERNAL_URL',
-          url: downloadUrl
+          url: absoluteDownloadUrl
         }));
-        if (showToast) showToast(`Finance CSV for ${monthTitle} exported! 📥`, "success");
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'DOWNLOAD_FILE',
+          url: absoluteDownloadUrl,
+          filename: filename
+        }));
+        if (showToast) showToast(`Finance CSV डाउनलोड शुरू हो गया! 📥`, "success");
         return;
       } catch (err) {}
     }
@@ -276,7 +295,7 @@ export const FinanceModal = ({
     // 2. Web browser: direct download via link to backend
     try {
       const link = document.createElement("a");
-      link.href = downloadUrl;
+      link.href = absoluteDownloadUrl;
       link.setAttribute("download", filename);
       link.target = "_blank";
       document.body.appendChild(link);

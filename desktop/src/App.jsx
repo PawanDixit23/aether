@@ -5051,8 +5051,8 @@ export default function App() {
                 </div>
               </header>
 
-              {/* LIVE CRICKET TICKER IN NORMAL FLOW — ZERO OVERLAP */}
-              {!isCricketModalOpen && cricketMatches && cricketMatches.some(m => m.status === 'in') && (() => {
+              {/* LIVE CRICKET TICKER — ONLY ON MAIN LANDING PAGE (NEVER IN CHAT, DASHBOARD, MODALS, OR OTHER TABS) */}
+              {!isCricketModalOpen && !showDashboard && activeTab === 'aether' && chatHistory.length === 0 && !activeSubModal && cricketMatches && cricketMatches.some(m => m.status === 'in') && (() => {
                 const liveMatch = cricketMatches.find(m => m.status === 'in');
                 if (!liveMatch || dismissedCricketMatchId === (liveMatch.id || 'dismissed')) return null;
                 return (
