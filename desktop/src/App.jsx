@@ -367,6 +367,57 @@ const GoogleIcon = () => (
   </svg>
 );
 
+export const calculateTaskTrigger = (t) => {
+  if (!t || !t.reminder_time) return null;
+  const rawTime = String(t.reminder_time || '').trim();
+  const m = rawTime.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+  if (!m) return null;
+
+  let hrs = parseInt(m[1], 10);
+  const mins = m[2] ? parseInt(m[2], 10) : 0;
+  const ampm = (m[3] || '').toUpperCase();
+  if (ampm === 'PM' && hrs < 12) hrs += 12;
+  if (ampm === 'AM' && hrs === 12) hrs = 0;
+
+  const rec = String(t.recurrence || '').toLowerCase();
+  const isDaily = rec === 'daily' || rec.includes('daily') || /daily|roz|everyday/i.test(t.title || '');
+
+  const now = new Date();
+  const target = new Date();
+  target.setHours(hrs, mins, 0, 0);
+
+  if (target.getTime() <= now.getTime()) {
+    if (isDaily) {
+      target.setDate(target.getDate() + 1);
+    } else if (t.due_date) {
+      const d = new Date(t.due_date);
+      if (!isNaN(d.getTime())) {
+        d.setHours(hrs, mins, 0, 0);
+        if (d.getTime() > now.getTime()) {
+          target.setTime(d.getTime());
+        }
+      }
+    }
+  } else if (!isDaily && t.due_date) {
+    const d = new Date(t.due_date);
+    if (!isNaN(d.getTime())) {
+      d.setHours(hrs, mins, 0, 0);
+      if (d.getTime() > now.getTime()) {
+        target.setTime(d.getTime());
+      }
+    }
+  }
+
+  const triggerSeconds = Math.max(1, Math.round((target.getTime() - now.getTime()) / 1000));
+  return {
+    triggerSeconds,
+    isDaily,
+    hour: hrs,
+    minute: mins,
+    targetDate: target
+  };
+};
+
 export default function App() {
   // Onboarding & BYOK Intelligence Configuration
   const [onboardingDone, setOnboardingDone] = useState(() => 
@@ -2852,6 +2903,53 @@ export default function App() {
     return () => clearInterval(clockTimer);
   }, []);
 
+  // Real-time foreground reminder watcher (checks every 20 seconds)
+  const alertedRemindersRef = useRef({});
+  useEffect(() => {
+    const reminderChecker = setInterval(() => {
+      const allActiveTasks = [...(tasks || []), ...(googleTasks || [])];
+      if (allActiveTasks.length === 0) return;
+
+      const now = new Date();
+      const currentHrs = now.getHours();
+      const currentMins = now.getMinutes();
+      const todayDateStr = now.toISOString().slice(0, 10);
+      const minuteKey = `${todayDateStr}_${currentHrs}:${currentMins}`;
+
+      allActiveTasks.forEach(t => {
+        if (!t.reminder_time || t.is_completed || t.status === 'completed') return;
+        const alertKey = `${t.id}_${minuteKey}`;
+        if (alertedRemindersRef.current[alertKey]) return;
+
+        // Parse reminder time
+        const m = String(t.reminder_time).match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+        if (!m) return;
+        let hrs = parseInt(m[1], 10);
+        const mins = m[2] ? parseInt(m[2], 10) : 0;
+        const ampm = (m[3] || '').toUpperCase();
+        if (ampm === 'PM' && hrs < 12) hrs += 12;
+        if (ampm === 'AM' && hrs === 12) hrs = 0;
+
+        if (currentHrs === hrs && currentMins === mins) {
+          alertedRemindersRef.current[alertKey] = true;
+          playReminderChime();
+          showToast(`⏰ रिमाइंडर: ${t.title}`, 'warning');
+          if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+            try {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'TRIGGER_NOTIFICATION',
+                title: `⏰ AETHER रिमाइंडर: ${t.title}`,
+                body: `समय: ${t.reminder_time} • कार्य का समय हो गया है!`
+              }));
+            } catch (err) {}
+          }
+        }
+      });
+    }, 20000);
+
+    return () => clearInterval(reminderChecker);
+  }, [tasks, googleTasks]);
+
   // Browser Geolocation
   useEffect(() => {
     if ('geolocation' in navigator) {
@@ -2948,7 +3046,6 @@ export default function App() {
 
         // Schedule upcoming reminders natively on mobile app
         if (typeof window !== 'undefined' && window.ReactNativeWebView && Array.isArray(loadedTasks)) {
-          const nowMs = Date.now();
           loadedTasks.forEach(t => {
             const isDone = t.is_completed || t.status === 'completed';
             if (isDone) {
@@ -2959,21 +3056,18 @@ export default function App() {
                 }));
               } catch (e) {}
             } else if (t.reminder_time) {
-              let triggerSec = 0;
-              if (t.due_date) {
-                const dueMs = new Date(t.due_date).getTime();
-                if (dueMs > nowMs) {
-                  triggerSec = (dueMs - nowMs) / 1000;
-                }
-              }
-              if (triggerSec > 0) {
+              const trigger = calculateTaskTrigger(t);
+              if (trigger && trigger.triggerSeconds > 0) {
                 try {
                   window.ReactNativeWebView.postMessage(JSON.stringify({
                     type: 'SCHEDULE_REMINDER',
                     id: t.id,
                     title: t.title,
                     reminder_time: t.reminder_time,
-                    triggerSeconds: triggerSec
+                    triggerSeconds: trigger.triggerSeconds,
+                    isDaily: trigger.isDaily,
+                    hour: trigger.hour,
+                    minute: trigger.minute
                   }));
                 } catch (e) {}
               }
@@ -3757,13 +3851,24 @@ export default function App() {
       recurrence = 'daily';
     }
 
-    let dueDateIso = new Date().toISOString();
-    if (customDateStr) {
-      try {
-        const d = new Date(customDateStr + 'T12:00:00');
-        if (!isNaN(d.getTime())) dueDateIso = d.toISOString();
-      } catch (err) {}
+    // Accurately combine date and parsedTime into dueDateIso with exact hour and minute
+    let hrs = 12, mins = 0;
+    if (parsedTime) {
+      const tm = parsedTime.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+      if (tm) {
+        hrs = parseInt(tm[1], 10);
+        mins = tm[2] ? parseInt(tm[2], 10) : 0;
+        const ampm = (tm[3] || '').toUpperCase();
+        if (ampm === 'PM' && hrs < 12) hrs += 12;
+        if (ampm === 'AM' && hrs === 12) hrs = 0;
+      }
     }
+    let dueDateIso = new Date().toISOString();
+    try {
+      const baseDate = customDateStr ? new Date(customDateStr + 'T00:00:00') : new Date();
+      baseDate.setHours(hrs, mins, 0, 0);
+      dueDateIso = baseDate.toISOString();
+    } catch (err) {}
 
     const optimisticTask = {
       id: 'local_' + Date.now(),
@@ -3777,6 +3882,25 @@ export default function App() {
       created_at: new Date().toISOString()
     };
     setTasks(prev => [optimisticTask, ...prev]);
+
+    // Immediately schedule on native Android OS alarm manager via bridge
+    if (typeof window !== 'undefined' && window.ReactNativeWebView && parsedTime) {
+      const trigger = calculateTaskTrigger(optimisticTask);
+      if (trigger && trigger.triggerSeconds > 0) {
+        try {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'SCHEDULE_REMINDER',
+            id: optimisticTask.id,
+            title: cleanTitle,
+            reminder_time: parsedTime,
+            triggerSeconds: trigger.triggerSeconds,
+            isDaily: trigger.isDaily,
+            hour: trigger.hour,
+            minute: trigger.minute
+          }));
+        } catch (e) {}
+      }
+    }
 
     try {
       await fetch(`${API_BASE}/tasks`, {

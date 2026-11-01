@@ -69,16 +69,16 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
 # ──────────────────────────────────────────────────────────────────────────────
 
 try:
-    from database import engine, Base, get_db, ensure_schema_migrations
+    from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
     from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
     from ai_engine import parse_intent_with_llm
 except ImportError:
     try:
-        from server.database import engine, Base, get_db, ensure_schema_migrations
+        from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
         from server.models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
         from server.ai_engine import parse_intent_with_llm
     except ImportError:
-        from .database import engine, Base, get_db, ensure_schema_migrations
+        from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
         from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
         from .ai_engine import parse_intent_with_llm
 
@@ -1483,6 +1483,13 @@ def create_task(
     data["user_email"] = eff_email
     subtasks = data.pop("subtasks", None)
     task = Task(**data)
+    if task.reminder_time:
+        time_comp = parse_reminder_time_components(task.reminder_time)
+        if time_comp:
+            hrs, mins = time_comp
+            now_dt = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
+            base_dt = task.due_date if task.due_date else now_dt
+            task.due_date = base_dt.replace(hour=hrs, minute=mins, second=0, microsecond=0)
     db.add(task)
     db.commit()
     db.refresh(task)
@@ -2609,18 +2616,66 @@ def _send_whatsapp_message_sync(to_number: str, message_body: str, phone_id: str
         print(f"[WhatsApp Sync Outgoing Error] {e}")
         return False
 
-@app.post("/api/reminders/push-check")
-def push_check_reminders(request: Request, db: Session = Depends(get_db)):
-    """
-    GitHub Actions हर 10 मिनट पर इस endpoint को call करता है।
-    सभी users के due reminders check करके Web Push notification भेजता है।
-    Database persistence की वजह से Render cold-sleep/reboot के बाद भी 1 घंटे वाले reminders 100% डिलीवर होते हैं!
-    """
+def parse_reminder_time_components(reminder_str: Optional[str]):
+    """Parses time string like '8:00 PM', '8 PM', '20:00' into (hours, minutes). Returns None if unparseable."""
+    if not reminder_str:
+        return None
+    m = re.search(r'(\d{1,2})(?::(\d{2}))?\s*(am|pm)?', str(reminder_str), re.IGNORECASE)
+    if not m:
+        return None
+    hrs = int(m.group(1))
+    mins = int(m.group(2)) if m.group(2) else 0
+    ampm = (m.group(3) or "").upper()
+    if ampm == "PM" and hrs < 12:
+        hrs += 12
+    elif ampm == "AM" and hrs == 12:
+        hrs = 0
+    return hrs, mins
+
+def is_task_due_for_notification(task, now: datetime) -> bool:
+    """Accurately checks whether a task is due for push notification right now."""
+    if task.status == "completed" or getattr(task, "is_completed", False):
+        return False
+
+    rec = str(getattr(task, "recurrence", "") or "").lower()
+    is_daily = "daily" in rec or "roz" in rec or "everyday" in rec or "daily" in str(task.title or "").lower()
+
+    time_comp = parse_reminder_time_components(task.reminder_time)
+    
+    if time_comp:
+        hrs, mins = time_comp
+        if is_daily:
+            # For daily recurring task, due if current hour:minute has reached or passed scheduled time today
+            if now.hour > hrs or (now.hour == hrs and now.minute >= mins):
+                return True
+            return False
+        else:
+            if task.due_date:
+                try:
+                    dt = task.due_date if isinstance(task.due_date, datetime) else datetime.fromisoformat(str(task.due_date).replace(' ', 'T'))
+                    target = dt.replace(hour=hrs, minute=mins, second=0, microsecond=0)
+                    return target <= now
+                except Exception:
+                    pass
+            target_today = now.replace(hour=hrs, minute=mins, second=0, microsecond=0)
+            return target_today <= now
+
+    # Fallback to due_date if no reminder_time
+    if task.due_date:
+        try:
+            dt = task.due_date if isinstance(task.due_date, datetime) else datetime.fromisoformat(str(task.due_date).replace(' ', 'T'))
+            return dt <= now
+        except Exception:
+            pass
+
+    return False
+
+def _run_push_check_internal(db: Session):
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     pushed_count = 0
     errors = []
-    
-    # 1. Database से सभी active subscriptions reload करें (Cold boot survival guarantee)
+
+    # 1. Database से सभी active subscriptions reload करें
     try:
         db_subs = db.query(PushSubscription).all()
         for s in db_subs:
@@ -2644,36 +2699,20 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
     for email, subscriptions in list(_push_subscriptions.items()):
         if not subscriptions or not email:
             continue
-        
         try:
-            # Strictly isolated: each user only receives their own due tasks
             tasks = db.query(Task).filter(
                 Task.user_email == email,
                 Task.status == "pending",
                 Task.notified == False
             ).all()
-            
-            due_tasks = []
-            for t in tasks:
-                if not t.due_date:
-                    continue
-                try:
-                    dt = t.due_date
-                    if isinstance(dt, str):
-                        dt = datetime.fromisoformat(dt.replace(' ', 'T'))
-                    if dt <= now:
-                        due_tasks.append(t)
-                except Exception:
-                    pass
-            
-            # Due tasks के लिए push notification भेजें
+
+            due_tasks = [t for t in tasks if is_task_due_for_notification(t, now)]
+
             for task in due_tasks:
                 title = f"⏰ AETHER रिमाइंडर: {task.title}"
                 body = f"समय: {task.reminder_time or 'अभी'} • कार्य का समय हो गया है!"
-                
-                # सभी subscriptions पर push भेजें
+
                 task_pushed_success = False
-                failed_subscriptions = []
                 expired_endpoints = []
 
                 for sub in subscriptions:
@@ -2682,45 +2721,64 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
                         pushed_count += 1
                         task_pushed_success = True
                     else:
-                        failed_subscriptions.append(sub.get("endpoint", "")[:50])
                         if is_expired:
                             expired_endpoints.append(sub.get("endpoint"))
 
-                # Cleanup expired (404/410) subscriptions from DB and memory
                 if expired_endpoints:
                     try:
                         db.query(PushSubscription).filter(PushSubscription.endpoint.in_(expired_endpoints)).delete(synchronize_session=False)
                         db.commit()
                         _push_subscriptions[email] = [s for s in _push_subscriptions[email] if s.get("endpoint") not in expired_endpoints]
-                        print(f"[PushCheck] Cleaned up {len(expired_endpoints)} expired subscriptions for {email}")
-                    except Exception as clean_err:
-                        print(f"[Push Clean Error] {clean_err}")
+                    except Exception:
+                        pass
 
-                # Push सफल होने पर ही task को notified mark करें (Issue #3 fix)
                 if task_pushed_success:
                     task.notified = True
                     rec = getattr(task, "recurrence", None)
-                    if rec and task.due_date:
-                        if rec == "daily":
-                            task.due_date = task.due_date + timedelta(days=1)
-                        elif rec in ["weekdays", "monday_to_friday"]:
-                            task.due_date = get_next_weekday(task.due_date)
-                        elif str(rec).startswith("weekly"):
-                            task.due_date = task.due_date + timedelta(days=7)
-                        else:
-                            task.due_date = task.due_date + timedelta(days=1)
+                    is_daily = rec == "daily" or "daily" in str(rec or "").lower() or "daily" in str(task.title or "").lower()
+                    if is_daily:
+                        # Advance due_date by 1 day and reset notified for tomorrow's run
+                        next_day = (task.due_date if task.due_date else now) + timedelta(days=1)
+                        time_comp = parse_reminder_time_components(task.reminder_time)
+                        if time_comp:
+                            hrs, mins = time_comp
+                            next_day = next_day.replace(hour=hrs, minute=mins, second=0, microsecond=0)
+                        task.due_date = next_day
                         task.notified = False
                         task.status = "pending"
                     db.commit()
                 else:
-                    errors.append(f"Push delivery failed for task {task.id} (user {email}). Task left un-notified for retry.")
-                
-                if failed_subscriptions:
-                    errors.append(f"Failed subs for task {task.id}: {len(failed_subscriptions)}")
-        
+                    errors.append(f"Push delivery failed for task {task.id} (user {email}).")
         except Exception as e:
             errors.append(f"Error for {email}: {str(e)[:100]}")
             print(f"[PushCheck Error] {email}: {e}")
+
+    return {"status": "ok", "pushed": pushed_count, "errors": errors}
+
+@app.on_event("startup")
+async def start_reminder_background_worker():
+    import asyncio
+    async def reminder_loop():
+        await asyncio.sleep(5)
+        while True:
+            try:
+                db = SessionLocal()
+                try:
+                    _run_push_check_internal(db)
+                finally:
+                    db.close()
+            except Exception as e:
+                print(f"[ReminderWorker Background Error] {e}")
+            await asyncio.sleep(30)
+    asyncio.create_task(reminder_loop())
+
+@app.post("/api/reminders/push-check")
+def push_check_reminders(request: Request, db: Session = Depends(get_db)):
+    """
+    Checks all active subscriptions and sends push notifications for due tasks.
+    Also callable on-demand via GitHub Actions or manual health triggers.
+    """
+    result = _run_push_check_internal(db)
 
     # Automated Morning (08:00 AM IST) & Evening (08:30 PM IST) WhatsApp Executive Digest
     try:

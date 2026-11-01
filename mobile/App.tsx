@@ -399,12 +399,32 @@ export default function App() {
               } else if (data.type === 'SCHEDULE_REMINDER') {
                 const identifier = `reminder-${data.id}`;
                 await Notifications.cancelScheduledNotificationAsync(identifier).catch(() => {});
-                if (data.triggerSeconds && data.triggerSeconds > 0) {
+                
+                const title = `⏰ AETHER रिमाइंडर: ${data.title}`;
+                const body = data.reminder_time ? `समय: ${data.reminder_time} • कार्य का समय हो गया है!` : 'कार्य का समय हो गया है!';
+
+                if (data.isDaily && data.hour !== undefined && data.minute !== undefined) {
+                  // Exact Daily Recurring native alarm in Android OS
                   await Notifications.scheduleNotificationAsync({
                     identifier,
                     content: {
-                      title: `⏰ AETHER रिमाइंडर: ${data.title}`,
-                      body: data.reminder_time ? `समय: ${data.reminder_time} • कार्य का समय हो गया है!` : 'कार्य का समय हो गया है!',
+                      title,
+                      body,
+                      sound: true,
+                    },
+                    trigger: {
+                      type: Notifications.SchedulableTriggerInputTypes.DAILY,
+                      hour: data.hour,
+                      minute: data.minute,
+                      channelId: 'reminders',
+                    },
+                  }).catch(() => {});
+                } else if (data.triggerSeconds && data.triggerSeconds > 0) {
+                  await Notifications.scheduleNotificationAsync({
+                    identifier,
+                    content: {
+                      title,
+                      body,
                       sound: true,
                     },
                     trigger: {
@@ -412,7 +432,7 @@ export default function App() {
                       seconds: Math.max(1, Math.round(data.triggerSeconds)),
                       channelId: 'reminders',
                     },
-                  });
+                  }).catch(() => {});
                 }
               } else if (data.type === 'CANCEL_REMINDER') {
                 await Notifications.cancelScheduledNotificationAsync(`reminder-${data.id}`).catch(() => {});
