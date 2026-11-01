@@ -401,6 +401,95 @@ _cricket_cache = {
     "timestamp": 0
 }
 
+def parse_ist_time(date_str: str = '', status_text: str = '') -> str:
+    """Calculates exact Indian Standard Time (IST) from GMT/UTC timestamps or status text."""
+    gmt_m = re.search(r'(\d{1,2}):(\d{2})\s*GMT', status_text or '')
+    if gmt_m:
+        h, m = int(gmt_m.group(1)), int(gmt_m.group(2))
+        total_m = h * 60 + m + (5 * 60 + 30) # Add 5 hrs 30 mins
+        ist_h = (total_m // 60) % 24
+        ist_min = total_m % 60
+        ampm = 'AM' if ist_h < 12 else 'PM'
+        display_h = ist_h if 1 <= ist_h <= 12 else (12 if ist_h == 0 else ist_h - 12)
+        return f"{display_h}:{ist_min:02d} {ampm} IST"
+
+    if date_str:
+        try:
+            d = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            import zoneinfo
+            ist_tz = zoneinfo.ZoneInfo('Asia/Kolkata')
+            ist_dt = d.astimezone(ist_tz)
+            return ist_dt.strftime('%I:%M %p IST').lstrip('0')
+        except Exception:
+            pass
+    return ""
+
+def get_match_streaming(series: str = '', name: str = '') -> dict:
+    """Returns official streaming & TV broadcast channel for Indian and global cricket fans."""
+    text = f"{series} {name}".lower()
+    if any(k in text for k in ['sixes', 'hong kong']):
+        return {
+            'platform': 'FanCode / Star Sports',
+            'channel': 'Star Sports Network',
+            'ott': 'FanCode App & Website',
+            'badge': 'FanCode'
+        }
+    if any(k in text for k in ['new zealand', 'nz']):
+        return {
+            'platform': 'Sony LIV / Sony Sports Ten',
+            'channel': 'Sony Sports Ten 1 / Ten 5',
+            'ott': 'Sony LIV App',
+            'badge': 'Sony LIV'
+        }
+    if any(k in text for k in ['australia', 'sheffield', 'big bash', 'bbl']):
+        return {
+            'platform': 'Disney+ Hotstar / Star Sports',
+            'channel': 'Star Sports Select',
+            'ott': 'Disney+ Hotstar',
+            'badge': 'Hotstar'
+        }
+    if any(k in text for k in ['bangladesh', 'ncl', 'national cricket league']):
+        return {
+            'platform': 'T Sports / YouTube (BCB Live)',
+            'channel': 'T Sports',
+            'ott': 'YouTube (BCB Live)',
+            'badge': 'YouTube / T Sports'
+        }
+    if any(k in text for k in ['pro50', 'zimbabwe', 'namibia', 'ireland', 'canada', 'gt20', 'nepal', 'npl']):
+        return {
+            'platform': 'FanCode / ICC.tv',
+            'channel': 'FanCode',
+            'ott': 'FanCode App & Web',
+            'badge': 'FanCode'
+        }
+    if any(k in text for k in ['icc', 'world cup', 't20 world cup', 'asia cup', 'ipl', 'wpl']):
+        return {
+            'platform': 'JioCinema / Star Sports',
+            'channel': 'Star Sports 1 / Sports18',
+            'ott': 'JioCinema App',
+            'badge': 'JioCinema'
+        }
+    if any(k in text for k in ['south africa', 'csa', 'pro20', 'dolphins', 'titans', 'lions']):
+        return {
+            'platform': 'JioCinema / Sports18',
+            'channel': 'Sports18 1 HD',
+            'ott': 'JioCinema App',
+            'badge': 'JioCinema'
+        }
+    if 'india' in text:
+        return {
+            'platform': 'JioCinema / Sports18',
+            'channel': 'Sports18 Network',
+            'ott': 'JioCinema App',
+            'badge': 'JioCinema'
+        }
+    return {
+        'platform': 'FanCode / Official Digital Stream',
+        'channel': 'Sports Feed',
+        'ott': 'FanCode / Live Stream',
+        'badge': 'Live OTT'
+    }
+
 def fetch_cricinfo_live_matches() -> list:
     """
     Fetch live cricket match scorecards and upcoming international fixtures
@@ -427,6 +516,7 @@ def fetch_cricinfo_live_matches() -> list:
             leagues = sports[0].get('leagues', [])
             for lg in leagues:
                 series_name = lg.get('name', 'Cricket Series')
+                league_id = str(lg.get('id', ''))
                 for ev in lg.get('events', []):
                     ev_id = ev.get('id')
                     name = ev.get('name', '')
@@ -454,9 +544,12 @@ def fetch_cricinfo_live_matches() -> list:
                     match_notes = [n.get('text') for n in notes_list if n.get('type') in ['matchnote', 'closeofplay'] and n.get('text')]
                     session_info = full_status.get('session', '')
                     day_num = full_status.get('dayNumber', '')
+                    ist_formatted = parse_ist_time(ev_date, status_detail or summary or '')
+                    streaming_info = get_match_streaming(series_name, name)
 
                     matches.append({
                         'id': str(ev_id),
+                        'league_id': league_id,
                         'name': name,
                         'series': series_name,
                         'description': desc,
@@ -465,6 +558,8 @@ def fetch_cricinfo_live_matches() -> list:
                         'status': raw_status, # 'in'=live, 'pre'=upcoming, 'post'=finished
                         'status_text': status_detail or summary or ('Live' if raw_status == 'in' else ('Scheduled' if raw_status == 'pre' else 'Completed')),
                         'date': ev_date,
+                        'ist_time': ist_formatted,
+                        'streaming': streaming_info,
                         'cricinfo_url': cricinfo_link,
                         'toss': toss_note,
                         'session': session_info,
@@ -505,8 +600,10 @@ def fetch_cricinfo_live_matches() -> list:
                     t1_str = parts[0].strip() if len(parts) > 0 else 'Team 1'
                     t2_str = parts[1].strip() if len(parts) > 1 else 'Team 2'
                     is_live = '*' in title
+                    streaming_info = get_match_streaming('Live Cricket', title)
                     matches.append({
                         'id': guid,
+                        'league_id': '0',
                         'name': title,
                         'series': 'Live Cricket',
                         'description': title,
@@ -515,6 +612,8 @@ def fetch_cricinfo_live_matches() -> list:
                         'status': 'in' if is_live else 'pre',
                         'status_text': 'Live Now • In Progress' if is_live else 'Scorecard Update',
                         'date': datetime.now().isoformat(),
+                        'ist_time': datetime.now().strftime('%I:%M %p IST').lstrip('0'),
+                        'streaming': streaming_info,
                         'cricinfo_url': link,
                         'team1': {'name': t1_str, 'short_name': '', 'score': '', 'logo': ''},
                         'team2': {'name': t2_str, 'short_name': '', 'score': '', 'logo': ''}
@@ -528,6 +627,61 @@ def fetch_cricinfo_live_matches() -> list:
         return matches
 
     return _cricket_cache["data"] or []
+
+def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None) -> dict:
+    """Fetches detailed batting and bowling scorecard, fall of wickets, rosters, and commentary for a match."""
+    league_candidates = [league_id] if league_id else []
+    league_candidates.extend(['24805', '8814', '8838', '15599', '15439', '8820', '8840'])
+
+    for lid in league_candidates:
+        if not lid: continue
+        url = f'https://site.api.espn.com/apis/site/v2/sports/cricket/{lid}/summary?event={match_id}'
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+            with urllib.request.urlopen(req, timeout=3.5) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                if 'matchcards' in data or 'rosters' in data or 'notes' in data:
+                    matchcards = data.get('matchcards', [])
+                    notes = [n.get('text') for n in data.get('notes', []) if n.get('text')]
+                    rosters = []
+                    for r in data.get('rosters', []):
+                        team_name = r.get('team', {}).get('displayName', 'Team')
+                        team_logo = r.get('team', {}).get('logo', '')
+                        players = []
+                        for p in r.get('roster', []):
+                            ath = p.get('athlete', {})
+                            players.append({
+                                'name': ath.get('displayName') or ath.get('name', 'Player'),
+                                'short_name': ath.get('shortName', ''),
+                                'position': p.get('position', {}).get('name', ''),
+                                'jersey': p.get('jersey', '')
+                            })
+                        rosters.append({
+                            'team': team_name,
+                            'logo': team_logo,
+                            'players': players
+                        })
+
+                    return {
+                        'status': 'success',
+                        'match_id': match_id,
+                        'league_id': lid,
+                        'matchcards': matchcards,
+                        'notes': notes,
+                        'rosters': rosters,
+                        'game_info': data.get('gameInfo', {})
+                    }
+        except Exception:
+            continue
+
+    return {
+        'status': 'fallback',
+        'match_id': match_id,
+        'matchcards': [],
+        'notes': [],
+        'rosters': [],
+        'game_info': {}
+    }
 
 def parse_reminder_time(text: str) -> tuple:
     """

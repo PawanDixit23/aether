@@ -1250,6 +1250,16 @@ def get_live_cricket(filter_intl: bool = False):
         "last_updated": datetime.now().isoformat()
     }
 
+@app.get("/api/cricket/match/{match_id}")
+def get_cricket_match_detail(match_id: str, league_id: Optional[str] = None):
+    """Fetches comprehensive batting, bowling scorecards, rosters and notes for a specific match."""
+    try:
+        from ai_engine import fetch_cricinfo_match_scorecard
+    except ImportError:
+        from .ai_engine import fetch_cricinfo_match_scorecard
+    return fetch_cricinfo_match_scorecard(match_id=match_id, league_id=league_id)
+
+
 # ----------------- Reminders & Notification Engine -----------------
 def get_next_weekday(dt: datetime) -> datetime:
     next_day = dt + timedelta(days=1)
