@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, RefreshCw, Globe, Trophy, Radio, Clock, CheckCircle2, 
   Search, ArrowLeft, Award, MapPin, Tv, Users, Info, ChevronRight,
