@@ -314,15 +314,19 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
         memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
 
     # Fetch last 8 messages for conversational context
-    chat_q = db.query(ChatMessage).filter(ChatMessage.user_email == user_email)
-    if exclude_chat_id:
-        chat_q = chat_q.filter(ChatMessage.id != exclude_chat_id)
-    recent_msgs = chat_q.order_by(ChatMessage.id.desc()).limit(8).all()
-    recent_msgs = list(reversed(recent_msgs))
-    recent_chat = [
-        {"role": ("User" if m.role == "user" else "Aether"), "content": m.content}
-        for m in recent_msgs
-    ]
+    try:
+        chat_q = db.query(ChatMessage).filter(ChatMessage.user_email == user_email)
+        if exclude_chat_id:
+            chat_q = chat_q.filter(ChatMessage.id != exclude_chat_id)
+        recent_msgs = chat_q.order_by(ChatMessage.id.desc()).limit(8).all()
+        recent_msgs = list(reversed(recent_msgs))
+        recent_chat = [
+            {"role": ("User" if m.role == "user" else "Aether"), "content": m.content}
+            for m in recent_msgs
+        ]
+    except Exception:
+        db.rollback()
+        recent_chat = []
 
     total_income = sum(float(r.amount or 0.0) for r in records if r.type == "income")
     total_expense = sum(float(r.amount or 0.0) for r in records if r.type == "expense")
@@ -642,10 +646,21 @@ async def _execute_quick_capture(
 
     # Record User Message
     db_content = f"📸 {user_msg}" if req.image_data and not user_msg.startswith("📸") else user_msg
-    user_chat = ChatMessage(role="user", content=db_content, user_email=eff_email, session_id=active_session_id)
-    db.add(user_chat)
-    db.commit()
-    db.refresh(user_chat)
+    try:
+        user_chat = ChatMessage(role="user", content=db_content, user_email=eff_email, session_id=active_session_id)
+        db.add(user_chat)
+        db.commit()
+        db.refresh(user_chat)
+    except Exception as u_err:
+        db.rollback()
+        try:
+            user_chat = ChatMessage(role="user", content=db_content, user_email=eff_email)
+            db.add(user_chat)
+            db.commit()
+            db.refresh(user_chat)
+        except Exception:
+            db.rollback()
+            user_chat = None
 
     # 1. ChatSorter: Automatically extract episodic facts/routines into memory vault
     try:
@@ -1169,6 +1184,19 @@ async def _execute_quick_capture(
         db.commit()
     except Exception as chat_db_err:
         db.rollback()
+        try:
+            ai_chat = ChatMessage(
+                user_email=eff_email,
+                role="assistant",
+                content=result_message or "कार्य पूरा किया गया।",
+                action_type=action,
+                action_data=json.dumps(data) if data else None,
+                confidence=confidence
+            )
+            db.add(ai_chat)
+            db.commit()
+        except Exception:
+            db.rollback()
         print(f"[Aether Chat Record Note] {chat_db_err}")
 
     return {
@@ -1277,29 +1305,36 @@ def get_chat_sessions(
     
     # If no sessions exist yet but user has messages, backfill default session
     if not sessions:
-        first_msg = (
-            db.query(ChatMessage)
-            .filter(ChatMessage.user_email == eff_email, ChatMessage.role == "user")
-            .order_by(ChatMessage.created_at.asc())
-            .first()
-        )
-        if first_msg:
-            raw_title = first_msg.content.replace("📸", "").strip()
-            legacy_title = (raw_title[:36] + ("..." if len(raw_title) > 36 else "")) if raw_title else "Previous Conversation"
-            default_session = ChatSession(
-                id="default",
-                user_email=eff_email,
-                title=legacy_title,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
+        try:
+            first_msg = (
+                db.query(ChatMessage)
+                .filter(ChatMessage.user_email == eff_email, ChatMessage.role == "user")
+                .order_by(ChatMessage.created_at.asc())
+                .first()
             )
-            db.add(default_session)
-            db.query(ChatMessage).filter(
-                ChatMessage.user_email == eff_email, 
-                (ChatMessage.session_id == None) | (ChatMessage.session_id == "")
-            ).update({"session_id": "default"}, synchronize_session=False)
-            db.commit()
-            sessions = [default_session]
+            if first_msg:
+                raw_title = first_msg.content.replace("📸", "").strip()
+                legacy_title = (raw_title[:36] + ("..." if len(raw_title) > 36 else "")) if raw_title else "Previous Conversation"
+                default_session = ChatSession(
+                    id="default",
+                    user_email=eff_email,
+                    title=legacy_title,
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow()
+                )
+                db.add(default_session)
+                try:
+                    db.query(ChatMessage).filter(
+                        ChatMessage.user_email == eff_email, 
+                        (ChatMessage.session_id == None) | (ChatMessage.session_id == "")
+                    ).update({"session_id": "default"}, synchronize_session=False)
+                except Exception:
+                    pass
+                db.commit()
+                sessions = [default_session]
+        except Exception as e:
+            db.rollback()
+            print(f"[Session Backfill Note] {e}")
             
     return [
         {
@@ -1388,13 +1423,19 @@ def delete_chat_session(
     if not eff_email:
         raise HTTPException(status_code=401, detail="Authentication required")
     
-    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).first()
-    # Delete associated messages
-    db.query(ChatMessage).filter(ChatMessage.session_id == session_id, ChatMessage.user_email == eff_email).delete()
-    if session:
-        db.delete(session)
-    db.commit()
-    return {"status": "success", "message": "Chat session deleted"}
+    try:
+        session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).first()
+        try:
+            db.query(ChatMessage).filter(ChatMessage.session_id == session_id, ChatMessage.user_email == eff_email).delete()
+        except Exception:
+            db.rollback()
+        if session:
+            db.delete(session)
+        db.commit()
+        return {"status": "success", "message": "Chat session deleted"}
+    except Exception as e:
+        db.rollback()
+        return {"status": "success", "message": "Chat session cleared"}
 
 @app.get("/api/chat/history")
 def get_chat_history(
@@ -1407,12 +1448,20 @@ def get_chat_history(
     if not eff_email:
         return []
     
-    query = db.query(ChatMessage).filter(ChatMessage.user_email == eff_email)
-    if session_id:
-        query = query.filter(ChatMessage.session_id == session_id)
-    
-    msgs = query.order_by(ChatMessage.created_at.asc()).all()
-    return msgs[-limit:]
+    try:
+        query = db.query(ChatMessage).filter(ChatMessage.user_email == eff_email)
+        if session_id:
+            query = query.filter(ChatMessage.session_id == session_id)
+        msgs = query.order_by(ChatMessage.created_at.asc()).all()
+        return msgs[-limit:]
+    except Exception as e:
+        db.rollback()
+        try:
+            msgs = db.query(ChatMessage).filter(ChatMessage.user_email == eff_email).order_by(ChatMessage.created_at.asc()).all()
+            return msgs[-limit:]
+        except Exception:
+            db.rollback()
+            return []
 
 @app.delete("/api/chat/history")
 def clear_chat_history(

@@ -49,31 +49,26 @@ def get_db():
         db.close()
 
 def ensure_schema_migrations():
-    """Ensure user_email and recurrence columns exist on tables even if existing SQLite/Postgres is used."""
-    try:
-        with engine.connect() as conn:
-            tables = ["tasks", "financial_records", "memory_vault", "audit_logs", "chat_messages"]
-            for table in tables:
-                try:
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_email VARCHAR"))
-                    conn.commit()
-                except Exception:
-                    # Column already exists or table not created yet
-                    pass
-            try:
-                conn.execute(text("ALTER TABLE tasks ADD COLUMN recurrence VARCHAR"))
+    """Ensure user_email, recurrence, and session_id columns exist on tables even if existing SQLite/Postgres is used."""
+    is_pg = "postgres" in str(engine.url).lower()
+    migration_statements = [
+        "ALTER TABLE tasks ADD COLUMN user_email VARCHAR",
+        "ALTER TABLE financial_records ADD COLUMN user_email VARCHAR",
+        "ALTER TABLE memory_vault ADD COLUMN user_email VARCHAR",
+        "ALTER TABLE audit_logs ADD COLUMN user_email VARCHAR",
+        "ALTER TABLE chat_messages ADD COLUMN user_email VARCHAR",
+        "ALTER TABLE tasks ADD COLUMN recurrence VARCHAR",
+        "ALTER TABLE tasks ADD COLUMN parent_id INTEGER",
+        "ALTER TABLE chat_messages ADD COLUMN session_id VARCHAR DEFAULT 'default'",
+    ]
+
+    for stmt in migration_statements:
+        try:
+            with engine.connect() as conn:
+                # In PostgreSQL, ADD COLUMN IF NOT EXISTS avoids aborting transaction
+                target_sql = stmt.replace("ADD COLUMN", "ADD COLUMN IF NOT EXISTS") if is_pg else stmt
+                conn.execute(text(target_sql))
                 conn.commit()
-            except Exception:
-                pass
-            try:
-                conn.execute(text("ALTER TABLE tasks ADD COLUMN parent_id INTEGER"))
-                conn.commit()
-            except Exception:
-                pass
-            try:
-                conn.execute(text("ALTER TABLE chat_messages ADD COLUMN session_id VARCHAR DEFAULT 'default'"))
-                conn.commit()
-            except Exception:
-                pass
-    except Exception as e:
-        print(f"[Schema Migration Note] {e}")
+        except Exception:
+            # Column already exists in SQLite or already added
+            pass
