@@ -227,11 +227,11 @@ export const TasksModal = ({
 
       // If toggling on TODAY, also sync with main backend task status
       if (isSelectedDateToday && handleToggleTask) {
-        handleToggleTask(task.id);
+        handleToggleTask(task.id, willBeDone, selectedDateStr);
       }
     } else {
       if (handleToggleTask) {
-        handleToggleTask(task.id);
+        handleToggleTask(task.id, willBeDone, selectedDateStr);
       }
     }
   };
@@ -265,7 +265,7 @@ export const TasksModal = ({
 
       // Status filter
       if (agendaFilter === 'completed' && !done) return false;
-      if (agendaFilter === 'overdue') return isOverdueNow;
+      if (agendaFilter === 'overdue' && !isOverdueNow) return false;
       if (agendaFilter === 'upcoming' && (done || daily || !tDateStr || tDateStr <= todayStr)) return false;
       if (agendaFilter === 'today' && !isForSelectedDate) return false;
 

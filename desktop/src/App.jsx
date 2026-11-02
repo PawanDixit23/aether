@@ -408,7 +408,14 @@ export const calculateTaskTrigger = (t) => {
     }
   }
 
-  const triggerSeconds = Math.max(1, Math.round((target.getTime() - now.getTime()) / 1000));
+  // If target time is in the past and non-recurring, it is overdue — do NOT fire an alarm!
+  if (target.getTime() <= now.getTime()) {
+    return null;
+  }
+
+  const triggerSeconds = Math.round((target.getTime() - now.getTime()) / 1000);
+  if (triggerSeconds <= 0) return null;
+
   return {
     triggerSeconds,
     isDaily,
@@ -1661,9 +1668,23 @@ export default function App() {
     localStorage.removeItem('aether_user_name');
     localStorage.removeItem('aether_user_avatar');
     localStorage.removeItem('aether_onboarding_done');
+    localStorage.removeItem('aether_cached_tasks');
     setUserEmail('');
     setUserName('Operator');
     setUserAvatar('');
+    setTasks([]);
+    setChatHistory([]);
+    setMemories([]);
+    setFinanceRecords([]);
+    setFinanceSummary({ total_income: 0, total_expense: 0, balance: 0 });
+    if (typeof window !== 'undefined') {
+      delete window.__nativeBackup;
+      if (window.ReactNativeWebView) {
+        try {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'CLEAR_NATIVE_BACKUP' }));
+        } catch (e) {}
+      }
+    }
     setOnboardingDone(false);
     setOnboardingStep(1);
     setIsSettingsOpen(false);
@@ -3117,17 +3138,23 @@ export default function App() {
             } catch (e) {}
           }
         } else {
-          // If server returned 0 records, try restoring from local backup or native bridge backup
+          // If server returned 0 records, try restoring from local backup or native bridge backup ONLY for this exact user
           let backupData = null;
-          const cachedBackupStr = localStorage.getItem(`aether_backup_${currentEmail}`) || localStorage.getItem('aether_cached_tasks');
+          const cachedBackupStr = currentEmail ? localStorage.getItem(`aether_backup_${currentEmail}`) : null;
           if (cachedBackupStr) {
             try { backupData = JSON.parse(cachedBackupStr); } catch (e) {}
           }
           if (!backupData && typeof window !== 'undefined' && window.__nativeBackup) {
-            try { backupData = JSON.parse(window.__nativeBackup); } catch (e) {}
+            try {
+              const parsed = JSON.parse(window.__nativeBackup);
+              // Strict Multi-tenant check: never restore another account's backup
+              if (parsed && parsed.email && currentEmail && parsed.email.trim().toLowerCase() === currentEmail.trim().toLowerCase()) {
+                backupData = parsed;
+              }
+            } catch (e) {}
           }
 
-          if (backupData) {
+          if (backupData && currentEmail) {
             const bTasks = Array.isArray(backupData) ? backupData : (backupData.tasks || []);
             const bMems = backupData.memories || [];
             const bFin = backupData.finances || [];
@@ -3725,17 +3752,24 @@ export default function App() {
     }
   };
 
-  const handleToggleTask = async (taskId) => {
+  const handleToggleTask = async (taskId, explicitDone = null, explicitDateStr = null) => {
     // Record date-aware completion for recurring/daily tasks
-    const todayDateKey = formatLocalDateStr ? formatLocalDateStr(new Date()) : new Date().toISOString().slice(0, 10);
+    const todayDateKey = explicitDateStr || (formatLocalDateStr ? formatLocalDateStr(new Date()) : new Date().toISOString().slice(0, 10));
     const targetTask = tasks.find(t => t.id === taskId) || (typeof combinedTasks !== 'undefined' ? combinedTasks.find(t => t.id === taskId) : null);
     const isDaily = targetTask && (targetTask.recurrence === 'daily' || targetTask.repeat === 'daily' || String(targetTask.recurrence || '').toLowerCase().includes('daily'));
+    
+    let willBeDone;
+    if (explicitDone !== null && explicitDone !== undefined) {
+      willBeDone = Boolean(explicitDone);
+    } else {
+      willBeDone = !(targetTask?.is_completed || targetTask?.status === 'completed');
+    }
+
     if (isDaily) {
       try {
         const saved = localStorage.getItem('aether_task_date_completions');
         const map = saved ? JSON.parse(saved) : {};
-        const currentDone = map[taskId]?.[todayDateKey] || false;
-        map[taskId] = { ...(map[taskId] || {}), [todayDateKey]: !currentDone };
+        map[taskId] = { ...(map[taskId] || {}), [todayDateKey]: willBeDone };
         localStorage.setItem('aether_task_date_completions', JSON.stringify(map));
       } catch (e) {}
     }
@@ -3743,7 +3777,6 @@ export default function App() {
     // Optimistically toggle task in local state immediately so UI updates with zero delay
     setTasks(prev => prev.map(t => {
       if (t.id === taskId) {
-        const willBeDone = !(t.is_completed || t.status === 'completed');
         return {
           ...t,
           is_completed: willBeDone,
@@ -3755,7 +3788,6 @@ export default function App() {
           ...t,
           subtasks: t.subtasks.map(s => {
             if (s.id === taskId) {
-              const willBeDone = !(s.is_completed || s.status === 'completed');
               return {
                 ...s,
                 is_completed: willBeDone,
@@ -3770,7 +3802,7 @@ export default function App() {
     }));
 
     // Cancel native reminder alarm if being marked done
-    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+    if (willBeDone && typeof window !== 'undefined' && window.ReactNativeWebView) {
       try {
         window.ReactNativeWebView.postMessage(JSON.stringify({
           type: 'CANCEL_REMINDER',

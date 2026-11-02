@@ -492,9 +492,19 @@ export default function App() {
                 // Audio is handled natively and cleanly directly within the webview Audio element
                 // No duplicate injection needed to prevent 2 audio streams playing simultaneously
               } else if (data.type === 'STORE_NATIVE_BACKUP') {
-                if (data.payload) {
+                if (data.payload && data.payload.email) {
+                  const userKey = `aether_offline_backup_${data.payload.email.trim().toLowerCase()}`;
+                  AsyncStorage.setItem(userKey, JSON.stringify(data.payload)).catch(() => {});
                   AsyncStorage.setItem('aether_offline_backup', JSON.stringify(data.payload)).catch(() => {});
                 }
+              } else if (data.type === 'CLEAR_NATIVE_BACKUP') {
+                try {
+                  const allKeys = await AsyncStorage.getAllKeys();
+                  const backupKeys = allKeys.filter(k => k.startsWith('aether_offline_backup'));
+                  if (backupKeys.length > 0) {
+                    await AsyncStorage.multiRemove(backupKeys);
+                  }
+                } catch (e) {}
               }
             } catch (err) {
               console.warn('WebView onMessage error:', err);

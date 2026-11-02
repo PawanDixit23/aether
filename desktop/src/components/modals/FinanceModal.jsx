@@ -57,13 +57,30 @@ const DEFAULT_BUDGETS = [
 
 export const QUICK_EXPENSE_CHIPS = [
   { id: 'food', label: '🍔 Lunch/Dinner', text: 'Lunch/Dinner', cat: 'food' },
-  { id: 'fuel', label: '⛽ Petrol', text: 'Petrol / Fuel', cat: 'fuel' },
+  { id: 'fuel', label: '⛽ Petrol', text: 'Petrol / Fuel', cat: 'petrol' },
   { id: 'grocery', label: '🛒 Grocery', text: 'Grocery', cat: 'shopping' },
-  { id: 'cab', label: '🚕 Uber/Cab', text: 'Uber / Cab', cat: 'travel' },
-  { id: 'medicine', label: '💊 Medicine', text: 'Medicine', cat: 'health' },
+  { id: 'cab', label: '🚕 Uber/Cab', text: 'Uber / Cab', cat: 'other' },
+  { id: 'medicine', label: '💊 Medicine', text: 'Medicine', cat: 'medical' },
   { id: 'coffee', label: '☕ Chai/Snacks', text: 'Chai & Snacks', cat: 'food' },
   { id: 'bills', label: '⚡ Bills', text: 'Utility Bill', cat: 'bills' },
   { id: 'shopping', label: '🛍️ Shopping', text: 'Shopping', cat: 'shopping' },
+];
+
+export const INCOME_CATEGORIES = [
+  { id: 'salary', label: 'Salary / वेतन', icon: '💼', color: '#10b981' },
+  { id: 'investment', label: 'Investments / रिटर्न', icon: '📈', color: '#38bdf8' },
+  { id: 'freelance', label: 'Freelance / परामर्श', icon: '🤝', color: '#a855f7' },
+  { id: 'cashback', label: 'Cashback & Rewards', icon: '🎁', color: '#f59e0b' },
+  { id: 'business', label: 'Business / Rental', icon: '🏢', color: '#06b6d4' },
+  { id: 'other_income', label: 'Other Income / अन्य', icon: '💰', color: '#34d399' }
+];
+
+export const QUICK_INCOME_CHIPS = [
+  { id: 'salary', label: '💼 Salary', text: 'Monthly Salary', cat: 'salary' },
+  { id: 'mf_dividend', label: '📈 Dividend / Return', text: 'Investment Return', cat: 'investment' },
+  { id: 'client_pay', label: '🤝 Client Payment', text: 'Client Payment', cat: 'freelance' },
+  { id: 'cashback', label: '🎁 Cashback / Reward', text: 'UPI Cashback', cat: 'cashback' },
+  { id: 'bonus', label: '💰 Bonus', text: 'Quarterly Bonus', cat: 'salary' }
 ];
 
 export const FinanceModal = ({
@@ -117,14 +134,76 @@ export const FinanceModal = ({
   // Bank SMS Auto-Log State
   const [isSmsParserOpen, setIsSmsParserOpen] = useState(false);
   const [smsInputText, setSmsInputText] = useState('');
+  const [smsAmount, setSmsAmount] = useState('');
   const [smsExpensePurpose, setSmsExpensePurpose] = useState('');
   const [isParsingSms, setIsParsingSms] = useState(false);
   const [parsedSmsResult, setParsedSmsResult] = useState(null);
 
+  const handleSmsInputChange = (text) => {
+    setSmsInputText(text);
+    // Instant regex extraction for Amount & Merchant
+    const amtMatch = text.match(/(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)/i) || 
+                     text.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:debited|spent|paid|credited)/i);
+    if (amtMatch) {
+      const cleanAmt = amtMatch[1].replace(/,/g, '');
+      setSmsAmount(cleanAmt);
+    }
+    const merchMatch = text.match(/(?:at|to|vpa|info|trf to)\s+([A-Za-z0-9\s._-]+?)(?:\s+(?:on|ref|upi|avl|bal|val)|\.|\,|$)/i);
+    if (merchMatch && !smsExpensePurpose) {
+      setSmsExpensePurpose(merchMatch[1].trim());
+    }
+  };
+
+  const handleSaveSmsExpense = async () => {
+    const amtVal = parseFloat(smsAmount);
+    if (!isNaN(amtVal) && amtVal > 0) {
+      setIsParsingSms(true);
+      try {
+        const resp = await fetch(`${API_BASE}/finance/records`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(userEmail ? { 'X-User-Email': userEmail } : {})
+          },
+          body: JSON.stringify({
+            type: 'expense',
+            amount: amtVal,
+            category: 'food',
+            note: smsExpensePurpose.trim() || smsInputText.trim() || 'Expense',
+            payment_mode: 'upi',
+            user_email: userEmail || null
+          })
+        });
+        const data = await resp.json();
+        if (data.status === 'success') {
+          setSmsAmount('');
+          setSmsInputText('');
+          setSmsExpensePurpose('');
+          setIsSmsParserOpen(false);
+          if (showToast) showToast(`✅ ₹${amtVal} खर्च दर्ज किया गया!`, "success");
+          if (refreshAllData) refreshAllData();
+        } else {
+          if (showToast) showToast("खर्च सहेजने में त्रुटि आई", "error");
+        }
+      } catch (e) {
+        if (showToast) showToast("खर्च सहेजने में त्रुटि आई", "error");
+      } finally {
+        setIsParsingSms(false);
+      }
+      return;
+    }
+
+    if (smsInputText.trim()) {
+      await handleParseSms();
+    } else {
+      if (showToast) showToast("कृपया राशि या SMS दर्ज करें", "info");
+    }
+  };
+
   const handleParseSms = async (textToParse = smsInputText) => {
     const raw = (textToParse || '').trim();
-    if (!raw) {
-      if (showToast) showToast("Please paste bank SMS text", "info");
+    if (!raw && !smsAmount) {
+      if (showToast) showToast("कृपया राशि या बैंक SMS दर्ज करें", "info");
       return;
     }
     setIsParsingSms(true);
@@ -148,14 +227,15 @@ export const FinanceModal = ({
         const rec = data.records[0];
         setParsedSmsResult(rec);
         setSmsInputText('');
+        setSmsAmount('');
         setSmsExpensePurpose('');
-        if (showToast) showToast(`✅ ₹${rec.amount} ${rec.category || 'expense'} logged successfully! (${rec.merchant || ''})`, "success");
+        if (showToast) showToast(`✅ ₹${rec.amount} ${rec.category || 'expense'} दर्ज किया गया! (${rec.merchant || ''})`, "success");
         if (refreshAllData) refreshAllData();
       } else {
-        if (showToast) showToast("No valid financial transaction found in SMS. Please check text.", "info");
+        if (showToast) showToast("SMS से राशि स्वतः नहीं मिली, कृपया ऊपर राशि दर्ज करके सहेजें।", "info");
       }
     } catch (err) {
-      if (showToast) showToast("Error parsing SMS text", "error");
+      if (showToast) showToast("त्रुटि: कृपया राशि दर्ज करके सेव करें", "error");
     } finally {
       setIsParsingSms(false);
     }
@@ -799,7 +879,7 @@ export const FinanceModal = ({
               rows={3}
               placeholder="Paste Indian Bank SMS alert here...&#10;(e.g. A/C XX1234 debited for Rs 1499.00 on 31-Oct-26 at ZARA JAIPUR. UPI Ref: 987654...)"
               value={smsInputText}
-              onChange={e => setSmsInputText(e.target.value)}
+              onChange={e => handleSmsInputChange(e.target.value)}
               style={{
                 width: '100%',
                 boxSizing: 'border-box',
@@ -864,56 +944,82 @@ export const FinanceModal = ({
               </div>
             </div>
 
-            {/* Custom Expense Purpose / What this expense was for */}
-            <div style={{ marginBottom: '12px' }}>
-              <div style={{ fontSize: '0.74rem', color: '#94a3b8', fontWeight: 600, marginBottom: '5px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <span>📝 Custom Reason / खर्च का कारण (Optional):</span>
+            {/* Amount & Custom Reason in a clean responsive grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '8px', marginBottom: '12px' }}>
+              <div>
+                <div style={{ fontSize: '0.74rem', color: '#38bdf8', fontWeight: 700, marginBottom: '5px' }}>
+                  <span>₹ Amount:</span>
+                </div>
+                <input
+                  type="number"
+                  placeholder="e.g. 500"
+                  value={smsAmount}
+                  onChange={e => setSmsAmount(e.target.value)}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    background: '#060d1c',
+                    border: '1px solid rgba(56, 189, 248, 0.4)',
+                    borderRadius: '10px',
+                    padding: '9px 12px',
+                    color: '#f8fafc',
+                    fontSize: '0.84rem',
+                    fontWeight: 700,
+                    outline: 'none'
+                  }}
+                />
               </div>
-              <input
-                type="text"
-                placeholder="e.g. Dinner with friends, Sneakers, Medicine, Groceries..."
-                value={smsExpensePurpose}
-                onChange={e => setSmsExpensePurpose(e.target.value)}
-                style={{
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  background: '#060d1c',
-                  border: '1px solid rgba(56, 189, 248, 0.25)',
-                  borderRadius: '10px',
-                  padding: '9px 12px',
-                  color: '#f8fafc',
-                  fontSize: '0.80rem',
-                  outline: 'none',
-                  transition: 'border-color 0.15s'
-                }}
-              />
+
+              <div>
+                <div style={{ fontSize: '0.74rem', color: '#94a3b8', fontWeight: 600, marginBottom: '5px' }}>
+                  <span>📝 Reason / खर्च का कारण:</span>
+                </div>
+                <input
+                  type="text"
+                  placeholder="e.g. Petrol, Dinner, Groceries..."
+                  value={smsExpensePurpose}
+                  onChange={e => setSmsExpensePurpose(e.target.value)}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    background: '#060d1c',
+                    border: '1px solid rgba(56, 189, 248, 0.25)',
+                    borderRadius: '10px',
+                    padding: '9px 12px',
+                    color: '#f8fafc',
+                    fontSize: '0.80rem',
+                    outline: 'none',
+                    transition: 'border-color 0.15s'
+                  }}
+                />
+              </div>
             </div>
 
             {/* Action Submit Button */}
             <button
               type="button"
-              disabled={isParsingSms || !smsInputText.trim()}
-              onClick={() => handleParseSms()}
+              disabled={isParsingSms || (!smsAmount && !smsInputText.trim())}
+              onClick={handleSaveSmsExpense}
               style={{
                 width: '100%',
-                background: !smsInputText.trim() ? 'rgba(56, 189, 248, 0.2)' : 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                background: (!smsAmount && !smsInputText.trim()) ? 'rgba(56, 189, 248, 0.2)' : 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
                 border: 'none',
                 color: '#ffffff',
                 padding: '11px',
                 borderRadius: '12px',
                 fontWeight: 700,
                 fontSize: '0.84rem',
-                cursor: !smsInputText.trim() ? 'not-allowed' : 'pointer',
+                cursor: (!smsAmount && !smsInputText.trim()) ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '6px',
-                boxShadow: smsInputText.trim() ? '0 4px 14px rgba(2, 132, 199, 0.4)' : 'none',
+                boxShadow: (smsAmount || smsInputText.trim()) ? '0 4px 14px rgba(2, 132, 199, 0.4)' : 'none',
                 transition: 'all 0.15s'
               }}
             >
               <Sparkles size={15} />
-              <span>{isParsingSms ? 'Parsing Transaction & Logging...' : '⚡ Auto-Detect & Record to Expense'}</span>
+              <span>{isParsingSms ? 'Saving Transaction...' : '💾 Save Transaction (खर्च सहेजें)'}</span>
             </button>
 
             {/* Parsed Result Success Card */}
@@ -1464,199 +1570,258 @@ export const FinanceModal = ({
         )}
 
         {/* Quick Add Form Drawer when Add Expense or Add Income is clicked */}
-        {isAddingExpense && (
-          <div style={{ background: '#0e172a', border: '1px solid rgba(56, 189, 248, 0.3)', borderRadius: '20px', padding: '16px', marginBottom: '16px', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <span style={{ fontSize: '0.86rem', fontWeight: 700, color: '#ffffff' }}>
-                {newExpenseForm.type === 'income' ? 'Record Income' : 'Record Expense'}
-              </span>
-              <button type="button" onClick={() => setIsAddingExpense(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>✕</button>
-            </div>
+        {isAddingExpense && (() => {
+          const isIncome = newExpenseForm.type === 'income';
+          const currentCategories = isIncome ? INCOME_CATEGORIES : FINANCE_CATEGORIES;
+          const currentChips = isIncome ? QUICK_INCOME_CHIPS : QUICK_EXPENSE_CHIPS;
+          const themeColor = isIncome ? '#10b981' : '#f43f5e';
+          const themeBorder = isIncome ? 'rgba(16, 185, 129, 0.4)' : 'rgba(244, 63, 94, 0.4)';
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
-              <div>
-                <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Amount (₹)</label>
-                <input
-                  type="number"
-                  placeholder="e.g. 500"
-                  value={newExpenseForm.amount}
-                  onChange={e => setNewExpenseForm({ ...newExpenseForm, amount: e.target.value })}
-                  style={{ width: '100%', boxSizing: 'border-box', background: '#060a14', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '10px', padding: '9px 10px', color: '#fff', fontSize: '0.84rem' }}
-                />
-              </div>
-              <div style={{ position: 'relative' }}>
-                <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Category</label>
+          const handleSaveTransactionForm = async () => {
+            const amtVal = parseFloat(newExpenseForm.amount);
+            if (isNaN(amtVal) || amtVal <= 0) {
+              if (showToast) showToast("कृपया एक वैध राशि दर्ज करें (e.g. 500)", "info");
+              return;
+            }
+            try {
+              const resp = await fetch(`${API_BASE}/finance/records`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(userEmail ? { 'X-User-Email': userEmail } : {})
+                },
+                body: JSON.stringify({
+                  type: isIncome ? 'income' : 'expense',
+                  amount: amtVal,
+                  category: newExpenseForm.category || (isIncome ? 'salary' : 'food'),
+                  note: (newExpenseForm.note || '').trim() || (isIncome ? 'Income' : 'Expense'),
+                  payment_mode: newExpenseForm.payment_mode || (isIncome ? 'bank' : 'upi'),
+                  user_email: userEmail || null
+                })
+              });
+              const data = await resp.json();
+              if (data.status === 'success') {
+                setIsAddingExpense(false);
+                setNewExpenseForm({ type: 'expense', category: 'food', amount: '', note: '', payment_mode: 'upi' });
+                if (showToast) showToast(isIncome ? `✅ ₹${amtVal.toLocaleString('en-IN')} आय सफलतापूर्वक सहेजी गई!` : `✅ ₹${amtVal.toLocaleString('en-IN')} खर्च दर्ज किया गया!`, "success");
+                if (refreshAllData) refreshAllData();
+              } else {
+                if (showToast) showToast("सहेजने में त्रुटि आई", "error");
+              }
+            } catch (err) {
+              if (showToast) showToast("सहेजने में त्रुटि आई", "error");
+            }
+          };
+
+          return (
+            <div style={{
+              background: isIncome ? 'linear-gradient(180deg, #06241a 0%, #081622 100%)' : '#0e172a',
+              border: `1px solid ${themeBorder}`,
+              borderRadius: '20px',
+              padding: '16px',
+              marginBottom: '16px',
+              boxShadow: isIncome ? '0 8px 30px rgba(16, 185, 129, 0.25)' : '0 8px 30px rgba(0,0,0,0.5)'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <span style={{ fontSize: '0.90rem', fontWeight: 800, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>{isIncome ? '💰' : '💸'}</span>
+                  <span>{isIncome ? 'आय दर्ज करें (Record Income)' : 'खर्च दर्ज करें (Record Expense)'}</span>
+                </span>
                 <button
                   type="button"
-                  onClick={() => setIsCategoryPickerOpen(!isCategoryPickerOpen)}
-                  style={{
-                    width: '100%',
-                    boxSizing: 'border-box',
-                    background: '#060a14',
-                    border: isCategoryPickerOpen ? '1.5px solid #38bdf8' : '1px solid rgba(255,255,255,0.12)',
-                    borderRadius: '10px',
-                    padding: '8px 10px',
-                    color: '#fff',
-                    fontSize: '0.8rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    cursor: 'pointer',
-                    boxShadow: isCategoryPickerOpen ? '0 0 12px rgba(56, 189, 248, 0.25)' : 'none',
-                    textAlign: 'left'
-                  }}
+                  onClick={() => setIsAddingExpense(false)}
+                  style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1rem', padding: '2px 6px' }}
                 >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    <span>{FINANCE_CATEGORIES.find(c => c.id === newExpenseForm.category)?.icon || '🍔'}</span>
-                    <span style={{ fontWeight: 600 }}>{FINANCE_CATEGORIES.find(c => c.id === newExpenseForm.category)?.label || 'Food & Dining'}</span>
-                  </span>
-                  <ChevronDown size={14} color="#94a3b8" />
+                  ✕
                 </button>
               </div>
-            </div>
 
-            {/* Custom Modern Dark Category Picker Drawer */}
-            {isCategoryPickerOpen && (
-              <div style={{
-                background: '#070d1d',
-                border: '1px solid rgba(56, 189, 248, 0.3)',
-                borderRadius: '14px',
-                padding: '8px',
-                marginBottom: '12px',
-                display: 'grid',
-                gridTemplateColumns: '1fr',
-                gap: '4px',
-                boxShadow: '0 12px 32px rgba(0,0,0,0.85)'
-              }}>
-                <div style={{ fontSize: '0.68rem', color: '#94a3b8', padding: '2px 8px 4px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Select Category
-                </div>
-                {FINANCE_CATEGORIES.map(cat => {
-                  const isSelected = newExpenseForm.category === cat.id;
-                  return (
-                    <button
-                      key={cat.id}
-                      type="button"
-                      onClick={() => {
-                        setNewExpenseForm({ ...newExpenseForm, category: cat.id });
-                        setIsCategoryPickerOpen(false);
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '8px 12px',
-                        background: isSelected ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                        border: isSelected ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid transparent',
-                        borderRadius: '10px',
-                        cursor: 'pointer',
-                        textAlign: 'left',
-                        transition: 'all 0.15s'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span style={{ fontSize: '1.1rem' }}>{cat.icon}</span>
-                        <span style={{ fontSize: '0.82rem', fontWeight: isSelected ? 700 : 500, color: isSelected ? '#38bdf8' : '#e2e8f0' }}>
-                          {cat.label}
-                        </span>
-                      </div>
-                      {isSelected ? (
-                        <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: '#38bdf8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <Check size={12} color="#080e1e" strokeWidth={3} />
-                        </div>
-                      ) : (
-                        <div style={{ width: '16px', height: '16px', borderRadius: '50%', border: '1.5px solid rgba(255, 255, 255, 0.2)' }} />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* 1-Tap Quick Tags */}
-            <div style={{ marginBottom: '10px' }}>
-              <div style={{ fontSize: '0.68rem', color: '#94a3b8', display: 'block', marginBottom: '5px' }}>⚡ 1-Tap Quick Tags:</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
-                {QUICK_EXPENSE_CHIPS.map(chip => (
-                  <button
-                    key={chip.id}
-                    type="button"
-                    onClick={() => {
-                      triggerHaptic(10);
-                      setNewExpenseForm({
-                        ...newExpenseForm,
-                        note: chip.text,
-                        category: chip.cat || newExpenseForm.category
-                      });
-                    }}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
+                <div>
+                  <label style={{ fontSize: '0.7rem', color: isIncome ? '#34d399' : '#f87171', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
+                    {isIncome ? '₹ Income Amount (आय राशि)' : '₹ Amount (खर्च राशि)'}
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="e.g. 5000"
+                    value={newExpenseForm.amount}
+                    onChange={e => setNewExpenseForm({ ...newExpenseForm, amount: e.target.value })}
                     style={{
-                      background: newExpenseForm.note === chip.text ? 'rgba(56, 189, 248, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                      border: newExpenseForm.note === chip.text ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.1)',
-                      color: newExpenseForm.note === chip.text ? '#38bdf8' : '#e2e8f0',
-                      borderRadius: '8px',
-                      padding: '4px 8px',
-                      fontSize: '0.70rem',
-                      fontWeight: 600,
-                      cursor: 'pointer'
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      background: '#060a14',
+                      border: `1px solid ${themeBorder}`,
+                      borderRadius: '10px',
+                      padding: '9px 10px',
+                      color: '#fff',
+                      fontSize: '0.90rem',
+                      fontWeight: 700
+                    }}
+                  />
+                </div>
+                <div style={{ position: 'relative' }}>
+                  <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Category (श्रेणी)</label>
+                  <button
+                    type="button"
+                    onClick={() => setIsCategoryPickerOpen(!isCategoryPickerOpen)}
+                    style={{
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      background: '#060a14',
+                      border: isCategoryPickerOpen ? `1.5px solid ${themeColor}` : '1px solid rgba(255,255,255,0.12)',
+                      borderRadius: '10px',
+                      padding: '8px 10px',
+                      color: '#fff',
+                      fontSize: '0.8rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      cursor: 'pointer',
+                      textAlign: 'left'
                     }}
                   >
-                    {chip.label}
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <span>{currentCategories.find(c => c.id === newExpenseForm.category)?.icon || (isIncome ? '💼' : '🍔')}</span>
+                      <span style={{ fontWeight: 600 }}>{currentCategories.find(c => c.id === newExpenseForm.category)?.label || (isIncome ? 'Salary / वेतन' : 'Food & Dining')}</span>
+                    </span>
+                    <ChevronDown size={14} color="#94a3b8" />
                   </button>
-                ))}
+                </div>
               </div>
-            </div>
 
-            <div style={{ marginBottom: '12px' }}>
-              <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Note / Description (या कस्टम कारण दर्ज करें)</label>
-              <input
-                type="text"
-                placeholder="e.g. Swiggy lunch, petrol refill, dinner with friends..."
-                value={newExpenseForm.note}
-                onChange={e => setNewExpenseForm({ ...newExpenseForm, note: e.target.value })}
-                style={{ width: '100%', boxSizing: 'border-box', background: '#060a14', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '0.82rem' }}
-              />
-            </div>
+              {/* Category Picker Drawer */}
+              {isCategoryPickerOpen && (
+                <div style={{
+                  background: '#070d1d',
+                  border: `1px solid ${themeBorder}`,
+                  borderRadius: '14px',
+                  padding: '8px',
+                  marginBottom: '12px',
+                  display: 'grid',
+                  gridTemplateColumns: '1fr',
+                  gap: '4px',
+                  boxShadow: '0 12px 32px rgba(0,0,0,0.85)'
+                }}>
+                  <div style={{ fontSize: '0.68rem', color: '#94a3b8', padding: '2px 8px 4px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Select {isIncome ? 'Income Source' : 'Expense Category'}
+                  </div>
+                  {currentCategories.map(cat => {
+                    const isSelected = newExpenseForm.category === cat.id;
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => {
+                          setNewExpenseForm({ ...newExpenseForm, category: cat.id });
+                          setIsCategoryPickerOpen(false);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '8px 12px',
+                          background: isSelected ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                          border: isSelected ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid transparent',
+                          borderRadius: '10px',
+                          cursor: 'pointer',
+                          textAlign: 'left'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span style={{ fontSize: '1.1rem' }}>{cat.icon}</span>
+                          <span style={{ fontSize: '0.82rem', fontWeight: isSelected ? 700 : 500, color: isSelected ? '#38bdf8' : '#e2e8f0' }}>
+                            {cat.label}
+                          </span>
+                        </div>
+                        {isSelected ? (
+                          <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: themeColor, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Check size={12} color="#080e1e" strokeWidth={3} />
+                          </div>
+                        ) : (
+                          <div style={{ width: '16px', height: '16px', borderRadius: '50%', border: '1.5px solid rgba(255, 255, 255, 0.2)' }} />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
-            <button
-              type="button"
-              onClick={async () => {
-                if (!newExpenseForm.amount) {
-                  if (showToast) showToast("Please enter an amount", "info");
-                  return;
-                }
-                try {
-                  const resp = await fetch(`${API_BASE}/action/quick-capture`, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      ...(userEmail ? { 'X-User-Email': userEmail } : {})
-                    },
-                    body: JSON.stringify({
-                      text: `${newExpenseForm.amount} rupees ${newExpenseForm.type === 'income' ? 'received for' : 'spent on'} ${newExpenseForm.note || newExpenseForm.category}`,
-                      capture_type: 'text'
-                    })
-                  });
-                  setIsAddingExpense(false);
-                  setNewExpenseForm({ type: 'expense', category: 'food', amount: '', note: '', payment_mode: 'upi' });
-                  if (showToast) showToast("Transaction recorded successfully! ✅", "success");
-                  if (refreshAllData) refreshAllData();
-                } catch (err) {
-                  if (showToast) showToast("Failed to record transaction", "error");
-                }
-              }}
-              style={{ width: '100%', background: newExpenseForm.type === 'income' ? '#10b981' : '#f43f5e', border: 'none', color: '#ffffff', padding: '10px', borderRadius: '10px', fontWeight: 700, fontSize: '0.84rem', cursor: 'pointer' }}
-            >
-              Save Transaction
-            </button>
-          </div>
-        )}
+              {/* 1-Tap Quick Tags */}
+              <div style={{ marginBottom: '10px' }}>
+                <div style={{ fontSize: '0.68rem', color: '#94a3b8', display: 'block', marginBottom: '5px', fontWeight: 600 }}>
+                  ⚡ 1-Tap Quick Tags:
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
+                  {currentChips.map(chip => (
+                    <button
+                      key={chip.id}
+                      type="button"
+                      onClick={() => {
+                        triggerHaptic(10);
+                        setNewExpenseForm({
+                          ...newExpenseForm,
+                          note: chip.text,
+                          category: chip.cat || newExpenseForm.category
+                        });
+                      }}
+                      style={{
+                        background: newExpenseForm.note === chip.text ? 'rgba(56, 189, 248, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                        border: newExpenseForm.note === chip.text ? `1px solid ${themeColor}` : '1px solid rgba(255, 255, 255, 0.1)',
+                        color: newExpenseForm.note === chip.text ? themeColor : '#e2e8f0',
+                        borderRadius: '8px',
+                        padding: '4px 8px',
+                        fontSize: '0.70rem',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>
+                  {isIncome ? 'Source / Note (कहाँ से प्राप्त हुआ)' : 'Note / Description (खर्च का कारण)'}
+                </label>
+                <input
+                  type="text"
+                  placeholder={isIncome ? "e.g. Monthly salary, Google AdSense, consulting..." : "e.g. Swiggy lunch, petrol refill, dinner with friends..."}
+                  value={newExpenseForm.note}
+                  onChange={e => setNewExpenseForm({ ...newExpenseForm, note: e.target.value })}
+                  style={{ width: '100%', boxSizing: 'border-box', background: '#060a14', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '0.82rem' }}
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSaveTransactionForm}
+                style={{
+                  width: '100%',
+                  background: isIncome ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'linear-gradient(135deg, #f43f5e 0%, #e11d48 100%)',
+                  border: 'none',
+                  color: '#ffffff',
+                  padding: '11px',
+                  borderRadius: '12px',
+                  fontWeight: 700,
+                  fontSize: '0.86rem',
+                  cursor: 'pointer',
+                  boxShadow: isIncome ? '0 4px 14px rgba(16, 185, 129, 0.4)' : '0 4px 14px rgba(244, 63, 94, 0.4)'
+                }}
+              >
+                {isIncome ? '💾 Save Income (आय सहेजें)' : '💾 Save Expense (खर्च सहेजें)'}
+              </button>
+            </div>
+          );
+        })()}
 
         {/* Fixed Bottom Action Buttons matching Screenshot 2: [Add Expense] [Add Income] [Paste SMS] */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '10px', marginTop: 'auto', paddingTop: '8px' }}>
           <button
             type="button"
             onClick={() => {
-              setNewExpenseForm({ ...newExpenseForm, type: 'expense' });
+              setNewExpenseForm({ type: 'expense', category: 'food', amount: '', note: '', payment_mode: 'upi' });
               setIsAddingExpense(true);
             }}
             style={{
@@ -1682,7 +1847,7 @@ export const FinanceModal = ({
           <button
             type="button"
             onClick={() => {
-              setNewExpenseForm({ ...newExpenseForm, type: 'income' });
+              setNewExpenseForm({ type: 'income', category: 'salary', amount: '', note: '', payment_mode: 'bank' });
               setIsAddingExpense(true);
             }}
             style={{

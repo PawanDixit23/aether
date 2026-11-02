@@ -159,15 +159,17 @@ def get_user_email(
 
 DEFAULT_OWNER_EMAIL = os.environ.get("DEFAULT_USER_EMAIL", "e.pawandixit@gmail.com").strip().lower()
 
-def get_effective_email(user_email: Optional[str]) -> str:
-    """Returns effective email with strict isolation: explicit user email if provided, else default owner email."""
+def get_effective_email(user_email: Optional[str]) -> Optional[str]:
+    """Returns effective email with strict isolation: explicit user email if provided, else None."""
     if user_email and user_email.strip():
         return user_email.strip().lower()
-    return DEFAULT_OWNER_EMAIL
+    return None
 
-def is_owner_email(email: str) -> bool:
+def is_owner_email(email: Optional[str]) -> bool:
     """Checks whether the given email matches the primary environment owner."""
-    return (email or "").strip().lower() == DEFAULT_OWNER_EMAIL
+    if not email:
+        return False
+    return email.strip().lower() == DEFAULT_OWNER_EMAIL
 
 # ----------------- Pydantic Schemas -----------------
 class AuthRecordRequest(BaseModel):
@@ -1229,8 +1231,7 @@ def get_chat_history(
     db: Session = Depends(get_db)
 ):
     if not user_email:
-        msgs = db.query(ChatMessage).filter(ChatMessage.user_email == None).order_by(ChatMessage.created_at.asc()).all()
-        return msgs[-limit:]
+        return []
     msgs = db.query(ChatMessage).filter(ChatMessage.user_email == user_email.strip().lower()).order_by(ChatMessage.created_at.asc()).all()
     return msgs[-limit:]
 
@@ -1239,10 +1240,9 @@ def clear_chat_history(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    if user_email:
-        db.query(ChatMessage).filter(ChatMessage.user_email == user_email.strip().lower()).delete()
-    else:
-        db.query(ChatMessage).filter(ChatMessage.user_email == None).delete()
+    if not user_email:
+        return {"message": "No authenticated user to clear"}
+    db.query(ChatMessage).filter(ChatMessage.user_email == user_email.strip().lower()).delete()
     db.commit()
     return {"message": "Chat history cleared, ready for new conversation"}
 
@@ -1341,27 +1341,19 @@ def get_due_reminders(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    """Fetch pending tasks whose reminder time has arrived or passed and have not been alerted yet."""
+    """Fetch pending tasks whose reminder time has just arrived (within active window) and have not been alerted yet."""
     eff_email = get_effective_email(user_email)
+    if not eff_email:
+        return []
 
     auto_advance_recurring_tasks(db, eff_email)
 
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
-    if is_owner_email(eff_email):
-        tasks = db.query(Task).filter(
-            (Task.user_email == eff_email) |
-            (Task.user_email == None) |
-            (Task.user_email == "operator@aether.local") |
-            (Task.user_email == "test@example.com"),
-            Task.status == "pending",
-            Task.notified == False
-        ).all()
-    else:
-        tasks = db.query(Task).filter(
-            Task.user_email == eff_email,
-            Task.status == "pending",
-            Task.notified == False
-        ).all()
+    tasks = db.query(Task).filter(
+        Task.user_email == eff_email,
+        Task.status == "pending",
+        Task.notified == False
+    ).all()
     
     due_tasks = []
     for t in tasks:
@@ -1371,7 +1363,9 @@ def get_due_reminders(
             dt = t.due_date
             if isinstance(dt, str):
                 dt = datetime.fromisoformat(dt.replace(' ', 'T'))
-            if dt <= now:
+            # Only alert if due time arrived within the last 3 minutes (180s) to avoid blasting old overdue tasks
+            diff = (now - dt).total_seconds()
+            if 0 <= diff <= 180:
                 due_tasks.append({
                     "id": t.id,
                     "title": t.title,
@@ -1394,16 +1388,9 @@ def acknowledge_reminder(
 ):
     """Acknowledge reminder so it won't repeatedly alert. Preserves today's date so task remains visible in today's agenda."""
     eff_email = get_effective_email(user_email)
-    query = db.query(Task).filter(Task.id == task_id)
-    if is_owner_email(eff_email):
-        query = query.filter(
-            (Task.user_email == eff_email) |
-            (Task.user_email == None) |
-            (Task.user_email == "operator@aether.local") |
-            (Task.user_email == "test@example.com")
-        )
-    else:
-        query = query.filter(Task.user_email == eff_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    query = db.query(Task).filter(Task.id == task_id, Task.user_email == eff_email)
     task = query.first()
     if task:
         task.notified = True
@@ -1441,30 +1428,12 @@ def list_tasks(
     db: Session = Depends(get_db)
 ):
     eff_email = get_effective_email(user_email)
+    if not eff_email:
+        return []
+
     auto_advance_recurring_tasks(db, eff_email)
 
-    if is_owner_email(eff_email):
-        try:
-            db.query(Task).filter(
-                (Task.user_email == None) | 
-                (Task.user_email == "") | 
-                (Task.user_email == "operator@aether.ai") | 
-                (Task.user_email == "operator@aether.local") |
-                (Task.user_email == "test@example.com")
-            ).update({Task.user_email: eff_email})
-            db.commit()
-        except Exception:
-            db.rollback()
-
-        query = db.query(Task).filter(
-            (Task.user_email == eff_email) |
-            (Task.user_email == None) |
-            (Task.user_email == "operator@aether.local") |
-            (Task.user_email == "test@example.com")
-        )
-    else:
-        # Strict isolation for other users
-        query = db.query(Task).filter(Task.user_email == eff_email)
+    query = db.query(Task).filter(Task.user_email == eff_email)
     
     # Return top-level tasks by default (nested subtasks are attached inside serialize_task)
     query = query.filter((Task.parent_id == None) | (Task.parent_id == 0))
@@ -1851,13 +1820,43 @@ def sync_ical_feed(req: ICalSyncRequest, user_email: Optional[str] = Depends(get
 # ----------------- Finance Endpoints -----------------
 @app.get("/api/finance/records")
 def list_finance_records(
-    limit: int = 50, 
+    limit: int = 100, 
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
     if not user_email:
-        return db.query(FinancialRecord).filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == "")).order_by(FinancialRecord.date.desc()).limit(limit).all()
-    return db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).order_by(FinancialRecord.date.desc()).limit(limit).all()
+        return []
+    return db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email.strip().lower()).order_by(FinancialRecord.date.desc()).limit(limit).all()
+
+@app.post("/api/finance/records")
+def create_finance_record(
+    req: FinancialRecordCreate,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(req.user_email or user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    rec_type = (req.type or "expense").strip().lower()
+    if rec_type not in ["expense", "income"]:
+        rec_type = "expense"
+        
+    now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
+    new_rec = FinancialRecord(
+        user_email=eff_email,
+        type=rec_type,
+        category=(req.category or "general").strip().lower(),
+        amount=abs(float(req.amount)),
+        currency=req.currency or "INR",
+        payment_mode=(req.payment_mode or "upi").strip().lower(),
+        note=(req.note or "").strip() or None,
+        date=now
+    )
+    db.add(new_rec)
+    db.commit()
+    db.refresh(new_rec)
+    return {"status": "success", "record": new_rec}
 
 @app.get("/api/finance/summary")
 def get_finance_summary(
@@ -1865,9 +1864,13 @@ def get_finance_summary(
     db: Session = Depends(get_db)
 ):
     if not user_email:
-        records = db.query(FinancialRecord).filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == "")).all()
-    else:
-        records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).all()
+        return {
+            "total_income": 0,
+            "total_expense": 0,
+            "balance": 0,
+            "record_count": 0
+        }
+    records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email.strip().lower()).all()
     total_income = sum(r.amount for r in records if r.type == "income")
     total_expense = sum(r.amount for r in records if r.type == "expense")
     balance = total_income - total_expense
@@ -2092,14 +2095,9 @@ def list_memory(
     db: Session = Depends(get_db)
 ):
     eff_email = get_effective_email(user_email)
-    if is_owner_email(eff_email):
-        return db.query(MemoryItem).filter(
-            (MemoryItem.user_email == eff_email) |
-            (MemoryItem.user_email == None) |
-            (MemoryItem.user_email == "operator@aether.local")
-        ).order_by(MemoryItem.created_at.desc()).all()
-    else:
-        return db.query(MemoryItem).filter(MemoryItem.user_email == eff_email).order_by(MemoryItem.created_at.desc()).all()
+    if not eff_email:
+        return []
+    return db.query(MemoryItem).filter(MemoryItem.user_email == eff_email).order_by(MemoryItem.created_at.desc()).all()
 
 @app.post("/api/memory")
 def create_memory(
@@ -2636,6 +2634,8 @@ def is_task_due_for_notification(task, now: datetime) -> bool:
     """Accurately checks whether a task is due for push notification right now."""
     if task.status == "completed" or getattr(task, "is_completed", False):
         return False
+    if getattr(task, "notified", False):
+        return False
 
     rec = str(getattr(task, "recurrence", "") or "").lower()
     is_daily = "daily" in rec or "roz" in rec or "everyday" in rec or "daily" in str(task.title or "").lower()
@@ -2644,27 +2644,26 @@ def is_task_due_for_notification(task, now: datetime) -> bool:
     
     if time_comp:
         hrs, mins = time_comp
+        target_today = now.replace(hour=hrs, minute=mins, second=0, microsecond=0)
+        diff_seconds = (now - target_today).total_seconds()
         if is_daily:
-            # For daily recurring task, due if current hour:minute has reached or passed scheduled time today
-            if now.hour > hrs or (now.hour == hrs and now.minute >= mins):
-                return True
-            return False
+            # For daily recurring task, only trigger within active 3-minute window (0 to 180s)
+            return 0 <= diff_seconds <= 180
         else:
             if task.due_date:
                 try:
                     dt = task.due_date if isinstance(task.due_date, datetime) else datetime.fromisoformat(str(task.due_date).replace(' ', 'T'))
                     target = dt.replace(hour=hrs, minute=mins, second=0, microsecond=0)
-                    return target <= now
+                    return 0 <= (now - target).total_seconds() <= 180
                 except Exception:
                     pass
-            target_today = now.replace(hour=hrs, minute=mins, second=0, microsecond=0)
-            return target_today <= now
+            return 0 <= diff_seconds <= 180
 
     # Fallback to due_date if no reminder_time
     if task.due_date:
         try:
             dt = task.due_date if isinstance(task.due_date, datetime) else datetime.fromisoformat(str(task.due_date).replace(' ', 'T'))
-            return dt <= now
+            return 0 <= (now - dt).total_seconds() <= 180
         except Exception:
             pass
 
@@ -2734,18 +2733,6 @@ def _run_push_check_internal(db: Session):
 
                 if task_pushed_success:
                     task.notified = True
-                    rec = getattr(task, "recurrence", None)
-                    is_daily = rec == "daily" or "daily" in str(rec or "").lower() or "daily" in str(task.title or "").lower()
-                    if is_daily:
-                        # Advance due_date by 1 day and reset notified for tomorrow's run
-                        next_day = (task.due_date if task.due_date else now) + timedelta(days=1)
-                        time_comp = parse_reminder_time_components(task.reminder_time)
-                        if time_comp:
-                            hrs, mins = time_comp
-                            next_day = next_day.replace(hour=hrs, minute=mins, second=0, microsecond=0)
-                        task.due_date = next_day
-                        task.notified = False
-                        task.status = "pending"
                     db.commit()
                 else:
                     errors.append(f"Push delivery failed for task {task.id} (user {email}).")
