@@ -1303,12 +1303,16 @@ def get_chat_sessions(
         .all()
     )
     
-    # If no sessions exist yet but user has messages, backfill default session
+    # If no sessions exist yet but user has legacy messages without session, backfill default session
     if not sessions:
         try:
             first_msg = (
                 db.query(ChatMessage)
-                .filter(ChatMessage.user_email == eff_email, ChatMessage.role == "user")
+                .filter(
+                    ChatMessage.user_email == eff_email, 
+                    ChatMessage.role == "user",
+                    (ChatMessage.session_id == None) | (ChatMessage.session_id == "")
+                )
                 .order_by(ChatMessage.created_at.asc())
                 .first()
             )
@@ -1424,17 +1428,29 @@ def delete_chat_session(
         raise HTTPException(status_code=401, detail="Authentication required")
     
     try:
-        session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).first()
+        # Delete associated messages
         try:
-            db.query(ChatMessage).filter(ChatMessage.session_id == session_id, ChatMessage.user_email == eff_email).delete()
-        except Exception:
-            db.rollback()
+            if session_id == "default":
+                db.query(ChatMessage).filter(
+                    (ChatMessage.session_id == "default") | (ChatMessage.session_id == None) | (ChatMessage.session_id == ""),
+                    ChatMessage.user_email == eff_email
+                ).delete(synchronize_session=False)
+            else:
+                db.query(ChatMessage).filter(
+                    ChatMessage.session_id == session_id,
+                    ChatMessage.user_email == eff_email
+                ).delete(synchronize_session=False)
+        except Exception as msg_del_err:
+            print(f"[Delete Session Messages Note] {msg_del_err}")
+
+        session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).first()
         if session:
             db.delete(session)
         db.commit()
         return {"status": "success", "message": "Chat session deleted"}
     except Exception as e:
         db.rollback()
+        print(f"[Delete Session Error] {e}")
         return {"status": "success", "message": "Chat session cleared"}
 
 @app.get("/api/chat/history")

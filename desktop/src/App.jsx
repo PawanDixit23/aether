@@ -675,6 +675,12 @@ export default function App() {
       return 'default';
     }
   });
+  const activeSessionIdRef = useRef(activeSessionId);
+  const deletedSessionIdsRef = useRef(new Set());
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
   const [isChatDrawerOpen, setIsChatDrawerOpen] = useState(false);
   const [chatHistory, setChatHistory] = useState(() => {
     try {
@@ -3025,9 +3031,10 @@ export default function App() {
     try {
       const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
       const authHeaders = currentEmail ? { 'X-User-Email': currentEmail } : {};
+      const curSessionId = activeSessionIdRef.current || 'default';
       const [resBrief, resChat, resSessions, resTasks, resFin, resFinSum, resMem, resAudit, resNews, resDue, resCricket] = await Promise.all([
         fetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}`, { headers: authHeaders }),
-        opts.skipChatHistory ? Promise.resolve({ ok: false }) : fetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(activeSessionId || 'default')}&limit=60`, { headers: authHeaders }),
+        opts.skipChatHistory ? Promise.resolve({ ok: false }) : fetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(curSessionId)}&limit=60`, { headers: authHeaders }),
         fetch(`${API_BASE}/chat/sessions`, { headers: authHeaders }),
         fetch(`${API_BASE}/tasks`, { headers: authHeaders }),
         fetch(`${API_BASE}/finance/records`, { headers: authHeaders }),
@@ -3044,10 +3051,12 @@ export default function App() {
         try {
           const sessData = await resSessions.json();
           if (Array.isArray(sessData)) {
-            setChatSessions(sessData);
+            // Drop any session that was intentionally deleted by the user to avoid temporary resurrection
+            const validSessions = sessData.filter(s => !deletedSessionIdsRef.current.has(s.id));
+            setChatSessions(validSessions);
             if (currentEmail) {
               try {
-                localStorage.setItem(`aether_chat_sessions_${currentEmail}`, JSON.stringify(sessData));
+                localStorage.setItem(`aether_chat_sessions_${currentEmail}`, JSON.stringify(validSessions));
               } catch (e) {}
             }
           }
@@ -3061,35 +3070,38 @@ export default function App() {
           role: c.role === 'aether' ? 'assistant' : c.role
         })) : [];
 
-        if (currentEmail && activeSessionId) {
-          try {
-            localStorage.setItem(`aether_chat_history_${currentEmail}_${activeSessionId}`, JSON.stringify(normalizedChats));
-          } catch (e) {}
-        }
+        // Guard against race conditions: only update if activeSessionId hasn't changed during fetch
+        if (activeSessionIdRef.current === curSessionId) {
+          if (currentEmail && curSessionId) {
+            try {
+              localStorage.setItem(`aether_chat_history_${currentEmail}_${curSessionId}`, JSON.stringify(normalizedChats));
+            } catch (e) {}
+          }
 
-        setChatHistory(prev => {
-          if (isClearingChatRef.current) {
-            return [];
-          }
-          if (isProcessingRef.current) {
-            return prev;
-          }
-          if (normalizedChats.length === 0) {
-            return [];
-          }
-          if (prev.length === normalizedChats.length && prev[prev.length - 1]?.content === normalizedChats[normalizedChats.length - 1]?.content) {
-            return prev;
-          }
-          // Avoid wiping out active media players (like YouTube embed iframe) if the latest message matches
-          if (prev.length > 0 && normalizedChats.length > 0) {
-            const lastPrev = prev[prev.length - 1];
-            const lastNorm = normalizedChats[normalizedChats.length - 1];
-            if (lastPrev.content === lastNorm.content && lastPrev.role === lastNorm.role) {
+          setChatHistory(prev => {
+            if (isClearingChatRef.current) {
+              return [];
+            }
+            if (isProcessingRef.current) {
               return prev;
             }
-          }
-          return normalizedChats;
-        });
+            if (normalizedChats.length === 0) {
+              return [];
+            }
+            if (prev.length === normalizedChats.length && prev[prev.length - 1]?.content === normalizedChats[normalizedChats.length - 1]?.content) {
+              return prev;
+            }
+            // Avoid wiping out active media players (like YouTube embed iframe) if the latest message matches
+            if (prev.length > 0 && normalizedChats.length > 0) {
+              const lastPrev = prev[prev.length - 1];
+              const lastNorm = normalizedChats[normalizedChats.length - 1];
+              if (lastPrev.content === lastNorm.content && lastPrev.role === lastNorm.role) {
+                return prev;
+              }
+            }
+            return normalizedChats;
+          });
+        }
       }
 
       let loadedTasks = [];
@@ -3662,14 +3674,41 @@ export default function App() {
       setAttachedMedia(null);
     }
 
+    const curSessionId = activeSessionIdRef.current || 'default';
     userScrolledUpRef.current = false;
     setShowDashboard(false);
-    setChatHistory(prev => [...prev, { 
-      role: 'user', 
-      content: prompt, 
-      image_url: sendingImageUrl,
-      created_at: new Date().toISOString() 
-    }]);
+
+    // Optimistically update active chat history
+    setChatHistory(prev => {
+      const next = [...prev, { 
+        role: 'user', 
+        content: prompt, 
+        image_url: sendingImageUrl,
+        created_at: new Date().toISOString() 
+      }];
+      if (userEmail && curSessionId) {
+        try {
+          localStorage.setItem(`aether_chat_history_${userEmail}_${curSessionId}`, JSON.stringify(next));
+        } catch (e) {}
+      }
+      return next;
+    });
+
+    // Optimistically update sessions list so drawer immediately displays new conversation with 0ms delay!
+    const smartTitle = prompt.length > 36 ? prompt.slice(0, 36) + '...' : prompt;
+    setChatSessions(prev => {
+      const exists = prev.some(s => s.id === curSessionId);
+      const updated = exists
+        ? prev.map(s => s.id === curSessionId ? { ...s, updated_at: new Date().toISOString() } : s)
+        : [{ id: curSessionId, title: smartTitle, updated_at: new Date().toISOString(), user_email: userEmail }, ...prev];
+      if (userEmail) {
+        try {
+          localStorage.setItem(`aether_chat_sessions_${userEmail}`, JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
     setInputText('');
     isProcessingRef.current = true;
     setIsProcessing(true);
@@ -3679,7 +3718,7 @@ export default function App() {
       const payload = {
         input_text: prompt,
         image_data: sendingImageUrl || null,
-        session_id: activeSessionId || 'default',
+        session_id: curSessionId,
         latitude: userCoords?.latitude || null,
         longitude: userCoords?.longitude || null,
         language: selectedLang,
@@ -3761,9 +3800,9 @@ export default function App() {
           actionData: actionData,
           created_at: new Date().toISOString()
         }];
-        if (userEmail && activeSessionId) {
+        if (userEmail && curSessionId) {
           try {
-            localStorage.setItem(`aether_chat_history_${userEmail}_${activeSessionId}`, JSON.stringify(next));
+            localStorage.setItem(`aether_chat_history_${userEmail}_${curSessionId}`, JSON.stringify(next));
           } catch (e) {}
         }
         return next;
@@ -3775,9 +3814,10 @@ export default function App() {
           .then(r => r.ok ? r.json() : null)
           .then(sessData => {
             if (Array.isArray(sessData)) {
-              setChatSessions(sessData);
+              const validSessions = sessData.filter(s => !deletedSessionIdsRef.current.has(s.id));
+              setChatSessions(validSessions);
               try {
-                localStorage.setItem(`aether_chat_sessions_${userEmail}`, JSON.stringify(sessData));
+                localStorage.setItem(`aether_chat_sessions_${userEmail}`, JSON.stringify(validSessions));
               } catch (e) {}
             }
           })
@@ -3807,6 +3847,7 @@ export default function App() {
   // Start a New Chat (Switches to fresh session, preserves existing chats)
   const handleStartNewChat = () => {
     const newSessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    activeSessionIdRef.current = newSessionId;
     setActiveSessionId(newSessionId);
     setChatHistory([]);
     setInputText('');
@@ -3818,6 +3859,7 @@ export default function App() {
     if (currentEmail) {
       try {
         localStorage.setItem(`aether_active_session_id_${currentEmail}`, newSessionId);
+        localStorage.setItem(`aether_chat_history_${currentEmail}_${newSessionId}`, JSON.stringify([]));
       } catch (e) {}
     }
   };
@@ -3825,6 +3867,7 @@ export default function App() {
   // Switch to an existing chat session from drawer
   const handleSelectSession = async (sessionId) => {
     if (!sessionId) return;
+    activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId);
     setInputText('');
     setShowDashboard(false);
@@ -3836,6 +3879,8 @@ export default function App() {
         const cached = localStorage.getItem(`aether_chat_history_${currentEmail}_${sessionId}`);
         if (cached) {
           setChatHistory(JSON.parse(cached));
+        } else {
+          setChatHistory([]);
         }
       } catch (e) {}
     }
@@ -3845,15 +3890,17 @@ export default function App() {
       const res = await fetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(sessionId)}&limit=60`, { headers: authHeaders });
       if (res.ok) {
         const chats = await res.json();
-        const normalizedChats = Array.isArray(chats) ? chats.map(c => ({
-          ...c,
-          role: c.role === 'aether' ? 'assistant' : c.role
-        })) : [];
-        setChatHistory(normalizedChats);
-        if (currentEmail) {
-          try {
-            localStorage.setItem(`aether_chat_history_${currentEmail}_${sessionId}`, JSON.stringify(normalizedChats));
-          } catch (e) {}
+        if (activeSessionIdRef.current === sessionId) {
+          const normalizedChats = Array.isArray(chats) ? chats.map(c => ({
+            ...c,
+            role: c.role === 'aether' ? 'assistant' : c.role
+          })) : [];
+          setChatHistory(normalizedChats);
+          if (currentEmail) {
+            try {
+              localStorage.setItem(`aether_chat_history_${currentEmail}_${sessionId}`, JSON.stringify(normalizedChats));
+            } catch (e) {}
+          }
         }
       }
     } catch (err) {
@@ -3895,6 +3942,7 @@ export default function App() {
   // Delete a chat session intentionally
   const handleDeleteSession = async (sessionId) => {
     if (!sessionId) return;
+    deletedSessionIdsRef.current.add(sessionId);
     const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
 
     const remainingSessions = chatSessions.filter(s => s.id !== sessionId);
@@ -3906,7 +3954,7 @@ export default function App() {
       } catch (e) {}
     }
 
-    if (sessionId === activeSessionId) {
+    if (sessionId === activeSessionIdRef.current) {
       if (remainingSessions.length > 0) {
         handleSelectSession(remainingSessions[0].id);
       } else {
