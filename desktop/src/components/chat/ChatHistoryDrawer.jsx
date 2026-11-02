@@ -4,11 +4,11 @@ import {
   MessageSquare, 
   Trash2, 
   Edit3, 
-  Check, 
   X, 
   Search, 
   Sparkles,
-  ShieldCheck
+  ShieldCheck,
+  Check
 } from 'lucide-react';
 
 export const ChatHistoryDrawer = ({
@@ -24,9 +24,9 @@ export const ChatHistoryDrawer = ({
   userName
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [editingSessionId, setEditingSessionId] = useState(null);
-  const [editingTitle, setEditingTitle] = useState('');
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [renamingSession, setRenamingSession] = useState(null);
+  const [renamingTitle, setRenamingTitle] = useState('');
+  const [deletingSession, setDeletingSession] = useState(null);
 
   // Group sessions by date
   const groupedSessions = useMemo(() => {
@@ -65,59 +65,30 @@ export const ChatHistoryDrawer = ({
     return groups;
   }, [sessions, searchQuery]);
 
-  const handleStartRename = (e, session) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    setEditingSessionId(session.id);
-    setEditingTitle(session.title || 'Conversation');
-    setConfirmDeleteId(null);
+  const handleOpenRename = (e, session) => {
+    e.stopPropagation();
+    setRenamingSession(session);
+    setRenamingTitle(session.title || 'Conversation');
   };
 
-  const handleSaveRename = async (e, sessionId) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
+  const handleConfirmRename = async (e) => {
+    if (e) e.preventDefault();
+    if (renamingSession && renamingTitle.trim()) {
+      await onRenameSession(renamingSession.id, renamingTitle.trim());
     }
-    if (editingTitle.trim()) {
-      await onRenameSession(sessionId, editingTitle.trim());
-    }
-    setEditingSessionId(null);
+    setRenamingSession(null);
   };
 
-  const handleCancelRename = (e) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    setEditingSessionId(null);
+  const handleOpenDelete = (e, session) => {
+    e.stopPropagation();
+    setDeletingSession(session);
   };
 
-  const handleDeleteClick = (e, sessionId) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
+  const handleConfirmDelete = async () => {
+    if (deletingSession) {
+      await onDeleteSession(deletingSession.id);
     }
-    setConfirmDeleteId(sessionId);
-    setEditingSessionId(null);
-  };
-
-  const handleConfirmDelete = async (e, sessionId) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    await onDeleteSession(sessionId);
-    setConfirmDeleteId(null);
-  };
-
-  const handleCancelDelete = (e) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    setConfirmDeleteId(null);
+    setDeletingSession(null);
   };
 
   return (
@@ -128,7 +99,7 @@ export const ChatHistoryDrawer = ({
         style={{
           position: 'fixed',
           inset: 0,
-          background: 'rgba(2, 6, 23, 0.72)',
+          background: 'rgba(2, 6, 23, 0.75)',
           backdropFilter: 'blur(10px)',
           WebkitBackdropFilter: 'blur(10px)',
           zIndex: 120,
@@ -138,19 +109,18 @@ export const ChatHistoryDrawer = ({
         }}
       />
 
-      {/* Slide-over Drawer Panel */}
+      {/* Slide-over Drawer Panel - Edge-to-Edge on Mobile, Elegant Sheet on Desktop */}
       <div 
         style={{
           position: 'fixed',
           top: 0,
           left: 0,
           bottom: 0,
-          width: 'min(340px, 85vw)',
-          background: 'linear-gradient(180deg, #0c1322 0%, #070a14 100%)',
-          borderRight: '1px solid rgba(255, 255, 255, 0.1)',
-          borderTopRightRadius: '24px',
-          borderBottomRightRadius: '24px',
-          boxShadow: '16px 0 48px rgba(0, 0, 0, 0.7)',
+          width: '100%',
+          maxWidth: 'min(380px, 100vw)',
+          background: 'linear-gradient(180deg, #0c1424 0%, #060913 100%)',
+          borderRight: '1px solid rgba(255, 255, 255, 0.12)',
+          boxShadow: '20px 0 60px rgba(0, 0, 0, 0.8)',
           zIndex: 130,
           display: 'flex',
           flexDirection: 'column',
@@ -160,35 +130,40 @@ export const ChatHistoryDrawer = ({
           overflow: 'hidden'
         }}
       >
-        {/* Header - Safe Area Padding for Mobile Status Bar & Notch */}
+        {/* Header - Generous Safe Area for Mobile Status Bar / Camera Notch */}
         <div style={{
-          padding: 'max(env(safe-area-inset-top, 20px), 24px) 18px 14px',
+          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 36px)',
+          paddingBottom: '16px',
+          paddingLeft: '20px',
+          paddingRight: '20px',
           borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '12px',
-          flexShrink: 0
+          flexShrink: 0,
+          background: 'rgba(12, 20, 36, 0.8)',
+          backdropFilter: 'blur(12px)'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <div style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '10px',
+              width: '36px',
+              height: '36px',
+              borderRadius: '12px',
               background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.25), rgba(168, 85, 247, 0.25))',
-              border: '1px solid rgba(56, 189, 248, 0.4)',
+              border: '1px solid rgba(56, 189, 248, 0.45)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              boxShadow: '0 0 12px rgba(56, 189, 248, 0.2)'
+              boxShadow: '0 0 16px rgba(56, 189, 248, 0.25)'
             }}>
-              <Sparkles size={16} color="#38bdf8" />
+              <Sparkles size={18} color="#38bdf8" />
             </div>
             <div>
-              <div style={{ color: '#f8fafc', fontWeight: 700, fontSize: '1.02rem', letterSpacing: '0.2px' }}>
+              <div style={{ color: '#ffffff', fontWeight: 800, fontSize: '1.08rem', letterSpacing: '0.2px' }}>
                 Chat History
               </div>
-              <div style={{ color: '#64748b', fontSize: '0.72rem' }}>
+              <div style={{ color: '#94a3b8', fontSize: '0.74rem', marginTop: '1px' }}>
                 Your saved conversations
               </div>
             </div>
@@ -198,12 +173,12 @@ export const ChatHistoryDrawer = ({
             type="button"
             onClick={onClose}
             style={{
-              background: 'rgba(255, 255, 255, 0.06)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              color: '#94a3b8',
-              borderRadius: '10px',
-              width: '34px',
-              height: '34px',
+              background: 'rgba(255, 255, 255, 0.07)',
+              border: '1px solid rgba(255, 255, 255, 0.14)',
+              color: '#e2e8f0',
+              borderRadius: '12px',
+              width: '38px',
+              height: '38px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -212,12 +187,12 @@ export const ChatHistoryDrawer = ({
             }}
             title="Close Drawer"
           >
-            <X size={18} />
+            <X size={20} />
           </button>
         </div>
 
         {/* Action: New Chat Button */}
-        <div style={{ padding: '14px 16px 10px', flexShrink: 0 }}>
+        <div style={{ padding: '16px 20px 10px', flexShrink: 0 }}>
           <button
             type="button"
             onClick={() => {
@@ -226,36 +201,36 @@ export const ChatHistoryDrawer = ({
             }}
             style={{
               width: '100%',
-              background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.18) 0%, rgba(59, 130, 246, 0.18) 100%)',
-              border: '1px solid rgba(56, 189, 248, 0.4)',
+              background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.2) 0%, rgba(59, 130, 246, 0.2) 100%)',
+              border: '1px solid rgba(56, 189, 248, 0.45)',
               color: '#38bdf8',
               borderRadius: '14px',
-              padding: '11px 16px',
+              padding: '12px 18px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '8px',
-              fontWeight: 600,
-              fontSize: '0.9rem',
+              gap: '10px',
+              fontWeight: 700,
+              fontSize: '0.94rem',
               cursor: 'pointer',
               transition: 'all 0.2s',
-              boxShadow: '0 4px 16px rgba(56, 189, 248, 0.15)'
+              boxShadow: '0 4px 18px rgba(56, 189, 248, 0.18)'
             }}
           >
-            <Plus size={18} />
+            <Plus size={20} />
             <span>New Chat</span>
           </button>
         </div>
 
         {/* Search Bar */}
         {sessions.length > 2 && (
-          <div style={{ padding: '0 16px 12px', flexShrink: 0 }}>
+          <div style={{ padding: '0 20px 12px', flexShrink: 0 }}>
             <div style={{
               position: 'relative',
               display: 'flex',
               alignItems: 'center'
             }}>
-              <Search size={14} color="#64748b" style={{ position: 'absolute', left: '12px' }} />
+              <Search size={15} color="#64748b" style={{ position: 'absolute', left: '14px' }} />
               <input
                 type="text"
                 placeholder="Search conversations..."
@@ -263,12 +238,12 @@ export const ChatHistoryDrawer = ({
                 onChange={(e) => setSearchQuery(e.target.value)}
                 style={{
                   width: '100%',
-                  background: 'rgba(255, 255, 255, 0.04)',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
                   borderRadius: '12px',
-                  padding: '8px 12px 8px 34px',
+                  padding: '9px 12px 9px 38px',
                   color: '#ffffff',
-                  fontSize: '0.82rem',
+                  fontSize: '0.85rem',
                   outline: 'none',
                   boxSizing: 'border-box'
                 }}
@@ -279,15 +254,15 @@ export const ChatHistoryDrawer = ({
                   onClick={() => setSearchQuery('')}
                   style={{
                     position: 'absolute',
-                    right: '10px',
+                    right: '12px',
                     background: 'none',
                     border: 'none',
-                    color: '#64748b',
+                    color: '#94a3b8',
                     cursor: 'pointer',
                     padding: 0
                   }}
                 >
-                  <X size={13} />
+                  <X size={14} />
                 </button>
               )}
             </div>
@@ -298,7 +273,7 @@ export const ChatHistoryDrawer = ({
         <div style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '0 14px 16px',
+          padding: '0 16px 20px',
           display: 'flex',
           flexDirection: 'column',
           gap: '16px',
@@ -307,13 +282,13 @@ export const ChatHistoryDrawer = ({
           {sessions.length === 0 ? (
             <div style={{
               textAlign: 'center',
-              padding: '48px 16px',
+              padding: '60px 20px',
               color: '#64748b',
-              fontSize: '0.85rem'
+              fontSize: '0.88rem'
             }}>
-              <MessageSquare size={36} color="#334155" style={{ margin: '0 auto 12px', display: 'block' }} />
-              <p style={{ margin: '0 0 6px', color: '#94a3b8', fontWeight: 600 }}>No conversations yet</p>
-              <p style={{ margin: 0, fontSize: '0.78rem' }}>Ask Aether anything to create your first saved chat!</p>
+              <MessageSquare size={40} color="#334155" style={{ margin: '0 auto 14px', display: 'block' }} />
+              <p style={{ margin: '0 0 6px', color: '#94a3b8', fontWeight: 700 }}>No conversations yet</p>
+              <p style={{ margin: 0, fontSize: '0.8rem' }}>Ask Aether anything to create your first saved chat!</p>
             </div>
           ) : (
             <>
@@ -325,36 +300,213 @@ export const ChatHistoryDrawer = ({
           )}
         </div>
 
-        {/* Footer: User Account & Safe Area Padding */}
+        {/* Footer: User Account & Multi-tenant status */}
         <div style={{
-          padding: '12px 18px max(env(safe-area-inset-bottom, 16px), 18px)',
+          padding: '14px 20px max(env(safe-area-inset-bottom, 16px), 20px)',
           borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-          background: 'rgba(0, 0, 0, 0.35)',
+          background: 'rgba(0, 0, 0, 0.45)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          fontSize: '0.75rem',
+          fontSize: '0.78rem',
           color: '#64748b',
           flexShrink: 0
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
-            <ShieldCheck size={15} color="#10b981" style={{ flexShrink: 0 }} />
+            <ShieldCheck size={16} color="#10b981" style={{ flexShrink: 0 }} />
             <span style={{ 
               overflow: 'hidden', 
               textOverflow: 'ellipsis', 
               whiteSpace: 'nowrap',
-              color: '#94a3b8',
-              maxWidth: '190px',
-              fontWeight: 500
+              color: '#cbd5e1',
+              maxWidth: '220px',
+              fontWeight: 600
             }}>
               {userEmail || 'Local Account'}
             </span>
           </div>
-          <span style={{ flexShrink: 0, color: '#64748b', fontSize: '0.72rem', fontWeight: 600 }}>
+          <span style={{ flexShrink: 0, color: '#38bdf8', fontSize: '0.75rem', fontWeight: 700 }}>
             {sessions.length} {sessions.length === 1 ? 'chat' : 'chats'}
           </span>
         </div>
       </div>
+
+      {/* =========================================================================
+          RENAME CONVERSATION MODAL (100% Reliable on Mobile Virtual Keyboards)
+          ========================================================================= */}
+      {renamingSession && (
+        <div 
+          onClick={() => setRenamingSession(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 160,
+            background: 'rgba(2, 6, 23, 0.8)',
+            backdropFilter: 'blur(10px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px'
+          }}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#0d1527',
+              border: '1px solid rgba(56, 189, 248, 0.35)',
+              borderRadius: '20px',
+              padding: '24px',
+              width: '100%',
+              maxWidth: '380px',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.8)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+              <Edit3 size={18} color="#38bdf8" />
+              <h3 style={{ margin: 0, fontSize: '1.05rem', color: '#ffffff', fontWeight: 700 }}>
+                Rename Conversation
+              </h3>
+            </div>
+
+            <form onSubmit={handleConfirmRename}>
+              <input
+                type="text"
+                value={renamingTitle}
+                onChange={(e) => setRenamingTitle(e.target.value)}
+                autoFocus
+                placeholder="Enter new conversation title"
+                style={{
+                  width: '100%',
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid rgba(56, 189, 248, 0.5)',
+                  borderRadius: '12px',
+                  padding: '12px 14px',
+                  color: '#ffffff',
+                  fontSize: '0.92rem',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                  marginBottom: '18px'
+                }}
+              />
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => setRenamingSession(null)}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.08)',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    color: '#94a3b8',
+                    padding: '10px 18px',
+                    borderRadius: '12px',
+                    fontSize: '0.86rem',
+                    cursor: 'pointer',
+                    fontWeight: 600
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{
+                    background: 'linear-gradient(135deg, #38bdf8 0%, #2563eb 100%)',
+                    border: 'none',
+                    color: '#ffffff',
+                    padding: '10px 22px',
+                    borderRadius: '12px',
+                    fontSize: '0.86rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 14px rgba(56, 189, 248, 0.3)'
+                  }}
+                >
+                  Save Title
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          DELETE CONFIRMATION MODAL (100% Reliable on Mobile Touch)
+          ========================================================================= */}
+      {deletingSession && (
+        <div 
+          onClick={() => setDeletingSession(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 160,
+            background: 'rgba(2, 6, 23, 0.8)',
+            backdropFilter: 'blur(10px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px'
+          }}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#0d1527',
+              border: '1px solid rgba(239, 68, 68, 0.4)',
+              borderRadius: '20px',
+              padding: '24px',
+              width: '100%',
+              maxWidth: '380px',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.8)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+              <Trash2 size={20} color="#f87171" />
+              <h3 style={{ margin: 0, fontSize: '1.05rem', color: '#f87171', fontWeight: 700 }}>
+                Delete Conversation?
+              </h3>
+            </div>
+
+            <p style={{ margin: '0 0 20px', fontSize: '0.88rem', color: '#cbd5e1', lineHeight: 1.5 }}>
+              Are you sure you want to permanently delete <strong style={{ color: '#ffffff' }}>"{deletingSession.title}"</strong>? This chat and its messages cannot be recovered.
+            </p>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setDeletingSession(null)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  color: '#94a3b8',
+                  padding: '10px 18px',
+                  borderRadius: '12px',
+                  fontSize: '0.86rem',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                style={{
+                  background: 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)',
+                  border: 'none',
+                  color: '#ffffff',
+                  padding: '10px 22px',
+                  borderRadius: '12px',
+                  fontSize: '0.86rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 14px rgba(239, 68, 68, 0.3)'
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 
@@ -362,10 +514,10 @@ export const ChatHistoryDrawer = ({
     if (!groupItems || groupItems.length === 0) return null;
 
     return (
-      <div key={groupTitle} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      <div key={groupTitle} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <div style={{
-          fontSize: '0.7rem',
-          fontWeight: 700,
+          fontSize: '0.72rem',
+          fontWeight: 800,
           color: '#64748b',
           textTransform: 'uppercase',
           letterSpacing: '0.8px',
@@ -376,8 +528,6 @@ export const ChatHistoryDrawer = ({
 
         {groupItems.map(session => {
           const isActive = session.id === activeSessionId;
-          const isEditing = editingSessionId === session.id;
-          const isConfirmingDelete = confirmDeleteId === session.id;
 
           return (
             <div
@@ -386,226 +536,124 @@ export const ChatHistoryDrawer = ({
                 position: 'relative',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
-                padding: '9px 12px',
-                borderRadius: '12px',
+                justifyContent: 'space-between',
+                padding: '10px 14px',
+                borderRadius: '14px',
                 background: isActive 
-                  ? 'linear-gradient(90deg, rgba(56, 189, 248, 0.16) 0%, rgba(56, 189, 248, 0.05) 100%)' 
+                  ? 'linear-gradient(90deg, rgba(56, 189, 248, 0.18) 0%, rgba(56, 189, 248, 0.06) 100%)' 
                   : 'rgba(255, 255, 255, 0.03)',
                 border: isActive 
-                  ? '1px solid rgba(56, 189, 248, 0.4)' 
-                  : '1px solid rgba(255, 255, 255, 0.05)',
+                  ? '1px solid rgba(56, 189, 248, 0.45)' 
+                  : '1px solid rgba(255, 255, 255, 0.06)',
                 borderLeft: isActive 
                   ? '3px solid #38bdf8' 
-                  : '1px solid rgba(255, 255, 255, 0.05)',
+                  : '1px solid rgba(255, 255, 255, 0.06)',
                 boxSizing: 'border-box',
-                transition: 'all 0.15s'
+                transition: 'all 0.15s',
+                gap: '10px'
               }}
             >
-              {isEditing ? (
-                /* Inline Rename Editor with large touch targets */
-                <div 
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '100%' }}
-                  onClick={e => e.stopPropagation()}
-                  onTouchEnd={e => e.stopPropagation()}
-                >
-                  <input
-                    type="text"
-                    value={editingTitle}
-                    onChange={(e) => setEditingTitle(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleSaveRename(e, session.id);
-                      if (e.key === 'Escape') handleCancelRename(e);
-                    }}
-                    autoFocus
-                    style={{
-                      flex: 1,
-                      background: 'rgba(0, 0, 0, 0.5)',
-                      border: '1px solid #38bdf8',
-                      borderRadius: '8px',
-                      padding: '6px 10px',
-                      color: '#ffffff',
-                      fontSize: '0.84rem',
-                      outline: 'none',
-                      minWidth: 0
-                    }}
+              {/* Clickable Area to Select Chat */}
+              <div
+                onClick={() => {
+                  onSelectSession(session.id);
+                  onClose();
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  flex: 1,
+                  minWidth: 0,
+                  cursor: 'pointer',
+                  padding: '2px 0'
+                }}
+              >
+                <div style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '8px',
+                  background: isActive ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.04)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0
+                }}>
+                  <MessageSquare 
+                    size={15} 
+                    color={isActive ? '#38bdf8' : '#64748b'} 
                   />
-                  <button
-                    type="button"
-                    onClick={(e) => handleSaveRename(e, session.id)}
-                    style={{
-                      background: 'rgba(16, 185, 129, 0.25)',
-                      border: '1px solid rgba(16, 185, 129, 0.5)',
-                      color: '#10b981',
-                      borderRadius: '8px',
-                      padding: '6px 10px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      fontSize: '0.74rem',
-                      fontWeight: 600
-                    }}
-                    title="Save title"
-                  >
-                    <Check size={14} />
-                    <span>Save</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => handleCancelRename(e)}
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.08)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      color: '#94a3b8',
-                      borderRadius: '8px',
-                      padding: '6px 8px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center'
-                    }}
-                    title="Cancel"
-                  >
-                    <X size={14} />
-                  </button>
                 </div>
-              ) : isConfirmingDelete ? (
-                /* Delete Confirmation Row */
-                <div 
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', width: '100%' }}
-                  onClick={e => e.stopPropagation()}
-                  onTouchEnd={e => e.stopPropagation()}
-                >
-                  <span style={{ fontSize: '0.76rem', color: '#f87171', fontWeight: 600 }}>
-                    Delete conversation?
-                  </span>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <button
-                      type="button"
-                      onClick={(e) => handleConfirmDelete(e, session.id)}
-                      style={{ 
-                        background: 'rgba(239, 68, 68, 0.25)', 
-                        border: '1px solid rgba(239, 68, 68, 0.5)', 
-                        color: '#f87171', 
-                        borderRadius: '8px', 
-                        padding: '4px 10px', 
-                        fontSize: '0.72rem', 
-                        cursor: 'pointer',
-                        fontWeight: 700
-                      }}
-                    >
-                      Delete
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => handleCancelDelete(e)}
-                      style={{ 
-                        background: 'rgba(255, 255, 255, 0.08)', 
-                        border: '1px solid rgba(255, 255, 255, 0.12)', 
-                        color: '#94a3b8', 
-                        borderRadius: '8px', 
-                        padding: '4px 10px', 
-                        fontSize: '0.72rem', 
-                        cursor: 'pointer' 
-                      }}
-                    >
-                      Cancel
-                    </button>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: '0.88rem',
+                    color: isActive ? '#ffffff' : '#e2e8f0',
+                    fontWeight: isActive ? 700 : 500,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {session.title || 'Conversation'}
                   </div>
+                  {isActive && (
+                    <div style={{ color: '#38bdf8', fontSize: '0.68rem', fontWeight: 600, marginTop: '2px' }}>
+                      Active
+                    </div>
+                  )}
                 </div>
-              ) : (
-                /* Normal Session Row: Left side for selecting, Right side for actions */
-                <>
-                  <div
-                    onClick={() => {
-                      onSelectSession(session.id);
-                      onClose();
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                      flex: 1,
-                      minWidth: 0,
-                      cursor: 'pointer',
-                      padding: '2px 0'
-                    }}
-                  >
-                    <MessageSquare 
-                      size={16} 
-                      color={isActive ? '#38bdf8' : '#64748b'} 
-                      style={{ flexShrink: 0 }} 
-                    />
-                    <span style={{
-                      fontSize: '0.84rem',
-                      color: isActive ? '#f8fafc' : '#cbd5e1',
-                      fontWeight: isActive ? 600 : 400,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap'
-                    }}>
-                      {session.title || 'Conversation'}
-                    </span>
-                  </div>
+              </div>
 
-                  {/* Actions: Distinct touch targets that never bubble to session click */}
-                  <div 
-                    style={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      gap: '4px',
-                      flexShrink: 0
-                    }}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }}
-                    onTouchEnd={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={(e) => handleStartRename(e, session)}
-                      style={{
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        color: '#94a3b8',
-                        cursor: 'pointer',
-                        padding: '6px',
-                        borderRadius: '8px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        transition: 'all 0.15s'
-                      }}
-                      title="Rename"
-                    >
-                      <Edit3 size={13} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => handleDeleteClick(e, session.id)}
-                      style={{
-                        background: 'rgba(239, 68, 68, 0.08)',
-                        border: '1px solid rgba(239, 68, 68, 0.2)',
-                        color: '#f87171',
-                        cursor: 'pointer',
-                        padding: '6px',
-                        borderRadius: '8px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        transition: 'all 0.15s'
-                      }}
-                      title="Delete"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </>
-              )}
+              {/* Action Buttons: Clean, Large Touch Targets */}
+              <div 
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '6px',
+                  flexShrink: 0
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={(e) => handleOpenRename(e, session)}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.06)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    color: '#cbd5e1',
+                    cursor: 'pointer',
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition: 'all 0.15s'
+                  }}
+                  title="Rename Conversation"
+                >
+                  <Edit3 size={14} />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={(e) => handleOpenDelete(e, session)}
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                    color: '#f87171',
+                    cursor: 'pointer',
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition: 'all 0.15s'
+                  }}
+                  title="Delete Conversation"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
             </div>
           );
         })}
