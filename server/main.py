@@ -70,16 +70,16 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
 
 try:
     from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
-    from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
+    from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession
     from ai_engine import parse_intent_with_llm
 except ImportError:
     try:
         from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
-        from server.models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
+        from server.models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession
         from server.ai_engine import parse_intent_with_llm
     except ImportError:
         from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
-        from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
+        from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession
         from .ai_engine import parse_intent_with_llm
 
 # Initialize tables & run automated schema migrations
@@ -184,6 +184,7 @@ class QuickCaptureRequest(BaseModel):
     input_text: str = ""
     image_data: Optional[str] = None
     user_email: Optional[str] = None
+    session_id: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     language: Optional[str] = "auto" # 'auto', 'hi', 'en', 'hinglish'
@@ -191,6 +192,13 @@ class QuickCaptureRequest(BaseModel):
     timezone: Optional[str] = None
     api_key: Optional[str] = None
     user_name: Optional[str] = None
+
+class ChatSessionCreate(BaseModel):
+    title: Optional[str] = "New Conversation"
+    id: Optional[str] = None
+
+class ChatSessionUpdate(BaseModel):
+    title: str
 
 class TranslateRequest(BaseModel):
     text: str
@@ -601,6 +609,31 @@ async def _execute_quick_capture(
         user_msg = "कृपया इस फ़ोटो का विश्लेषण करें (यदि यह बिल/रसीद/खर्च है तो राशि और विवरण दर्ज करें, अन्यथा सामान्य जानकारी दें)।"
 
     eff_email = (req.user_email or user_email or "").strip().lower() or None
+    active_session_id = (req.session_id or "").strip() or "default"
+
+    # Ensure ChatSession exists or auto-title it
+    if eff_email:
+        try:
+            sess_obj = db.query(ChatSession).filter(ChatSession.id == active_session_id, ChatSession.user_email == eff_email).first()
+            raw_title = user_msg.replace("📸", "").strip()
+            smart_title = (raw_title[:38] + ("..." if len(raw_title) > 38 else "")) if raw_title else "New Conversation"
+            if not sess_obj:
+                sess_obj = ChatSession(
+                    id=active_session_id,
+                    user_email=eff_email,
+                    title=smart_title,
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow()
+                )
+                db.add(sess_obj)
+            else:
+                if sess_obj.title in ["New Conversation", "New Chat", "default"] and smart_title:
+                    sess_obj.title = smart_title
+                sess_obj.updated_at = datetime.utcnow()
+            db.commit()
+        except Exception as sess_err:
+            db.rollback()
+            print(f"[ChatSession Note] {sess_err}")
 
     # Security: Content Quarantine & Prompt Injection Sanitization (AETHER_SECURITY_REVIEW.md)
     _, is_suspicious = ContentQuarantine.sanitize_input(user_msg, source="user_quick_capture")
@@ -609,7 +642,7 @@ async def _execute_quick_capture(
 
     # Record User Message
     db_content = f"📸 {user_msg}" if req.image_data and not user_msg.startswith("📸") else user_msg
-    user_chat = ChatMessage(role="user", content=db_content, user_email=eff_email)
+    user_chat = ChatMessage(role="user", content=db_content, user_email=eff_email, session_id=active_session_id)
     db.add(user_chat)
     db.commit()
     db.refresh(user_chat)
@@ -633,6 +666,7 @@ async def _execute_quick_capture(
             if agent_res.executed_tools and len(agent_res.executed_tools) > 1:
                 ai_chat = ChatMessage(
                     user_email=eff_email,
+                    session_id=active_session_id,
                     role="assistant",
                     content=agent_res.final_message,
                     action_type="agent_multi_step",
@@ -1112,6 +1146,7 @@ async def _execute_quick_capture(
     try:
         ai_chat = ChatMessage(
             user_email=eff_email,
+            session_id=active_session_id,
             role="assistant",
             content=result_message or "कार्य पूरा किया गया।",
             action_type=action,
@@ -1223,28 +1258,179 @@ def detect_user_location(request: Request):
         "display_name": "Jaipur, Rajasthan"
     }
 
-# ----------------- Chat History & News -----------------
-@app.get("/api/chat/history")
-def get_chat_history(
-    limit: int = 30, 
+# ----------------- Chat Sessions & History -----------------
+@app.get("/api/chat/sessions")
+def get_chat_sessions(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    if not user_email:
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
         return []
-    msgs = db.query(ChatMessage).filter(ChatMessage.user_email == user_email.strip().lower()).order_by(ChatMessage.created_at.asc()).all()
+    
+    sessions = (
+        db.query(ChatSession)
+        .filter(ChatSession.user_email == eff_email)
+        .order_by(ChatSession.updated_at.desc())
+        .all()
+    )
+    
+    # If no sessions exist yet but user has messages, backfill default session
+    if not sessions:
+        first_msg = (
+            db.query(ChatMessage)
+            .filter(ChatMessage.user_email == eff_email, ChatMessage.role == "user")
+            .order_by(ChatMessage.created_at.asc())
+            .first()
+        )
+        if first_msg:
+            raw_title = first_msg.content.replace("📸", "").strip()
+            legacy_title = (raw_title[:36] + ("..." if len(raw_title) > 36 else "")) if raw_title else "Previous Conversation"
+            default_session = ChatSession(
+                id="default",
+                user_email=eff_email,
+                title=legacy_title,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            )
+            db.add(default_session)
+            db.query(ChatMessage).filter(
+                ChatMessage.user_email == eff_email, 
+                (ChatMessage.session_id == None) | (ChatMessage.session_id == "")
+            ).update({"session_id": "default"}, synchronize_session=False)
+            db.commit()
+            sessions = [default_session]
+            
+    return [
+        {
+            "id": s.id,
+            "title": s.title,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None
+        }
+        for s in sessions
+    ]
+
+@app.post("/api/chat/sessions")
+def create_chat_session(
+    req: ChatSessionCreate,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    sess_id = (req.id or "").strip() or f"sess_{int(datetime.utcnow().timestamp() * 1000)}"
+    existing = db.query(ChatSession).filter(ChatSession.id == sess_id, ChatSession.user_email == eff_email).first()
+    if existing:
+        return {
+            "id": existing.id,
+            "title": existing.title,
+            "created_at": existing.created_at.isoformat() if existing.created_at else None,
+            "updated_at": existing.updated_at.isoformat() if existing.updated_at else None
+        }
+    
+    session = ChatSession(
+        id=sess_id,
+        user_email=eff_email,
+        title=req.title or "New Conversation",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return {
+        "id": session.id,
+        "title": session.title,
+        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None
+    }
+
+@app.put("/api/chat/sessions/{session_id}")
+def update_chat_session(
+    session_id: str,
+    req: ChatSessionUpdate,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    
+    clean_title = (req.title or "").strip()
+    if not clean_title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    
+    session.title = clean_title
+    session.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(session)
+    return {
+        "id": session.id,
+        "title": session.title,
+        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None
+    }
+
+@app.delete("/api/chat/sessions/{session_id}")
+def delete_chat_session(
+    session_id: str,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).first()
+    # Delete associated messages
+    db.query(ChatMessage).filter(ChatMessage.session_id == session_id, ChatMessage.user_email == eff_email).delete()
+    if session:
+        db.delete(session)
+    db.commit()
+    return {"status": "success", "message": "Chat session deleted"}
+
+@app.get("/api/chat/history")
+def get_chat_history(
+    session_id: Optional[str] = None,
+    limit: int = 60, 
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        return []
+    
+    query = db.query(ChatMessage).filter(ChatMessage.user_email == eff_email)
+    if session_id:
+        query = query.filter(ChatMessage.session_id == session_id)
+    
+    msgs = query.order_by(ChatMessage.created_at.asc()).all()
     return msgs[-limit:]
 
 @app.delete("/api/chat/history")
 def clear_chat_history(
+    session_id: Optional[str] = None,
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    if not user_email:
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
         return {"message": "No authenticated user to clear"}
-    db.query(ChatMessage).filter(ChatMessage.user_email == user_email.strip().lower()).delete()
+    
+    query = db.query(ChatMessage).filter(ChatMessage.user_email == eff_email)
+    if session_id:
+        query = query.filter(ChatMessage.session_id == session_id)
+        db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).delete()
+    query.delete()
     db.commit()
-    return {"message": "Chat history cleared, ready for new conversation"}
+    return {"message": "Chat history cleared"}
 
 @app.get("/api/news")
 def get_live_news(limit: int = 5, category: str = None):

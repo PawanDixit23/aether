@@ -70,5 +70,10 @@ def ensure_schema_migrations():
                 conn.commit()
             except Exception:
                 pass
+            try:
+                conn.execute(text("ALTER TABLE chat_messages ADD COLUMN session_id VARCHAR DEFAULT 'default'"))
+                conn.commit()
+            except Exception:
+                pass
     except Exception as e:
         print(f"[Schema Migration Note] {e}")

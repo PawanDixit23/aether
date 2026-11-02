@@ -58,11 +58,21 @@ class AuditLog(Base):
     undo_payload = Column(Text, nullable=True)   # JSON string for undo operation
     is_undone = Column(Boolean, default=False)
 
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id = Column(String, primary_key=True, index=True) # e.g. sess_20261102_123456
+    user_email = Column(String, index=True, nullable=False)
+    title = Column(String, nullable=False, default="New Conversation")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    session_id = Column(String, index=True, default="default", nullable=True)
     role = Column(String, nullable=False)        # "user" or "aether"
     content = Column(Text, nullable=False)
     action_type = Column(String, default="query")# "task", "expense", "income", "memory", "query"

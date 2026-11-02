@@ -57,6 +57,7 @@ import {
   Sliders,
   Menu,
   Edit3,
+  PanelLeft,
   Camera,
   Image,
   FileText,
@@ -83,6 +84,7 @@ import { AetherParticleSphere } from './components/chat/AetherParticleSphere';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { TasksModal } from './components/modals/TasksModal';
 import { ConfirmModal } from './components/modals/ConfirmModal';
+import { ChatHistoryDrawer } from './components/chat/ChatHistoryDrawer';
 
 // Code-split heavy modals for instant mobile loading & 0-lag startup
 const FinanceModal = React.lazy(() => import('./components/modals/FinanceModal').then(m => ({ default: m.FinanceModal })));
@@ -655,7 +657,35 @@ export default function App() {
   
   // App data states
   const [briefing, setBriefing] = useState(null);
-  const [chatHistory, setChatHistory] = useState([]);
+  const [chatSessions, setChatSessions] = useState(() => {
+    try {
+      const email = localStorage.getItem('aether_user_email');
+      const cached = email ? localStorage.getItem(`aether_chat_sessions_${email}`) : null;
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [activeSessionId, setActiveSessionId] = useState(() => {
+    try {
+      const email = localStorage.getItem('aether_user_email');
+      const cached = email ? localStorage.getItem(`aether_active_session_id_${email}`) : null;
+      return cached || 'default';
+    } catch {
+      return 'default';
+    }
+  });
+  const [isChatDrawerOpen, setIsChatDrawerOpen] = useState(false);
+  const [chatHistory, setChatHistory] = useState(() => {
+    try {
+      const email = localStorage.getItem('aether_user_email');
+      const sessId = email ? (localStorage.getItem(`aether_active_session_id_${email}`) || 'default') : 'default';
+      const cached = email ? localStorage.getItem(`aether_chat_history_${email}_${sessId}`) : null;
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const isClearingChatRef = useRef(false);
   const handledDueIdsRef = useRef(new Set());
   const [tasks, setTasks] = useState(() => {
@@ -1674,6 +1704,8 @@ export default function App() {
     setUserAvatar('');
     setTasks([]);
     setChatHistory([]);
+    setChatSessions([]);
+    setActiveSessionId('default');
     setMemories([]);
     setFinanceRecords([]);
     setFinanceSummary({ total_income: 0, total_expense: 0, balance: 0 });
@@ -2993,9 +3025,10 @@ export default function App() {
     try {
       const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
       const authHeaders = currentEmail ? { 'X-User-Email': currentEmail } : {};
-      const [resBrief, resChat, resTasks, resFin, resFinSum, resMem, resAudit, resNews, resDue, resCricket] = await Promise.all([
+      const [resBrief, resChat, resSessions, resTasks, resFin, resFinSum, resMem, resAudit, resNews, resDue, resCricket] = await Promise.all([
         fetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}`, { headers: authHeaders }),
-        opts.skipChatHistory ? Promise.resolve({ ok: false }) : fetch(`${API_BASE}/chat/history`, { headers: authHeaders }),
+        opts.skipChatHistory ? Promise.resolve({ ok: false }) : fetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(activeSessionId || 'default')}&limit=60`, { headers: authHeaders }),
+        fetch(`${API_BASE}/chat/sessions`, { headers: authHeaders }),
         fetch(`${API_BASE}/tasks`, { headers: authHeaders }),
         fetch(`${API_BASE}/finance/records`, { headers: authHeaders }),
         fetch(`${API_BASE}/finance/summary`, { headers: authHeaders }),
@@ -3007,6 +3040,19 @@ export default function App() {
       ]);
 
       if (resBrief.ok) setBriefing(await resBrief.json());
+      if (resSessions && resSessions.ok) {
+        try {
+          const sessData = await resSessions.json();
+          if (Array.isArray(sessData)) {
+            setChatSessions(sessData);
+            if (currentEmail) {
+              try {
+                localStorage.setItem(`aether_chat_sessions_${currentEmail}`, JSON.stringify(sessData));
+              } catch (e) {}
+            }
+          }
+        } catch (e) {}
+      }
       if (resChat.ok && !opts.skipChatHistory) {
         const chats = await resChat.json();
         // Normalize role for rendering: 'aether' -> 'assistant'
@@ -3014,6 +3060,12 @@ export default function App() {
           ...c,
           role: c.role === 'aether' ? 'assistant' : c.role
         })) : [];
+
+        if (currentEmail && activeSessionId) {
+          try {
+            localStorage.setItem(`aether_chat_history_${currentEmail}_${activeSessionId}`, JSON.stringify(normalizedChats));
+          } catch (e) {}
+        }
 
         setChatHistory(prev => {
           if (isClearingChatRef.current) {
@@ -3627,6 +3679,7 @@ export default function App() {
       const payload = {
         input_text: prompt,
         image_data: sendingImageUrl || null,
+        session_id: activeSessionId || 'default',
         latitude: userCoords?.latitude || null,
         longitude: userCoords?.longitude || null,
         language: selectedLang,
@@ -3699,14 +3752,37 @@ export default function App() {
 
       // Call action is presented via the interactive call action card with dial buttons
 
-      setChatHistory(prev => [...prev, {
-        id: newAssistantMsgId,
-        role: 'assistant',
-        content: assistantReply,
-        action: actionType,
-        actionData: actionData,
-        created_at: new Date().toISOString()
-      }]);
+      setChatHistory(prev => {
+        const next = [...prev, {
+          id: newAssistantMsgId,
+          role: 'assistant',
+          content: assistantReply,
+          action: actionType,
+          actionData: actionData,
+          created_at: new Date().toISOString()
+        }];
+        if (userEmail && activeSessionId) {
+          try {
+            localStorage.setItem(`aether_chat_history_${userEmail}_${activeSessionId}`, JSON.stringify(next));
+          } catch (e) {}
+        }
+        return next;
+      });
+
+      // Quietly refresh chat sessions to get updated titles/timestamps
+      if (userEmail) {
+        fetch(`${API_BASE}/chat/sessions`, { headers: { 'X-User-Email': userEmail } })
+          .then(r => r.ok ? r.json() : null)
+          .then(sessData => {
+            if (Array.isArray(sessData)) {
+              setChatSessions(sessData);
+              try {
+                localStorage.setItem(`aether_chat_sessions_${userEmail}`, JSON.stringify(sessData));
+              } catch (e) {}
+            }
+          })
+          .catch(() => {});
+      }
 
       // If playing YouTube music, skip TTS voiceover to prevent dual audio collision & pause
       if (voiceOutputEnabled && actionType !== 'youtube') {
@@ -3728,27 +3804,125 @@ export default function App() {
     }
   };
 
-  // Start a New Chat / Clear Chat
-  const handleStartNewChat = async () => {
-    isClearingChatRef.current = true;
+  // Start a New Chat (Switches to fresh session, preserves existing chats)
+  const handleStartNewChat = () => {
+    const newSessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    setActiveSessionId(newSessionId);
     setChatHistory([]);
     setInputText('');
     setShowConversation(false);
     setShowDashboard(false);
-    showToast("New chat started! ⚡", 'success');
+    showToast("New conversation ready! ⚡", 'success');
+
+    const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+    if (currentEmail) {
+      try {
+        localStorage.setItem(`aether_active_session_id_${currentEmail}`, newSessionId);
+      } catch (e) {}
+    }
+  };
+
+  // Switch to an existing chat session from drawer
+  const handleSelectSession = async (sessionId) => {
+    if (!sessionId) return;
+    setActiveSessionId(sessionId);
+    setInputText('');
+    setShowDashboard(false);
+
+    const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+    if (currentEmail) {
+      try {
+        localStorage.setItem(`aether_active_session_id_${currentEmail}`, sessionId);
+        const cached = localStorage.getItem(`aether_chat_history_${currentEmail}_${sessionId}`);
+        if (cached) {
+          setChatHistory(JSON.parse(cached));
+        }
+      } catch (e) {}
+    }
 
     try {
-      const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
-      await fetch(`${API_BASE}/chat/history`, { 
-        method: 'DELETE',
-        headers: { ...(currentEmail ? { 'X-User-Email': currentEmail } : {}) }
-      });
+      const authHeaders = currentEmail ? { 'X-User-Email': currentEmail } : {};
+      const res = await fetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(sessionId)}&limit=60`, { headers: authHeaders });
+      if (res.ok) {
+        const chats = await res.json();
+        const normalizedChats = Array.isArray(chats) ? chats.map(c => ({
+          ...c,
+          role: c.role === 'aether' ? 'assistant' : c.role
+        })) : [];
+        setChatHistory(normalizedChats);
+        if (currentEmail) {
+          try {
+            localStorage.setItem(`aether_chat_history_${currentEmail}_${sessionId}`, JSON.stringify(normalizedChats));
+          } catch (e) {}
+        }
+      }
     } catch (err) {
-      console.warn("Failed to delete chat history on server:", err);
-    } finally {
-      setTimeout(() => {
-        isClearingChatRef.current = false;
-      }, 1000);
+      console.warn("Error fetching session chat history:", err);
+    }
+  };
+
+  // Rename a chat session
+  const handleRenameSession = async (sessionId, newTitle) => {
+    if (!sessionId || !newTitle?.trim()) return;
+    const cleanTitle = newTitle.trim();
+    const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+
+    setChatSessions(prev => {
+      const next = prev.map(s => s.id === sessionId ? { ...s, title: cleanTitle } : s);
+      if (currentEmail) {
+        try {
+          localStorage.setItem(`aether_chat_sessions_${currentEmail}`, JSON.stringify(next));
+        } catch (e) {}
+      }
+      return next;
+    });
+
+    try {
+      const authHeaders = currentEmail ? { 'X-User-Email': currentEmail, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+      const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}`, {
+        method: 'PUT',
+        headers: authHeaders,
+        body: JSON.stringify({ title: cleanTitle })
+      });
+      if (res.ok) {
+        showToast("Conversation renamed", 'success');
+      }
+    } catch (err) {
+      console.warn("Error renaming chat session:", err);
+    }
+  };
+
+  // Delete a chat session intentionally
+  const handleDeleteSession = async (sessionId) => {
+    if (!sessionId) return;
+    const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+
+    const remainingSessions = chatSessions.filter(s => s.id !== sessionId);
+    setChatSessions(remainingSessions);
+    if (currentEmail) {
+      try {
+        localStorage.setItem(`aether_chat_sessions_${currentEmail}`, JSON.stringify(remainingSessions));
+        localStorage.removeItem(`aether_chat_history_${currentEmail}_${sessionId}`);
+      } catch (e) {}
+    }
+
+    if (sessionId === activeSessionId) {
+      if (remainingSessions.length > 0) {
+        handleSelectSession(remainingSessions[0].id);
+      } else {
+        handleStartNewChat();
+      }
+    }
+
+    try {
+      const authHeaders = currentEmail ? { 'X-User-Email': currentEmail } : {};
+      await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}`, {
+        method: 'DELETE',
+        headers: authHeaders
+      });
+      showToast("Conversation deleted", 'info');
+    } catch (err) {
+      console.warn("Error deleting chat session:", err);
     }
   };
 
@@ -5092,8 +5266,8 @@ export default function App() {
                 className="gemini-top-bar"
                 style={showDashboard ? { paddingLeft: '12px', paddingRight: '12px' } : {}}
               >
-                <div className="gemini-top-left" style={{ width: '80px', display: 'flex', alignItems: 'center' }}>
-                  {showDashboard && (
+                <div className="gemini-top-left" style={{ width: '80px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {showDashboard ? (
                     <button
                       type="button"
                       className="gemini-icon-btn"
@@ -5113,6 +5287,28 @@ export default function App() {
                       }}
                     >
                       <ArrowLeft size={18} />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="gemini-icon-btn"
+                      onClick={() => setIsChatDrawerOpen(true)}
+                      title="Chat History / पुरानी चैट"
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        color: '#e2e8f0',
+                        borderRadius: '12px',
+                        width: '38px',
+                        height: '38px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s'
+                      }}
+                    >
+                      <PanelLeft size={19} />
                     </button>
                   )}
                 </div>
@@ -6740,6 +6936,20 @@ export default function App() {
       {/* =========================================================================
           SUB-MODALS (Key, Finance, Audit, Profile Name, Assistant Setup, Reminders)
           ========================================================================= */}
+
+      {/* ChatGPT / Gemini Style Chat History Slide-over Drawer */}
+      <ChatHistoryDrawer
+        isOpen={isChatDrawerOpen}
+        onClose={() => setIsChatDrawerOpen(false)}
+        sessions={chatSessions}
+        activeSessionId={activeSessionId}
+        onSelectSession={handleSelectSession}
+        onNewChat={handleStartNewChat}
+        onRenameSession={handleRenameSession}
+        onDeleteSession={handleDeleteSession}
+        userEmail={userEmail}
+        userName={userName}
+      />
 
       {/* 0. Tasks & Agenda Modal (Redesigned Clean UI matching Screenshot) */}
       <TasksModal
