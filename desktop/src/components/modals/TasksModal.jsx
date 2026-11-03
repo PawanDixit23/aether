@@ -200,7 +200,7 @@ export const TasksModal = ({
   const dateCompletedCount = dateTasks.filter(t => isTaskDone(t, selectedDateStr)).length;
   const overdueCount = combinedTasks.filter(t => isTaskOverdue(t, todayStr)).length;
   const upcomingCount = combinedTasks.filter(t => !isTaskDone(t, todayStr) && !isDaily(t) && getTaskDateStr(t) && getTaskDateStr(t) > todayStr).length;
-  const completedCount = dateCompletedCount;
+  const completedCount = combinedTasks.filter(t => isTaskDone(t, selectedDateStr)).length;
 
   const dateProgressPercent = dateTotalCount > 0 ? Math.round((dateCompletedCount / dateTotalCount) * 100) : 0;
 

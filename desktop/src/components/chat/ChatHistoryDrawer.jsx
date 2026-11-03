@@ -83,9 +83,10 @@ export const ChatHistoryDrawer = ({
     });
   };
 
-  // Filter sessions by search query and project
+  // Filter sessions by search query and project (exclude temporary chats)
   const filteredSessions = useMemo(() => {
     return (sessions || []).filter(s => {
+      if (s.id?.startsWith('temp_') || s.id === 'temporary') return false;
       const matchesSearch = !searchQuery.trim() || 
         (s.title || '').toLowerCase().includes(searchQuery.toLowerCase().trim());
       if (!matchesSearch) return false;
@@ -434,7 +435,7 @@ export const ChatHistoryDrawer = ({
                       }}
                     >
                       <div 
-                        onClick={() => onToggleTask && onToggleTask(task)}
+                        onClick={() => onToggleTask && onToggleTask(task.id, !completed)}
                         style={{
                           display: 'flex',
                           alignItems: 'center',

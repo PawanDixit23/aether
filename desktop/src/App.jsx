@@ -661,7 +661,8 @@ export default function App() {
     try {
       const email = localStorage.getItem('aether_user_email');
       const cached = email ? localStorage.getItem(`aether_chat_sessions_${email}`) : null;
-      return cached ? JSON.parse(cached) : [];
+      const list = cached ? JSON.parse(cached) : [];
+      return Array.isArray(list) ? list.filter(s => !s.id?.startsWith('temp_') && s.id !== 'temporary') : [];
     } catch {
       return [];
     }
@@ -3125,8 +3126,8 @@ export default function App() {
         try {
           const sessData = await resSessions.json();
           if (Array.isArray(sessData)) {
-            // Drop any session that was intentionally deleted by the user to avoid temporary resurrection
-            const validSessions = sessData.filter(s => !deletedSessionIdsRef.current.has(s.id));
+            // Drop any session that was intentionally deleted or temporary
+            const validSessions = sessData.filter(s => !deletedSessionIdsRef.current.has(s.id) && !s.id.startsWith('temp_') && s.id !== 'temporary');
             setChatSessions(validSessions);
             if (currentEmail) {
               try {
@@ -3938,7 +3939,7 @@ export default function App() {
           .then(r => r.ok ? r.json() : null)
           .then(sessData => {
             if (Array.isArray(sessData)) {
-              const validSessions = sessData.filter(s => !deletedSessionIdsRef.current.has(s.id));
+              const validSessions = sessData.filter(s => !deletedSessionIdsRef.current.has(s.id) && !s.id.startsWith('temp_') && s.id !== 'temporary');
               setChatSessions(validSessions);
               try {
                 localStorage.setItem(`aether_chat_sessions_${userEmail}`, JSON.stringify(validSessions));
@@ -4100,9 +4101,13 @@ export default function App() {
   };
 
   const handleToggleTask = async (taskId, explicitDone = null, explicitDateStr = null) => {
+    // Support both ID primitive and task object
+    const actualTaskId = typeof taskId === 'object' && taskId !== null ? (taskId.id || taskId) : taskId;
+    if (!actualTaskId) return;
+
     // Record date-aware completion for recurring/daily tasks
     const todayDateKey = explicitDateStr || (formatLocalDateStr ? formatLocalDateStr(new Date()) : new Date().toISOString().slice(0, 10));
-    const targetTask = tasks.find(t => String(t.id) === String(taskId)) || (typeof combinedTasks !== 'undefined' ? combinedTasks.find(t => String(t.id) === String(taskId)) : null);
+    const targetTask = tasks.find(t => String(t.id) === String(actualTaskId)) || (typeof combinedTasks !== 'undefined' ? combinedTasks.find(t => String(t.id) === String(actualTaskId)) : null);
     const isDaily = targetTask && (targetTask.recurrence === 'daily' || targetTask.repeat === 'daily' || String(targetTask.recurrence || '').toLowerCase().includes('daily'));
     
     let willBeDone;
@@ -4116,13 +4121,13 @@ export default function App() {
       try {
         const saved = localStorage.getItem('aether_task_date_completions');
         const map = saved ? JSON.parse(saved) : {};
-        map[taskId] = { ...(map[taskId] || {}), [todayDateKey]: willBeDone };
+        map[actualTaskId] = { ...(map[actualTaskId] || {}), [todayDateKey]: willBeDone };
         localStorage.setItem('aether_task_date_completions', JSON.stringify(map));
       } catch (e) {}
     }
 
     // Register in pendingTaskStatusRef so concurrent background polling never reverts to stale status
-    pendingTaskStatusRef.current.set(String(taskId), {
+    pendingTaskStatusRef.current.set(String(actualTaskId), {
       status: willBeDone ? 'completed' : 'pending',
       is_completed: willBeDone,
       timestamp: Date.now()
@@ -4130,18 +4135,18 @@ export default function App() {
 
     // Optimistically toggle task in local state immediately so UI updates with zero delay
     setTasks(prev => prev.map(t => {
-      if (String(t.id) === String(taskId)) {
+      if (String(t.id) === String(actualTaskId)) {
         return {
           ...t,
           is_completed: willBeDone,
           status: willBeDone ? 'completed' : 'pending'
         };
       }
-      if (t.subtasks && t.subtasks.some(s => String(s.id) === String(taskId))) {
+      if (t.subtasks && t.subtasks.some(s => String(s.id) === String(actualTaskId))) {
         return {
           ...t,
           subtasks: t.subtasks.map(s => {
-            if (String(s.id) === String(taskId)) {
+            if (String(s.id) === String(actualTaskId)) {
               return {
                 ...s,
                 is_completed: willBeDone,
@@ -4156,43 +4161,50 @@ export default function App() {
     }));
 
     // Also update googleTasks if matched
-    setGoogleTasks(prev => prev.map(t => String(t.id) === String(taskId) ? { ...t, is_completed: willBeDone, status: willBeDone ? 'completed' : 'pending' } : t));
+    setGoogleTasks(prev => prev.map(t => String(t.id) === String(actualTaskId) ? { ...t, is_completed: willBeDone, status: willBeDone ? 'completed' : 'pending' } : t));
 
     // Cancel native reminder alarm if being marked done
     if (willBeDone && typeof window !== 'undefined' && window.ReactNativeWebView) {
       try {
         window.ReactNativeWebView.postMessage(JSON.stringify({
           type: 'CANCEL_REMINDER',
-          id: taskId
+          id: actualTaskId
         }));
       } catch (e) {}
     }
 
     try {
-      const resp = await fetch(`${API_BASE}/tasks/${taskId}/toggle`, { 
+      const resp = await fetch(`${API_BASE}/tasks/${actualTaskId}/toggle`, { 
         method: 'PUT',
-        headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(userEmail ? { 'X-User-Email': userEmail } : {}) 
+        },
+        body: JSON.stringify({ status: willBeDone ? 'completed' : 'pending' })
       });
       if (resp.ok) {
         const serverUpdated = await resp.json();
-        pendingTaskStatusRef.current.delete(String(taskId));
+        // Protect status for 12 seconds so in-flight GET polls never revert it
+        setTimeout(() => {
+          pendingTaskStatusRef.current.delete(String(actualTaskId));
+        }, 12000);
         setTasks(prev => prev.map(t => {
-          if (String(t.id) === String(taskId)) {
+          if (String(t.id) === String(actualTaskId)) {
             return { ...t, ...serverUpdated, is_completed: willBeDone, status: willBeDone ? 'completed' : 'pending' };
           }
-          if (t.subtasks && t.subtasks.some(s => String(s.id) === String(taskId))) {
+          if (t.subtasks && t.subtasks.some(s => String(s.id) === String(actualTaskId))) {
             return {
               ...t,
-              subtasks: t.subtasks.map(s => String(s.id) === String(taskId) ? { ...s, ...serverUpdated, is_completed: willBeDone, status: willBeDone ? 'completed' : 'pending' } : s)
+              subtasks: t.subtasks.map(s => String(s.id) === String(actualTaskId) ? { ...s, ...serverUpdated, is_completed: willBeDone, status: willBeDone ? 'completed' : 'pending' } : s)
             };
           }
           return t;
         }));
         showToast("स्थिति अपडेट की गई (Status Updated)", 'info');
       } else {
-        pendingTaskStatusRef.current.delete(String(taskId));
+        pendingTaskStatusRef.current.delete(String(actualTaskId));
         setTasks(prev => prev.map(t => {
-          if (String(t.id) === String(taskId)) {
+          if (String(t.id) === String(actualTaskId)) {
             return { ...t, is_completed: !willBeDone, status: !willBeDone ? 'completed' : 'pending' };
           }
           return t;
@@ -4201,9 +4213,9 @@ export default function App() {
       }
     } catch (err) {
       console.error(err);
-      pendingTaskStatusRef.current.delete(String(taskId));
+      pendingTaskStatusRef.current.delete(String(actualTaskId));
       setTasks(prev => prev.map(t => {
-        if (String(t.id) === String(taskId)) {
+        if (String(t.id) === String(actualTaskId)) {
           return { ...t, is_completed: !willBeDone, status: !willBeDone ? 'completed' : 'pending' };
         }
         return t;
@@ -5542,15 +5554,23 @@ export default function App() {
                     type="button" 
                     className="gemini-icon-btn"
                     onClick={() => {
-                      setIsTemporaryChat(prev => {
-                        const next = !prev;
-                        if (next) {
-                          showToast("अस्थायी चैट चालू है (Temporary Chat On — हिस्ट्री सेव नहीं होगी)", "info");
-                        } else {
-                          showToast("अस्थायी चैट बंद की गई (Temporary Chat Off)", "info");
-                        }
-                        return next;
-                      });
+                      if (!isTemporaryChat) {
+                        // Switch to Temporary Chat: open a clean, fresh new chat immediately!
+                        const tempId = `temp_${Date.now()}`;
+                        activeSessionIdRef.current = tempId;
+                        setActiveSessionId(tempId);
+                        setChatHistory([]);
+                        setInputText('');
+                        setShowConversation(false);
+                        setShowDashboard(false);
+                        setIsTemporaryChat(true);
+                        showToast("अस्थायी चैट चालू है (Temporary Chat On — कोई मैसेज सेव नहीं होगा)", "info");
+                      } else {
+                        // Switch back to normal chat mode
+                        setIsTemporaryChat(false);
+                        handleStartNewChat();
+                        showToast("अस्थायी चैट बंद की गई (Normal Mode Active)", "info");
+                      }
                     }}
                     title={isTemporaryChat ? "Temporary Chat is Active (History paused)" : "Start Temporary Chat (अस्थायी चैट)"}
                     style={{

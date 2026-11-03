@@ -219,6 +219,9 @@ class TaskReschedule(BaseModel):
     due_date: Optional[datetime] = None
     reminder_time: Optional[str] = None
 
+class TaskToggleRequest(BaseModel):
+    status: Optional[str] = None
+
 class FinancialRecordCreate(BaseModel):
     type: str
     user_email: Optional[str] = None
@@ -614,9 +617,10 @@ async def _execute_quick_capture(
 
     eff_email = (req.user_email or user_email or "").strip().lower() or None
     active_session_id = (req.session_id or "").strip() or "default"
+    is_temporary = active_session_id.startswith("temp_") or active_session_id == "temporary"
 
-    # Ensure ChatSession exists or auto-title it
-    if eff_email:
+    # Ensure ChatSession exists or auto-title it (Skip completely for Temporary Chats)
+    if eff_email and not is_temporary:
         try:
             sess_obj = db.query(ChatSession).filter(ChatSession.id == active_session_id, ChatSession.user_email == eff_email).first()
             raw_title = user_msg.replace("📸", "").strip()
@@ -644,30 +648,33 @@ async def _execute_quick_capture(
     if is_suspicious:
         print(f"[Security Alert] Neutralized prompt injection pattern in: {user_msg[:60]}")
 
-    # Record User Message
-    db_content = f"📸 {user_msg}" if req.image_data and not user_msg.startswith("📸") else user_msg
-    try:
-        user_chat = ChatMessage(role="user", content=db_content, user_email=eff_email, session_id=active_session_id)
-        db.add(user_chat)
-        db.commit()
-        db.refresh(user_chat)
-    except Exception as u_err:
-        db.rollback()
+    # Record User Message (Skip completely for Temporary Chats)
+    user_chat = None
+    if not is_temporary:
+        db_content = f"📸 {user_msg}" if req.image_data and not user_msg.startswith("📸") else user_msg
         try:
-            user_chat = ChatMessage(role="user", content=db_content, user_email=eff_email)
+            user_chat = ChatMessage(role="user", content=db_content, user_email=eff_email, session_id=active_session_id)
             db.add(user_chat)
             db.commit()
             db.refresh(user_chat)
-        except Exception:
+        except Exception as u_err:
             db.rollback()
-            user_chat = None
+            try:
+                user_chat = ChatMessage(role="user", content=db_content, user_email=eff_email)
+                db.add(user_chat)
+                db.commit()
+                db.refresh(user_chat)
+            except Exception:
+                db.rollback()
+                user_chat = None
 
-    # 1. ChatSorter: Automatically extract episodic facts/routines into memory vault
-    try:
-        from memory import ChatSorter
-        ChatSorter.extract_facts(user_msg, eff_email or "operator@aether.local", db)
-    except Exception as cs_err:
-        print(f"[ChatSorter Passive Note] {cs_err}")
+    # 1. ChatSorter: Automatically extract episodic facts/routines into memory vault (Skip for Temporary Chats)
+    if not is_temporary:
+        try:
+            from memory import ChatSorter
+            ChatSorter.extract_facts(user_msg, eff_email or "operator@aether.local", db)
+        except Exception as cs_err:
+            print(f"[ChatSorter Passive Note] {cs_err}")
 
     # 2. Autonomous Multi-Step Agent Routing
     lang = req.language or "auto"
@@ -679,17 +686,18 @@ async def _execute_quick_capture(
             orchestrator = AgentOrchestrator(db=db, user_email=eff_email or "operator@aether.local", lang=lang)
             agent_res = await orchestrator.run(user_msg)
             if agent_res.executed_tools and len(agent_res.executed_tools) > 1:
-                ai_chat = ChatMessage(
-                    user_email=eff_email,
-                    session_id=active_session_id,
-                    role="assistant",
-                    content=agent_res.final_message,
-                    action_type="agent_multi_step",
-                    action_data=json.dumps({"plan": agent_res.plan}),
-                    confidence=0.98
-                )
-                db.add(ai_chat)
-                db.commit()
+                if not is_temporary:
+                    ai_chat = ChatMessage(
+                        user_email=eff_email,
+                        session_id=active_session_id,
+                        role="assistant",
+                        content=agent_res.final_message,
+                        action_type="agent_multi_step",
+                        action_data=json.dumps({"plan": agent_res.plan}),
+                        confidence=0.98
+                    )
+                    db.add(ai_chat)
+                    db.commit()
                 return {
                     "status": "executed",
                     "action": "agent_multi_step",
@@ -1157,36 +1165,12 @@ async def _execute_quick_capture(
         else:
             result_message = f"✉️ **ईमेल ड्राफ्ट समीक्षा के लिए तैयार है:**\n• **प्राप्तकर्ता**: {recip}\n• **विषय**: {subj}\n\nसमीक्षा करने या सीधे ईमेल क्लाइंट में खोलने के लिए नीचे दिया गया कार्ड देखें। 📝"
 
-    # Record AI Response in Chat History (resilient to schema constraints)
-    try:
-        ai_chat = ChatMessage(
-            user_email=eff_email,
-            session_id=active_session_id,
-            role="assistant",
-            content=result_message or "कार्य पूरा किया गया।",
-            action_type=action,
-            action_data=json.dumps(data) if data else None,
-            confidence=confidence
-        )
-        db.add(ai_chat)
-
-        # Log to Audit Log if real action was taken
-        if executed and action != "query":
-            audit = AuditLog(
-                user_email=eff_email,
-                action_type=f"auto_{action}",
-                details=result_message,
-                confidence_score=confidence,
-                undo_payload=undo_payload
-            )
-            db.add(audit)
-        
-        db.commit()
-    except Exception as chat_db_err:
-        db.rollback()
+    # Record AI Response in Chat History (resilient to schema constraints, skip for temporary chats)
+    if not is_temporary:
         try:
             ai_chat = ChatMessage(
                 user_email=eff_email,
+                session_id=active_session_id,
                 role="assistant",
                 content=result_message or "कार्य पूरा किया गया।",
                 action_type=action,
@@ -1194,10 +1178,35 @@ async def _execute_quick_capture(
                 confidence=confidence
             )
             db.add(ai_chat)
+
+            # Log to Audit Log if real action was taken
+            if executed and action != "query":
+                audit = AuditLog(
+                    user_email=eff_email,
+                    action_type=f"auto_{action}",
+                    details=result_message,
+                    confidence_score=confidence,
+                    undo_payload=undo_payload
+                )
+                db.add(audit)
+            
             db.commit()
-        except Exception:
+        except Exception as chat_db_err:
             db.rollback()
-        print(f"[Aether Chat Record Note] {chat_db_err}")
+            try:
+                ai_chat = ChatMessage(
+                    user_email=eff_email,
+                    role="assistant",
+                    content=result_message or "कार्य पूरा किया गया।",
+                    action_type=action,
+                    action_data=json.dumps(data) if data else None,
+                    confidence=confidence
+                )
+                db.add(ai_chat)
+                db.commit()
+            except Exception:
+                db.rollback()
+            print(f"[Aether Chat Record Note] {chat_db_err}")
 
     return {
         "status": "executed",
@@ -1296,9 +1305,10 @@ def get_chat_sessions(
     if not eff_email:
         return []
     
+    # Exclude any temporary or ephemeral sessions
     sessions = (
         db.query(ChatSession)
-        .filter(ChatSession.user_email == eff_email)
+        .filter(ChatSession.user_email == eff_email, ~ChatSession.id.startswith("temp_"), ChatSession.id != "temporary")
         .order_by(ChatSession.updated_at.desc())
         .all()
     )
@@ -1737,6 +1747,7 @@ def create_task(
 @app.put("/api/tasks/{task_id}/toggle")
 def toggle_task(
     task_id: int, 
+    req: Optional[TaskToggleRequest] = None,
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
@@ -1749,7 +1760,12 @@ def toggle_task(
         task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    new_status = "completed" if task.status != "completed" else "pending"
+    
+    if req and req.status in ["completed", "pending"]:
+        new_status = req.status
+    else:
+        new_status = "completed" if task.status != "completed" else "pending"
+        
     task.status = new_status
     if new_status == "completed":
         task.notified = True
