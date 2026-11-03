@@ -710,7 +710,7 @@ async def _execute_quick_capture(
         except Exception as ag_err:
             print(f"[Agent Orchestrator Note] {ag_err}")
 
-    context = build_context(db, client_time=req.client_time, tz_name=req.timezone, user_email=eff_email, exclude_chat_id=user_chat.id, prompt_query=user_msg)
+    context = build_context(db, client_time=req.client_time, tz_name=req.timezone, user_email=eff_email, exclude_chat_id=(user_chat.id if user_chat else None), prompt_query=user_msg)
     lang = req.language or "auto"
     parsed = await parse_intent_with_llm(
         user_msg, 
