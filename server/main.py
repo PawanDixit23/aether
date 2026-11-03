@@ -1727,10 +1727,13 @@ def toggle_task(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
+    eff_email = get_effective_email(user_email)
     query = db.query(Task).filter(Task.id == task_id)
-    if user_email:
-        query = query.filter(Task.user_email == user_email)
+    if eff_email:
+        query = query.filter(Task.user_email == eff_email)
     task = query.first()
+    if not task:
+        task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     new_status = "completed" if task.status != "completed" else "pending"
@@ -1763,10 +1766,13 @@ def reschedule_task(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
+    eff_email = get_effective_email(user_email)
     query = db.query(Task).filter(Task.id == task_id)
-    if user_email:
-        query = query.filter(Task.user_email == user_email)
+    if eff_email:
+        query = query.filter(Task.user_email == eff_email)
     task = query.first()
+    if not task:
+        task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     if req.due_date:
@@ -1787,7 +1793,7 @@ def reschedule_all_overdue(
     """Reschedules all overdue non-recurring tasks to today at their original reminder time."""
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     today = now.date()
-    eff_email = (user_email or "").strip().lower()
+    eff_email = get_effective_email(user_email)
     query = db.query(Task).filter(Task.status == "pending", Task.recurrence == None, Task.due_date != None)
     if eff_email:
         query = query.filter(Task.user_email == eff_email)
@@ -1812,14 +1818,20 @@ def delete_task(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
+    eff_email = get_effective_email(user_email)
     query = db.query(Task).filter(Task.id == task_id)
-    if user_email:
-        query = query.filter(Task.user_email == user_email)
+    if eff_email:
+        query = query.filter(Task.user_email == eff_email)
     task = query.first()
+    if not task:
+        task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     # Delete child subtasks if parent is deleted
-    db.query(Task).filter(Task.parent_id == task.id).delete()
+    try:
+        db.query(Task).filter(Task.parent_id == task.id).delete(synchronize_session=False)
+    except Exception as e:
+        print(f"[Delete Subtasks Note] {e}")
     db.delete(task)
     db.commit()
     return {"message": "Task and subtasks deleted successfully"}

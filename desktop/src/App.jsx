@@ -677,6 +677,10 @@ export default function App() {
   });
   const activeSessionIdRef = useRef(activeSessionId);
   const deletedSessionIdsRef = useRef(new Set());
+  const deletedTaskIdsRef = useRef(new Set());
+  const pendingTaskStatusRef = useRef(new Map()); // taskId -> { status, is_completed, timestamp }
+  const deletedFinanceIdsRef = useRef(new Set());
+  const deletedMemoryIdsRef = useRef(new Set());
 
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
@@ -988,25 +992,27 @@ export default function App() {
       cancelText: "Cancel",
       isDestructive: true,
       onConfirm: async () => {
+        deletedFinanceIdsRef.current.add(String(id));
+        const deleted = financeRecords.find(r => String(r.id) === String(id));
+        setFinanceRecords(prev => prev.filter(r => String(r.id) !== String(id)));
+        if (deleted) {
+          const amt = Number(deleted.amount || 0);
+          const isExp = (deleted.type === 'expense' || deleted.record_type === 'expense' || !deleted.type);
+          setFinanceSummary(prev => ({
+            ...prev,
+            total_expense: isExp ? Math.max(0, prev.total_expense - amt) : prev.total_expense,
+            total_income: !isExp ? Math.max(0, prev.total_income - amt) : prev.total_income,
+            balance: isExp ? prev.balance + amt : prev.balance - amt,
+            record_count: Math.max(0, (prev.record_count || 1) - 1)
+          }));
+        }
+
         try {
           const resp = await fetch(`${API_BASE}/finance/records/${id}`, {
             method: 'DELETE',
             headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
           });
           if (resp.ok) {
-            const deleted = financeRecords.find(r => r.id === id);
-            setFinanceRecords(prev => prev.filter(r => r.id !== id));
-            if (deleted) {
-              const amt = Number(deleted.amount || 0);
-              const isExp = (deleted.type === 'expense' || deleted.record_type === 'expense' || !deleted.type);
-              setFinanceSummary(prev => ({
-                ...prev,
-                total_expense: isExp ? Math.max(0, prev.total_expense - amt) : prev.total_expense,
-                total_income: !isExp ? Math.max(0, prev.total_income - amt) : prev.total_income,
-                balance: isExp ? prev.balance + amt : prev.balance - amt,
-                record_count: Math.max(0, (prev.record_count || 1) - 1)
-              }));
-            }
             showToast("रिकॉर्ड हटा दिया गया", "success");
           } else {
             showToast("रिकॉर्ड हटाने में समस्या आई", "error");
@@ -2587,6 +2593,7 @@ export default function App() {
   const handleRescheduleTask = async (taskId, targetDateStr = null) => {
     const todayStr = formatLocalDateStr(new Date());
     const finalDate = targetDateStr || todayStr;
+    setTasks(prev => prev.map(t => String(t.id) === String(taskId) ? { ...t, due_date: `${finalDate}T10:00:00`, status: 'pending', is_completed: false } : t));
     try {
       const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
       await fetch(`${API_BASE}/tasks/${taskId}/reschedule`, {
@@ -2594,7 +2601,6 @@ export default function App() {
         headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ due_date: `${finalDate}T10:00:00` })
       });
-      refreshAllData();
       showToast('कार्य सफलतापूर्वक रीशेड्यूल किया गया!', 'success');
     } catch (e) {
       showToast('रीशेड्यूल करने में त्रुटि', 'error');
@@ -2656,14 +2662,27 @@ export default function App() {
       showToast('आज कोई पूर्ण कार्य नहीं है जिसे रीसेट किया जा सके', 'info');
       return;
     }
+    completedToday.forEach(t => {
+      pendingTaskStatusRef.current.set(String(t.id), {
+        status: 'pending',
+        is_completed: false,
+        timestamp: Date.now()
+      });
+    });
+    setTasks(prev => prev.map(t => {
+      if (completedToday.some(c => String(c.id) === String(t.id))) {
+        return { ...t, is_completed: false, status: 'pending' };
+      }
+      return t;
+    }));
     try {
       for (const t of completedToday) {
         await fetch(`${API_BASE}/tasks/${t.id}/toggle`, {
           method: 'PUT',
           headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
         });
+        pendingTaskStatusRef.current.delete(String(t.id));
       }
-      refreshAllData();
       showToast(`आज के लिए ${completedToday.length} कार्य पुनः सक्रिय (Reset) किए गए!`, 'success');
     } catch (err) {
       showToast('रीसेट करने में त्रुटि', 'error');
@@ -3110,19 +3129,58 @@ export default function App() {
 
       if (resTasks.ok) {
         loadedTasks = await resTasks.json();
-        setTasks(prev => {
-          // Never wipe out local tasks if server returned 0 but we already have local tasks!
-          if (loadedTasks.length === 0 && prev.length > 0) {
-            return prev;
+        const now = Date.now();
+
+        // 1. Drop any task that was intentionally deleted by the user
+        let cleanTasks = Array.isArray(loadedTasks) 
+          ? loadedTasks.filter(t => !deletedTaskIdsRef.current.has(String(t.id)))
+          : [];
+
+        // 2. Preserve recent optimistic status changes (completed/pending) so slow server sync never reverts them
+        cleanTasks = cleanTasks.map(t => {
+          let updatedTask = t;
+          const pending = pendingTaskStatusRef.current.get(String(t.id));
+          if (pending && (now - pending.timestamp < 15000)) {
+            const serverDone = Boolean(t.is_completed || t.status === 'completed');
+            if (serverDone === pending.is_completed) {
+              pendingTaskStatusRef.current.delete(String(t.id));
+            } else {
+              updatedTask = { ...updatedTask, status: pending.status, is_completed: pending.is_completed };
+            }
           }
-          return loadedTasks;
+          if (updatedTask.subtasks && Array.isArray(updatedTask.subtasks)) {
+            updatedTask = {
+              ...updatedTask,
+              subtasks: updatedTask.subtasks.map(s => {
+                const subPending = pendingTaskStatusRef.current.get(String(s.id));
+                if (subPending && (now - subPending.timestamp < 15000)) {
+                  const subServerDone = Boolean(s.is_completed || s.status === 'completed');
+                  if (subServerDone === subPending.is_completed) {
+                    pendingTaskStatusRef.current.delete(String(s.id));
+                    return s;
+                  }
+                  return { ...s, status: subPending.status, is_completed: subPending.is_completed };
+                }
+                return s;
+              })
+            };
+          }
+          return updatedTask;
         });
 
-        if (loadedTasks.length > 0) {
-          localStorage.setItem('aether_cached_tasks', JSON.stringify(loadedTasks));
+        setTasks(prev => {
+          // Never wipe out local tasks if server returned 0 but we already have local tasks!
+          if (cleanTasks.length === 0 && prev.length > 0) {
+            return prev;
+          }
+          return cleanTasks;
+        });
+
+        if (cleanTasks.length > 0) {
+          localStorage.setItem('aether_cached_tasks', JSON.stringify(cleanTasks));
           if (currentEmail) {
             localStorage.setItem(`aether_backup_${currentEmail}`, JSON.stringify({
-              tasks: loadedTasks,
+              tasks: cleanTasks,
               memories: loadedMemories,
               finances: loadedFinances
             }));
@@ -3130,8 +3188,8 @@ export default function App() {
         }
 
         // Schedule upcoming reminders natively on mobile app
-        if (typeof window !== 'undefined' && window.ReactNativeWebView && Array.isArray(loadedTasks)) {
-          loadedTasks.forEach(t => {
+        if (typeof window !== 'undefined' && window.ReactNativeWebView && Array.isArray(cleanTasks)) {
+          cleanTasks.forEach(t => {
             const isDone = t.is_completed || t.status === 'completed';
             if (isDone) {
               try {
@@ -3163,12 +3221,18 @@ export default function App() {
 
       if (resFin.ok) {
         loadedFinances = await resFin.json();
-        setFinanceRecords(loadedFinances);
+        const validFinances = Array.isArray(loadedFinances)
+          ? loadedFinances.filter(f => !deletedFinanceIdsRef.current.has(String(f.id)))
+          : [];
+        setFinanceRecords(validFinances);
       }
       if (resFinSum.ok) setFinanceSummary(await resFinSum.json());
       if (resMem.ok) {
         loadedMemories = await resMem.json();
-        setMemories(loadedMemories);
+        const validMemories = Array.isArray(loadedMemories)
+          ? loadedMemories.filter(m => !deletedMemoryIdsRef.current.has(String(m.id)))
+          : [];
+        setMemories(validMemories);
       }
       if (resAudit.ok) setAuditLogs(await resAudit.json());
       if (resNews.ok) setNewsItems(await resNews.json());
@@ -3977,7 +4041,7 @@ export default function App() {
   const handleToggleTask = async (taskId, explicitDone = null, explicitDateStr = null) => {
     // Record date-aware completion for recurring/daily tasks
     const todayDateKey = explicitDateStr || (formatLocalDateStr ? formatLocalDateStr(new Date()) : new Date().toISOString().slice(0, 10));
-    const targetTask = tasks.find(t => t.id === taskId) || (typeof combinedTasks !== 'undefined' ? combinedTasks.find(t => t.id === taskId) : null);
+    const targetTask = tasks.find(t => String(t.id) === String(taskId)) || (typeof combinedTasks !== 'undefined' ? combinedTasks.find(t => String(t.id) === String(taskId)) : null);
     const isDaily = targetTask && (targetTask.recurrence === 'daily' || targetTask.repeat === 'daily' || String(targetTask.recurrence || '').toLowerCase().includes('daily'));
     
     let willBeDone;
@@ -3996,20 +4060,27 @@ export default function App() {
       } catch (e) {}
     }
 
+    // Register in pendingTaskStatusRef so concurrent background polling never reverts to stale status
+    pendingTaskStatusRef.current.set(String(taskId), {
+      status: willBeDone ? 'completed' : 'pending',
+      is_completed: willBeDone,
+      timestamp: Date.now()
+    });
+
     // Optimistically toggle task in local state immediately so UI updates with zero delay
     setTasks(prev => prev.map(t => {
-      if (t.id === taskId) {
+      if (String(t.id) === String(taskId)) {
         return {
           ...t,
           is_completed: willBeDone,
           status: willBeDone ? 'completed' : 'pending'
         };
       }
-      if (t.subtasks && t.subtasks.some(s => s.id === taskId)) {
+      if (t.subtasks && t.subtasks.some(s => String(s.id) === String(taskId))) {
         return {
           ...t,
           subtasks: t.subtasks.map(s => {
-            if (s.id === taskId) {
+            if (String(s.id) === String(taskId)) {
               return {
                 ...s,
                 is_completed: willBeDone,
@@ -4023,6 +4094,9 @@ export default function App() {
       return t;
     }));
 
+    // Also update googleTasks if matched
+    setGoogleTasks(prev => prev.map(t => String(t.id) === String(taskId) ? { ...t, is_completed: willBeDone, status: willBeDone ? 'completed' : 'pending' } : t));
+
     // Cancel native reminder alarm if being marked done
     if (willBeDone && typeof window !== 'undefined' && window.ReactNativeWebView) {
       try {
@@ -4034,20 +4108,51 @@ export default function App() {
     }
 
     try {
-      await fetch(`${API_BASE}/tasks/${taskId}/toggle`, { 
+      const resp = await fetch(`${API_BASE}/tasks/${taskId}/toggle`, { 
         method: 'PUT',
         headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
       });
-      refreshAllData();
-      showToast("स्थिति अपडेट की गई (Status Updated)", 'info');
+      if (resp.ok) {
+        const serverUpdated = await resp.json();
+        pendingTaskStatusRef.current.delete(String(taskId));
+        setTasks(prev => prev.map(t => {
+          if (String(t.id) === String(taskId)) {
+            return { ...t, ...serverUpdated, is_completed: willBeDone, status: willBeDone ? 'completed' : 'pending' };
+          }
+          if (t.subtasks && t.subtasks.some(s => String(s.id) === String(taskId))) {
+            return {
+              ...t,
+              subtasks: t.subtasks.map(s => String(s.id) === String(taskId) ? { ...s, ...serverUpdated, is_completed: willBeDone, status: willBeDone ? 'completed' : 'pending' } : s)
+            };
+          }
+          return t;
+        }));
+        showToast("स्थिति अपडेट की गई (Status Updated)", 'info');
+      } else {
+        pendingTaskStatusRef.current.delete(String(taskId));
+        setTasks(prev => prev.map(t => {
+          if (String(t.id) === String(taskId)) {
+            return { ...t, is_completed: !willBeDone, status: !willBeDone ? 'completed' : 'pending' };
+          }
+          return t;
+        }));
+        showToast("स्थिति अपडेट करने में समस्या आई", 'error');
+      }
     } catch (err) {
       console.error(err);
-      refreshAllData();
+      pendingTaskStatusRef.current.delete(String(taskId));
+      setTasks(prev => prev.map(t => {
+        if (String(t.id) === String(taskId)) {
+          return { ...t, is_completed: !willBeDone, status: !willBeDone ? 'completed' : 'pending' };
+        }
+        return t;
+      }));
+      showToast("स्थिति अपडेट करने में समस्या आई", 'error');
     }
   };
 
   const handleDeleteTask = (taskId) => {
-    const target = tasks.find(t => t.id === taskId);
+    const target = tasks.find(t => String(t.id) === String(taskId));
     const title = target?.title || 'यह कार्य';
     showConfirm({
       title: "कार्य हटाएं?",
@@ -4056,24 +4161,27 @@ export default function App() {
       cancelText: "रद्द करें",
       isDestructive: true,
       onConfirm: async () => {
+        deletedTaskIdsRef.current.add(String(taskId));
         // Optimistically remove from local state
-        setTasks(prev => prev.filter(t => t.id !== taskId).map(t => {
-          if (t.subtasks && t.subtasks.some(s => s.id === taskId)) {
-            return { ...t, subtasks: t.subtasks.filter(s => s.id !== taskId) };
+        setTasks(prev => prev.filter(t => String(t.id) !== String(taskId)).map(t => {
+          if (t.subtasks && t.subtasks.some(s => String(s.id) === String(taskId))) {
+            return { ...t, subtasks: t.subtasks.filter(s => String(s.id) !== String(taskId)) };
           }
           return t;
         }));
+        setGoogleTasks(prev => prev.filter(t => String(t.id) !== String(taskId)));
 
         try {
-          await fetch(`${API_BASE}/tasks/${taskId}`, { 
+          const resp = await fetch(`${API_BASE}/tasks/${taskId}`, { 
             method: 'DELETE',
             headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
           });
-          refreshAllData();
-          showToast("कार्य हटा दिया गया", 'info');
+          if (resp.ok) {
+            showToast("कार्य हटा दिया गया", 'info');
+          }
         } catch (err) {
           console.error(err);
-          refreshAllData();
+          showToast("कार्य हटाने में समस्या आई", 'error');
         }
       }
     });
@@ -4181,7 +4289,7 @@ export default function App() {
   };
 
   const handleDeleteMemory = (memId) => {
-    const mem = memories.find(m => m.id === memId);
+    const mem = memories.find(m => String(m.id) === String(memId));
     const key = mem?.key || 'यह स्मृति';
     showConfirm({
       title: "स्मृति हटाएं?",
@@ -4190,13 +4298,16 @@ export default function App() {
       cancelText: "रद्द करें",
       isDestructive: true,
       onConfirm: async () => {
+        deletedMemoryIdsRef.current.add(String(memId));
+        setMemories(prev => prev.filter(m => String(m.id) !== String(memId)));
         try {
-          await fetch(`${API_BASE}/memory/${memId}`, { 
+          const resp = await fetch(`${API_BASE}/memory/${memId}`, { 
             method: 'DELETE',
             headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
           });
-          refreshAllData();
-          showToast("स्मृति वॉल्ट से हटा दी गई", 'info');
+          if (resp.ok) {
+            showToast("स्मृति वॉल्ट से हटा दी गई", 'info');
+          }
         } catch (err) {
           console.error(err);
         }
