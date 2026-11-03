@@ -8,8 +8,25 @@ import {
   Search, 
   Sparkles,
   ShieldCheck,
-  Check
+  Check,
+  CheckCircle2,
+  Circle,
+  Pin,
+  PinOff,
+  Folder,
+  FolderOpen,
+  Calendar,
+  Clock,
+  ChevronRight,
+  Briefcase
 } from 'lucide-react';
+
+const PROJECT_LIST = [
+  { id: 'all', name: 'All', icon: FolderOpen },
+  { id: 'work', name: 'Work', icon: Briefcase, color: '#38bdf8' },
+  { id: 'personal', name: 'Personal', icon: Folder, color: '#a855f7' },
+  { id: 'ideas', name: 'Ideas', icon: Sparkles, color: '#f59e0b' }
+];
 
 export const ChatHistoryDrawer = ({
   isOpen,
@@ -21,24 +38,97 @@ export const ChatHistoryDrawer = ({
   onRenameSession,
   onDeleteSession,
   userEmail,
-  userName
+  userName,
+  todayTasks = [],
+  todayPendingCount = 0,
+  onToggleTask,
+  onOpenTasksModal
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [renamingSession, setRenamingSession] = useState(null);
   const [renamingTitle, setRenamingTitle] = useState('');
   const [deletingSession, setDeletingSession] = useState(null);
+  const [activeProject, setActiveProject] = useState('all');
 
-  // Group sessions by date
+  // Pinned session IDs stored in localStorage
+  const [pinnedSessionIds, setPinnedSessionIds] = useState(() => {
+    try {
+      const saved = localStorage.getItem('aether_pinned_sessions');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  // Project assignments map { [sessionId]: projectId } stored in localStorage
+  const [sessionProjects, setSessionProjects] = useState(() => {
+    try {
+      const saved = localStorage.getItem('aether_chat_projects');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+
+  const handleTogglePin = (e, sessionId) => {
+    e.stopPropagation();
+    setPinnedSessionIds(prev => {
+      const next = prev.includes(sessionId)
+        ? prev.filter(id => id !== sessionId)
+        : [...prev, sessionId];
+      try {
+        localStorage.setItem('aether_pinned_sessions', JSON.stringify(next));
+      } catch (err) {}
+      return next;
+    });
+  };
+
+  // Filter sessions by search query and project
+  const filteredSessions = useMemo(() => {
+    return (sessions || []).filter(s => {
+      const matchesSearch = !searchQuery.trim() || 
+        (s.title || '').toLowerCase().includes(searchQuery.toLowerCase().trim());
+      if (!matchesSearch) return false;
+
+      if (activeProject === 'all') return true;
+      const assignedProj = sessionProjects[s.id];
+      if (assignedProj) return assignedProj === activeProject;
+
+      // Fallback keyword heuristic if not explicitly assigned
+      const titleLower = (s.title || '').toLowerCase();
+      if (activeProject === 'work') {
+        return /work|project|code|bug|dev|meeting|task|deploy|test|git|api/i.test(titleLower);
+      }
+      if (activeProject === 'personal') {
+        return /weather|food|health|remind|home|family|movie|music|finance/i.test(titleLower);
+      }
+      if (activeProject === 'ideas') {
+        return /idea|plan|draft|concept|note|research|learn/i.test(titleLower);
+      }
+      return false;
+    });
+  }, [sessions, searchQuery, activeProject, sessionProjects]);
+
+  // Separate pinned vs unpinned
+  const { pinnedSessions, unpinnedSessions } = useMemo(() => {
+    const pinned = [];
+    const unpinned = [];
+    filteredSessions.forEach(s => {
+      if (pinnedSessionIds.includes(s.id)) {
+        pinned.push(s);
+      } else {
+        unpinned.push(s);
+      }
+    });
+    return { pinnedSessions: pinned, unpinnedSessions: unpinned };
+  }, [filteredSessions, pinnedSessionIds]);
+
+  // Group unpinned sessions by date
   const groupedSessions = useMemo(() => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const yesterday = today - 86400000;
     const sevenDaysAgo = today - (7 * 86400000);
-
-    const filtered = (sessions || []).filter(s => 
-      !searchQuery.trim() || 
-      (s.title || '').toLowerCase().includes(searchQuery.toLowerCase().trim())
-    );
 
     const groups = {
       today: [],
@@ -47,7 +137,7 @@ export const ChatHistoryDrawer = ({
       older: []
     };
 
-    filtered.forEach(session => {
+    unpinnedSessions.forEach(session => {
       const sessionDate = session.updated_at 
         ? new Date(session.updated_at).getTime() 
         : (session.created_at ? new Date(session.created_at).getTime() : 0);
@@ -63,7 +153,7 @@ export const ChatHistoryDrawer = ({
     });
 
     return groups;
-  }, [sessions, searchQuery]);
+  }, [unpinnedSessions]);
 
   const handleOpenRename = (e, session) => {
     e.stopPropagation();
@@ -87,8 +177,20 @@ export const ChatHistoryDrawer = ({
   const handleConfirmDelete = async () => {
     if (deletingSession) {
       await onDeleteSession(deletingSession.id);
+      // Clean up pinned status if present
+      if (pinnedSessionIds.includes(deletingSession.id)) {
+        const next = pinnedSessionIds.filter(id => id !== deletingSession.id);
+        setPinnedSessionIds(next);
+        try {
+          localStorage.setItem('aether_pinned_sessions', JSON.stringify(next));
+        } catch (err) {}
+      }
     }
     setDeletingSession(null);
+  };
+
+  const isTaskCompleted = (t) => {
+    return Boolean(t.is_completed === true || t.completed === true || t.status === 'completed');
   };
 
   return (
@@ -109,7 +211,7 @@ export const ChatHistoryDrawer = ({
         }}
       />
 
-      {/* Slide-over Drawer Panel - Edge-to-Edge on Mobile, Elegant Sheet on Desktop */}
+      {/* Slide-over Drawer Panel */}
       <div 
         style={{
           position: 'fixed',
@@ -117,7 +219,7 @@ export const ChatHistoryDrawer = ({
           left: 0,
           bottom: 0,
           width: '100%',
-          maxWidth: 'min(380px, 100vw)',
+          maxWidth: 'min(390px, 100vw)',
           background: 'linear-gradient(180deg, #0c1424 0%, #060913 100%)',
           borderRight: '1px solid rgba(255, 255, 255, 0.12)',
           boxShadow: '20px 0 60px rgba(0, 0, 0, 0.8)',
@@ -130,19 +232,19 @@ export const ChatHistoryDrawer = ({
           overflow: 'hidden'
         }}
       >
-        {/* Header - Generous Safe Area for Mobile Status Bar / Camera Notch */}
+        {/* Header - Generous Safe Area for Mobile Notch */}
         <div style={{
-          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 36px)',
-          paddingBottom: '16px',
-          paddingLeft: '20px',
-          paddingRight: '20px',
+          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 28px)',
+          paddingBottom: '14px',
+          paddingLeft: '18px',
+          paddingRight: '18px',
           borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '12px',
           flexShrink: 0,
-          background: 'rgba(12, 20, 36, 0.8)',
+          background: 'rgba(12, 20, 36, 0.85)',
           backdropFilter: 'blur(12px)'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -160,11 +262,11 @@ export const ChatHistoryDrawer = ({
               <Sparkles size={18} color="#38bdf8" />
             </div>
             <div>
-              <div style={{ color: '#ffffff', fontWeight: 800, fontSize: '1.08rem', letterSpacing: '0.2px' }}>
+              <div style={{ color: '#ffffff', fontWeight: 800, fontSize: '1.05rem', letterSpacing: '0.2px' }}>
                 Chat History
               </div>
-              <div style={{ color: '#94a3b8', fontSize: '0.74rem', marginTop: '1px' }}>
-                Your saved conversations
+              <div style={{ color: '#94a3b8', fontSize: '0.72rem', marginTop: '1px' }}>
+                Saved conversations & agenda
               </div>
             </div>
           </div>
@@ -177,8 +279,8 @@ export const ChatHistoryDrawer = ({
               border: '1px solid rgba(255, 255, 255, 0.14)',
               color: '#e2e8f0',
               borderRadius: '12px',
-              width: '38px',
-              height: '38px',
+              width: '36px',
+              height: '36px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -187,12 +289,12 @@ export const ChatHistoryDrawer = ({
             }}
             title="Close Drawer"
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
 
         {/* Action: New Chat Button */}
-        <div style={{ padding: '16px 20px 10px', flexShrink: 0 }}>
+        <div style={{ padding: '14px 18px 8px', flexShrink: 0 }}>
           <button
             type="button"
             onClick={() => {
@@ -205,32 +307,32 @@ export const ChatHistoryDrawer = ({
               border: '1px solid rgba(56, 189, 248, 0.45)',
               color: '#38bdf8',
               borderRadius: '14px',
-              padding: '12px 18px',
+              padding: '11px 18px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '10px',
               fontWeight: 700,
-              fontSize: '0.94rem',
+              fontSize: '0.92rem',
               cursor: 'pointer',
               transition: 'all 0.2s',
-              boxShadow: '0 4px 18px rgba(56, 189, 248, 0.18)'
+              boxShadow: '0 4px 16px rgba(56, 189, 248, 0.16)'
             }}
           >
-            <Plus size={20} />
+            <Plus size={18} />
             <span>New Chat</span>
           </button>
         </div>
 
         {/* Search Bar */}
         {sessions.length > 2 && (
-          <div style={{ padding: '0 20px 12px', flexShrink: 0 }}>
+          <div style={{ padding: '0 18px 10px', flexShrink: 0 }}>
             <div style={{
               position: 'relative',
               display: 'flex',
               alignItems: 'center'
             }}>
-              <Search size={15} color="#64748b" style={{ position: 'absolute', left: '14px' }} />
+              <Search size={14} color="#64748b" style={{ position: 'absolute', left: '12px' }} />
               <input
                 type="text"
                 placeholder="Search conversations..."
@@ -241,9 +343,9 @@ export const ChatHistoryDrawer = ({
                   background: 'rgba(255, 255, 255, 0.05)',
                   border: '1px solid rgba(255, 255, 255, 0.1)',
                   borderRadius: '12px',
-                  padding: '9px 12px 9px 38px',
+                  padding: '8px 12px 8px 34px',
                   color: '#ffffff',
-                  fontSize: '0.85rem',
+                  fontSize: '0.84rem',
                   outline: 'none',
                   boxSizing: 'border-box'
                 }}
@@ -254,7 +356,7 @@ export const ChatHistoryDrawer = ({
                   onClick={() => setSearchQuery('')}
                   style={{
                     position: 'absolute',
-                    right: '12px',
+                    right: '10px',
                     background: 'none',
                     border: 'none',
                     color: '#94a3b8',
@@ -269,7 +371,7 @@ export const ChatHistoryDrawer = ({
           </div>
         )}
 
-        {/* Sessions List */}
+        {/* Scrollable Content: Tasks Notification Card + Projects + Pinned + Chats */}
         <div style={{
           flex: 1,
           overflowY: 'auto',
@@ -279,16 +381,248 @@ export const ChatHistoryDrawer = ({
           gap: '16px',
           WebkitOverflowScrolling: 'touch'
         }}>
-          {sessions.length === 0 ? (
+
+          {/* =========================================================================
+              ISSUE 7: TASK NOTIFICATION SECTION (Moved cleanly inside chat history)
+              ========================================================================= */}
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%)',
+            border: '1px solid rgba(56, 189, 248, 0.25)',
+            borderRadius: '14px',
+            padding: '12px 14px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Calendar size={15} color="#38bdf8" />
+                <span style={{ fontSize: '0.74rem', fontWeight: 800, color: '#94a3b8', letterSpacing: '0.6px', textTransform: 'uppercase' }}>
+                  Today's Tasks & Agenda
+                </span>
+              </div>
+              <span style={{
+                fontSize: '0.7rem',
+                fontWeight: 700,
+                padding: '2px 8px',
+                borderRadius: '10px',
+                background: todayPendingCount > 0 ? 'rgba(56, 189, 248, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                color: todayPendingCount > 0 ? '#38bdf8' : '#34d399',
+                border: todayPendingCount > 0 ? '1px solid rgba(56, 189, 248, 0.3)' : '1px solid rgba(16, 185, 129, 0.3)'
+              }}>
+                {todayPendingCount > 0 ? `${todayPendingCount} pending` : 'All done 🎉'}
+              </span>
+            </div>
+
+            {/* Top 3 Today Tasks with quick checkbox */}
+            {todayTasks && todayTasks.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {todayTasks.slice(0, 3).map(task => {
+                  const completed = isTaskCompleted(task);
+                  return (
+                    <div 
+                      key={task.id || task.title}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '8px',
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        padding: '6px 10px',
+                        borderRadius: '10px',
+                        border: '1px solid rgba(255, 255, 255, 0.05)'
+                      }}
+                    >
+                      <div 
+                        onClick={() => onToggleTask && onToggleTask(task)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          flex: 1,
+                          minWidth: 0,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {completed ? (
+                          <CheckCircle2 size={16} color="#10b981" style={{ flexShrink: 0 }} />
+                        ) : (
+                          <Circle size={16} color="#64748b" style={{ flexShrink: 0 }} />
+                        )}
+                        <span style={{
+                          fontSize: '0.82rem',
+                          color: completed ? '#64748b' : '#f1f5f9',
+                          textDecoration: completed ? 'line-through' : 'none',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {task.title}
+                        </span>
+                      </div>
+
+                      {task.reminder_time && (
+                        <span style={{ fontSize: '0.68rem', color: '#94a3b8', whiteSpace: 'nowrap' }}>
+                          ⏰ {task.reminder_time}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ fontSize: '0.78rem', color: '#64748b', padding: '2px 0' }}>
+                No tasks scheduled for today.
+              </div>
+            )}
+
+            {/* View Full Tasks modal trigger button */}
+            {onOpenTasksModal && (
+              <button
+                type="button"
+                onClick={onOpenTasksModal}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  color: '#38bdf8',
+                  borderRadius: '10px',
+                  padding: '6px 12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  fontSize: '0.76rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  marginTop: '2px'
+                }}
+              >
+                <span>View Full Agenda & Tasks</span>
+                <ChevronRight size={14} />
+              </button>
+            )}
+          </div>
+
+          {/* =========================================================================
+              ISSUE 6: PROJECTS SECTION (Organize chats by Projects/Workspaces)
+              ========================================================================= */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '2px 4px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Folder size={13} color="#94a3b8" />
+                <span style={{
+                  fontSize: '0.72rem',
+                  fontWeight: 800,
+                  color: '#64748b',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.8px'
+                }}>
+                  Projects
+                </span>
+              </div>
+            </div>
+
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, 1fr)',
+              gap: '6px'
+            }}>
+              {PROJECT_LIST.map(proj => {
+                const IconComponent = proj.icon;
+                const isSelected = activeProject === proj.id;
+                return (
+                  <button
+                    key={proj.id}
+                    type="button"
+                    onClick={() => setActiveProject(proj.id)}
+                    style={{
+                      background: isSelected 
+                        ? 'linear-gradient(135deg, rgba(56, 189, 248, 0.2) 0%, rgba(59, 130, 246, 0.2) 100%)' 
+                        : 'rgba(255, 255, 255, 0.03)',
+                      border: isSelected ? '1px solid rgba(56, 189, 248, 0.5)' : '1px solid rgba(255, 255, 255, 0.06)',
+                      color: isSelected ? '#38bdf8' : '#94a3b8',
+                      borderRadius: '10px',
+                      padding: '8px 4px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '4px',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    <IconComponent size={14} color={isSelected ? '#38bdf8' : '#94a3b8'} />
+                    <span style={{ fontSize: '0.72rem', fontWeight: isSelected ? 700 : 500 }}>
+                      {proj.name}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* =========================================================================
+              ISSUE 6: PINNED CHATS SECTION (Pin chat to top)
+              ========================================================================= */}
+          {pinnedSessions.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '2px 4px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Pin size={13} color="#f59e0b" fill="#f59e0b" />
+                  <span style={{
+                    fontSize: '0.72rem',
+                    fontWeight: 800,
+                    color: '#f59e0b',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.8px'
+                  }}>
+                    Pinned Chats
+                  </span>
+                </div>
+                <span style={{
+                  fontSize: '0.68rem',
+                  color: '#f59e0b',
+                  fontWeight: 700,
+                  background: 'rgba(245, 158, 11, 0.15)',
+                  padding: '1px 6px',
+                  borderRadius: '8px'
+                }}>
+                  {pinnedSessions.length}
+                </span>
+              </div>
+
+              {pinnedSessions.map(session => renderSessionItem(session, true))}
+            </div>
+          )}
+
+          {/* =========================================================================
+              ISSUE 6: CHAT SECTION (Recent Conversations Grouped by Time)
+              ========================================================================= */}
+          {filteredSessions.length === 0 ? (
             <div style={{
               textAlign: 'center',
-              padding: '60px 20px',
+              padding: '40px 20px',
               color: '#64748b',
               fontSize: '0.88rem'
             }}>
-              <MessageSquare size={40} color="#334155" style={{ margin: '0 auto 14px', display: 'block' }} />
-              <p style={{ margin: '0 0 6px', color: '#94a3b8', fontWeight: 700 }}>No conversations yet</p>
-              <p style={{ margin: 0, fontSize: '0.8rem' }}>Ask Aether anything to create your first saved chat!</p>
+              <MessageSquare size={36} color="#334155" style={{ margin: '0 auto 12px', display: 'block' }} />
+              <p style={{ margin: '0 0 4px', color: '#94a3b8', fontWeight: 700 }}>
+                {searchQuery ? 'No matching conversations' : 'No conversations in this section'}
+              </p>
+              <p style={{ margin: 0, fontSize: '0.78rem' }}>
+                {searchQuery ? 'Try adjusting your search terms' : 'Start a new chat to build your history!'}
+              </p>
             </div>
           ) : (
             <>
@@ -298,11 +632,12 @@ export const ChatHistoryDrawer = ({
               {renderGroup("Older", groupedSessions.older)}
             </>
           )}
+
         </div>
 
-        {/* Footer: User Account & Multi-tenant status */}
+        {/* Footer: User Account & Total Chats */}
         <div style={{
-          padding: '14px 20px max(env(safe-area-inset-bottom, 16px), 20px)',
+          padding: '12px 18px max(env(safe-area-inset-bottom, 14px), 16px)',
           borderTop: '1px solid rgba(255, 255, 255, 0.08)',
           background: 'rgba(0, 0, 0, 0.45)',
           display: 'flex',
@@ -317,7 +652,7 @@ export const ChatHistoryDrawer = ({
             <span style={{ 
               overflow: 'hidden', 
               textOverflow: 'ellipsis', 
-              whiteSpace: 'nowrap',
+              whiteSpace: 'nowrap', 
               color: '#cbd5e1',
               maxWidth: '220px',
               fontWeight: 600
@@ -325,14 +660,14 @@ export const ChatHistoryDrawer = ({
               {userEmail || 'Local Account'}
             </span>
           </div>
-          <span style={{ flexShrink: 0, color: '#38bdf8', fontSize: '0.75rem', fontWeight: 700 }}>
+          <span style={{ flexShrink: 0, color: '#38bdf8', fontSize: '0.74rem', fontWeight: 700 }}>
             {sessions.length} {sessions.length === 1 ? 'chat' : 'chats'}
           </span>
         </div>
       </div>
 
       {/* =========================================================================
-          RENAME CONVERSATION MODAL (100% Reliable on Mobile Virtual Keyboards)
+          RENAME CONVERSATION MODAL
           ========================================================================= */}
       {renamingSession && (
         <div 
@@ -429,7 +764,7 @@ export const ChatHistoryDrawer = ({
       )}
 
       {/* =========================================================================
-          DELETE CONFIRMATION MODAL (100% Reliable on Mobile Touch)
+          DELETE CONFIRMATION MODAL
           ========================================================================= */}
       {deletingSession && (
         <div 
@@ -510,6 +845,168 @@ export const ChatHistoryDrawer = ({
     </>
   );
 
+  function renderSessionItem(session, isPinned) {
+    const isActive = session.id === activeSessionId;
+
+    return (
+      <div
+        key={session.id}
+        style={{
+          position: 'relative',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '9px 12px',
+          borderRadius: '14px',
+          background: isActive 
+            ? 'linear-gradient(90deg, rgba(56, 189, 248, 0.18) 0%, rgba(56, 189, 248, 0.06) 100%)' 
+            : (isPinned ? 'rgba(245, 158, 11, 0.05)' : 'rgba(255, 255, 255, 0.03)'),
+          border: isActive 
+            ? '1px solid rgba(56, 189, 248, 0.45)' 
+            : (isPinned ? '1px solid rgba(245, 158, 11, 0.2)' : '1px solid rgba(255, 255, 255, 0.06)'),
+          borderLeft: isActive 
+            ? '3px solid #38bdf8' 
+            : (isPinned ? '3px solid #f59e0b' : '1px solid rgba(255, 255, 255, 0.06)'),
+          boxSizing: 'border-box',
+          transition: 'all 0.15s',
+          gap: '8px'
+        }}
+      >
+        {/* Clickable Area to Select Chat */}
+        <div
+          onClick={() => {
+            onSelectSession(session.id);
+            onClose();
+          }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            flex: 1,
+            minWidth: 0,
+            cursor: 'pointer',
+            padding: '2px 0'
+          }}
+        >
+          <div style={{
+            width: '28px',
+            height: '28px',
+            borderRadius: '8px',
+            background: isActive 
+              ? 'rgba(56, 189, 248, 0.2)' 
+              : (isPinned ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255, 255, 255, 0.04)'),
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0
+          }}>
+            {isPinned ? (
+              <Pin size={14} color="#f59e0b" fill="#f59e0b" />
+            ) : (
+              <MessageSquare 
+                size={14} 
+                color={isActive ? '#38bdf8' : '#64748b'} 
+              />
+            )}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: '0.86rem',
+              color: isActive ? '#ffffff' : '#e2e8f0',
+              fontWeight: isActive ? 700 : 500,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap'
+            }}>
+              {session.title || 'Conversation'}
+            </div>
+            {isActive && (
+              <div style={{ color: '#38bdf8', fontSize: '0.66rem', fontWeight: 600, marginTop: '1px' }}>
+                Active
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Action Buttons: Pin, Rename, Delete */}
+        <div 
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '4px',
+            flexShrink: 0
+          }}
+        >
+          {/* Pin / Unpin Button */}
+          <button
+            type="button"
+            onClick={(e) => handleTogglePin(e, session.id)}
+            style={{
+              background: isPinned ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+              border: isPinned ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(255, 255, 255, 0.08)',
+              color: isPinned ? '#f59e0b' : '#94a3b8',
+              cursor: 'pointer',
+              width: '30px',
+              height: '30px',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.15s'
+            }}
+            title={isPinned ? "Unpin chat" : "Pin chat to top"}
+          >
+            {isPinned ? <PinOff size={13} /> : <Pin size={13} />}
+          </button>
+
+          {/* Rename Button */}
+          <button
+            type="button"
+            onClick={(e) => handleOpenRename(e, session)}
+            style={{
+              background: 'rgba(255, 255, 255, 0.05)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              color: '#cbd5e1',
+              cursor: 'pointer',
+              width: '30px',
+              height: '30px',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.15s'
+            }}
+            title="Rename Conversation"
+          >
+            <Edit3 size={13} />
+          </button>
+
+          {/* Delete Button */}
+          <button
+            type="button"
+            onClick={(e) => handleOpenDelete(e, session)}
+            style={{
+              background: 'rgba(239, 68, 68, 0.1)',
+              border: '1px solid rgba(239, 68, 68, 0.25)',
+              color: '#f87171',
+              cursor: 'pointer',
+              width: '30px',
+              height: '30px',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.15s'
+            }}
+            title="Delete Conversation"
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   function renderGroup(groupTitle, groupItems) {
     if (!groupItems || groupItems.length === 0) return null;
 
@@ -521,142 +1018,12 @@ export const ChatHistoryDrawer = ({
           color: '#64748b',
           textTransform: 'uppercase',
           letterSpacing: '0.8px',
-          padding: '2px 8px'
+          padding: '2px 6px'
         }}>
           {groupTitle}
         </div>
 
-        {groupItems.map(session => {
-          const isActive = session.id === activeSessionId;
-
-          return (
-            <div
-              key={session.id}
-              style={{
-                position: 'relative',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '10px 14px',
-                borderRadius: '14px',
-                background: isActive 
-                  ? 'linear-gradient(90deg, rgba(56, 189, 248, 0.18) 0%, rgba(56, 189, 248, 0.06) 100%)' 
-                  : 'rgba(255, 255, 255, 0.03)',
-                border: isActive 
-                  ? '1px solid rgba(56, 189, 248, 0.45)' 
-                  : '1px solid rgba(255, 255, 255, 0.06)',
-                borderLeft: isActive 
-                  ? '3px solid #38bdf8' 
-                  : '1px solid rgba(255, 255, 255, 0.06)',
-                boxSizing: 'border-box',
-                transition: 'all 0.15s',
-                gap: '10px'
-              }}
-            >
-              {/* Clickable Area to Select Chat */}
-              <div
-                onClick={() => {
-                  onSelectSession(session.id);
-                  onClose();
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  flex: 1,
-                  minWidth: 0,
-                  cursor: 'pointer',
-                  padding: '2px 0'
-                }}
-              >
-                <div style={{
-                  width: '28px',
-                  height: '28px',
-                  borderRadius: '8px',
-                  background: isActive ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.04)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0
-                }}>
-                  <MessageSquare 
-                    size={15} 
-                    color={isActive ? '#38bdf8' : '#64748b'} 
-                  />
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: '0.88rem',
-                    color: isActive ? '#ffffff' : '#e2e8f0',
-                    fontWeight: isActive ? 700 : 500,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
-                  }}>
-                    {session.title || 'Conversation'}
-                  </div>
-                  {isActive && (
-                    <div style={{ color: '#38bdf8', fontSize: '0.68rem', fontWeight: 600, marginTop: '2px' }}>
-                      Active
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Action Buttons: Clean, Large Touch Targets */}
-              <div 
-                style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '6px',
-                  flexShrink: 0
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={(e) => handleOpenRename(e, session)}
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.06)',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    color: '#cbd5e1',
-                    cursor: 'pointer',
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    transition: 'all 0.15s'
-                  }}
-                  title="Rename Conversation"
-                >
-                  <Edit3 size={14} />
-                </button>
-
-                <button
-                  type="button"
-                  onClick={(e) => handleOpenDelete(e, session)}
-                  style={{
-                    background: 'rgba(239, 68, 68, 0.1)',
-                    border: '1px solid rgba(239, 68, 68, 0.25)',
-                    color: '#f87171',
-                    cursor: 'pointer',
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    transition: 'all 0.15s'
-                  }}
-                  title="Delete Conversation"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            </div>
-          );
-        })}
+        {groupItems.map(session => renderSessionItem(session, false))}
       </div>
     );
   }

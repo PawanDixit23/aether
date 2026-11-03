@@ -686,6 +686,7 @@ export default function App() {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
   const [isChatDrawerOpen, setIsChatDrawerOpen] = useState(false);
+  const [isTemporaryChat, setIsTemporaryChat] = useState(false);
   const [chatHistory, setChatHistory] = useState(() => {
     try {
       const email = localStorage.getItem('aether_user_email');
@@ -815,7 +816,7 @@ export default function App() {
         try { currentAudioRef.current.pause(); } catch (e) {}
         currentAudioRef.current = null;
       }
-      const ttsUrl = `${API_BASE}/tts?text=${encodeURIComponent(text.slice(0, 350))}&voice=${voiceId}&lang=${lang || 'en'}`;
+      const ttsUrl = `${API_BASE}/tts?text=${encodeURIComponent(text.slice(0, 2500))}&voice=${voiceId}&lang=${lang || 'en'}`;
 
       // 1. Direct Web Audio element (handles playback directly within browser/webview)
       const audio = new Audio(ttsUrl);
@@ -1182,35 +1183,92 @@ export default function App() {
     return `${y}-${m}-${day}`;
   };
 
-  const isTaskPending = (t) => !(t.is_completed === true || t.completed === true || t.status === 'completed');
+  const isTaskCompletedForToday = (t, targetDateStr = formatLocalDateStr(new Date())) => {
+    if (!t) return false;
+    const isDaily = t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily');
+    if (isDaily) {
+      try {
+        const saved = localStorage.getItem('aether_task_date_completions');
+        if (saved) {
+          const map = JSON.parse(saved);
+          if (map[t.id] && map[t.id][targetDateStr] !== undefined) {
+            return Boolean(map[t.id][targetDateStr]);
+          }
+        }
+      } catch (e) {}
+    }
+    return Boolean(t.is_completed === true || t.completed === true || t.status === 'completed');
+  };
 
-  // Today-only pending tasks count for bell badge
+  const isTaskPending = (t) => !isTaskCompletedForToday(t);
+
+  // Today-only pending tasks count
   const getTodayPendingCount = () => {
     const today = new Date();
     const todayStr = formatLocalDateStr(today);
     const dayIdx = today.getDay(); // 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
     const list = (combinedTasks && combinedTasks.length > 0) ? combinedTasks : (tasks || []);
     return list.filter(t => {
-      if (!isTaskPending(t)) return false;
-      // Daily recurring tasks
-      if (t.recurrence === 'daily' || t.repeat === 'daily') return true;
-      // Weekdays (Mon-Fri)
-      if ((t.recurrence === 'weekdays' || t.recurrence === 'monday_to_friday') && dayIdx >= 1 && dayIdx <= 5) return true;
-      // Weekly Monday
-      if (t.recurrence === 'weekly_monday' && dayIdx === 1) return true;
-      // 1. Explicit due_date check (must strictly match today's local date)
+      // If task is completed (either globally or for today), exclude it immediately
+      if (isTaskCompletedForToday(t, todayStr)) return false;
+
+      // 1. Daily recurring tasks
+      if (t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily')) {
+        return true;
+      }
+      // 2. Weekdays (Mon-Fri)
+      if ((t.recurrence === 'weekdays' || t.recurrence === 'monday_to_friday') && dayIdx >= 1 && dayIdx <= 5) {
+        return true;
+      }
+      // 3. Weekly Monday
+      if (t.recurrence === 'weekly_monday' && dayIdx === 1) {
+        return true;
+      }
+      // 4. Explicit due_date check (must strictly match today's date)
       if (t.due_date) {
         const taskDay = formatLocalDateStr(t.due_date);
         return taskDay === todayStr;
       }
-      // 2. If no due_date, only tasks created today count as today's tasks
+      // 5. If no due_date, only tasks created today count as today's tasks
       if (t.created_at) {
         const createdDay = formatLocalDateStr(t.created_at);
         return createdDay === todayStr;
       }
-      // Older undated backlog reminders do NOT pollute today's badge count
       return false;
     }).length;
+  };
+
+  // Today-only tasks list (used for Agenda in Chat History drawer)
+  const getTodayTasks = () => {
+    const today = new Date();
+    const todayStr = formatLocalDateStr(today);
+    const dayIdx = today.getDay();
+    const list = (combinedTasks && combinedTasks.length > 0) ? combinedTasks : (tasks || []);
+    return list.filter(t => {
+      // 1. Daily recurring tasks
+      if (t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily')) {
+        return true;
+      }
+      // 2. Weekdays (Mon-Fri)
+      if ((t.recurrence === 'weekdays' || t.recurrence === 'monday_to_friday') && dayIdx >= 1 && dayIdx <= 5) {
+        return true;
+      }
+      // 3. Weekly Monday
+      if (t.recurrence === 'weekly_monday' && dayIdx === 1) {
+        return true;
+      }
+      // 4. Explicit due_date check (strictly matches today)
+      if (t.due_date) {
+        const taskDay = formatLocalDateStr(t.due_date);
+        return taskDay === todayStr;
+      }
+      // 5. Created today
+      if (t.created_at) {
+        const createdDay = formatLocalDateStr(t.created_at);
+        return createdDay === todayStr;
+      }
+      return false;
+    });
   };
 
   // Dynamic Executive Subtitles list tailored to real-time context & time of day
@@ -1508,10 +1566,7 @@ export default function App() {
           setOnboardingStep(prev => (prev < 4 ? 4 : prev));
         }
 
-        // ✅ Fix: सिर्फ fresh SIGNED_IN पर toast दिखाएं — session restore/token refresh पर नहीं
-        if (event === 'SIGNED_IN') {
-          showToast(`Google से सफलतापूर्वक लिंक: ${gName}`, 'success');
-        }
+        // Fresh OAuth redirect toast is handled above via access_token hash check
       }
     });
 
@@ -3738,7 +3793,9 @@ export default function App() {
       setAttachedMedia(null);
     }
 
-    const curSessionId = activeSessionIdRef.current || 'default';
+    const curSessionId = isTemporaryChat 
+      ? (`temp_${activeSessionIdRef.current || Date.now()}`) 
+      : (activeSessionIdRef.current || 'default');
     userScrolledUpRef.current = false;
     setShowDashboard(false);
 
@@ -3750,7 +3807,7 @@ export default function App() {
         image_url: sendingImageUrl,
         created_at: new Date().toISOString() 
       }];
-      if (userEmail && curSessionId) {
+      if (!isTemporaryChat && userEmail && curSessionId) {
         try {
           localStorage.setItem(`aether_chat_history_${userEmail}_${curSessionId}`, JSON.stringify(next));
         } catch (e) {}
@@ -3759,19 +3816,22 @@ export default function App() {
     });
 
     // Optimistically update sessions list so drawer immediately displays new conversation with 0ms delay!
-    const smartTitle = prompt.length > 36 ? prompt.slice(0, 36) + '...' : prompt;
-    setChatSessions(prev => {
-      const exists = prev.some(s => s.id === curSessionId);
-      const updated = exists
-        ? prev.map(s => s.id === curSessionId ? { ...s, updated_at: new Date().toISOString() } : s)
-        : [{ id: curSessionId, title: smartTitle, updated_at: new Date().toISOString(), user_email: userEmail }, ...prev];
-      if (userEmail) {
-        try {
-          localStorage.setItem(`aether_chat_sessions_${userEmail}`, JSON.stringify(updated));
-        } catch (e) {}
-      }
-      return updated;
-    });
+    // (Only if not a temporary chat)
+    if (!isTemporaryChat) {
+      const smartTitle = prompt.length > 36 ? prompt.slice(0, 36) + '...' : prompt;
+      setChatSessions(prev => {
+        const exists = prev.some(s => s.id === curSessionId);
+        const updated = exists
+          ? prev.map(s => s.id === curSessionId ? { ...s, updated_at: new Date().toISOString() } : s)
+          : [{ id: curSessionId, title: smartTitle, updated_at: new Date().toISOString(), user_email: userEmail }, ...prev];
+        if (userEmail) {
+          try {
+            localStorage.setItem(`aether_chat_sessions_${userEmail}`, JSON.stringify(updated));
+          } catch (e) {}
+        }
+        return updated;
+      });
+    }
 
     setInputText('');
     isProcessingRef.current = true;
@@ -3864,7 +3924,7 @@ export default function App() {
           actionData: actionData,
           created_at: new Date().toISOString()
         }];
-        if (userEmail && curSessionId) {
+        if (!isTemporaryChat && userEmail && curSessionId) {
           try {
             localStorage.setItem(`aether_chat_history_${userEmail}_${curSessionId}`, JSON.stringify(next));
           } catch (e) {}
@@ -3872,8 +3932,8 @@ export default function App() {
         return next;
       });
 
-      // Quietly refresh chat sessions to get updated titles/timestamps
-      if (userEmail) {
+      // Quietly refresh chat sessions to get updated titles/timestamps (skip if temporary chat)
+      if (!isTemporaryChat && userEmail) {
         fetch(`${API_BASE}/chat/sessions`, { headers: { 'X-User-Email': userEmail } })
           .then(r => r.ok ? r.json() : null)
           .then(sessData => {
@@ -3917,6 +3977,7 @@ export default function App() {
     setInputText('');
     setShowConversation(false);
     setShowDashboard(false);
+    setIsTemporaryChat(false);
     showToast("New conversation ready! ⚡", 'success');
 
     const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
@@ -5472,172 +5533,80 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="gemini-top-center" style={{ position: 'relative', display: 'flex', justifyContent: 'center' }}>
+                {/* Center space kept clean — Aether model/voice selection moved to Settings modal */}
+                <div className="gemini-top-center" style={{ flex: 1 }} />
+
+                <div className="gemini-top-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {/* Temporary Chat Toggle */}
                   <button 
                     type="button" 
-                    className="gemini-model-pill"
-                    onClick={() => setIsPersonaDropdownOpen(!isPersonaDropdownOpen)}
-                    title="Select Aether Voice / आवाज चुनें"
-                  >
-                    <span className="aether-top-mini-logo">Æ</span>
-                    <span>Aether</span>
-                    <ChevronDown size={14} color="#94a3b8" />
-                  </button>
-
-                  {isPersonaDropdownOpen && (
-                    <div className="aether-voice-dropdown" style={{ left: '50%', transform: 'translateX(-50%)' }}>
-                      <div style={{ padding: '8px 12px 6px', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.8px', color: '#94a3b8', fontWeight: 600 }}>
-                        Voice Personality
-                      </div>
-                      {AETHER_VOICES.map(voice => (
-                        <button
-                          key={voice.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedVoice(voice.id);
-                            localStorage.setItem('aether_selected_voice', voice.id);
-                            setIsPersonaDropdownOpen(false);
-                            handlePlayVoicePreview(voice);
-                            showToast(`Aether Voice: ${voice.name}`, 'info');
-                          }}
-                          className={`aether-voice-option ${selectedVoice === voice.id ? 'active' : ''}`}
-                        >
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', textAlign: 'left' }}>
-                            <span style={{ fontWeight: 600, fontSize: '0.88rem', color: selectedVoice === voice.id ? '#38bdf8' : '#f8fafc' }}>
-                              {voice.name}
-                            </span>
-                            <span style={{ fontSize: '0.74rem', color: '#94a3b8', marginTop: '2px' }}>
-                              {voice.desc}
-                            </span>
-                          </div>
-                          {selectedVoice === voice.id && <Check size={16} color="#38bdf8" />}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="gemini-top-right">
-                  <button 
-                    type="button" 
-                    className="gemini-icon-btn" 
+                    className="gemini-icon-btn"
                     onClick={() => {
-                      setActiveSubModal('reminders');
-                      setRemindersViewMode('list');
+                      setIsTemporaryChat(prev => {
+                        const next = !prev;
+                        if (next) {
+                          showToast("अस्थायी चैट चालू है (Temporary Chat On — हिस्ट्री सेव नहीं होगी)", "info");
+                        } else {
+                          showToast("अस्थायी चैट बंद की गई (Temporary Chat Off)", "info");
+                        }
+                        return next;
+                      });
                     }}
-                    title="Reminders & Today's Agenda"
-                    style={{ position: 'relative' }}
+                    title={isTemporaryChat ? "Temporary Chat is Active (History paused)" : "Start Temporary Chat (अस्थायी चैट)"}
+                    style={{
+                      background: isTemporaryChat ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255, 255, 255, 0.05)',
+                      border: isTemporaryChat ? '1px solid rgba(56, 189, 248, 0.55)' : '1px solid rgba(255, 255, 255, 0.1)',
+                      color: isTemporaryChat ? '#38bdf8' : '#94a3b8',
+                      borderRadius: '12px',
+                      width: '38px',
+                      height: '38px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s',
+                      position: 'relative'
+                    }}
                   >
-                    <Bell size={20} />
-                    {getTodayPendingCount() > 0 && (
-                      <span className="gemini-bell-badge">
-                        {getTodayPendingCount()}
-                      </span>
+                    <Clock size={19} />
+                    {isTemporaryChat && (
+                      <span style={{
+                        position: 'absolute',
+                        top: '5px',
+                        right: '5px',
+                        width: '7px',
+                        height: '7px',
+                        borderRadius: '50%',
+                        background: '#38bdf8',
+                        boxShadow: '0 0 6px #38bdf8'
+                      }} />
                     )}
                   </button>
 
+                  {/* Settings Button */}
                   <button 
                     type="button" 
                     className="gemini-icon-btn" 
-                    onClick={handleStartNewChat}
-                    title="New Chat / नया चैट शुरू करें"
+                    onClick={() => setIsSettingsOpen(true)}
+                    title="Settings & Profile (सेटिंग्स)"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      color: '#e2e8f0',
+                      borderRadius: '12px',
+                      width: '38px',
+                      height: '38px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s'
+                    }}
                   >
-                    <Edit3 size={20} />
+                    <Settings size={19} />
                   </button>
-
-                  <div className="gemini-avatar-wrap" onClick={() => setIsSettingsOpen(true)} title="Profile & Settings">
-                    {userAvatar ? (
-                      <img 
-                        src={userAvatar} 
-                        alt="Profile" 
-                        className="gemini-avatar-img" 
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : (
-                      <div className="gemini-avatar-fallback">
-                        {((userName && userName !== 'Operator') ? userName[0] : 'P').toUpperCase()}
-                      </div>
-                    )}
-                  </div>
                 </div>
               </header>
-
-              {/* LIVE CRICKET TICKER — ONLY ON MAIN LANDING PAGE (NEVER IN CHAT, DASHBOARD, MODALS, OR OTHER TABS) */}
-              {!isCricketModalOpen && !showDashboard && activeTab === 'aether' && chatHistory.length === 0 && !activeSubModal && cricketMatches && cricketMatches.some(m => m.status === 'in') && (() => {
-                const liveMatch = cricketMatches.find(m => m.status === 'in');
-                if (!liveMatch || dismissedCricketMatchId === (liveMatch.id || 'dismissed')) return null;
-                return (
-                  <div style={{
-                    width: '100%',
-                    display: 'flex',
-                    justifyContent: 'center',
-                    padding: '4px 12px 6px',
-                    boxSizing: 'border-box',
-                    flexShrink: 0,
-                    zIndex: 20
-                  }}>
-                    <div
-                      onClick={() => {
-                        playReminderChime();
-                        setIsCricketModalOpen(true);
-                      }}
-                      style={{
-                        background: 'rgba(9, 14, 26, 0.95)',
-                        border: '1px solid rgba(239, 68, 68, 0.4)',
-                        borderRadius: '20px',
-                        padding: '4px 10px 4px 12px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        boxShadow: '0 4px 16px rgba(0,0,0,0.5), 0 0 10px rgba(239, 68, 68, 0.2)',
-                        cursor: 'pointer',
-                        maxWidth: 'min(420px, calc(100vw - 28px))',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        boxSizing: 'border-box',
-                        transition: 'all 0.2s'
-                      }}
-                    >
-                      <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#ef4444', display: 'inline-block', boxShadow: '0 0 6px #ef4444', flexShrink: 0 }} />
-                      <span style={{ color: '#ef4444', fontSize: '0.66rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px', flexShrink: 0 }}>LIVE</span>
-                      <span style={{ color: '#ffffff', fontSize: '0.76rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px', flexShrink: 0 }}>
-                        {liveMatch.name || 'Match'}
-                      </span>
-                      <span style={{ color: '#38bdf8', fontSize: '0.72rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px', flexShrink: 1 }}>
-                        {liveMatch.status_text || 'In Progress'}
-                      </span>
-                      <span style={{ color: '#94a3b8', fontSize: '0.68rem', marginLeft: '2px', flexShrink: 0 }}>
-                        ↗
-                      </span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDismissedCricketMatchId(liveMatch.id || 'dismissed');
-                        }}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          color: '#94a3b8',
-                          padding: '0 3px',
-                          cursor: 'pointer',
-                          fontSize: '0.74rem',
-                          lineHeight: 1,
-                          marginLeft: '3px',
-                          borderRadius: '50%',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          flexShrink: 0
-                        }}
-                        title="Dismiss match banner"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
 
               {/* CENTER STAGE OR CONVERSATION STREAM */}
               {showDashboard ? (
@@ -6413,6 +6382,27 @@ export default function App() {
                   </div>
                 )}
 
+                {isTemporaryChat && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '4px 12px',
+                    borderRadius: '12px',
+                    background: 'rgba(56, 189, 248, 0.1)',
+                    border: '1px solid rgba(56, 189, 248, 0.25)',
+                    color: '#38bdf8',
+                    fontSize: '0.76rem',
+                    fontWeight: 600,
+                    margin: '0 auto 8px',
+                    width: 'fit-content'
+                  }}>
+                    <Clock size={13} />
+                    <span>Temporary Chat Active — Messages will not be saved</span>
+                  </div>
+                )}
+
                 <form 
                   onSubmit={(e) => {
                     e.preventDefault();
@@ -6548,12 +6538,24 @@ export default function App() {
                     </>
                   )}
 
-                  <input 
-                    type="text" 
+                  <textarea 
+                    rows={1}
                     className="gemini-input-field"
                     placeholder={attachedMedia?.type === 'image' ? "इस फ़ोटो के बारे में सवाल पूछें..." : ROTATING_PROMPTS[promptPlaceholderIndex]}
                     value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
+                    onChange={(e) => {
+                      setInputText(e.target.value);
+                      e.target.style.height = 'auto';
+                      e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        if (inputText.trim() || attachedMedia) {
+                          handleSendPrompt();
+                        }
+                      }
+                    }}
                     autoFocus
                   />
 
@@ -7108,6 +7110,14 @@ export default function App() {
         onDeleteSession={handleDeleteSession}
         userEmail={userEmail}
         userName={userName}
+        todayTasks={getTodayTasks()}
+        todayPendingCount={getTodayPendingCount()}
+        onToggleTask={handleToggleTask}
+        onOpenTasksModal={() => {
+          setIsChatDrawerOpen(false);
+          setActiveSubModal('reminders');
+          setRemindersViewMode('list');
+        }}
       />
 
       {/* 0. Tasks & Agenda Modal (Redesigned Clean UI matching Screenshot) */}

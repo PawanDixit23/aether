@@ -2438,6 +2438,12 @@ body.theme-oled .settings-user-card {
   padding: 8px 6px;
   font-family: inherit;
   min-width: 0;
+  resize: none;
+  line-height: 1.45;
+  word-break: break-word;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow-y: auto;
 }
 
 .gemini-input-field::placeholder {

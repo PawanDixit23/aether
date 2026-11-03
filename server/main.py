@@ -1556,6 +1556,19 @@ def auto_advance_recurring_tasks(db: Session, user_email: Optional[str] = None):
         rec_tasks = query.all()
         updated = False
         for dt in rec_tasks:
+            # If task has been marked completed by the user, never reset it or notify again
+            if dt.status == "completed":
+                dt.notified = True
+                continue
+
+            # Strip accidental daily recurrence from one-time tasks (like challan, fine, etc.)
+            title_lower = (dt.title or "").lower()
+            if any(w in title_lower for w in ["challan", "fine", "ticket", "one-time"]):
+                dt.recurrence = None
+                dt.notified = True
+                updated = True
+                continue
+
             if not dt.due_date:
                 dt.due_date = datetime.combine(today, datetime.min.time())
                 updated = True
@@ -1738,6 +1751,8 @@ def toggle_task(
         raise HTTPException(status_code=404, detail="Task not found")
     new_status = "completed" if task.status != "completed" else "pending"
     task.status = new_status
+    if new_status == "completed":
+        task.notified = True
     
     # If this task is a subtask, update parent task progress
     if getattr(task, "parent_id", None):
@@ -2645,7 +2660,7 @@ def text_to_speech(request: Request, text: str = "", voice: str = "zephyr", lang
     import urllib.parse
     import re
 
-    clean_text = text.strip()[:600]
+    clean_text = text.strip()[:2500]
     if not clean_text:
         raise HTTPException(status_code=400, detail="Text required")
 
@@ -2674,7 +2689,7 @@ def text_to_speech(request: Request, text: str = "", voice: str = "zephyr", lang
 
     audio_bytes_list = []
     try:
-        for chunk in chunks[:4]:  # max 4 chunks (~600 chars) for responsive streaming
+        for chunk in chunks[:18]:  # support complete lengthy responses up to ~2500 chars
             if not chunk.strip():
                 continue
             encoded_text = urllib.parse.quote(chunk.strip())
