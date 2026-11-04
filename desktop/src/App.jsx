@@ -481,9 +481,10 @@ export default function App() {
   });
   const [isMicTesting, setIsMicTesting] = useState(false);
   const [wakeWordEnabled, setWakeWordEnabled] = useState(() => {
-    return localStorage.getItem('aether_wake_word_enabled') === 'true';
+    return localStorage.getItem('aether_wake_word_enabled') !== 'false';
   });
   const wakeWordRecognitionRef = useRef(null);
+  const speechSilenceTimeoutRef = useRef(null);
   const [attachedMedia, setAttachedMedia] = useState(null); // { type: 'image' | 'file' | 'drive' | 'map', name: string, url?: string, size?: string }
 
   // Modern Confirmation Dialog State (Zero ugly window.confirm popups)
@@ -813,6 +814,26 @@ export default function App() {
   const userScrolledUpRef = useRef(false);
   const currentAudioRef = useRef(null);
   const activeMediaPlayingRef = useRef(false);
+
+  // Futuristic audio chime for instant wake-word / mic activation feedback (Gemini-grade)
+  const playWakeChime = () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.11); // A5
+      gain.gain.setValueAtTime(0.09, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.16);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.16);
+    } catch (e) {}
+  };
 
   // Universal Audio Streaming Fallback (Works 100% on Mobile WebViews where SpeechSynthesis is unavailable)
   const playStreamAudio = (text, voiceId, lang) => {
@@ -3593,8 +3614,9 @@ export default function App() {
   const WeatherSymbol = dayPhase.IconComponent;
 
   // Voice Recognition (Speech to Text) with Mobile Device Microphone Support
-  const toggleVoiceRecognition = async () => {
-    if (isListening) {
+  const toggleVoiceRecognition = async (initialQuery = '') => {
+    if (isListening && !initialQuery) {
+      clearTimeout(speechSilenceTimeoutRef.current);
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch (e) {}
       }
@@ -3608,31 +3630,39 @@ export default function App() {
       return;
     }
 
+    // Play subtle wake chime & trigger crisp haptic pulse (Gemini-grade feedback)
+    playWakeChime();
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try { navigator.vibrate(20); } catch (e) {}
+    }
+
+    // If starting with query from wake word, pre-populate input
+    if (initialQuery) {
+      setInputText(initialQuery);
+    }
+
     // Trigger native Android microphone permission if wrapped in mobile app
     const isInReactNativeWebView = typeof window !== 'undefined' && !!window.ReactNativeWebView;
     if (isInReactNativeWebView) {
       try {
         window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_MIC_PERMISSION' }));
-        // Give native layer time to show permission dialog and inject result
         await new Promise((resolve) => {
-          // Set a callback that native layer will call after permission result
           window.__onMicPermissionResult = (granted) => {
             window.__onMicPermissionResult = null;
             resolve(granted);
           };
-          // Fallback: proceed after 3s regardless
-          setTimeout(() => resolve(true), 3000);
+          setTimeout(() => resolve(true), 2000);
         });
       } catch (e) {}
     }
 
-    // Non-fatal getUserMedia check (do NOT abort if WebView restricts getUserMedia directly)
+    // Non-fatal getUserMedia check
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach(track => track.stop());
       } catch (micErr) {
-        console.warn('getUserMedia non-fatal in WebView:', micErr);
+        console.warn('getUserMedia non-fatal:', micErr);
       }
     }
 
@@ -3644,9 +3674,13 @@ export default function App() {
     }
 
     try {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (e) {}
+      }
+
       const recognition = new SpeechRecognition();
       recognitionRef.current = recognition;
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = selectedLang === 'hi' ? 'hi-IN' : 'en-IN';
 
@@ -3656,25 +3690,47 @@ export default function App() {
       };
 
       recognition.onresult = (event) => {
-        const transcript = Array.from(event.results).map(r => r[0].transcript).join(' ').trim();
-        setInputText(transcript);
-        if (event.results[0].isFinal || event.results[event.results.length - 1].isFinal) {
-          setIsListening(false);
-          // Strip any leading wake-word if user repeated "Hey Aether ..."
-          const cleanPrompt = transcript.replace(/^(hey\s*aether|ok\s*aether|hey\s*ether|aether|ether|हे\s*ईथर|ईथर)[,\s]+/i, '').trim() || transcript;
-          handleSendPrompt(cleanPrompt);
+        let currentTranscript = "";
+        for (let i = 0; i < event.results.length; i++) {
+          if (event.results[i] && event.results[i][0]) {
+            currentTranscript += " " + event.results[i][0].transcript;
+          }
         }
+        currentTranscript = currentTranscript.trim();
+        if (!currentTranscript && initialQuery) {
+          currentTranscript = initialQuery;
+        }
+
+        if (currentTranscript) {
+          setInputText(currentTranscript);
+        }
+
+        // Smart dynamic silence detection (User finished speaking)
+        clearTimeout(speechSilenceTimeoutRef.current);
+        const lastResult = event.results[event.results.length - 1];
+        const isFinal = Boolean(lastResult && lastResult.isFinal);
+        const debounceDelay = isFinal ? 700 : 1100;
+
+        speechSilenceTimeoutRef.current = setTimeout(() => {
+          try { recognition.stop(); } catch (e) {}
+          setIsListening(false);
+          clearTimeout(speechSilenceTimeoutRef.current);
+          const cleanPrompt = currentTranscript.replace(/^(hey\s*aether|ok\s*aether|okay\s*aether|hey\s*ether|ok\s*ether|okay\s*ether|aether|ether|हे\s*ईथर|ईथर|सुनो\s*ईथर|नमस्ते\s*ईथर)[,\s]+/i, '').trim() || currentTranscript;
+          if (cleanPrompt.length > 0) {
+            handleSendPrompt(cleanPrompt);
+          }
+        }, debounceDelay);
       };
 
       recognition.onerror = (event) => {
-        console.error("Speech recognition error:", event.error);
-        setIsListening(false);
-        if (event.error === 'no-speech') {
-          showToast("कोई आवाज़ नहीं सुनी गई। पुनः प्रयास करें।", 'info');
-        } else if (event.error === 'not-allowed') {
-          showToast("कृपया सेटिंग्स में Aether ऐप को माइक्रोफ़ोन अनुमति (Microphone Permission) दें।", 'error');
-        } else {
-          showToast(`माइक स्टेटस: ${event.error}`, 'error');
+        console.warn("Speech recognition notice:", event.error);
+        if (event.error === 'not-allowed') {
+          showToast("कृपया सेटिंग्स में Aether ऐप को माइक्रोफ़ोन अनुमति दें।", 'error');
+          setIsListening(false);
+          clearTimeout(speechSilenceTimeoutRef.current);
+        } else if (event.error !== 'no-speech') {
+          setIsListening(false);
+          clearTimeout(speechSilenceTimeoutRef.current);
         }
       };
 
@@ -3686,6 +3742,7 @@ export default function App() {
     } catch (err) {
       console.error("Failed to start speech recognition:", err);
       setIsListening(false);
+      clearTimeout(speechSilenceTimeoutRef.current);
       showToast("माइक शुरू करने में समस्या आई। टाइप प्रॉम्प्ट का उपयोग करें।", 'error');
       setIsTypeInputOpen(true);
     }
@@ -3693,16 +3750,10 @@ export default function App() {
 
   const toggleListening = toggleVoiceRecognition;
 
-  // Background "Hey Aether" Wake Word Detection
+  // Background "Hey Aether" Wake Word Detection (Universal: Mobile App & Desktop)
   useEffect(() => {
-    // STRICT GUARD:
-    // 1. NEVER run continuous background wake-word listener on mobile / Android WebView!
-    // On mobile devices, continuous microphone capture permanently locks the Android AudioManager
-    // hardware focus, which interrupts/pauses YouTube & music playback and causes extreme battery drain.
-    const isMobile = (typeof window !== 'undefined' && !!window.ReactNativeWebView) || 
-      (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
-
-    if (isMobile || !onboardingDone || !micEnabled || !wakeWordEnabled || isListening || isSpeaking || isProcessing || activeMediaPlayingRef.current) {
+    // Guards: don't listen if onboarding not done, mic disabled, wake word disabled, or active session/media running
+    if (!onboardingDone || !micEnabled || !wakeWordEnabled || isListening || isSpeaking || isProcessing || activeMediaPlayingRef.current) {
       if (wakeWordRecognitionRef.current) {
         try { wakeWordRecognitionRef.current.stop(); } catch (e) {}
         wakeWordRecognitionRef.current = null;
@@ -3726,7 +3777,6 @@ export default function App() {
       wakeRec.onresult = (event) => {
         if (isDestroyed) return;
         
-        // Use only the latest recognition segment to prevent stale accumulation
         let latestSegment = "";
         for (let i = event.resultIndex; i < event.results.length; i++) {
           if (event.results[i] && event.results[i][0]) {
@@ -3736,54 +3786,52 @@ export default function App() {
         const text = latestSegment.trim().toLowerCase();
         if (!text) return;
 
-        // Check for wake words: "hey aether", "ok aether", "hey ether", "ok ether", "aether", "ether", "हे ईथर", "ईथर", "सुनो ईथर"
-        const wakeWordRegex = /\b(hey\s*aether|ok\s*aether|okay\s*aether|hey\s*ether|ok\s*ether|okay\s*ether|aether|ether|हे\s*ईथर|ईथर|सुनो\s*ईथर)\b/i;
+        // Supported wake words: "hey aether", "ok aether", "aether", "hey ether", "हे ईथर", "ईथर", "सुनो ईथर"
+        const wakeWordRegex = /\b(hey\s*aether|ok\s*aether|okay\s*aether|hey\s*ether|ok\s*ether|okay\s*ether|aether|ether|हे\s*ईथर|ईथर|सुनो\s*ईथर|नमस्ते\s*ईथर)\b/i;
         const match = text.match(wakeWordRegex);
 
         if (match) {
           console.log("[Wake Word Detected]:", text);
           showToast("⚡ 'Hey Aether' पहचाना गया!", "info");
+          playWakeChime();
+          if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+            try { navigator.vibrate([25, 20, 25]); } catch (e) {}
+          }
           
           try { wakeRec.stop(); } catch (e) {}
           wakeWordRecognitionRef.current = null;
 
-          // Extract any query following the wake word
+          // Extract any query spoken along with the wake word
           const queryPart = text.slice(match.index + match[0].length).replace(/^[,.\s]+/, '').trim();
-          if (queryPart.length > 2) {
-            handleSendPrompt(queryPart);
-          } else {
-            // Trigger active speech recognition
-            setTimeout(() => {
-              toggleVoiceRecognition();
-            }, 250);
-          }
+          setTimeout(() => {
+            toggleVoiceRecognition(queryPart);
+          }, 60);
         }
       };
 
       wakeRec.onerror = (e) => {
-        // Auto restart on non-fatal errors (pause restart if user is listening to active media/video or on mobile)
-        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current && !isMobile) {
+        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current) {
           if (e.error !== 'not-allowed') {
             setTimeout(() => {
-              try { if (!isDestroyed && !activeMediaPlayingRef.current && !isMobile) wakeRec.start(); } catch (err) {}
-            }, 1000);
+              try { if (!isDestroyed && !activeMediaPlayingRef.current) wakeRec.start(); } catch (err) {}
+            }, 800);
           }
         }
       };
 
       wakeRec.onend = () => {
-        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current && !isMobile) {
+        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current) {
           setTimeout(() => {
-            try { if (!isDestroyed && !activeMediaPlayingRef.current && !isMobile) wakeRec.start(); } catch (e) {}
-          }, 400);
+            try { if (!isDestroyed && !activeMediaPlayingRef.current) wakeRec.start(); } catch (e) {}
+          }, 350);
         }
       };
 
-      if (!isDestroyed && !activeMediaPlayingRef.current && !isMobile) {
+      if (!isDestroyed && !activeMediaPlayingRef.current) {
         wakeRec.start();
       }
     } catch (e) {
-      console.warn("Wake word listener start error:", e);
+      console.warn("Wake word listener start notice:", e);
     }
 
     return () => {
@@ -3795,7 +3843,7 @@ export default function App() {
     };
   }, [wakeWordEnabled, micEnabled, onboardingDone, isListening, isSpeaking, isProcessing, selectedLang]);
 
-  // Text to Speech with Mobile WebView Audio Streaming Fallback
+  // Text to Speech with Instant Native Speech & Fast Parallel Server Streaming Fallback
   const speakText = (text) => {
     // STRICT GUARD: If onboarding is not completed, NEVER speak or play TTS!
     if (!onboardingDone) return;
@@ -3813,74 +3861,76 @@ export default function App() {
       .replace(/\[(.*?)\]\([^)]*\)/g, '$1')   // preserve headline text from markdown links
       .replace(/https?:\/\/[^\s]+/g, '')      // remove raw URLs
       .replace(/Link:\s*(?:स्रोत पढ़ें|Read Source)?/gi, '') // clean link labels
-      .replace(/[*_#`🔗🏆📰•⚡✨🎯💡📌]/g, '') // remove markdown formatting & symbols/emojis
+      .replace(/[*_#`🔗🏆📰•⚡✨🎯💡📌|]/g, '') // remove markdown formatting & symbols/emojis
       .replace(/```[\s\S]*?```/g, '')         // remove code blocks
       .replace(/₹\s*([0-9,.-]+)/g, (match, p1) => hasDevanagari ? `${p1} रुपये` : `${p1} Rupees`)
-      .replace(/[!]/g, '')                    // remove exclamation points so synthesizers never speak "exclamation point" or "dot"
-      .replace(/\s*([.,?।])\s*/g, '$1 ')      // attach punctuation directly to preceding word so synthesizers pause naturally instead of reading punctuation names
-      .replace(/[.?।]+\s*([.?।]+)/g, '$1')    // remove duplicate punctuation like "..", ".?", "?."
+      .replace(/[!]/g, '')                    // remove exclamation points
+      .replace(/\s*([.,?।])\s*/g, '$1 ')      // attach punctuation directly
+      .replace(/[.?।]+\s*([.?।]+)/g, '$1')    // remove duplicate punctuation
       .replace(/\s+/g, ' ')                  // normalize whitespace
       .trim();
 
     if (!cleanText) return;
+
+    // Concise, natural spoken reply for conversational speech (just like Gemini / Assistant)
+    // If response is huge (e.g. 5 paragraphs of tables), speak the main summary sentence / intro paragraph
+    let spokenText = cleanText;
+    if (spokenText.length > 280) {
+      const firstSentenceEnd = spokenText.search(/[.?!।\n]/);
+      if (firstSentenceEnd > 25 && firstSentenceEnd < 260) {
+        const rest = spokenText.slice(firstSentenceEnd + 1);
+        const secondSentence = rest.search(/[.?!।\n]/);
+        if (secondSentence > 20 && (firstSentenceEnd + 1 + secondSentence) < 280) {
+          spokenText = spokenText.slice(0, firstSentenceEnd + 1 + secondSentence + 1).trim();
+        } else {
+          spokenText = spokenText.slice(0, firstSentenceEnd + 1).trim();
+        }
+      } else {
+        spokenText = spokenText.slice(0, 260).trim();
+      }
+    }
 
     // Cancel any ongoing speech
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try { window.speechSynthesis.cancel(); } catch (e) {}
     }
 
-    const isMobileDevice = (typeof window !== 'undefined' && !!window.ReactNativeWebView) || 
-      (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
-
-    // CRITICAL: For Hindi text, ALWAYS use server-side Google Hindi TTS (/api/tts?lang=hi).
-    // Desktop and mobile browser speech engines frequently lack native Hindi voices and attempt
-    // to read Devanagari with English synthesizers, which skips words and reads "dot question mark".
-    if (hasDevanagari || isMobileDevice) {
-      playStreamAudio(cleanText, selectedVoice, lang);
-      return;
-    }
-
     let spoken = false;
 
-    // Try browser SpeechSynthesis (Desktop only)
+    // 1. Try native Web Speech API SpeechSynthesis first (0ms instantaneous speech)
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      const voices = window.speechSynthesis.getVoices();
-      if (voices && voices.length > 0) {
-        try {
-          const utterance = new SpeechSynthesisUtterance(cleanText);
+      try {
+        const matchedVoice = resolveSpeechVoice(selectedVoice, bcp47);
+        if (matchedVoice) {
+          const utterance = new SpeechSynthesisUtterance(spokenText);
           const activeVoice = AETHER_VOICES.find(v => v.id === selectedVoice) || AETHER_VOICES[0];
+          utterance.voice = matchedVoice;
           utterance.rate = (activeVoice ? activeVoice.rate : 1.0) * speechRate;
           utterance.pitch = (activeVoice ? activeVoice.pitch : 1.0);
           utterance.volume = 1.0;
           utterance.lang = bcp47;
 
-          const matchedVoice = resolveSpeechVoice(selectedVoice, bcp47);
-          if (matchedVoice) {
-            utterance.voice = matchedVoice;
-          }
-
           setIsSpeaking(true);
           utterance.onend = () => setIsSpeaking(false);
           utterance.onerror = (e) => {
-            console.warn('[Aether TTS] SpeechSynthesis error:', e);
+            console.warn('[Aether TTS] Native speech error, falling back to stream:', e);
             setIsSpeaking(false);
-            // Fallback to server TTS if browser speech fails
-            if (!spoken) playStreamAudio(cleanText, selectedVoice, lang);
+            if (!spoken) playStreamAudio(spokenText, selectedVoice, lang);
           };
           window.speechSynthesis.speak(utterance);
           spoken = true;
-        } catch (e) {
-          console.warn('[Aether TTS] SpeechSynthesis exception:', e);
-          spoken = false;
+          return;
         }
+      } catch (e) {
+        console.warn('[Aether TTS] Native speech exception:', e);
       }
     }
 
-    // Fallback: stream server-side TTS (always works on mobile WebViews)
+    // 2. Guaranteed Parallelized Server-Side TTS Fallback (<300ms latency)
     if (!spoken) {
-      playStreamAudio(cleanText, selectedVoice, lang);
+      playStreamAudio(spokenText, selectedVoice, lang);
       setIsSpeaking(true);
-      setTimeout(() => setIsSpeaking(false), Math.min(cleanText.length * 60, 8000));
+      setTimeout(() => setIsSpeaking(false), Math.min(spokenText.length * 60, 8000));
     }
   };
 
@@ -6774,7 +6824,7 @@ export default function App() {
                     autoFocus
                   />
 
-                  {(inputText.trim() || attachedMedia) ? (
+                  {(inputText.trim() || attachedMedia) && !isListening ? (
                     /* Send Arrow Button — shown when user has typed text or attached media */
                     <button 
                       type="submit" 
@@ -6791,10 +6841,23 @@ export default function App() {
                     <button 
                       type="button" 
                       className={`gemini-prompt-btn mic ${isListening ? 'listening' : ''}`}
-                      onClick={toggleListening}
+                      onClick={() => {
+                        if (isListening) {
+                          clearTimeout(speechSilenceTimeoutRef.current);
+                          if (recognitionRef.current) {
+                            try { recognitionRef.current.stop(); } catch (e) {}
+                          }
+                          setIsListening(false);
+                          if (inputText.trim()) {
+                            handleSendPrompt(inputText.trim());
+                          }
+                        } else {
+                          toggleListening();
+                        }
+                      }}
                       title={
                         isListening 
-                          ? "Stop listening" 
+                          ? "Listening... Tap to send" 
                           : wakeWordEnabled 
                             ? "Voice Input (Wake word 'Hey Aether' active)" 
                             : "Voice Input (माइक शुरू करें)"
