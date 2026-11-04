@@ -3234,6 +3234,10 @@ export default function App() {
 
         if (cleanTasks.length > 0) {
           localStorage.setItem('aether_cached_tasks', JSON.stringify(cleanTasks));
+          setOnboardingDone(true);
+          try {
+            localStorage.setItem('aether_onboarding_done', 'true');
+          } catch (e) {}
           if (currentEmail) {
             localStorage.setItem(`aether_backup_${currentEmail}`, JSON.stringify({
               tasks: cleanTasks,
