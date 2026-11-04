@@ -24,21 +24,13 @@ import re
 import traceback
 
 # ─── Web Push (VAPID) Setup ────────────────────────────────────────────────────
-VALID_VAPID_PUBLIC_KEY  = "BKMr0rTgjRw-7TTPy4rcWo_LTBsRCVDKrwAZD7MpeeOVsF_Vea9LSK13QoXVq3F_fjLWyHrOlG_XVJ3ffKkDxbM"
-VALID_VAPID_PRIVATE_KEY = "iOu5y8PSEFJJev8PPShfr4NdBuLbe9-Ya0bPC3pCeXY"
-VAPID_CLAIMS_EMAIL      = os.environ.get("VAPID_CLAIMS_EMAIL", "mailto:aether@pawandixit.com")
+# Loaded securely from Environment Variables (never hardcoded in source repository)
+VAPID_PUBLIC_KEY   = (os.environ.get("VAPID_PUBLIC_KEY") or "").strip()
+VAPID_PRIVATE_KEY  = (os.environ.get("VAPID_PRIVATE_KEY") or "").strip()
+VAPID_CLAIMS_EMAIL = (os.environ.get("VAPID_CLAIMS_EMAIL") or "mailto:aether@pawandixit.com").strip()
 
-raw_pub = (os.environ.get("VAPID_PUBLIC_KEY") or "").strip()
-if not raw_pub or len(raw_pub) != 87 or not raw_pub.startswith("B"):
-    VAPID_PUBLIC_KEY = VALID_VAPID_PUBLIC_KEY
-else:
-    VAPID_PUBLIC_KEY = raw_pub
-
-raw_priv = (os.environ.get("VAPID_PRIVATE_KEY") or "").strip()
-if not raw_priv or len(raw_priv) < 42 or len(raw_priv) > 44:
-    VAPID_PRIVATE_KEY = VALID_VAPID_PRIVATE_KEY
-else:
-    VAPID_PRIVATE_KEY = raw_priv
+if not VAPID_PRIVATE_KEY:
+    print("[VAPID Security Notice] VAPID keys not configured in environment. Web Push notifications disabled until set in Render.")
 
 # In-memory push subscription store (user_email -> list of subscriptions)
 # Render container restart पर clear होता है, इसलिए client re-subscribe करता है
@@ -46,6 +38,8 @@ _push_subscriptions: dict = {}  # {email: [subscription_info_dict, ...]}
 
 def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "aether-alert"):
     """VAPID Web Push notification एक subscription पर भेजें। Returns (success: bool, is_expired: bool)."""
+    if not VAPID_PRIVATE_KEY or not VAPID_PUBLIC_KEY:
+        return False, False
     try:
         from pywebpush import webpush, WebPushException
         webpush(

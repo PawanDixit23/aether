@@ -1939,7 +1939,7 @@ export default function App() {
       }
 
       // 2. Server से VAPID public key fetch करें (65-byte NIST P-256 standard)
-      const FALLBACK_VAPID_PUBLIC_KEY = "BKMr0rTgjRw-7TTPy4rcWo_LTBsRCVDKrwAZD7MpeeOVsF_Vea9LSK13QoXVq3F_fjLWyHrOlG_XVJ3ffKkDxbM";
+      const FALLBACK_VAPID_PUBLIC_KEY = "BD4PXJ0PRrZXvh6dgsnzr0qOjEl_TcZweG4uI57Mr-W1vQY7HjoPo_66fBeFWZHOmRmpzJhpwS_nMIFaGVn2E7g";
       let keyToUse = FALLBACK_VAPID_PUBLIC_KEY;
       try {
         const keyRes = await fetch(`${API_BASE}/push/vapid-public-key`);
