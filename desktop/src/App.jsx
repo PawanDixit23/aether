@@ -814,6 +814,9 @@ export default function App() {
   const userScrolledUpRef = useRef(false);
   const currentAudioRef = useRef(null);
   const activeUtteranceRef = useRef(null);
+  const speechQueueRef = useRef([]);
+  const speechCurrentIndexRef = useRef(0);
+  const speechHeartbeatRef = useRef(null);
   const activeMediaPlayingRef = useRef(false);
 
   // Futuristic audio chime for instant wake-word / mic activation feedback (Gemini-grade)
@@ -1089,6 +1092,12 @@ export default function App() {
   };
 
   const stopBriefingAudio = () => {
+    speechQueueRef.current = [];
+    speechCurrentIndexRef.current = 0;
+    if (speechHeartbeatRef.current) {
+      clearInterval(speechHeartbeatRef.current);
+      speechHeartbeatRef.current = null;
+    }
     if (activeUtteranceRef.current) {
       try {
         activeUtteranceRef.current.onend = null;
@@ -3868,6 +3877,55 @@ export default function App() {
     };
   }, [wakeWordEnabled, micEnabled, onboardingDone, isListening, isSpeaking, isProcessing, selectedLang]);
 
+  // Helper to split long responses into natural spoken chunks to bypass Chrome's 15s freeze & play 100% complete text
+  const splitTextIntoSpeechChunks = (text, maxChunkLen = 160) => {
+    if (!text) return [];
+    // Split by sentence punctuation: periods, Devanagari purna viram (।), questions, exclamations, newlines
+    const rawParts = text.split(/([.?!।\n]+)/);
+    const sentences = [];
+    for (let i = 0; i < rawParts.length; i += 2) {
+      const part = rawParts[i] || '';
+      const delim = rawParts[i + 1] || '';
+      const full = (part + delim).trim();
+      if (full) sentences.push(full);
+    }
+
+    const chunks = [];
+    let current = "";
+
+    for (const s of sentences) {
+      if (s.length > maxChunkLen) {
+        if (current) {
+          chunks.push(current.trim());
+          current = "";
+        }
+        const words = s.split(/\s+/);
+        let subChunk = "";
+        for (const w of words) {
+          if ((subChunk + " " + w).length > maxChunkLen) {
+            if (subChunk) chunks.push(subChunk.trim());
+            subChunk = w;
+          } else {
+            subChunk = subChunk ? (subChunk + " " + w) : w;
+          }
+        }
+        if (subChunk) current = subChunk;
+      } else {
+        if (current && (current.length + s.length + 1) > maxChunkLen) {
+          chunks.push(current.trim());
+          current = s;
+        } else {
+          current = current ? (current + " " + s) : s;
+        }
+      }
+    }
+    if (current && current.trim()) {
+      chunks.push(current.trim());
+    }
+
+    return chunks.length > 0 ? chunks : [text];
+  };
+
   // Text to Speech with Instant Native Speech & Fast Parallel Server Streaming Fallback
   const speakText = (text) => {
     // STRICT GUARD: If onboarding is not completed, NEVER speak or play TTS!
@@ -3897,59 +3955,76 @@ export default function App() {
 
     if (!cleanText) return;
 
-    // Concise, natural spoken reply for conversational speech (just like Gemini / Assistant)
-    // If response is huge (e.g. 5 paragraphs of tables), speak the main summary sentence / intro paragraph
-    let spokenText = cleanText;
-    if (spokenText.length > 280) {
-      const firstSentenceEnd = spokenText.search(/[.?!।\n]/);
-      if (firstSentenceEnd > 25 && firstSentenceEnd < 260) {
-        const rest = spokenText.slice(firstSentenceEnd + 1);
-        const secondSentence = rest.search(/[.?!।\n]/);
-        if (secondSentence > 20 && (firstSentenceEnd + 1 + secondSentence) < 280) {
-          spokenText = spokenText.slice(0, firstSentenceEnd + 1 + secondSentence + 1).trim();
-        } else {
-          spokenText = spokenText.slice(0, firstSentenceEnd + 1).trim();
-        }
-      } else {
-        spokenText = spokenText.slice(0, 260).trim();
-      }
-    }
-
     // Cancel any ongoing speech and reset audio refs
     stopBriefingAudio();
 
     let spoken = false;
 
-    // 1. Try native Web Speech API SpeechSynthesis first (0ms instantaneous speech)
+    // 1. Try native Web Speech API SpeechSynthesis first (0ms instantaneous speech + full response chunk playback)
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         const matchedVoice = resolveSpeechVoice(selectedVoice, bcp47);
         if (matchedVoice) {
-          const utterance = new SpeechSynthesisUtterance(spokenText);
-          activeUtteranceRef.current = utterance;
           const activeVoice = AETHER_VOICES.find(v => v.id === selectedVoice) || AETHER_VOICES[0];
-          utterance.voice = matchedVoice;
-          utterance.rate = (activeVoice ? activeVoice.rate : 1.0) * speechRate;
-          utterance.pitch = (activeVoice ? activeVoice.pitch : 1.0);
-          utterance.volume = 1.0;
-          utterance.lang = bcp47;
+          const chunks = splitTextIntoSpeechChunks(cleanText, 160);
 
-          setIsSpeaking(true);
-          utterance.onend = () => {
-            activeUtteranceRef.current = null;
-            setIsSpeaking(false);
-            setIsBriefingPlaying(false);
-          };
-          utterance.onerror = (e) => {
-            console.warn('[Aether TTS] Native speech error, falling back to stream:', e);
-            activeUtteranceRef.current = null;
-            setIsSpeaking(false);
-            setIsBriefingPlaying(false);
-            if (!spoken) playStreamAudio(spokenText, selectedVoice, lang);
-          };
-          window.speechSynthesis.speak(utterance);
-          spoken = true;
-          return;
+          if (chunks.length > 0) {
+            speechQueueRef.current = chunks;
+            speechCurrentIndexRef.current = 0;
+            setIsSpeaking(true);
+
+            // Chrome heartbeat to prevent 15-second speech silence timeout
+            if (speechHeartbeatRef.current) clearInterval(speechHeartbeatRef.current);
+            speechHeartbeatRef.current = setInterval(() => {
+              if (typeof window !== 'undefined' && 'speechSynthesis' in window && window.speechSynthesis.speaking) {
+                try {
+                  window.speechSynthesis.pause();
+                  window.speechSynthesis.resume();
+                } catch (e) {}
+              }
+            }, 8000);
+
+            const playChunkAt = (index) => {
+              const queue = speechQueueRef.current;
+              if (!queue || index >= queue.length) {
+                stopBriefingAudio();
+                return;
+              }
+
+              const utterance = new SpeechSynthesisUtterance(queue[index]);
+              activeUtteranceRef.current = utterance;
+              utterance.voice = matchedVoice;
+              utterance.rate = (activeVoice ? activeVoice.rate : 1.0) * speechRate;
+              utterance.pitch = (activeVoice ? activeVoice.pitch : 1.0);
+              utterance.volume = 1.0;
+              utterance.lang = bcp47;
+
+              utterance.onend = () => {
+                speechCurrentIndexRef.current = index + 1;
+                if (speechCurrentIndexRef.current < queue.length) {
+                  playChunkAt(speechCurrentIndexRef.current);
+                } else {
+                  stopBriefingAudio();
+                }
+              };
+
+              utterance.onerror = (e) => {
+                console.warn('[Aether TTS] Chunk error:', e);
+                speechCurrentIndexRef.current = index + 1;
+                if (speechCurrentIndexRef.current < queue.length) {
+                  playChunkAt(speechCurrentIndexRef.current);
+                } else {
+                  stopBriefingAudio();
+                }
+              };
+
+              window.speechSynthesis.speak(utterance);
+            };
+
+            playChunkAt(0);
+            spoken = true;
+            return;
+          }
         }
       } catch (e) {
         console.warn('[Aether TTS] Native speech exception:', e);
@@ -3958,7 +4033,7 @@ export default function App() {
 
     // 2. Guaranteed Parallelized Server-Side TTS Fallback (<300ms latency)
     if (!spoken) {
-      playStreamAudio(spokenText, selectedVoice, lang);
+      playStreamAudio(cleanText, selectedVoice, lang);
     }
   };
 
