@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Plus, 
   MessageSquare, 
@@ -49,8 +49,9 @@ export const ChatHistoryDrawer = ({
   const [renamingTitle, setRenamingTitle] = useState('');
   const [deletingSession, setDeletingSession] = useState(null);
   const [activeProject, setActiveProject] = useState('all');
+  const [projectMenuSessionId, setProjectMenuSessionId] = useState(null);
 
-  // Pinned session IDs stored in localStorage
+  // Pinned session IDs stored in localStorage with cloud server sync
   const [pinnedSessionIds, setPinnedSessionIds] = useState(() => {
     try {
       const saved = localStorage.getItem('aether_pinned_sessions');
@@ -60,7 +61,7 @@ export const ChatHistoryDrawer = ({
     }
   });
 
-  // Project assignments map { [sessionId]: projectId } stored in localStorage
+  // Project assignments map { [sessionId]: projectId } stored in localStorage with cloud server sync
   const [sessionProjects, setSessionProjects] = useState(() => {
     try {
       const saved = localStorage.getItem('aether_chat_projects');
@@ -70,17 +71,90 @@ export const ChatHistoryDrawer = ({
     }
   });
 
-  const handleTogglePin = (e, sessionId) => {
+  // Auto-sync pinned sessions and projects whenever sessions arrive from server
+  useEffect(() => {
+    if (sessions && sessions.length > 0) {
+      const serverPinned = sessions.filter(s => s.is_pinned).map(s => s.id);
+      if (serverPinned.length > 0) {
+        setPinnedSessionIds(prev => {
+          const merged = Array.from(new Set([...prev, ...serverPinned]));
+          try {
+            localStorage.setItem('aether_pinned_sessions', JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
+        });
+      }
+
+      const projMap = {};
+      sessions.forEach(s => {
+        if (s.project) projMap[s.id] = s.project;
+      });
+      if (Object.keys(projMap).length > 0) {
+        setSessionProjects(prev => {
+          const merged = { ...prev, ...projMap };
+          try {
+            localStorage.setItem('aether_chat_projects', JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
+        });
+      }
+    }
+  }, [sessions]);
+
+  const handleTogglePin = async (e, sessionId) => {
     e.stopPropagation();
+    const willBePinned = !pinnedSessionIds.includes(sessionId);
     setPinnedSessionIds(prev => {
-      const next = prev.includes(sessionId)
-        ? prev.filter(id => id !== sessionId)
-        : [...prev, sessionId];
+      const next = willBePinned
+        ? [...prev, sessionId]
+        : prev.filter(id => id !== sessionId);
       try {
         localStorage.setItem('aether_pinned_sessions', JSON.stringify(next));
       } catch (err) {}
       return next;
     });
+
+    try {
+      const authHeaders = {
+        'Content-Type': 'application/json',
+        ...(userEmail ? { 'X-User-Email': userEmail } : {})
+      };
+      const apiEndpoint = typeof window !== 'undefined' && window.location.port === '5173'
+        ? `http://${window.location.hostname}:8000/api`
+        : '/api';
+      fetch(`${apiEndpoint}/chat/sessions/${encodeURIComponent(sessionId)}/pin`, {
+        method: 'PUT',
+        headers: authHeaders,
+        body: JSON.stringify({ is_pinned: willBePinned })
+      }).catch(() => {});
+    } catch (err) {}
+  };
+
+  const handleSetProject = async (e, sessionId, projectId) => {
+    if (e) e.stopPropagation();
+    setSessionProjects(prev => {
+      const next = { ...prev, [sessionId]: projectId || null };
+      try {
+        localStorage.setItem('aether_chat_projects', JSON.stringify(next));
+      } catch (err) {}
+      return next;
+    });
+    setProjectMenuSessionId(null);
+
+    try {
+      const authHeaders = {
+        'Content-Type': 'application/json',
+        ...(userEmail ? { 'X-User-Email': userEmail } : {})
+      };
+      const apiEndpoint = typeof window !== 'undefined' && window.location.port === '5173'
+        ? `http://${window.location.hostname}:8000/api`
+        : '/api';
+      fetch(`${apiEndpoint}/chat/sessions/${encodeURIComponent(sessionId)}/project`, {
+        method: 'PUT',
+        headers: authHeaders,
+        body: JSON.stringify({ project: projectId || null })
+      }).catch(() => {});
+    } catch (err) {}
   };
 
   // Filter sessions by search query and project (exclude temporary chats)
@@ -299,7 +373,7 @@ export const ChatHistoryDrawer = ({
           <button
             type="button"
             onClick={() => {
-              onNewChat();
+              onNewChat(activeProject !== 'all' ? activeProject : null);
               onClose();
             }}
             style={{
@@ -321,7 +395,7 @@ export const ChatHistoryDrawer = ({
             }}
           >
             <Plus size={18} />
-            <span>New Chat</span>
+            <span>{activeProject !== 'all' ? `New ${activeProject.charAt(0).toUpperCase() + activeProject.slice(1)} Chat` : 'New Chat'}</span>
           </button>
         </div>
 
@@ -619,11 +693,33 @@ export const ChatHistoryDrawer = ({
             }}>
               <MessageSquare size={36} color="#334155" style={{ margin: '0 auto 12px', display: 'block' }} />
               <p style={{ margin: '0 0 4px', color: '#94a3b8', fontWeight: 700 }}>
-                {searchQuery ? 'No matching conversations' : 'No conversations in this section'}
+                {searchQuery ? 'No matching conversations' : (activeProject !== 'all' ? `No ${activeProject.charAt(0).toUpperCase() + activeProject.slice(1)} chats yet` : 'No conversations in this section')}
               </p>
               <p style={{ margin: 0, fontSize: '0.78rem' }}>
-                {searchQuery ? 'Try adjusting your search terms' : 'Start a new chat to build your history!'}
+                {searchQuery ? 'Try adjusting your search terms' : (activeProject !== 'all' ? `Click below to start a dedicated chat in this category!` : 'Start a new chat to build your history!')}
               </p>
+              {activeProject !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onNewChat(activeProject);
+                    onClose();
+                  }}
+                  style={{
+                    marginTop: '14px',
+                    background: 'rgba(56, 189, 248, 0.15)',
+                    border: '1px solid rgba(56, 189, 248, 0.35)',
+                    color: '#38bdf8',
+                    padding: '8px 16px',
+                    borderRadius: '12px',
+                    fontSize: '0.82rem',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  + Start {activeProject.charAt(0).toUpperCase() + activeProject.slice(1)} Chat
+                </button>
+              )}
             </div>
           ) : (
             <>
@@ -848,6 +944,7 @@ export const ChatHistoryDrawer = ({
 
   function renderSessionItem(session, isPinned) {
     const isActive = session.id === activeSessionId;
+    const currentProj = sessionProjects[session.id] || session.project;
 
     return (
       <div
@@ -921,15 +1018,32 @@ export const ChatHistoryDrawer = ({
             }}>
               {session.title || 'Conversation'}
             </div>
-            {isActive && (
-              <div style={{ color: '#38bdf8', fontSize: '0.66rem', fontWeight: 600, marginTop: '1px' }}>
-                Active
-              </div>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+              {isActive && (
+                <span style={{ color: '#38bdf8', fontSize: '0.66rem', fontWeight: 600 }}>
+                  Active
+                </span>
+              )}
+              {currentProj === 'work' && (
+                <span style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', padding: '1px 5px', borderRadius: '4px', fontSize: '0.64rem', fontWeight: 700 }}>
+                  💼 Work
+                </span>
+              )}
+              {currentProj === 'personal' && (
+                <span style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#a855f7', padding: '1px 5px', borderRadius: '4px', fontSize: '0.64rem', fontWeight: 700 }}>
+                  📁 Personal
+                </span>
+              )}
+              {currentProj === 'ideas' && (
+                <span style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', padding: '1px 5px', borderRadius: '4px', fontSize: '0.64rem', fontWeight: 700 }}>
+                  ✨ Ideas
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Action Buttons: Pin, Rename, Delete */}
+        {/* Action Buttons: Pin, Category/Folder, Rename, Delete */}
         <div 
           style={{ 
             display: 'flex', 
@@ -938,6 +1052,88 @@ export const ChatHistoryDrawer = ({
             flexShrink: 0
           }}
         >
+          {/* Category / Project Dropdown Button */}
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setProjectMenuSessionId(projectMenuSessionId === session.id ? null : session.id);
+              }}
+              style={{
+                background: currentProj ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                border: currentProj ? '1px solid rgba(56, 189, 248, 0.35)' : '1px solid rgba(255, 255, 255, 0.08)',
+                color: currentProj ? '#38bdf8' : '#94a3b8',
+                cursor: 'pointer',
+                width: '30px',
+                height: '30px',
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.15s'
+              }}
+              title="Assign to Category (Work, Personal, Ideas)"
+            >
+              <Folder size={13} />
+            </button>
+
+            {projectMenuSessionId === session.id && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  position: 'absolute',
+                  right: 0,
+                  top: '36px',
+                  zIndex: 60,
+                  background: '#0e172a',
+                  border: '1px solid rgba(56, 189, 248, 0.35)',
+                  borderRadius: '12px',
+                  padding: '6px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                  boxShadow: '0 10px 30px rgba(0,0,0,0.85)',
+                  minWidth: '135px'
+                }}
+              >
+                <div style={{ fontSize: '0.64rem', color: '#64748b', padding: '2px 8px', fontWeight: 700, textTransform: 'uppercase' }}>
+                  Assign Folder:
+                </div>
+                {[
+                  { id: null, label: 'None (All)', icon: '💬' },
+                  { id: 'work', label: 'Work', icon: '💼', color: '#38bdf8' },
+                  { id: 'personal', label: 'Personal', icon: '📁', color: '#a855f7' },
+                  { id: 'ideas', label: 'Ideas', icon: '✨', color: '#f59e0b' }
+                ].map(opt => (
+                  <button
+                    key={String(opt.id)}
+                    type="button"
+                    onClick={(e) => handleSetProject(e, session.id, opt.id)}
+                    style={{
+                      background: currentProj === opt.id ? 'rgba(56, 189, 248, 0.2)' : 'transparent',
+                      border: 'none',
+                      color: opt.color || '#cbd5e1',
+                      padding: '6px 8px',
+                      borderRadius: '6px',
+                      fontSize: '0.78rem',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      fontWeight: currentProj === opt.id ? 700 : 500
+                    }}
+                  >
+                    <span>{opt.icon}</span>
+                    <span>{opt.label}</span>
+                    {currentProj === opt.id && <Check size={12} style={{ marginLeft: 'auto' }} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Pin / Unpin Button */}
           <button
             type="button"

@@ -67,14 +67,14 @@ export function CricketScorecardModal({
 
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window !== 'undefined') {
-      return window.innerWidth <= 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+      return window.innerWidth <= 768 || !!window.ReactNativeWebView || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
     }
     return false;
   });
 
   useEffect(() => {
     const handleResize = () => {
-      setIsMobile(window.innerWidth <= 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
+      setIsMobile(window.innerWidth <= 768 || !!window.ReactNativeWebView || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -334,6 +334,8 @@ export function CricketScorecardModal({
         <div 
           className="aether-edge-header"
           style={{
+            flexShrink: 0,
+            boxSizing: 'border-box',
             padding: isMobile ? '12px 14px' : '16px 20px',
             paddingTop: isMobile ? 'max(52px, calc(env(safe-area-inset-top, 0px) + 16px))' : '16px',
             background: selectedMatch ? '#007953' : 'linear-gradient(180deg, #0e172a 0%, #0a0f1d 100%)',
@@ -349,7 +351,14 @@ export function CricketScorecardModal({
             {selectedMatch ? (
               <button
                 type="button"
-                onClick={() => setSelectedMatch(null)}
+                onClick={() => {
+                  triggerHaptic(15);
+                  if (detailTab !== 'scorecard') {
+                    setDetailTab('scorecard');
+                  } else {
+                    setSelectedMatch(null);
+                  }
+                }}
                 style={{
                   background: 'rgba(255, 255, 255, 0.15)',
                   border: 'none',
@@ -363,7 +372,7 @@ export function CricketScorecardModal({
                   cursor: 'pointer',
                   flexShrink: 0
                 }}
-                title="Back to matches list"
+                title={detailTab !== 'scorecard' ? "Back to Scorecard" : "Back to matches list"}
               >
                 <ArrowLeft size={18} />
               </button>
@@ -461,15 +470,16 @@ export function CricketScorecardModal({
 
         {/* -------------------- VIEW 1: MATCH DETAIL CENTER (CRICBUZZ STYLE) -------------------- */}
         {selectedMatch ? (
-          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflowY: 'auto' }}>
-            {/* Cricbuzz Sub-Tabs Bar */}
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            {/* Cricbuzz Sub-Tabs Bar (FIXED at top, never cut off or scrolled away) */}
             <div style={{
               display: 'flex',
               alignItems: 'center',
               background: '#08111e',
               borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
               padding: '0 12px',
-              overflowX: 'auto'
+              overflowX: 'auto',
+              flexShrink: 0
             }}>
               {[
                 { id: 'scorecard', label: 'SCORECARD' },
@@ -503,7 +513,7 @@ export function CricketScorecardModal({
               ))}
             </div>
 
-            {/* Cricbuzz Red Status Banner */}
+            {/* Cricbuzz Red Status Banner (FIXED under tabs) */}
             <div style={{
               background: 'rgba(239, 68, 68, 0.08)',
               borderBottom: '1px solid rgba(239, 68, 68, 0.2)',
@@ -514,7 +524,8 @@ export function CricketScorecardModal({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              gap: '12px'
+              gap: '12px',
+              flexShrink: 0
             }}>
               <span>{selectedMatch.status_text || selectedMatch.description || 'Live Match Coverage'}</span>
               {selectedMatch.status === 'in' && (
@@ -532,8 +543,8 @@ export function CricketScorecardModal({
               )}
             </div>
 
-            {/* Sub-tab Content */}
-            <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '14px', flex: 1 }}>
+            {/* Sub-tab Scrollable Content (Only the scorecard / squads list scrolls) */}
+            <div style={{ padding: isMobile ? '12px 14px' : '16px 20px', display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minHeight: 0, overflowY: 'auto' }}>
               {/* TAB 1: SCORECARD (Accordion Innings Cricbuzz Style) */}
               {detailTab === 'scorecard' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -819,7 +830,42 @@ export function CricketScorecardModal({
 
               {/* TAB 2: SQUADS */}
               {detailTab === 'squads' && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    padding: '8px 12px',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(255, 255, 255, 0.06)'
+                  }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        triggerHaptic(15);
+                        setDetailTab('scorecard');
+                      }}
+                      style={{
+                        background: 'rgba(56, 189, 248, 0.15)',
+                        border: '1px solid rgba(56, 189, 248, 0.35)',
+                        color: '#38bdf8',
+                        padding: '6px 14px',
+                        borderRadius: '10px',
+                        fontSize: '0.80rem',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      ← Back to Scorecard
+                    </button>
+                    <span style={{ fontSize: '0.74rem', color: '#94a3b8' }}>Squads & Playing XI</span>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
                   {displayRosters.map((rost, rIdx) => (
                     <div
                       key={rIdx}
@@ -869,12 +915,47 @@ export function CricketScorecardModal({
                       </div>
                     </div>
                   ))}
+                  </div>
                 </div>
               )}
 
               {/* TAB 3: INFO */}
               {detailTab === 'info' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    padding: '8px 12px',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(255, 255, 255, 0.06)'
+                  }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        triggerHaptic(15);
+                        setDetailTab('scorecard');
+                      }}
+                      style={{
+                        background: 'rgba(56, 189, 248, 0.15)',
+                        border: '1px solid rgba(56, 189, 248, 0.35)',
+                        color: '#38bdf8',
+                        padding: '6px 14px',
+                        borderRadius: '10px',
+                        fontSize: '0.80rem',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      ← Back to Scorecard
+                    </button>
+                    <span style={{ fontSize: '0.74rem', color: '#94a3b8' }}>Match Information</span>
+                  </div>
+
                   {/* Match Info Grid */}
                   <div style={{
                     background: 'rgba(255, 255, 255, 0.02)',
@@ -948,6 +1029,40 @@ export function CricketScorecardModal({
               {/* TAB 4: LIVE */}
               {detailTab === 'live' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    padding: '8px 12px',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(255, 255, 255, 0.06)'
+                  }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        triggerHaptic(15);
+                        setDetailTab('scorecard');
+                      }}
+                      style={{
+                        background: 'rgba(56, 189, 248, 0.15)',
+                        border: '1px solid rgba(56, 189, 248, 0.35)',
+                        color: '#38bdf8',
+                        padding: '6px 14px',
+                        borderRadius: '10px',
+                        fontSize: '0.80rem',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      ← Back to Scorecard
+                    </button>
+                    <span style={{ fontSize: '0.74rem', color: '#94a3b8' }}>Live Situation</span>
+                  </div>
+
                   <div style={{
                     background: 'rgba(255, 255, 255, 0.02)',
                     border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -1350,9 +1465,22 @@ export function CricketScorecardModal({
         }}>
           <div>
             {selectedMatch ? (
-              <span style={{ color: '#38bdf8', cursor: 'pointer', fontWeight: 600 }} onClick={() => setSelectedMatch(null)}>
-                ← Back to matches list
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span 
+                  style={{ color: '#38bdf8', cursor: 'pointer', fontWeight: 600 }} 
+                  onClick={() => { triggerHaptic(15); setSelectedMatch(null); }}
+                >
+                  ← Back to matches list
+                </span>
+                {detailTab !== 'scorecard' && (
+                  <span 
+                    style={{ color: '#34d399', cursor: 'pointer', fontWeight: 600 }} 
+                    onClick={() => { triggerHaptic(15); setDetailTab('scorecard'); }}
+                  >
+                    • Back to Scorecard
+                  </span>
+                )}
+              </div>
             ) : (
               <span>Showing {finalMatches.length} of {displayMatches.length} matches</span>
             )}

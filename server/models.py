@@ -64,6 +64,8 @@ class ChatSession(Base):
     id = Column(String, primary_key=True, index=True) # e.g. sess_20261102_123456
     user_email = Column(String, index=True, nullable=False)
     title = Column(String, nullable=False, default="New Conversation")
+    is_pinned = Column(Boolean, default=False)
+    project = Column(String, nullable=True, default=None) # e.g. "work", "personal", "ideas"
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 

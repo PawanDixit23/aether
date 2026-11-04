@@ -318,6 +318,26 @@ export const TasksModal = ({
     { key: 'low', label: 'Low', dot: '#10B981' }
   ];
 
+  // Chronological time parser for tasks (e.g. "7:00 AM" -> 420 mins, "8:00 AM" -> 480 mins)
+  const parseReminderToMinutes = (timeStr) => {
+    if (!timeStr || typeof timeStr !== 'string') return 9999;
+    const str = timeStr.trim().toLowerCase();
+    const m12 = str.match(/^(\d{1,2})(?::(\d{1,2}))?\s*(am|pm)$/i);
+    if (m12) {
+      let hours = parseInt(m12[1], 10);
+      const minutes = m12[2] ? parseInt(m12[2], 10) : 0;
+      const ampm = m12[3].toLowerCase();
+      if (ampm === 'pm' && hours < 12) hours += 12;
+      if (ampm === 'am' && hours === 12) hours = 0;
+      return hours * 60 + minutes;
+    }
+    const m24 = str.match(/^(\d{1,2}):(\d{2})$/);
+    if (m24) {
+      return parseInt(m24[1], 10) * 60 + parseInt(m24[2], 10);
+    }
+    return 9999;
+  };
+
   // Filter tasks based on selected tab, date, priority, and search query
   const filteredTasks = useMemo(() => {
     return combinedTasks.filter(t => {
@@ -358,7 +378,11 @@ export const TasksModal = ({
       const bOverdue = isTaskOverdue(b);
       if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
 
-      return (a.reminder_time || '').localeCompare(b.reminder_time || '');
+      const aTime = parseReminderToMinutes(a.reminder_time);
+      const bTime = parseReminderToMinutes(b.reminder_time);
+      if (aTime !== bTime) return aTime - bTime;
+
+      return (a.title || '').localeCompare(b.title || '');
     });
   }, [combinedTasks, agendaFilter, priorityFilter, searchQuery, selectedDateStr, todayStr, isSelectedDateToday, getTaskDateStr]);
 

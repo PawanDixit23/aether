@@ -190,9 +190,19 @@ class QuickCaptureRequest(BaseModel):
 class ChatSessionCreate(BaseModel):
     title: Optional[str] = "New Conversation"
     id: Optional[str] = None
+    project: Optional[str] = None
+    is_pinned: Optional[bool] = False
 
 class ChatSessionUpdate(BaseModel):
-    title: str
+    title: Optional[str] = None
+    project: Optional[str] = None
+    is_pinned: Optional[bool] = None
+
+class ChatSessionPin(BaseModel):
+    is_pinned: bool
+
+class ChatSessionProject(BaseModel):
+    project: Optional[str] = None
 
 class TranslateRequest(BaseModel):
     text: str
@@ -1353,6 +1363,8 @@ def get_chat_sessions(
         {
             "id": s.id,
             "title": s.title,
+            "is_pinned": bool(getattr(s, "is_pinned", False)),
+            "project": getattr(s, "project", None),
             "created_at": s.created_at.isoformat() if s.created_at else None,
             "updated_at": s.updated_at.isoformat() if s.updated_at else None
         }
@@ -1375,6 +1387,8 @@ def create_chat_session(
         return {
             "id": existing.id,
             "title": existing.title,
+            "is_pinned": bool(getattr(existing, "is_pinned", False)),
+            "project": getattr(existing, "project", None),
             "created_at": existing.created_at.isoformat() if existing.created_at else None,
             "updated_at": existing.updated_at.isoformat() if existing.updated_at else None
         }
@@ -1383,6 +1397,8 @@ def create_chat_session(
         id=sess_id,
         user_email=eff_email,
         title=req.title or "New Conversation",
+        is_pinned=bool(req.is_pinned),
+        project=req.project,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )
@@ -1392,6 +1408,8 @@ def create_chat_session(
     return {
         "id": session.id,
         "title": session.title,
+        "is_pinned": bool(session.is_pinned),
+        "project": session.project,
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "updated_at": session.updated_at.isoformat() if session.updated_at else None
     }
@@ -1411,20 +1429,62 @@ def update_chat_session(
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found")
     
-    clean_title = (req.title or "").strip()
-    if not clean_title:
-        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    if req.title is not None:
+        clean_title = (req.title or "").strip()
+        if clean_title:
+            session.title = clean_title
+    if req.project is not None:
+        session.project = req.project.strip() if req.project else None
+    if req.is_pinned is not None:
+        session.is_pinned = bool(req.is_pinned)
     
-    session.title = clean_title
     session.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(session)
     return {
         "id": session.id,
         "title": session.title,
+        "is_pinned": bool(session.is_pinned),
+        "project": session.project,
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "updated_at": session.updated_at.isoformat() if session.updated_at else None
     }
+
+@app.put("/api/chat/sessions/{session_id}/pin")
+def pin_chat_session(
+    session_id: str,
+    req: ChatSessionPin,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    session.is_pinned = req.is_pinned
+    session.updated_at = datetime.utcnow()
+    db.commit()
+    return {"status": "ok", "id": session.id, "is_pinned": session.is_pinned}
+
+@app.put("/api/chat/sessions/{session_id}/project")
+def set_chat_session_project(
+    session_id: str,
+    req: ChatSessionProject,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    session.project = (req.project.strip() if req.project else None)
+    session.updated_at = datetime.utcnow()
+    db.commit()
+    return {"status": "ok", "id": session.id, "project": session.project}
 
 @app.delete("/api/chat/sessions/{session_id}")
 def delete_chat_session(

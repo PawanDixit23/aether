@@ -540,6 +540,10 @@ export default function App() {
   const cameraStreamRef = useRef(null);
   const [callInputNumber, setCallInputNumber] = useState({});
 
+  // Mobile Pull-to-Refresh State
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+
   const [calCurrentMonth, setCalCurrentMonth] = useState(() => new Date());
   const [calSelectedDate, setCalSelectedDate] = useState(() => new Date());
   const [remindersViewMode, setRemindersViewMode] = useState('list'); // 'list' | 'calendar'
@@ -3454,6 +3458,80 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Mobile Touch-Driven Pull to Refresh
+  useEffect(() => {
+    let touchStartY = 0;
+    let isTracking = false;
+
+    const getScrollTop = () => {
+      const activeScroller = document.querySelector('.dashboard-scroll-container') ||
+                             document.querySelector('.gemini-chat-feed') ||
+                             document.querySelector('.gemini-screen-container') ||
+                             document.scrollingElement ||
+                             document.documentElement;
+      return activeScroller ? activeScroller.scrollTop : 0;
+    };
+
+    const handleTouchStart = (e) => {
+      if (e.touches.length !== 1) return;
+      if (getScrollTop() <= 5) {
+        touchStartY = e.touches[0].clientY;
+        isTracking = true;
+      } else {
+        isTracking = false;
+      }
+    };
+
+    const handleTouchMove = (e) => {
+      if (!isTracking || e.touches.length !== 1) return;
+      const currentY = e.touches[0].clientY;
+      const deltaY = currentY - touchStartY;
+
+      if (deltaY > 0 && getScrollTop() <= 5) {
+        const damped = Math.min(Math.pow(deltaY, 0.82) * 1.4, 80);
+        setPullDistance(damped);
+      } else {
+        setPullDistance(0);
+      }
+    };
+
+    const handleTouchEnd = async () => {
+      if (!isTracking) return;
+      isTracking = false;
+
+      setPullDistance(prev => {
+        if (prev >= 48) {
+          setIsPullRefreshing(true);
+          if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+            try { navigator.vibrate(25); } catch (e) {}
+          }
+          (async () => {
+            try {
+              await refreshAllData({ force: true });
+            } finally {
+              setTimeout(() => {
+                setIsPullRefreshing(false);
+                setPullDistance(0);
+              }, 400);
+            }
+          })();
+          return 55;
+        }
+        return 0;
+      });
+    };
+
+    window.addEventListener('touchstart', handleTouchStart, { passive: true });
+    window.addEventListener('touchmove', handleTouchMove, { passive: true });
+    window.addEventListener('touchend', handleTouchEnd, { passive: true });
+
+    return () => {
+      window.removeEventListener('touchstart', handleTouchStart);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, []);
+
   // Scroll to bottom only if user hasn't scrolled up
   useEffect(() => {
     if (!userScrolledUpRef.current && showConversation) {
@@ -4023,7 +4101,7 @@ export default function App() {
   };
 
   // Start a New Chat (Switches to fresh session, preserves existing chats)
-  const handleStartNewChat = () => {
+  const handleStartNewChat = (initialProject = null) => {
     const newSessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     activeSessionIdRef.current = newSessionId;
     setActiveSessionId(newSessionId);
@@ -4032,14 +4110,34 @@ export default function App() {
     setShowConversation(false);
     setShowDashboard(false);
     setIsTemporaryChat(false);
-    showToast("New conversation ready! ⚡", 'success');
+    const projLabel = initialProject && initialProject !== 'all' ? ` [${initialProject.toUpperCase()}]` : '';
+    showToast(`New conversation${projLabel} ready! ⚡`, 'success');
 
     const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
     if (currentEmail) {
       try {
         localStorage.setItem(`aether_active_session_id_${currentEmail}`, newSessionId);
         localStorage.setItem(`aether_chat_history_${currentEmail}_${newSessionId}`, JSON.stringify([]));
+        if (initialProject && initialProject !== 'all') {
+          const savedProj = localStorage.getItem('aether_chat_projects');
+          const projMap = savedProj ? JSON.parse(savedProj) : {};
+          projMap[newSessionId] = initialProject;
+          localStorage.setItem('aether_chat_projects', JSON.stringify(projMap));
+        }
       } catch (e) {}
+    }
+
+    if (initialProject && initialProject !== 'all' && currentEmail) {
+      const projTitle = `New ${initialProject.charAt(0).toUpperCase() + initialProject.slice(1)} Chat`;
+      fetch(`${API_BASE}/chat/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
+        body: JSON.stringify({ id: newSessionId, title: projTitle, project: initialProject })
+      }).then(r => r.json()).then(newSess => {
+        if (newSess && newSess.id) {
+          setChatSessions(prev => [newSess, ...prev.filter(s => s.id !== newSess.id)]);
+        }
+      }).catch(() => {});
     }
   };
 
@@ -5240,6 +5338,46 @@ export default function App() {
 
   return (
     <div className="jarvis-screen-wrapper">
+      {/* Mobile Pull to Refresh Indicator */}
+      {(pullDistance > 0 || isPullRefreshing) && (
+        <div
+          style={{
+            position: 'fixed',
+            top: `max(16px, calc(env(safe-area-inset-top, 0px) + ${Math.min(pullDistance, 60)}px))`,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 99999,
+            background: 'rgba(15, 23, 42, 0.94)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            border: '1px solid rgba(56, 189, 248, 0.45)',
+            borderRadius: '999px',
+            padding: '8px 18px',
+            boxShadow: '0 10px 35px rgba(0, 0, 0, 0.7), 0 0 25px rgba(56, 189, 248, 0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            color: '#ffffff',
+            fontSize: '0.82rem',
+            fontWeight: 700,
+            pointerEvents: 'none',
+            transition: isPullRefreshing ? 'top 0.2s ease-out' : 'none'
+          }}
+        >
+          <span
+            style={{
+              display: 'inline-block',
+              animation: isPullRefreshing ? 'spin 0.8s linear infinite' : 'none',
+              transform: `rotate(${pullDistance * 4}deg)`,
+              color: '#38bdf8',
+              fontSize: '1.1rem'
+            }}
+          >
+            ⚡
+          </span>
+          <span>{isPullRefreshing ? 'Refreshing Aether...' : pullDistance >= 48 ? 'Release to Refresh' : 'Pull down to Refresh'}</span>
+        </div>
+      )}
       
       {/* =========================================================================
           VIEW 1: SETTINGS SCREEN (Exact 1:1 Spec from Screenshot 2)
