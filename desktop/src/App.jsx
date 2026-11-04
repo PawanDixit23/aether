@@ -813,6 +813,7 @@ export default function App() {
   const recognitionRef = useRef(null);
   const userScrolledUpRef = useRef(false);
   const currentAudioRef = useRef(null);
+  const activeUtteranceRef = useRef(null);
   const activeMediaPlayingRef = useRef(false);
 
   // Futuristic audio chime for instant wake-word / mic activation feedback (Gemini-grade)
@@ -1088,6 +1089,13 @@ export default function App() {
   };
 
   const stopBriefingAudio = () => {
+    if (activeUtteranceRef.current) {
+      try {
+        activeUtteranceRef.current.onend = null;
+        activeUtteranceRef.current.onerror = null;
+      } catch (e) {}
+      activeUtteranceRef.current = null;
+    }
     if (currentAudioRef.current) {
       try { currentAudioRef.current.pause(); } catch (e) {}
       currentAudioRef.current = null;
@@ -1116,14 +1124,17 @@ export default function App() {
       try {
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(cleanText);
+        activeUtteranceRef.current = utterance;
         utterance.rate = 1.0;
         utterance.pitch = 1.0;
         utterance.lang = 'hi-IN';
         utterance.onend = () => {
+          activeUtteranceRef.current = null;
           setIsSpeaking(false);
           setIsBriefingPlaying(false);
         };
         utterance.onerror = () => {
+          activeUtteranceRef.current = null;
           setIsSpeaking(false);
           setIsBriefingPlaying(false);
         };
@@ -3764,10 +3775,10 @@ export default function App() {
 
   const toggleListening = toggleVoiceRecognition;
 
-  // Background "Hey Aether" Wake Word Detection (Universal: Mobile App & Desktop) + Barge-In Interruption
+  // Background "Hey Aether" Wake Word Detection (Universal: Mobile App & Desktop)
   useEffect(() => {
-    // Guards: don't listen if onboarding not done, mic disabled, wake word disabled, or active voice session/media running
-    if (!onboardingDone || !micEnabled || !wakeWordEnabled || isListening || isProcessing || activeMediaPlayingRef.current) {
+    // Guards: don't listen if onboarding not done, mic disabled, wake word disabled, active voice session, processing, speaking, or media running
+    if (!onboardingDone || !micEnabled || !wakeWordEnabled || isListening || isSpeaking || isProcessing || activeMediaPlayingRef.current) {
       if (wakeWordRecognitionRef.current) {
         try { wakeWordRecognitionRef.current.stop(); } catch (e) {}
         wakeWordRecognitionRef.current = null;
@@ -3789,7 +3800,7 @@ export default function App() {
       wakeRec.lang = selectedLang === 'hi' ? 'hi-IN' : 'en-IN';
 
       wakeRec.onresult = (event) => {
-        if (isDestroyed) return;
+        if (isDestroyed || isSpeaking) return;
         
         let latestSegment = "";
         for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -3799,37 +3810,6 @@ export default function App() {
         }
         const text = latestSegment.trim().toLowerCase();
         if (!text) return;
-
-        // GEMINI LIVE BARGE-IN: If Aether is speaking and user says "Stop", "रुको", "बस", "शांत" or "Hey Aether"
-        if (isSpeaking) {
-          const interruptRegex = /\b(stop|रुको|रुक|रुकिए|बस|शांत|चुप|pause|hey\s*aether|ok\s*aether|okay\s*aether|aether)\b/i;
-          if (interruptRegex.test(text)) {
-            console.log("[Barge-in Interruption]:", text);
-            if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-              try { window.speechSynthesis.cancel(); } catch (e) {}
-            }
-            if (currentAudioRef.current) {
-              try { currentAudioRef.current.pause(); } catch (e) {}
-              currentAudioRef.current = null;
-            }
-            setIsSpeaking(false);
-            setIsBriefingPlaying(false);
-            showToast("⚡ Aether रुका (Interrupted)", "info");
-            playWakeChime();
-            if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-              try { navigator.vibrate([25, 20, 25]); } catch (e) {}
-            }
-            try { wakeRec.stop(); } catch (e) {}
-            wakeWordRecognitionRef.current = null;
-
-            const remainingQuery = text.replace(interruptRegex, '').replace(/^[,.\s]+/, '').trim();
-            setTimeout(() => {
-              toggleVoiceRecognition(remainingQuery);
-            }, 80);
-            return;
-          }
-          return;
-        }
 
         // Supported wake words: "hey aether", "ok aether", "aether", "hey ether", "हे ईथर", "ईथर", "सुनो ईथर"
         const wakeWordRegex = /\b(hey\s*aether|ok\s*aether|okay\s*aether|hey\s*ether|ok\s*ether|okay\s*ether|aether|ether|हे\s*ईथर|ईथर|सुनो\s*ईथर|नमस्ते\s*ईथर)\b/i;
@@ -3855,24 +3835,24 @@ export default function App() {
       };
 
       wakeRec.onerror = (e) => {
-        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isProcessing && !activeMediaPlayingRef.current) {
+        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current) {
           if (e.error !== 'not-allowed') {
             setTimeout(() => {
-              try { if (!isDestroyed && !activeMediaPlayingRef.current) wakeRec.start(); } catch (err) {}
+              try { if (!isDestroyed && !activeMediaPlayingRef.current && !isSpeaking) wakeRec.start(); } catch (err) {}
             }, 800);
           }
         }
       };
 
       wakeRec.onend = () => {
-        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isProcessing && !activeMediaPlayingRef.current) {
+        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current) {
           setTimeout(() => {
-            try { if (!isDestroyed && !activeMediaPlayingRef.current) wakeRec.start(); } catch (e) {}
+            try { if (!isDestroyed && !activeMediaPlayingRef.current && !isSpeaking) wakeRec.start(); } catch (e) {}
           }, 350);
         }
       };
 
-      if (!isDestroyed && !activeMediaPlayingRef.current) {
+      if (!isDestroyed && !activeMediaPlayingRef.current && !isSpeaking) {
         wakeRec.start();
       }
     } catch (e) {
@@ -3935,10 +3915,8 @@ export default function App() {
       }
     }
 
-    // Cancel any ongoing speech
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      try { window.speechSynthesis.cancel(); } catch (e) {}
-    }
+    // Cancel any ongoing speech and reset audio refs
+    stopBriefingAudio();
 
     let spoken = false;
 
@@ -3948,6 +3926,7 @@ export default function App() {
         const matchedVoice = resolveSpeechVoice(selectedVoice, bcp47);
         if (matchedVoice) {
           const utterance = new SpeechSynthesisUtterance(spokenText);
+          activeUtteranceRef.current = utterance;
           const activeVoice = AETHER_VOICES.find(v => v.id === selectedVoice) || AETHER_VOICES[0];
           utterance.voice = matchedVoice;
           utterance.rate = (activeVoice ? activeVoice.rate : 1.0) * speechRate;
@@ -3956,10 +3935,16 @@ export default function App() {
           utterance.lang = bcp47;
 
           setIsSpeaking(true);
-          utterance.onend = () => setIsSpeaking(false);
+          utterance.onend = () => {
+            activeUtteranceRef.current = null;
+            setIsSpeaking(false);
+            setIsBriefingPlaying(false);
+          };
           utterance.onerror = (e) => {
             console.warn('[Aether TTS] Native speech error, falling back to stream:', e);
+            activeUtteranceRef.current = null;
             setIsSpeaking(false);
+            setIsBriefingPlaying(false);
             if (!spoken) playStreamAudio(spokenText, selectedVoice, lang);
           };
           window.speechSynthesis.speak(utterance);
@@ -3974,8 +3959,6 @@ export default function App() {
     // 2. Guaranteed Parallelized Server-Side TTS Fallback (<300ms latency)
     if (!spoken) {
       playStreamAudio(spokenText, selectedVoice, lang);
-      setIsSpeaking(true);
-      setTimeout(() => setIsSpeaking(false), Math.min(spokenText.length * 60, 8000));
     }
   };
 
@@ -6687,12 +6670,18 @@ export default function App() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
                           <button
                             type="button"
-                            onClick={() => speakText(msg.content)}
-                            title="Aether की आवाज में सुनें (Listen aloud)"
+                            onClick={() => {
+                              if (isSpeaking) {
+                                stopBriefingAudio();
+                              } else {
+                                speakText(msg.content);
+                              }
+                            }}
+                            title={isSpeaking ? "रोकें (Stop speaking)" : "Aether की आवाज में सुनें (Listen aloud)"}
                             style={{
-                              background: 'rgba(255, 255, 255, 0.06)',
-                              border: '1px solid rgba(255, 255, 255, 0.12)',
-                              color: '#38bdf8',
+                              background: isSpeaking ? 'rgba(239, 68, 68, 0.12)' : 'rgba(255, 255, 255, 0.06)',
+                              border: `1px solid ${isSpeaking ? 'rgba(239, 68, 68, 0.35)' : 'rgba(255, 255, 255, 0.12)'}`,
+                              color: isSpeaking ? '#f87171' : '#38bdf8',
                               borderRadius: '8px',
                               padding: '3px 8px',
                               fontSize: '0.72rem',
@@ -6702,8 +6691,8 @@ export default function App() {
                               gap: '4px'
                             }}
                           >
-                            <Volume2 size={12} />
-                            <span>सुनें (Listen)</span>
+                            {isSpeaking ? <Pause size={12} /> : <Volume2 size={12} />}
+                            <span>{isSpeaking ? 'रोकें (Stop)' : 'सुनें (Listen)'}</span>
                           </button>
                         </div>
                       )}
