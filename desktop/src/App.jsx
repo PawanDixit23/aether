@@ -3529,6 +3529,14 @@ export default function App() {
 
     const handleTouchStart = (e) => {
       if (e.touches.length !== 1) return;
+      // Never intercept touch if settings or any modal is open
+      if (document.querySelector('.jarvis-settings-container') || 
+          document.querySelector('.modal-overlay') || 
+          document.querySelector('[role="dialog"]') ||
+          document.querySelector('.cricket-scoreboard-container')) {
+        isTracking = false;
+        return;
+      }
       if (getScrollTop() <= 5) {
         touchStartY = e.touches[0].clientY;
         isTracking = true;
@@ -3972,17 +3980,6 @@ export default function App() {
             speechQueueRef.current = chunks;
             speechCurrentIndexRef.current = 0;
             setIsSpeaking(true);
-
-            // Chrome heartbeat to prevent 15-second speech silence timeout
-            if (speechHeartbeatRef.current) clearInterval(speechHeartbeatRef.current);
-            speechHeartbeatRef.current = setInterval(() => {
-              if (typeof window !== 'undefined' && 'speechSynthesis' in window && window.speechSynthesis.speaking) {
-                try {
-                  window.speechSynthesis.pause();
-                  window.speechSynthesis.resume();
-                } catch (e) {}
-              }
-            }, 8000);
 
             const playChunkAt = (index) => {
               const queue = speechQueueRef.current;
@@ -5497,47 +5494,6 @@ export default function App() {
 
   return (
     <div className="jarvis-screen-wrapper">
-      {/* Mobile Pull to Refresh Indicator */}
-      {(pullDistance > 0 || isPullRefreshing) && (
-        <div
-          style={{
-            position: 'fixed',
-            top: `max(16px, calc(env(safe-area-inset-top, 0px) + ${Math.min(pullDistance, 60)}px))`,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 99999,
-            background: 'rgba(15, 23, 42, 0.94)',
-            backdropFilter: 'blur(16px)',
-            WebkitBackdropFilter: 'blur(16px)',
-            border: '1px solid rgba(56, 189, 248, 0.45)',
-            borderRadius: '999px',
-            padding: '8px 18px',
-            boxShadow: '0 10px 35px rgba(0, 0, 0, 0.7), 0 0 25px rgba(56, 189, 248, 0.35)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            color: '#ffffff',
-            fontSize: '0.82rem',
-            fontWeight: 700,
-            pointerEvents: 'none',
-            transition: isPullRefreshing ? 'top 0.2s ease-out' : 'none'
-          }}
-        >
-          <span
-            style={{
-              display: 'inline-block',
-              animation: isPullRefreshing ? 'spin 0.8s linear infinite' : 'none',
-              transform: `rotate(${pullDistance * 4}deg)`,
-              color: '#38bdf8',
-              fontSize: '1.1rem'
-            }}
-          >
-            ⚡
-          </span>
-          <span>{isPullRefreshing ? 'Refreshing Aether...' : pullDistance >= 48 ? 'Release to Refresh' : 'Pull down to Refresh'}</span>
-        </div>
-      )}
-
       {/* Render Server Cold-Start & Reconnect Ambient Banner */}
       {!serverOnline && (
         <div
@@ -5569,54 +5525,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Gemini Live Barge-In Floating Interruption Bar */}
-      {isSpeaking && (
-        <div
-          onClick={() => {
-            if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-              try { window.speechSynthesis.cancel(); } catch (e) {}
-            }
-            if (currentAudioRef.current) {
-              try { currentAudioRef.current.pause(); } catch (e) {}
-              currentAudioRef.current = null;
-            }
-            setIsSpeaking(false);
-            setIsBriefingPlaying(false);
-            showToast("⚡ Aether रुका (Interrupted)", "info");
-          }}
-          style={{
-            position: 'fixed',
-            bottom: '86px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 99990,
-            background: 'rgba(15, 23, 42, 0.94)',
-            backdropFilter: 'blur(16px)',
-            WebkitBackdropFilter: 'blur(16px)',
-            border: '1px solid rgba(56, 189, 248, 0.45)',
-            borderRadius: '999px',
-            padding: '7px 18px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            cursor: 'pointer',
-            boxShadow: '0 8px 25px rgba(0, 0, 0, 0.65), 0 0 15px rgba(56, 189, 248, 0.25)',
-            color: '#38bdf8',
-            fontSize: '0.78rem',
-            fontWeight: 700,
-            userSelect: 'none'
-          }}
-          title="Click to stop speaking / रुको"
-        >
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-            <span style={{ width: '3px', height: '12px', background: '#38bdf8', borderRadius: '2px', animation: 'pulse 0.8s infinite' }} />
-            <span style={{ width: '3px', height: '16px', background: '#38bdf8', borderRadius: '2px', animation: 'pulse 0.6s infinite 0.2s' }} />
-            <span style={{ width: '3px', height: '10px', background: '#38bdf8', borderRadius: '2px', animation: 'pulse 0.7s infinite 0.4s' }} />
-          </span>
-          <span>Aether बोल रहा है • रोकने के लिए टैप करें या बोलें "रुको"</span>
-        </div>
-      )}
-      
       {/* =========================================================================
           VIEW 1: SETTINGS SCREEN (Exact 1:1 Spec from Screenshot 2)
           ========================================================================= */}
@@ -6040,7 +5948,10 @@ export default function App() {
                   <button 
                     type="button" 
                     className="gemini-icon-btn" 
-                    onClick={() => setIsSettingsOpen(true)}
+                    onClick={() => {
+                      stopBriefingAudio();
+                      setIsSettingsOpen(true);
+                    }}
                     title="Settings & Profile (सेटिंग्स)"
                     style={{
                       background: 'rgba(255, 255, 255, 0.05)',
@@ -6094,10 +6005,16 @@ export default function App() {
                     isSpeaking={isSpeaking}
                     toggleListening={toggleListening}
                     onSwitchToChat={() => setShowDashboard(false)}
-                    setActiveSubModal={setActiveSubModal}
+                    setActiveSubModal={(modal) => {
+                      if (modal) stopBriefingAudio();
+                      setActiveSubModal(modal);
+                    }}
                     setIsAddingExpense={setIsAddingExpense}
                     setIsCameraOpen={handleCameraClick}
-                    setIsSettingsOpen={setIsSettingsOpen}
+                    setIsSettingsOpen={(open) => {
+                      if (open) stopBriefingAudio();
+                      setIsSettingsOpen(open);
+                    }}
                     userAvatar={userAvatar}
                     onClose={() => setShowDashboard(false)}
                     onToggleTask={handleToggleTask}
