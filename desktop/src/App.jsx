@@ -1167,15 +1167,23 @@ export default function App() {
     }
   }, [isSpeaking, isBriefingPlaying]);
 
-  const handlePlayExecutiveBriefing = async () => {
-    setShowBriefingModal(true);
-    if (isBriefingPlaying) {
+  const handlePlayExecutiveBriefing = async (openModal = true) => {
+    if (openModal) {
+      setShowBriefingModal(true);
+    }
+    if (isBriefingPlaying || isSpeaking) {
       stopBriefingAudio();
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        try { window.speechSynthesis.cancel(); } catch (e) {}
+      }
+      setIsSpeaking(false);
+      setIsBriefingPlaying(false);
       return;
     }
 
     try {
       setIsBriefingLoading(true);
+      showToast("🎙️ Aether एग्जीक्यूटिव ब्रीफिंग तैयार कर रहा है...", "info");
       const resp = await fetch(`${API_BASE}/briefing/executive`, {
         headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
       });
@@ -1183,7 +1191,8 @@ export default function App() {
       setIsBriefingLoading(false);
       if (data?.text) {
         setExecutiveBriefingData(data);
-        speakBriefingAudio(data.text);
+        speakText(data.text);
+        setIsBriefingPlaying(true);
       }
     } catch (e) {
       console.error(e);
@@ -3466,7 +3475,12 @@ export default function App() {
         }
       }
       
-      setServerOnline(true);
+      setServerOnline(prev => {
+        if (!prev) {
+          showToast("✓ Aether कोर कनेक्ट हो गया!", "success");
+        }
+        return true;
+      });
       setLastSyncTime(new Date().toLocaleTimeString('hi-IN', { hour: '2-digit', minute: '2-digit' }));
     } catch (err) {
       setServerOnline(false);
@@ -3475,9 +3489,9 @@ export default function App() {
 
   useEffect(() => {
     refreshAllData();
-    const interval = setInterval(refreshAllData, 15000);
+    const interval = setInterval(refreshAllData, serverOnline ? 15000 : 3500);
     return () => clearInterval(interval);
-  }, []);
+  }, [serverOnline]);
 
   // Mobile Touch-Driven Pull to Refresh
   useEffect(() => {
@@ -3750,10 +3764,10 @@ export default function App() {
 
   const toggleListening = toggleVoiceRecognition;
 
-  // Background "Hey Aether" Wake Word Detection (Universal: Mobile App & Desktop)
+  // Background "Hey Aether" Wake Word Detection (Universal: Mobile App & Desktop) + Barge-In Interruption
   useEffect(() => {
-    // Guards: don't listen if onboarding not done, mic disabled, wake word disabled, or active session/media running
-    if (!onboardingDone || !micEnabled || !wakeWordEnabled || isListening || isSpeaking || isProcessing || activeMediaPlayingRef.current) {
+    // Guards: don't listen if onboarding not done, mic disabled, wake word disabled, or active voice session/media running
+    if (!onboardingDone || !micEnabled || !wakeWordEnabled || isListening || isProcessing || activeMediaPlayingRef.current) {
       if (wakeWordRecognitionRef.current) {
         try { wakeWordRecognitionRef.current.stop(); } catch (e) {}
         wakeWordRecognitionRef.current = null;
@@ -3786,6 +3800,37 @@ export default function App() {
         const text = latestSegment.trim().toLowerCase();
         if (!text) return;
 
+        // GEMINI LIVE BARGE-IN: If Aether is speaking and user says "Stop", "रुको", "बस", "शांत" or "Hey Aether"
+        if (isSpeaking) {
+          const interruptRegex = /\b(stop|रुको|रुक|रुकिए|बस|शांत|चुप|pause|hey\s*aether|ok\s*aether|okay\s*aether|aether)\b/i;
+          if (interruptRegex.test(text)) {
+            console.log("[Barge-in Interruption]:", text);
+            if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+              try { window.speechSynthesis.cancel(); } catch (e) {}
+            }
+            if (currentAudioRef.current) {
+              try { currentAudioRef.current.pause(); } catch (e) {}
+              currentAudioRef.current = null;
+            }
+            setIsSpeaking(false);
+            setIsBriefingPlaying(false);
+            showToast("⚡ Aether रुका (Interrupted)", "info");
+            playWakeChime();
+            if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+              try { navigator.vibrate([25, 20, 25]); } catch (e) {}
+            }
+            try { wakeRec.stop(); } catch (e) {}
+            wakeWordRecognitionRef.current = null;
+
+            const remainingQuery = text.replace(interruptRegex, '').replace(/^[,.\s]+/, '').trim();
+            setTimeout(() => {
+              toggleVoiceRecognition(remainingQuery);
+            }, 80);
+            return;
+          }
+          return;
+        }
+
         // Supported wake words: "hey aether", "ok aether", "aether", "hey ether", "हे ईथर", "ईथर", "सुनो ईथर"
         const wakeWordRegex = /\b(hey\s*aether|ok\s*aether|okay\s*aether|hey\s*ether|ok\s*ether|okay\s*ether|aether|ether|हे\s*ईथर|ईथर|सुनो\s*ईथर|नमस्ते\s*ईथर)\b/i;
         const match = text.match(wakeWordRegex);
@@ -3810,7 +3855,7 @@ export default function App() {
       };
 
       wakeRec.onerror = (e) => {
-        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current) {
+        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isProcessing && !activeMediaPlayingRef.current) {
           if (e.error !== 'not-allowed') {
             setTimeout(() => {
               try { if (!isDestroyed && !activeMediaPlayingRef.current) wakeRec.start(); } catch (err) {}
@@ -3820,7 +3865,7 @@ export default function App() {
       };
 
       wakeRec.onend = () => {
-        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current) {
+        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isProcessing && !activeMediaPlayingRef.current) {
           setTimeout(() => {
             try { if (!isDestroyed && !activeMediaPlayingRef.current) wakeRec.start(); } catch (e) {}
           }, 350);
@@ -3960,6 +4005,12 @@ export default function App() {
     if (isProcessing) return;
 
     let prompt = rawPrompt;
+    // Direct voice trigger for Executive Briefing
+    if (!attachedMedia && /\b(morning briefing|executive briefing|daily briefing|ब्रीफिंग सुनाओ|आज का ब्रीफिंग|दिन का हाल)\b/i.test(prompt)) {
+      handlePlayExecutiveBriefing(false);
+      setInputText('');
+      return;
+    }
     let sendingImageUrl = null;
     if (attachedMedia) {
       if (attachedMedia.type === 'image') {
@@ -5428,6 +5479,85 @@ export default function App() {
           <span>{isPullRefreshing ? 'Refreshing Aether...' : pullDistance >= 48 ? 'Release to Refresh' : 'Pull down to Refresh'}</span>
         </div>
       )}
+
+      {/* Render Server Cold-Start & Reconnect Ambient Banner */}
+      {!serverOnline && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 'max(14px, calc(env(safe-area-inset-top, 0px) + 8px))',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 99998,
+            background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.96), rgba(15, 23, 42, 0.98))',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            border: '1px solid rgba(245, 158, 11, 0.5)',
+            borderRadius: '999px',
+            padding: '7px 18px',
+            boxShadow: '0 8px 30px rgba(0, 0, 0, 0.7), 0 0 20px rgba(245, 158, 11, 0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            color: '#fef08a',
+            fontSize: '0.78rem',
+            fontWeight: 700,
+            animation: 'pulse 2s infinite ease-in-out',
+            pointerEvents: 'none'
+          }}
+        >
+          <span style={{ animation: 'spin 1.5s linear infinite', display: 'inline-block' }}>⚡</span>
+          <span>Aether कोर कनेक्ट हो रहा है (Connecting to Core Server)...</span>
+        </div>
+      )}
+
+      {/* Gemini Live Barge-In Floating Interruption Bar */}
+      {isSpeaking && (
+        <div
+          onClick={() => {
+            if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+              try { window.speechSynthesis.cancel(); } catch (e) {}
+            }
+            if (currentAudioRef.current) {
+              try { currentAudioRef.current.pause(); } catch (e) {}
+              currentAudioRef.current = null;
+            }
+            setIsSpeaking(false);
+            setIsBriefingPlaying(false);
+            showToast("⚡ Aether रुका (Interrupted)", "info");
+          }}
+          style={{
+            position: 'fixed',
+            bottom: '86px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 99990,
+            background: 'rgba(15, 23, 42, 0.94)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            border: '1px solid rgba(56, 189, 248, 0.45)',
+            borderRadius: '999px',
+            padding: '7px 18px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            cursor: 'pointer',
+            boxShadow: '0 8px 25px rgba(0, 0, 0, 0.65), 0 0 15px rgba(56, 189, 248, 0.25)',
+            color: '#38bdf8',
+            fontSize: '0.78rem',
+            fontWeight: 700,
+            userSelect: 'none'
+          }}
+          title="Click to stop speaking / रुको"
+        >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+            <span style={{ width: '3px', height: '12px', background: '#38bdf8', borderRadius: '2px', animation: 'pulse 0.8s infinite' }} />
+            <span style={{ width: '3px', height: '16px', background: '#38bdf8', borderRadius: '2px', animation: 'pulse 0.6s infinite 0.2s' }} />
+            <span style={{ width: '3px', height: '10px', background: '#38bdf8', borderRadius: '2px', animation: 'pulse 0.7s infinite 0.4s' }} />
+          </span>
+          <span>Aether बोल रहा है • रोकने के लिए टैप करें या बोलें "रुको"</span>
+        </div>
+      )}
       
       {/* =========================================================================
           VIEW 1: SETTINGS SCREEN (Exact 1:1 Spec from Screenshot 2)
@@ -5913,6 +6043,7 @@ export default function App() {
                     userAvatar={userAvatar}
                     onClose={() => setShowDashboard(false)}
                     onToggleTask={handleToggleTask}
+                    onPlayBriefing={() => handlePlayExecutiveBriefing(false)}
                   />
                 </div>
               ) : chatHistory.length === 0 ? (

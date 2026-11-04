@@ -81,3 +81,5 @@ Icon
 *.db-wal
 local_storage/
 data/
+.vapid_keys.json
+*.vapid_keys.json

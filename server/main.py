@@ -24,13 +24,55 @@ import re
 import traceback
 
 # ─── Web Push (VAPID) Setup ────────────────────────────────────────────────────
-# Loaded securely from Environment Variables (never hardcoded in source repository)
+# Loaded securely from Environment Variables or auto-generated & persisted locally
 VAPID_PUBLIC_KEY   = (os.environ.get("VAPID_PUBLIC_KEY") or "").strip()
 VAPID_PRIVATE_KEY  = (os.environ.get("VAPID_PRIVATE_KEY") or "").strip()
 VAPID_CLAIMS_EMAIL = (os.environ.get("VAPID_CLAIMS_EMAIL") or "mailto:aether@pawandixit.com").strip()
 
-if not VAPID_PRIVATE_KEY:
-    print("[VAPID Security Notice] VAPID keys not configured in environment. Web Push notifications disabled until set in Render.")
+if not VAPID_PRIVATE_KEY or not VAPID_PUBLIC_KEY:
+    vapid_file = os.path.join(os.path.dirname(__file__), ".vapid_keys.json")
+    if os.path.exists(vapid_file):
+        try:
+            with open(vapid_file, "r") as f:
+                saved_keys = json.load(f)
+                if saved_keys.get("publicKey") and saved_keys.get("privateKey"):
+                    VAPID_PUBLIC_KEY = saved_keys["publicKey"]
+                    VAPID_PRIVATE_KEY = saved_keys["privateKey"]
+        except Exception:
+            pass
+
+    if not VAPID_PRIVATE_KEY or not VAPID_PUBLIC_KEY:
+        try:
+            from cryptography.hazmat.primitives.asymmetric import ec
+            from cryptography.hazmat.primitives import serialization
+            import base64
+
+            _ec_key = ec.generate_private_key(ec.SECP256R1())
+            _priv_bytes = _ec_key.private_numbers().private_value.to_bytes(32, byteorder='big')
+            _priv_b64 = base64.urlsafe_b64encode(_priv_bytes).decode('utf-8').rstrip('=')
+
+            _pub_bytes = _ec_key.public_key().public_bytes(
+                encoding=serialization.Encoding.X962,
+                format=serialization.PublicFormat.UncompressedPoint
+            )
+            _pub_b64 = base64.urlsafe_b64encode(_pub_bytes).decode('utf-8').rstrip('=')
+
+            VAPID_PUBLIC_KEY = _pub_b64
+            VAPID_PRIVATE_KEY = _priv_b64
+
+            try:
+                with open(vapid_file, "w") as f:
+                    json.dump({"publicKey": _pub_b64, "privateKey": _priv_b64}, f)
+            except Exception:
+                pass
+            print(f"[VAPID Setup] Auto-generated secure VAPID keypair for instant Web Push.")
+        except Exception as e:
+            print("[VAPID Setup Warning] Could not auto-generate VAPID keys:", e)
+
+if VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY:
+    print("[VAPID Setup] ✅ Web Push active with valid VAPID keys.")
+else:
+    print("[VAPID Security Notice] VAPID keys not configured in environment. Web Push notifications disabled until set.")
 
 # In-memory push subscription store (user_email -> list of subscriptions)
 # Render container restart पर clear होता है, इसलिए client re-subscribe करता है

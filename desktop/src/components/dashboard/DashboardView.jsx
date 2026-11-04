@@ -37,7 +37,8 @@ export const DashboardView = ({
   setIsSettingsOpen,
   userAvatar,
   onClose,
-  onToggleTask
+  onToggleTask,
+  onPlayBriefing
 }) => {
   const [selectedMode, setSelectedMode] = useState('voice'); // 'voice' | 'ask' | 'agent'
 
@@ -264,7 +265,7 @@ export const DashboardView = ({
     >
       
       {/* 1. GREETING & DATE HEADLINE */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px', paddingTop: '2px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', paddingTop: '2px', gap: '8px' }}>
         <div>
           <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: '#ffffff', margin: '0 0 2px 0', letterSpacing: '-0.02em' }}>
             {getGreeting()}, {userName || 'Pawan Dixit'}
@@ -276,6 +277,33 @@ export const DashboardView = ({
             {formattedDate}
           </div>
         </div>
+
+        {/* Executive Voice Briefing Button */}
+        {onPlayBriefing && (
+          <button
+            type="button"
+            onClick={onPlayBriefing}
+            style={{
+              background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.15) 0%, rgba(99, 102, 241, 0.2) 100%)',
+              border: '1px solid rgba(56, 189, 248, 0.35)',
+              borderRadius: '12px',
+              padding: '8px 12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              color: '#38bdf8',
+              fontSize: '0.78rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              flexShrink: 0,
+              boxShadow: '0 4px 14px rgba(56, 189, 248, 0.15)'
+            }}
+            title="Listen to Executive Daily Briefing"
+          >
+            <span>🎙️</span>
+            <span>Daily Briefing</span>
+          </button>
+        )}
       </div>
 
       {/* 2. CENTER ORB (Compact Holographic Sphere) */}
