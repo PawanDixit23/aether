@@ -93,7 +93,10 @@ export const DashboardView = ({
           }
         }
       } catch (e) {}
-      // If not explicitly completed on dateStr, daily task is PENDING (never carries over yesterday's completion!)
+      // Fallback to server status for today or the task's due date if local cache was cleared/empty
+      if (dateStr === todayDateStr || (t.due_date && t.due_date.slice(0, 10) === dateStr)) {
+        return Boolean(t.is_completed || t.status === 'completed');
+      }
       return false;
     }
     return Boolean(t.is_completed || t.status === 'completed');

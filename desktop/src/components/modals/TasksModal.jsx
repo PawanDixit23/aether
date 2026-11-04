@@ -78,6 +78,18 @@ export const TasksModal = ({
     return {};
   });
 
+  // Keep date completions in sync whenever modal opens
+  useEffect(() => {
+    if (isOpen) {
+      try {
+        if (typeof localStorage !== 'undefined') {
+          const saved = localStorage.getItem('aether_task_date_completions');
+          if (saved) setTaskDateCompletions(JSON.parse(saved));
+        }
+      } catch (e) {}
+    }
+  }, [isOpen]);
+
   const todayStr = formatLocalDateStr ? formatLocalDateStr(new Date()) : new Date().toISOString().slice(0, 10);
   
   // Selected date resolution
@@ -100,12 +112,17 @@ export const TasksModal = ({
     }
 
     // Daily / recurring task:
-    // Strict per-date isolation: only true if explicitly marked done on this exact date!
+    // 1. Strict per-date isolation if explicitly recorded in local cache
     if (taskDateCompletions[t.id] && taskDateCompletions[t.id][targetDateStr] !== undefined) {
       return Boolean(taskDateCompletions[t.id][targetDateStr]);
     }
 
-    // A daily task on any new date (whether today, yesterday, or future) starts fresh and uncompleted by default!
+    // 2. If viewing TODAY or the task's scheduled date, fallback to server's actual saved status!
+    if (targetDateStr === todayStr || (getTaskDateStr && targetDateStr === getTaskDateStr(t))) {
+      return Boolean(t.is_completed || t.status === 'completed');
+    }
+
+    // A daily task on any new/future date starts fresh and uncompleted by default!
     return false;
   };
 

@@ -3245,6 +3245,28 @@ export default function App() {
               finances: loadedFinances
             }));
           }
+
+          // Restore/seed today's recurring completions from server state if cache was wiped or empty
+          try {
+            const todayStr = formatLocalDateStr(new Date());
+            const savedDateCompletions = localStorage.getItem('aether_task_date_completions');
+            const dateMap = savedDateCompletions ? JSON.parse(savedDateCompletions) : {};
+            let mapUpdated = false;
+
+            cleanTasks.forEach(t => {
+              const isDaily = t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily');
+              if (isDaily && (t.is_completed || t.status === 'completed')) {
+                if (!dateMap[t.id] || dateMap[t.id][todayStr] === undefined) {
+                  dateMap[t.id] = { ...(dateMap[t.id] || {}), [todayStr]: true };
+                  mapUpdated = true;
+                }
+              }
+            });
+
+            if (mapUpdated) {
+              localStorage.setItem('aether_task_date_completions', JSON.stringify(dateMap));
+            }
+          } catch (e) {}
         }
 
         // Schedule upcoming reminders natively on mobile app
