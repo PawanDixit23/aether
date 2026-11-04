@@ -3255,10 +3255,37 @@ export default function App() {
 
             cleanTasks.forEach(t => {
               const isDaily = t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily');
-              if (isDaily && (t.is_completed || t.status === 'completed')) {
-                if (!dateMap[t.id] || dateMap[t.id][todayStr] === undefined) {
-                  dateMap[t.id] = { ...(dateMap[t.id] || {}), [todayStr]: true };
-                  mapUpdated = true;
+              if (isDaily) {
+                // 1. Merge all server-persisted date completions for all past dates
+                if (t.date_completions && typeof t.date_completions === 'object') {
+                  Object.entries(t.date_completions).forEach(([d, val]) => {
+                    if (!dateMap[t.id] || dateMap[t.id][d] !== val) {
+                      dateMap[t.id] = { ...(dateMap[t.id] || {}), [d]: Boolean(val) };
+                      mapUpdated = true;
+                    }
+                  });
+                }
+                // 2. Ensure today is completed if task status is completed on server
+                if (t.is_completed || t.status === 'completed') {
+                  if (!dateMap[t.id] || dateMap[t.id][todayStr] === undefined) {
+                    dateMap[t.id] = { ...(dateMap[t.id] || {}), [todayStr]: true };
+                    mapUpdated = true;
+                  }
+                  // 3. If task has a due date or creation date in the past that was completed
+                  if (t.due_date) {
+                    const dueD = t.due_date.slice(0, 10);
+                    if (!dateMap[t.id] || dateMap[t.id][dueD] === undefined) {
+                      dateMap[t.id] = { ...(dateMap[t.id] || {}), [dueD]: true };
+                      mapUpdated = true;
+                    }
+                  }
+                  if (t.created_at) {
+                    const createD = t.created_at.slice(0, 10);
+                    if (!dateMap[t.id] || dateMap[t.id][createD] === undefined) {
+                      dateMap[t.id] = { ...(dateMap[t.id] || {}), [createD]: true };
+                      mapUpdated = true;
+                    }
+                  }
                 }
               }
             });
@@ -4165,7 +4192,8 @@ export default function App() {
         return {
           ...t,
           is_completed: willBeDone,
-          status: willBeDone ? 'completed' : 'pending'
+          status: willBeDone ? 'completed' : 'pending',
+          ...(isDaily ? { date_completions: { ...(t.date_completions || {}), [todayDateKey]: willBeDone } } : {})
         };
       }
       if (t.subtasks && t.subtasks.some(s => String(s.id) === String(actualTaskId))) {
@@ -4206,7 +4234,10 @@ export default function App() {
           'Content-Type': 'application/json',
           ...(userEmail ? { 'X-User-Email': userEmail } : {}) 
         },
-        body: JSON.stringify({ status: willBeDone ? 'completed' : 'pending' })
+        body: JSON.stringify({ 
+          status: willBeDone ? 'completed' : 'pending',
+          date: todayDateKey
+        })
       });
       if (resp.ok) {
         const serverUpdated = await resp.json();

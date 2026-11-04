@@ -93,8 +93,18 @@ export const DashboardView = ({
           }
         }
       } catch (e) {}
-      // Fallback to server status for today or the task's due date if local cache was cleared/empty
-      if (dateStr === todayDateStr || (t.due_date && t.due_date.slice(0, 10) === dateStr)) {
+      // Check persistent cloud date completions
+      if (t.date_completions && t.date_completions[dateStr] !== undefined) {
+        return Boolean(t.date_completions[dateStr]);
+      }
+      // Future dates cannot be completed in advance
+      if (dateStr > todayDateStr) {
+        return false;
+      }
+      // Fallback to server status for today or the task's due date / creation date if local cache was cleared/empty
+      const dueStr = t.due_date ? t.due_date.slice(0, 10) : null;
+      const createdStr = t.created_at ? t.created_at.slice(0, 10) : null;
+      if (dateStr === todayDateStr || dateStr === dueStr || dateStr === createdStr) {
         return Boolean(t.is_completed || t.status === 'completed');
       }
       return false;

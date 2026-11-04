@@ -78,17 +78,48 @@ export const TasksModal = ({
     return {};
   });
 
-  // Keep date completions in sync whenever modal opens
+  // Keep date completions in sync whenever modal opens or combinedTasks update from server
   useEffect(() => {
-    if (isOpen) {
-      try {
-        if (typeof localStorage !== 'undefined') {
-          const saved = localStorage.getItem('aether_task_date_completions');
-          if (saved) setTaskDateCompletions(JSON.parse(saved));
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const saved = localStorage.getItem('aether_task_date_completions');
+        if (saved) setTaskDateCompletions(JSON.parse(saved));
+      }
+    } catch (e) {}
+
+    if (combinedTasks && combinedTasks.length > 0) {
+      setTaskDateCompletions(prev => {
+        let updated = false;
+        const next = { ...prev };
+        combinedTasks.forEach(t => {
+          if (t.date_completions && typeof t.date_completions === 'object') {
+            const existing = next[t.id] || {};
+            let taskUpdated = false;
+            const merged = { ...existing };
+            Object.entries(t.date_completions).forEach(([d, val]) => {
+              if (merged[d] !== val) {
+                merged[d] = val;
+                taskUpdated = true;
+              }
+            });
+            if (taskUpdated) {
+              next[t.id] = merged;
+              updated = true;
+            }
+          }
+        });
+        if (updated) {
+          try {
+            if (typeof localStorage !== 'undefined') {
+              localStorage.setItem('aether_task_date_completions', JSON.stringify(next));
+            }
+          } catch (e) {}
+          return next;
         }
-      } catch (e) {}
+        return prev;
+      });
     }
-  }, [isOpen]);
+  }, [isOpen, combinedTasks]);
 
   const todayStr = formatLocalDateStr ? formatLocalDateStr(new Date()) : new Date().toISOString().slice(0, 10);
   
@@ -117,12 +148,29 @@ export const TasksModal = ({
       return Boolean(taskDateCompletions[t.id][targetDateStr]);
     }
 
-    // 2. If viewing TODAY or the task's scheduled date, fallback to server's actual saved status!
-    if (targetDateStr === todayStr || (getTaskDateStr && targetDateStr === getTaskDateStr(t))) {
+    // 2. Persistent date completion from cloud server
+    if (t.date_completions && t.date_completions[targetDateStr] !== undefined) {
+      return Boolean(t.date_completions[targetDateStr]);
+    }
+
+    // 3. Future dates (targetDateStr > todayStr): ALWAYS false (cannot be completed in advance)
+    if (targetDateStr > todayStr) {
+      return false;
+    }
+
+    // 4. Today: follow server status
+    if (targetDateStr === todayStr) {
       return Boolean(t.is_completed || t.status === 'completed');
     }
 
-    // A daily task on any new/future date starts fresh and uncompleted by default!
+    // 5. Older dates (targetDateStr < todayStr):
+    // If the task was due or created on this older date and is marked completed on server
+    const dueStr = t.due_date ? t.due_date.slice(0, 10) : null;
+    const createdStr = t.created_at ? t.created_at.slice(0, 10) : null;
+    if ((targetDateStr === dueStr || targetDateStr === createdStr) && (t.is_completed || t.status === 'completed')) {
+      return true;
+    }
+
     return false;
   };
 
@@ -242,8 +290,8 @@ export const TasksModal = ({
         }
       } catch (e) {}
 
-      // If toggling on TODAY, also sync with main backend task status
-      if (isSelectedDateToday && handleToggleTask) {
+      // Sync date completion to backend for ANY date (today OR older days!)
+      if (handleToggleTask) {
         handleToggleTask(task.id, willBeDone, selectedDateStr);
       }
     } else {

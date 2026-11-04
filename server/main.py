@@ -64,16 +64,16 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
 
 try:
     from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
-    from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession
+    from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession, TaskDateCompletion
     from ai_engine import parse_intent_with_llm
 except ImportError:
     try:
         from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
-        from server.models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession
+        from server.models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession, TaskDateCompletion
         from server.ai_engine import parse_intent_with_llm
     except ImportError:
         from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
-        from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession
+        from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession, TaskDateCompletion
         from .ai_engine import parse_intent_with_llm
 
 # Initialize tables & run automated schema migrations
@@ -215,6 +215,11 @@ class TaskReschedule(BaseModel):
 
 class TaskToggleRequest(BaseModel):
     status: Optional[str] = None
+    date: Optional[str] = None
+
+class DateCompletionRequest(BaseModel):
+    date: str
+    completed: bool
 
 class FinancialRecordCreate(BaseModel):
     type: str
@@ -1707,7 +1712,24 @@ def list_tasks(
     query = query.filter((Task.parent_id == None) | (Task.parent_id == 0))
     if status:
         query = query.filter(Task.status == status)
-    return [serialize_task(t, db=db) for t in query.order_by(Task.created_at.desc()).all()]
+
+    # Fetch persistent date completions across all dates for recurring tasks
+    date_completions_map = {}
+    try:
+        records = db.query(TaskDateCompletion).filter(TaskDateCompletion.user_email == eff_email).all()
+        for r in records:
+            if r.task_id not in date_completions_map:
+                date_completions_map[r.task_id] = {}
+            date_completions_map[r.task_id][r.date_str] = r.completed
+    except Exception as e:
+        print(f"[list_tasks] Error fetching task date completions: {e}")
+
+    tasks_out = []
+    for t in query.order_by(Task.created_at.desc()).all():
+        serialized = serialize_task(t, db=db)
+        serialized["date_completions"] = date_completions_map.get(t.id, {})
+        tasks_out.append(serialized)
+    return tasks_out
 
 @app.post("/api/tasks")
 def create_task(
@@ -1780,9 +1802,93 @@ def toggle_task(
         for s in subs:
             s.status = new_status
 
+    # Record persistent date completion for recurring tasks in database
+    now_dt = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
+    today_str = now_dt.strftime("%Y-%m-%d")
+    target_date = (req.date.strip() if req and req.date else today_str)
+
+    if task.recurrence and eff_email:
+        try:
+            rec = db.query(TaskDateCompletion).filter(
+                TaskDateCompletion.task_id == task.id,
+                TaskDateCompletion.date_str == target_date,
+                TaskDateCompletion.user_email == eff_email
+            ).first()
+            if rec:
+                rec.completed = (new_status == "completed")
+            else:
+                db.add(TaskDateCompletion(
+                    task_id=task.id,
+                    user_email=eff_email,
+                    date_str=target_date,
+                    completed=(new_status == "completed"),
+                    created_at=datetime.utcnow()
+                ))
+        except Exception as e:
+            print(f"[toggle_task] Date completion note: {e}")
+
     db.commit()
     db.refresh(task)
     return serialize_task(task, db=db)
+
+@app.get("/api/tasks/date-completions")
+def get_task_date_completions(
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        return {}
+    records = db.query(TaskDateCompletion).filter(TaskDateCompletion.user_email == eff_email).all()
+    res = {}
+    for r in records:
+        if r.task_id not in res:
+            res[r.task_id] = {}
+        res[r.task_id][r.date_str] = r.completed
+    return res
+
+@app.post("/api/tasks/{task_id}/date-completion")
+def set_task_date_completion(
+    task_id: int,
+    req: DateCompletionRequest,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="User email required")
+
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    clean_date = req.date.strip()
+    rec = db.query(TaskDateCompletion).filter(
+        TaskDateCompletion.task_id == task_id,
+        TaskDateCompletion.date_str == clean_date,
+        TaskDateCompletion.user_email == eff_email
+    ).first()
+
+    if rec:
+        rec.completed = req.completed
+    else:
+        rec = TaskDateCompletion(
+            task_id=task_id,
+            user_email=eff_email,
+            date_str=clean_date,
+            completed=req.completed,
+            created_at=datetime.utcnow()
+        )
+        db.add(rec)
+
+    now_dt = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
+    today_str = now_dt.strftime("%Y-%m-%d")
+    if clean_date == today_str:
+        task.status = "completed" if req.completed else "pending"
+        task.notified = req.completed
+
+    db.commit()
+    return {"status": "ok", "task_id": task_id, "date": clean_date, "completed": req.completed}
 
 @app.put("/api/tasks/{task_id}/reschedule")
 def reschedule_task(
