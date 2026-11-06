@@ -336,7 +336,7 @@ def get_current_time_str(client_time: Optional[str] = None, tz_name: Optional[st
         pass
     return datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
 
-def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None, exclude_chat_id: Optional[int] = None, prompt_query: Optional[str] = None) -> dict:
+def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None, exclude_chat_id: Optional[int] = None, prompt_query: Optional[str] = None, session_id: Optional[str] = None) -> dict:
     if not user_email:
         return {
             "current_time": get_current_time_str(client_time, tz_name),
@@ -355,24 +355,26 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
     if prompt_query:
         try:
             from memory import HybridMemoryProvider
-            recalled = HybridMemoryProvider.recall_context(prompt_query, user_email, db, limit=8)
+            recalled = HybridMemoryProvider.recall_context(prompt_query, user_email, db, limit=12)
             recalled_facts = set(recalled.get("relevant_facts", []))
             all_mem_objs = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
             # Prioritize recalled items first
             recalled_mems = [m for m in all_mem_objs if m.fact in recalled_facts]
             remaining_mems = [m for m in all_mem_objs if m.fact not in recalled_facts]
-            memories = recalled_mems + remaining_mems[:12]
+            memories = recalled_mems + remaining_mems[:15]
         except Exception:
             memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
     else:
         memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
 
-    # Fetch last 8 messages for conversational context
+    # Fetch last 40 messages (20+ turns) for comprehensive conversational memory across prompts!
     try:
         chat_q = db.query(ChatMessage).filter(ChatMessage.user_email == user_email)
+        if session_id:
+            chat_q = chat_q.filter(ChatMessage.session_id == session_id)
         if exclude_chat_id:
             chat_q = chat_q.filter(ChatMessage.id != exclude_chat_id)
-        recent_msgs = chat_q.order_by(ChatMessage.id.desc()).limit(8).all()
+        recent_msgs = chat_q.order_by(ChatMessage.id.desc()).limit(40).all()
         recent_msgs = list(reversed(recent_msgs))
         recent_chat = [
             {"role": ("User" if m.role == "user" else "Aether"), "content": m.content}
@@ -761,7 +763,15 @@ async def _execute_quick_capture(
         except Exception as ag_err:
             print(f"[Agent Orchestrator Note] {ag_err}")
 
-    context = build_context(db, client_time=req.client_time, tz_name=req.timezone, user_email=eff_email, exclude_chat_id=(user_chat.id if user_chat else None), prompt_query=user_msg)
+    context = build_context(
+        db, 
+        client_time=req.client_time, 
+        tz_name=req.timezone, 
+        user_email=eff_email, 
+        exclude_chat_id=(user_chat.id if user_chat else None), 
+        prompt_query=user_msg,
+        session_id=active_session_id
+    )
     lang = req.language or "auto"
     parsed = await parse_intent_with_llm(
         user_msg, 
@@ -1883,10 +1893,41 @@ def toggle_task(
         new_status = req.status
     else:
         new_status = "completed" if task.status != "completed" else "pending"
-        
-    task.status = new_status
-    if new_status == "completed":
-        task.notified = True
+
+    now_dt = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
+    today_str = now_dt.strftime("%Y-%m-%d")
+    target_date = (req.date.strip() if req and req.date else today_str)
+
+    is_recurring = bool(task.recurrence and str(task.recurrence).strip())
+
+    if is_recurring:
+        # A recurring task is an ongoing series. The master task template row MUST remain "pending"
+        # so that tomorrow and future dates are NEVER pre-marked as completed!
+        # Only TaskDateCompletion records completion for the specific target_date.
+        task.status = "pending"
+        if eff_email:
+            try:
+                rec = db.query(TaskDateCompletion).filter(
+                    TaskDateCompletion.task_id == task.id,
+                    TaskDateCompletion.date_str == target_date,
+                    TaskDateCompletion.user_email == eff_email
+                ).first()
+                if rec:
+                    rec.completed = (new_status == "completed")
+                else:
+                    db.add(TaskDateCompletion(
+                        task_id=task.id,
+                        user_email=eff_email,
+                        date_str=target_date,
+                        completed=(new_status == "completed"),
+                        created_at=datetime.utcnow()
+                    ))
+            except Exception as e:
+                print(f"[toggle_task] Date completion note: {e}")
+    else:
+        task.status = new_status
+        if new_status == "completed":
+            task.notified = True
     
     # If this task is a subtask, update parent task progress
     if getattr(task, "parent_id", None):
@@ -1904,34 +1945,14 @@ def toggle_task(
         for s in subs:
             s.status = new_status
 
-    # Record persistent date completion for recurring tasks in database
-    now_dt = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
-    today_str = now_dt.strftime("%Y-%m-%d")
-    target_date = (req.date.strip() if req and req.date else today_str)
-
-    if task.recurrence and eff_email:
-        try:
-            rec = db.query(TaskDateCompletion).filter(
-                TaskDateCompletion.task_id == task.id,
-                TaskDateCompletion.date_str == target_date,
-                TaskDateCompletion.user_email == eff_email
-            ).first()
-            if rec:
-                rec.completed = (new_status == "completed")
-            else:
-                db.add(TaskDateCompletion(
-                    task_id=task.id,
-                    user_email=eff_email,
-                    date_str=target_date,
-                    completed=(new_status == "completed"),
-                    created_at=datetime.utcnow()
-                ))
-        except Exception as e:
-            print(f"[toggle_task] Date completion note: {e}")
-
     db.commit()
     db.refresh(task)
-    return serialize_task(task, db=db)
+    serialized = serialize_task(task, db=db)
+    if is_recurring:
+        serialized["is_completed"] = (new_status == "completed")
+        serialized["status"] = new_status
+        serialized["date_completions"] = {target_date: (new_status == "completed")}
+    return serialized
 
 @app.get("/api/tasks/date-completions")
 def get_task_date_completions(

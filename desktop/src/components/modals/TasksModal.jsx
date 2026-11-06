@@ -130,9 +130,9 @@ export const TasksModal = ({
 
   const monthYearTitle = selectedDateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
-  const isDaily = (t) => t?.recurrence === 'daily' || t?.repeat === 'daily' || String(t?.recurrence || '').toLowerCase().includes('daily');
+  const isDaily = (t) => t?.recurrence === 'daily' || t?.repeat === 'daily' || String(t?.recurrence || '').toLowerCase().includes('daily') || t?.recurrence === 'weekdays' || t?.recurrence === 'weekly_monday' || (t?.recurrence && t?.recurrence !== 'none');
 
-  // Date-aware completion: a daily task completed today or past is NEVER completed on tomorrow or any future date
+  // Date-aware completion: a daily/recurring task completed today or past is NEVER completed on tomorrow or any future date
   const isTaskDone = (t, targetDateStr = selectedDateStr) => {
     if (!t) return false;
     const daily = isDaily(t);
@@ -153,24 +153,7 @@ export const TasksModal = ({
       return Boolean(t.date_completions[targetDateStr]);
     }
 
-    // 3. Future dates (targetDateStr > todayStr): ALWAYS false (cannot be completed in advance)
-    if (targetDateStr > todayStr) {
-      return false;
-    }
-
-    // 4. Today: follow server status
-    if (targetDateStr === todayStr) {
-      return Boolean(t.is_completed || t.status === 'completed');
-    }
-
-    // 5. Older dates (targetDateStr < todayStr):
-    // If the task was due or created on this older date and is marked completed on server
-    const dueStr = t.due_date ? t.due_date.slice(0, 10) : null;
-    const createdStr = t.created_at ? t.created_at.slice(0, 10) : null;
-    if ((targetDateStr === dueStr || targetDateStr === createdStr) && (t.is_completed || t.status === 'completed')) {
-      return true;
-    }
-
+    // 3. For any recurring task, if targetDateStr was not explicitly marked done, it is ALWAYS false!
     return false;
   };
 

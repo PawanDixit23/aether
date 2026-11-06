@@ -83,8 +83,8 @@ export const DashboardView = ({
   // Date-aware task completion check (Daily recurring tasks completed yesterday start fresh/pending today!)
   const getIsTaskDoneForDate = (t, dateStr = todayDateStr) => {
     if (!t) return false;
-    const isDaily = t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily');
-    if (isDaily) {
+    const isRecurring = t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily') || t.recurrence === 'weekdays' || t.recurrence === 'weekly_monday' || (t.recurrence && t.recurrence !== 'none');
+    if (isRecurring) {
       try {
         const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('aether_task_date_completions') : null;
         if (saved) {
@@ -98,16 +98,7 @@ export const DashboardView = ({
       if (t.date_completions && t.date_completions[dateStr] !== undefined) {
         return Boolean(t.date_completions[dateStr]);
       }
-      // Future dates cannot be completed in advance
-      if (dateStr > todayDateStr) {
-        return false;
-      }
-      // Fallback to server status for today or the task's due date / creation date if local cache was cleared/empty
-      const dueStr = t.due_date ? t.due_date.slice(0, 10) : null;
-      const createdStr = t.created_at ? t.created_at.slice(0, 10) : null;
-      if (dateStr === todayDateStr || dateStr === dueStr || dateStr === createdStr) {
-        return Boolean(t.is_completed || t.status === 'completed');
-      }
+      // Recurring tasks are strictly isolated per-date: if not explicitly marked completed on dateStr, it is false!
       return false;
     }
     return Boolean(t.is_completed || t.status === 'completed');

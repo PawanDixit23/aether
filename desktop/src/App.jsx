@@ -1240,8 +1240,8 @@ export default function App() {
 
   const isTaskCompletedForToday = (t, targetDateStr = formatLocalDateStr(new Date())) => {
     if (!t) return false;
-    const isDaily = t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily');
-    if (isDaily) {
+    const isRecurring = t.recurrence === 'daily' || t.repeat === 'daily' || String(t.recurrence || '').toLowerCase().includes('daily') || t.recurrence === 'weekdays' || t.recurrence === 'weekly_monday' || (t.recurrence && t.recurrence !== 'none');
+    if (isRecurring) {
       try {
         const saved = localStorage.getItem('aether_task_date_completions');
         if (saved) {
@@ -1251,6 +1251,10 @@ export default function App() {
           }
         }
       } catch (e) {}
+      if (t.date_completions && t.date_completions[targetDateStr] !== undefined) {
+        return Boolean(t.date_completions[targetDateStr]);
+      }
+      return false; // Recurring tasks are NEVER completed unless explicitly marked done on that specific date!
     }
     return Boolean(t.is_completed === true || t.completed === true || t.status === 'completed');
   };

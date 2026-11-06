@@ -1234,6 +1234,8 @@ def clean_task_title(text: str) -> str:
 def build_system_prompt(context: dict = None, live_feed: str = "", language: str = "auto", user_name: str = "Operator", user_query: str = "", has_image: bool = False) -> str:
     ctx_str = ""
     display_name = user_name.strip() if user_name and user_name.strip() else "Operator"
+    current_time_str = (context.get('current_time') if context else None) or get_now_str()
+
     if context:
         recent_chat = context.get('recent_chat', [])
         chat_history_str = ""
@@ -1242,22 +1244,65 @@ def build_system_prompt(context: dict = None, live_feed: str = "", language: str
             for m in recent_chat:
                 role = m.get('role', 'User')
                 text_content = str(m.get('content', '')).replace('\n', ' ').strip()
-                if len(text_content) > 250:
-                    text_content = text_content[:250] + "..."
+                if len(text_content) > 1200:
+                    text_content = text_content[:1200] + "..."
                 chat_lines.append(f"- {role}: {text_content}")
-            chat_history_str = "\nRECENT CONVERSATION HISTORY (Previous turns in this active chat):\n" + "\n".join(chat_lines) + "\n"
+            chat_history_str = "\nFULL CONVERSATION HISTORY (Previous turns in this active chat session):\n" + "\n".join(chat_lines) + "\n"
 
         ctx_str = f"""
 CURRENT REAL-TIME CONTEXT:
-- Current Local Time: {context.get('current_time') or get_now_str()}
+- Current Local Time: {current_time_str}
+- Current Year: 2026 (November 2026)
 - User Name: {display_name}
 - Detected Home Location: {context.get('user_location', 'Jaipur / Bhankrota, Rajasthan')}
 - Pending Tasks ({len(context.get('tasks', []))}): {', '.join([t.get('title', '') for t in context.get('tasks', [])]) or 'None'}
 - Financial Balance: ₹{context.get('balance', 0):,.2f}
 - Known User Memories/Rules: {json.dumps(context.get('memories', []))}
 {chat_history_str}"""
+
+    grounding_rules = """
+TEMPORAL GROUNDING & 2026 REAL-TIME DIRECTIVE:
+1. The current year is strictly 2026. Today's date is in November 2026.
+2. NEVER cite outdated facts from 2023 or 2024.
+3. For Indian State Leadership, Chief Ministers (CM), Governors, and Ministers, ALWAYS provide the verified 2026 leaders:
+   • Andhra Pradesh: N. Chandrababu Naidu (TDP, sworn in June 2024)
+   • Rajasthan: Bhajan Lal Sharma (BJP)
+   • Madhya Pradesh: Mohan Yadav (BJP)
+   • Odisha: Mohan Charan Majhi (BJP)
+   • Telangana: A. Revanth Reddy (INC)
+   • Haryana: Nayab Singh Saini (BJP)
+   • Jammu and Kashmir (UT): Omar Abdullah (JKNC, sworn in Oct 2024)
+   • Delhi (UT): Atishi Marlena (AAP)
+   • Chhattisgarh: Vishnu Deo Sai (BJP)
+   • Bihar: Nitish Kumar (JDU)
+   • Uttar Pradesh: Yogi Adityanath (BJP)
+   • Maharashtra: Eknath Shinde (BJP-Shiv Sena alliance)
+   • Tamil Nadu: M. K. Stalin (DMK)
+   • Karnataka: Siddaramaiah (INC)
+   • West Bengal: Mamata Banerjee (AITC)
+   • Gujarat: Bhupendra Patel (BJP)
+   • Punjab: Bhagwant Mann (AAP)
+   • Kerala: Pinarayi Vijayan (CPI-M)
+   • Assam: Himanta Biswa Sarma (BJP)
+   • Uttarakhand: Pushkar Singh Dhami (BJP)
+   • Himachal Pradesh: Sukhvinder Singh Sukhu (INC)
+   • Jharkhand: Hemant Soren (JMM)
+   • Goa: Pramod Sawant (BJP)
+   • Arunachal Pradesh: Pema Khandu (BJP)
+   • Manipur: N. Biren Singh (BJP)
+   • Meghalaya: Conrad Sangma (NPP)
+   • Mizoram: Lalduhoma (ZPM)
+   • Nagaland: Neiphiu Rio (NDPP)
+   • Sikkim: Prem Singh Tamang (SKM)
+   • Tripura: Manik Saha (BJP)
+   • Puducherry (UT): N. Rangaswamy (AINRC)
+4. For all news, sports results, world leaders, scientific and technological queries, ALWAYS prioritize the latest 2026 information.
+"""
+
     if live_feed:
         ctx_str += f"\nLIVE REAL-TIME DATA FEED (VERIFIED ACCURATE):\n{live_feed}\n"
+
+    ctx_str += f"\n{grounding_rules}\n"
 
     q_lower = user_query.lower() if user_query else ""
     wants_hindi_in_prompt = any(k in q_lower for k in ["in hindi", "hindi me", "hindi mein", "हिंदी में", "हिंदी", "translate to hindi", "hindi news", "hindi me batao"])
@@ -1519,9 +1564,9 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
     if is_owner and server_key and server_key not in KNOWN_REVOKED_KEYS and server_key not in candidate_keys:
         candidate_keys.append(server_key)
 
-    # Try Gemini API with multimodal vision support and seamless model failover
+    # Try Gemini API with multimodal vision support, Google Search grounding, multi-turn memory & seamless model failover
     if candidate_keys:
-        user_parts = [{"text": f"{sys_prompt}\n\nUser Input: {user_input}"}]
+        user_parts = [{"text": user_input}]
         if has_image:
             raw_b64 = image_data.strip()
             mime_type = "image/jpeg"
@@ -1542,13 +1587,29 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
                 }
             })
 
+        # Build multi-turn conversational contents to preserve full memory across 10-20+ prompts!
+        conversation_contents = []
+        recent_chat = (context or {}).get("recent_chat", [])
+        if recent_chat:
+            for m in recent_chat[-40:]:
+                m_role = "user" if m.get("role") in ["User", "user"] else "model"
+                m_text = str(m.get("content", "")).strip()
+                if m_text:
+                    conversation_contents.append({
+                        "role": m_role,
+                        "parts": [{"text": m_text}]
+                    })
+        # Append current user prompt
+        conversation_contents.append({
+            "role": "user",
+            "parts": user_parts
+        })
+
         models_to_try = [
+            "gemini-2.5-flash",
             GEMINI_MODEL,
             "gemini-flash-lite-latest",
-            "gemini-3.1-flash-lite",
-            "gemini-3.5-flash-lite",
-            "gemini-2.5-flash",
-            "gemini-3.8-flash"
+            "gemini-1.5-flash"
         ]
         unique_models = list(dict.fromkeys(models_to_try))
 
@@ -1559,15 +1620,27 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
                 try:
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={active_gemini_key}"
                     payload = {
-                        "contents": [
-                            {"role": "user", "parts": user_parts}
-                        ],
+                        "system_instruction": {
+                            "parts": [{"text": sys_prompt}]
+                        },
+                        "contents": conversation_contents,
                         "generationConfig": {
                             "temperature": 0.2
-                        }
+                        },
+                        "tools": [{"googleSearch": {}}]
                     }
-                    async with httpx.AsyncClient(timeout=10.0) as client:
+                    async with httpx.AsyncClient(timeout=16.0) as client:
                         resp = await client.post(url, json=payload)
+                        # If model rejects googleSearch tool or system_instruction with 400, fallback gracefully
+                        if resp.status_code == 400:
+                            payload_no_tools = {
+                                "contents": [
+                                    {"role": "user", "parts": [{"text": f"{sys_prompt}\n\nUser Input: {user_input}"}] + (user_parts[1:] if len(user_parts) > 1 else [])}
+                                ],
+                                "generationConfig": {"temperature": 0.2}
+                            }
+                            resp = await client.post(url, json=payload_no_tools)
+
                         if resp.status_code == 200:
                             data = resp.json()
                             candidates = data.get("candidates", [])
