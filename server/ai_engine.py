@@ -1264,39 +1264,50 @@ CURRENT REAL-TIME CONTEXT:
 TEMPORAL GROUNDING & 2026 REAL-TIME DIRECTIVE:
 1. The current year is strictly 2026. Today's date is in November 2026.
 2. NEVER cite outdated facts from 2023 or 2024.
-3. For Indian State Leadership, Chief Ministers (CM), Governors, and Ministers, ALWAYS provide the verified 2026 leaders:
-   • Andhra Pradesh: N. Chandrababu Naidu (TDP, sworn in June 2024)
-   • Rajasthan: Bhajan Lal Sharma (BJP)
-   • Madhya Pradesh: Mohan Yadav (BJP)
-   • Odisha: Mohan Charan Majhi (BJP)
-   • Telangana: A. Revanth Reddy (INC)
-   • Haryana: Nayab Singh Saini (BJP)
-   • Jammu and Kashmir (UT): Omar Abdullah (JKNC, sworn in Oct 2024)
-   • Delhi (UT): Atishi Marlena (AAP)
-   • Chhattisgarh: Vishnu Deo Sai (BJP)
-   • Bihar: Nitish Kumar (JDU)
-   • Uttar Pradesh: Yogi Adityanath (BJP)
-   • Maharashtra: Eknath Shinde (BJP-Shiv Sena alliance)
-   • Tamil Nadu: M. K. Stalin (DMK)
-   • Karnataka: Siddaramaiah (INC)
-   • West Bengal: Mamata Banerjee (AITC)
-   • Gujarat: Bhupendra Patel (BJP)
-   • Punjab: Bhagwant Mann (AAP)
-   • Kerala: Pinarayi Vijayan (CPI-M)
-   • Assam: Himanta Biswa Sarma (BJP)
-   • Uttarakhand: Pushkar Singh Dhami (BJP)
-   • Himachal Pradesh: Sukhvinder Singh Sukhu (INC)
-   • Jharkhand: Hemant Soren (JMM)
-   • Goa: Pramod Sawant (BJP)
-   • Arunachal Pradesh: Pema Khandu (BJP)
-   • Manipur: N. Biren Singh (BJP)
-   • Meghalaya: Conrad Sangma (NPP)
-   • Mizoram: Lalduhoma (ZPM)
-   • Nagaland: Neiphiu Rio (NDPP)
-   • Sikkim: Prem Singh Tamang (SKM)
-   • Tripura: Manik Saha (BJP)
-   • Puducherry (UT): N. Rangaswamy (AINRC)
-4. For all news, sports results, world leaders, scientific and technological queries, ALWAYS prioritize the latest 2026 information.
+3. CONTEXTUAL FOLLOW-UP & AMBIGUOUS REFERENT RESOLUTION:
+   - When the user asks "cm of the state?", "who is the chief minister?", "capital of the state?", "weather of the city?", or uses pronouns / referents ("the state", "my state", "इस राज्य", "हमारे राज्य", "वहाँ", "उसका"):
+     a. CONVERSATION CONTEXT: Check the FULL CONVERSATION HISTORY first. If a specific state/city/entity was mentioned in any previous turn (e.g., Rajasthan, Bihar, Delhi, etc.), resolve "the state" to THAT specific state!
+     b. USER'S HOME STATE: If NO specific state was discussed in previous messages, resolve "the state" to the user's detected home state: RAJASTHAN (Capital: Jaipur, Chief Minister: Bhajan Lal Sharma, BJP).
+        Respond directly with that specific state's answer:
+        "आपके राज्य राजस्थान के वर्तमान मुख्यमंत्री भजन लाल शर्मा (Bhajan Lal Sharma, BJP) हैं।" (or in English if responding in English).
+     c. NEVER DUMP ALL 28 STATES: DO NOT output an alphabetical or long list of all 28 states unless the user explicitly and verbatim asks for "all states", "all chief ministers", "list of all states", or "sab rajyo ke cm". If the user asks for a single state or "the state", provide ONLY that single state's details!
+4. Verified 2026 Indian State Leadership (for single-state lookups or when full list is explicitly requested):
+   • Bihar: Samrat Choudhary (BJP, sworn in April 15, 2026, succeeding Nitish Kumar) | Capital: Patna
+   • Karnataka: D. K. Shivakumar (INC, sworn in June 2026, succeeding Siddaramaiah) | Capital: Bengaluru
+   • Delhi (UT): Rekha Gupta (BJP, assumed office Feb 2025) | Capital: New Delhi
+   • Rajasthan: Bhajan Lal Sharma (BJP, sworn in Dec 2023) | Capital: Jaipur
+   • Maharashtra: Devendra Fadnavis (BJP / Mahayuti, sworn in Dec 2024) | Capital: Mumbai
+   • Jammu and Kashmir (UT): Omar Abdullah (JKNC, sworn in Oct 2024) | Capital: Srinagar / Jammu
+   • Haryana: Nayab Singh Saini (BJP, re-elected Oct 2024) | Capital: Chandigarh
+   • Jharkhand: Hemant Soren (JMM, re-elected Nov 2024) | Capital: Ranchi
+   • Odisha: Mohan Charan Majhi (BJP, sworn in June 2024) | Capital: Bhubaneswar
+   • Andhra Pradesh: N. Chandrababu Naidu (TDP, sworn in June 2024) | Capital: Amaravati
+   • Madhya Pradesh: Mohan Yadav (BJP, sworn in Dec 2023) | Capital: Bhopal
+   • Chhattisgarh: Vishnu Deo Sai (BJP, sworn in Dec 2023) | Capital: Raipur
+   • Telangana: A. Revanth Reddy (INC, sworn in Dec 2023) | Capital: Hyderabad
+   • Mizoram: Lalduhoma (ZPM, sworn in Dec 2023) | Capital: Aizawl
+   • Uttar Pradesh: Yogi Adityanath (BJP) | Capital: Lucknow
+   • Tamil Nadu: M. K. Stalin (DMK) | Capital: Chennai
+   • West Bengal: Mamata Banerjee (AITC) | Capital: Kolkata
+   • Gujarat: Bhupendra Patel (BJP) | Capital: Gandhinagar
+   • Punjab: Bhagwant Mann (AAP) | Capital: Chandigarh
+   • Kerala: Pinarayi Vijayan (CPI-M) | Capital: Thiruvananthapuram
+   • Assam: Himanta Biswa Sarma (BJP) | Capital: Dispur
+   • Uttarakhand: Pushkar Singh Dhami (BJP) | Capital: Dehradun
+   • Himachal Pradesh: Sukhvinder Singh Sukhu (INC) | Capital: Shimla
+   • Goa: Pramod Sawant (BJP) | Capital: Panaji
+   • Arunachal Pradesh: Pema Khandu (BJP) | Capital: Itanagar
+   • Manipur: N. Biren Singh (BJP) | Capital: Imphal
+   • Meghalaya: Conrad Sangma (NPP) | Capital: Shillong
+   • Nagaland: Neiphiu Rio (NDPP) | Capital: Kohima
+   • Sikkim: Prem Singh Tamang (SKM, re-elected June 2024) | Capital: Gangtok
+   • Tripura: Manik Saha (BJP) | Capital: Agartala
+   • Puducherry (UT): N. Rangaswamy (AINRC) | Capital: Puducherry
+5. CRITICAL REAL-TIME DIRECTIVE FOR ANY QUERY:
+   - For ANY query asking about current news, world leaders, ministers, politics, appointments, sports results, prices, stock market, tech updates, or current events:
+   - ALWAYS provide the latest, up-to-date facts till today (November 2026).
+   - If the LIVE REAL-TIME DATA FEED contains live headlines or developments, synthesize the answer directly from those latest verified real-time sources!
+   - NEVER provide obsolete facts or past knowledge when asked for current information.
 """
 
     if live_feed:
@@ -1321,11 +1332,16 @@ CRITICAL LANGUAGE INSTRUCTION:
 The user has requested HINGLISH.
 YOU MUST RESPOND 100% IN CONVERSATIONAL HINGLISH (Hindi written using the English/Roman alphabet).
 """
-    else:
+    elif language == "en":
         lang_rules = """
 LANGUAGE INSTRUCTION:
 Default language is English. Respond in clear, professional English.
 CRITICAL OVERRIDE: If the user explicitly asks for another language (e.g. "in hindi", "hindi me batao", "translate to hindi"), YOU MUST HONOR THAT REQUEST AND RESPOND IN HINDI. Never refuse a language request.
+"""
+    else:
+        lang_rules = """
+LANGUAGE INSTRUCTION:
+Adaptive Bilingual Context: If the ongoing chat history contains Hindi or the user communicates in Hindi/Hinglish, reply in fluent, natural Hindi (हिन्दी). If asked in English, reply in English. Always be direct, clear, helpful, and polite.
 """
 
     image_rules = ""
@@ -1494,7 +1510,21 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
     wants_hindi_in_prompt = any(w in user_lower for w in ["in hindi", "hindi me", "hindi mein", "हिंदी में", "हिंदी", "translate to hindi", "hindi news", "hindi me batao"])
     wants_english_in_prompt = any(w in user_lower for w in ["in english", "english me", "english mein", "translate to english"])
     
-    effective_lang = "hi" if wants_hindi_in_prompt else ("en" if wants_english_in_prompt else language)
+    # Detect Devanagari script in user input
+    has_devanagari = bool(re.search(r'[\u0900-\u097F]', user_input))
+
+    # Detect if active chat session history has Hindi
+    recent_chat = (context or {}).get("recent_chat", [])
+    recent_has_hindi = any(bool(re.search(r'[\u0900-\u097F]', str(m.get("content", "")))) for m in recent_chat[-6:])
+
+    if wants_hindi_in_prompt or language == "hi" or (language == "auto" and (has_devanagari or recent_has_hindi)):
+        effective_lang = "hi"
+    elif wants_english_in_prompt or language == "en":
+        effective_lang = "en"
+    elif language == "hinglish":
+        effective_lang = "hinglish"
+    else:
+        effective_lang = language
 
     live_feed = ""
     is_match_query = any(w in user_lower for w in [
@@ -1507,8 +1537,6 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
         "tournament", "wpl", "f1", "formula 1", "premier league",
         "chelsea", "arsenal", "manchester", "virat", "rohit", "dhoni"
     ])
-    is_general_news = any(w in user_lower for w in ["news", "samachar", "headlines", "khabar", "taza khabar", "latest news", "headline", "update", "updates"])
-    is_news_query = is_general_news or is_sports_query or any(w in user_lower for w in ["technology", "business", "market", "economy"])
     is_weather_query = any(w in user_lower for w in ["weather", "mausam", "rain", "baarish", "temperature", "tapman", "climate", "garmi", "thand", "forecast"])
     
     is_cricket_query = any(w in user_lower for w in [
@@ -1532,13 +1560,42 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
     if is_weather_query:
         # Pass user_input so any mentioned city (London, Mumbai, etc.) is detected!
         weather_info = fetch_live_weather(user_query=user_input, lat=user_lat, lon=user_lon)
-        live_feed += f"[TODAY'S LIVE ACCURATE WEATHER]:\n{weather_info}\n"
+        live_feed += f"[TODAY'S LIVE ACCURATE WEATHER]:\n{weather_info}\n\n"
 
-    if is_news_query:
-        news_items = fetch_live_news_items(query=user_input, limit=5, lang=effective_lang)
+    # 🌐 Universal Real-Time Search Grounding for ANY Informational / News Query:
+    # If the user asks for latest news, leaders, prices, events, sports, or current facts,
+    # resolve contextual referents and inject live verified Google News RSS feed directly!
+    is_action_command = any(user_lower.startswith(w) for w in [
+        "remind me", "remind", "task", "todo", "spent", "spend", "expense", "kharch", 
+        "paid", "add income", "call ", "phone ", "draft email", "email ", "play "
+    ])
+
+    if not is_action_command and not is_weather_query:
+        # Resolve ambiguous state referents from recent conversation turns
+        resolved_search_query = user_input
+        if any(w in user_lower for w in ["cm", "chief minister", "mukhyamantri", "मुख्यमंत्री", "state", "rajya", "राज्य", "capital", "rajdhani", "राजधानी"]):
+            found_state = None
+            for m in reversed(recent_chat[-12:]):
+                t_low = str(m.get("content", "")).lower()
+                for s in [
+                    "bihar", "बिहार", "rajasthan", "राजस्थान", "delhi", "दिल्ली", 
+                    "maharashtra", "महाराष्ट्र", "karnataka", "कर्नाटक", "up", "uttar pradesh", "उत्तर प्रदेश", 
+                    "haryana", "हरियाणा", "punjab", "पंजाब", "gujarat", "गुजरात", "tamil nadu", "तमिलनाडु", 
+                    "kerala", "केरल", "bengal", "बंगाल", "odisha", "ओडिशा", "jharkhand", "झारखंड", 
+                    "telangana", "तेलंगाना", "andhra", "आंध्र", "assam", "असम"
+                ]:
+                    if s in t_low:
+                        found_state = s.title()
+                        break
+                if found_state:
+                    break
+            target_state = found_state or (context or {}).get("user_state", "Rajasthan")
+            resolved_search_query = f"{target_state} Chief Minister latest news"
+
+        news_items = fetch_live_news_items(query=resolved_search_query, limit=5, lang=effective_lang)
         if news_items:
-            heading = "RECENT MATCH RESULTS & SPORTS SCORES" if is_match_query else ("TODAY'S LIVE REAL-TIME SPORTS HEADLINES" if is_sports_query else "LIVE VERIFIED NEWS HEADLINES")
-            live_feed += f"[{heading}]:\n{news_items}\n"
+            heading = "RECENT MATCH RESULTS & SPORTS SCORES" if is_match_query else "TODAY'S VERIFIED REAL-TIME NEWS & DATA TILL NOVEMBER 2026"
+            live_feed += f"[{heading}]:\n{news_items}\n\n"
 
     has_image = bool(image_data and image_data.strip())
     sys_prompt = build_system_prompt(context, live_feed, language=effective_lang, user_name=user_name, user_query=user_input, has_image=has_image)
@@ -1606,10 +1663,12 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
         })
 
         models_to_try = [
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.6-flash",
             "gemini-2.5-flash",
-            GEMINI_MODEL,
-            "gemini-flash-lite-latest",
-            "gemini-1.5-flash"
+            "gemini-flash-latest",
+            GEMINI_MODEL
         ]
         unique_models = list(dict.fromkeys(models_to_try))
 

@@ -336,8 +336,32 @@ def get_current_time_str(client_time: Optional[str] = None, tz_name: Optional[st
         pass
     return datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
 
-def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None, exclude_chat_id: Optional[int] = None, prompt_query: Optional[str] = None, session_id: Optional[str] = None) -> dict:
+def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None, exclude_chat_id: Optional[int] = None, prompt_query: Optional[str] = None, session_id: Optional[str] = None, user_lat: Optional[float] = None, user_lon: Optional[float] = None) -> dict:
+    user_loc = "Jaipur, Rajasthan"
+    if user_lat and user_lon:
+        if 26.0 <= user_lat <= 28.0 and 74.5 <= user_lon <= 77.0:
+            user_loc = "Jaipur, Rajasthan"
+        else:
+            user_loc = f"{round(user_lat, 2)}, {round(user_lon, 2)}"
+
     if not user_email:
+        # Even without user_email, retain session conversational memory!
+        recent_chat = []
+        try:
+            chat_q = db.query(ChatMessage)
+            if session_id:
+                chat_q = chat_q.filter(ChatMessage.session_id == session_id)
+            if exclude_chat_id:
+                chat_q = chat_q.filter(ChatMessage.id != exclude_chat_id)
+            recent_msgs = chat_q.order_by(ChatMessage.id.desc()).limit(40).all()
+            recent_msgs = list(reversed(recent_msgs))
+            recent_chat = [
+                {"role": ("User" if m.role == "user" else "Aether"), "content": m.content}
+                for m in recent_msgs
+            ]
+        except Exception:
+            db.rollback()
+
         return {
             "current_time": get_current_time_str(client_time, tz_name),
             "tasks": [],
@@ -345,7 +369,10 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
             "total_expense": 0,
             "balance": 0,
             "memories": [],
-            "recent_chat": []
+            "recent_chat": recent_chat,
+            "user_location": user_loc,
+            "user_state": "Rajasthan",
+            "user_city": "Jaipur"
         }
     tasks = db.query(Task).filter(Task.user_email == user_email, Task.status == "pending").all()
     records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).all()
@@ -369,7 +396,9 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
 
     # Fetch last 40 messages (20+ turns) for comprehensive conversational memory across prompts!
     try:
-        chat_q = db.query(ChatMessage).filter(ChatMessage.user_email == user_email)
+        chat_q = db.query(ChatMessage)
+        if user_email:
+            chat_q = chat_q.filter(ChatMessage.user_email == user_email)
         if session_id:
             chat_q = chat_q.filter(ChatMessage.session_id == session_id)
         if exclude_chat_id:
@@ -395,7 +424,10 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
         "total_expense": total_expense,
         "balance": balance,
         "memories": [{"category": str(m.category or "general"), "fact": str(m.fact or "")} for m in memories],
-        "recent_chat": recent_chat
+        "recent_chat": recent_chat,
+        "user_location": user_loc,
+        "user_state": "Rajasthan",
+        "user_city": "Jaipur"
     }
 
 # ----------------- Key Validation Engine -----------------
@@ -770,7 +802,9 @@ async def _execute_quick_capture(
         user_email=eff_email, 
         exclude_chat_id=(user_chat.id if user_chat else None), 
         prompt_query=user_msg,
-        session_id=active_session_id
+        session_id=active_session_id,
+        user_lat=req.latitude,
+        user_lon=req.longitude
     )
     lang = req.language or "auto"
     parsed = await parse_intent_with_llm(
