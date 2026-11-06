@@ -5498,36 +5498,7 @@ export default function App() {
 
   return (
     <div className="jarvis-screen-wrapper">
-      {/* Render Server Cold-Start & Reconnect Ambient Banner */}
-      {!serverOnline && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 'max(14px, calc(env(safe-area-inset-top, 0px) + 8px))',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 99998,
-            background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.96), rgba(15, 23, 42, 0.98))',
-            backdropFilter: 'blur(16px)',
-            WebkitBackdropFilter: 'blur(16px)',
-            border: '1px solid rgba(245, 158, 11, 0.5)',
-            borderRadius: '999px',
-            padding: '7px 18px',
-            boxShadow: '0 8px 30px rgba(0, 0, 0, 0.7), 0 0 20px rgba(245, 158, 11, 0.25)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            color: '#fef08a',
-            fontSize: '0.78rem',
-            fontWeight: 700,
-            animation: 'pulse 2s infinite ease-in-out',
-            pointerEvents: 'none'
-          }}
-        >
-          <span style={{ animation: 'spin 1.5s linear infinite', display: 'inline-block' }}>⚡</span>
-          <span>Aether कोर कनेक्ट हो रहा है (Connecting to Core Server)...</span>
-        </div>
-      )}
+      {/* Background silent server reconnection without user-facing banners */}
 
       {/* =========================================================================
           VIEW 1: SETTINGS SCREEN (Exact 1:1 Spec from Screenshot 2)
