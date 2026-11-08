@@ -215,6 +215,7 @@ class AuthRecordRequest(BaseModel):
 
 class KeyValidationRequest(BaseModel):
     api_key: str
+    provider: Optional[str] = "gemini"
 
 class QuickCaptureRequest(BaseModel):
     input_text: str = ""
@@ -223,10 +224,14 @@ class QuickCaptureRequest(BaseModel):
     session_id: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    city: Optional[str] = None
     language: Optional[str] = "auto" # 'auto', 'hi', 'en', 'hinglish'
     client_time: Optional[str] = None
     timezone: Optional[str] = None
     api_key: Optional[str] = None
+    openai_key: Optional[str] = None
+    grok_key: Optional[str] = None
+    active_provider: Optional[str] = None
     user_name: Optional[str] = None
 
 class ChatSessionCreate(BaseModel):
@@ -336,13 +341,13 @@ def get_current_time_str(client_time: Optional[str] = None, tz_name: Optional[st
         pass
     return datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
 
-def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None, exclude_chat_id: Optional[int] = None, prompt_query: Optional[str] = None, session_id: Optional[str] = None, user_lat: Optional[float] = None, user_lon: Optional[float] = None) -> dict:
-    user_loc = "Jaipur, Rajasthan"
-    if user_lat and user_lon:
-        if 26.0 <= user_lat <= 28.0 and 74.5 <= user_lon <= 77.0:
-            user_loc = "Jaipur, Rajasthan"
-        else:
+def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None, exclude_chat_id: Optional[int] = None, prompt_query: Optional[str] = None, session_id: Optional[str] = None, user_lat: Optional[float] = None, user_lon: Optional[float] = None, user_city: Optional[str] = None) -> dict:
+    user_loc = (user_city or "").strip()
+    if not user_loc:
+        if user_lat and user_lon:
             user_loc = f"{round(user_lat, 2)}, {round(user_lon, 2)}"
+        else:
+            user_loc = "Jaipur, Rajasthan"
 
     if not user_email:
         # Even without user_email, retain session conversational memory!
@@ -426,29 +431,74 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
         "memories": [{"category": str(m.category or "general"), "fact": str(m.fact or "")} for m in memories],
         "recent_chat": recent_chat,
         "user_location": user_loc,
-        "user_state": "Rajasthan",
-        "user_city": "Jaipur"
+        "user_state": "India",
+        "user_city": user_loc
     }
 
-# ----------------- Key Validation Engine -----------------
+# ----------------- Multi-Provider Key Validation Engine (Gemini / OpenAI / Grok) -----------------
 @app.post("/api/auth/validate-key")
-async def validate_gemini_key(req: KeyValidationRequest):
-    """Validate a Gemini API Key directly against Google Gemini API."""
+async def validate_api_key(req: KeyValidationRequest):
+    """Validate a Gemini, OpenAI, or Grok API Key directly against respective providers."""
     key = req.api_key.strip()
+    provider = (req.provider or "gemini").lower().strip()
     if not key:
         return {"valid": False, "error": "API key cannot be empty"}
+    
+    # Auto-detect provider if default was sent
+    if key.startswith("sk-"):
+        provider = "openai"
+    elif key.startswith("xai-"):
+        provider = "grok"
+    elif key.startswith("AIzaSy"):
+        provider = "gemini"
+
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                data = resp.json()
-                models = [m.get("name", "") for m in data.get("models", [])]
-                return {"valid": True, "models_count": len(models)}
-            else:
-                return {"valid": False, "error": "Invalid API key or unauthorized access"}
+            if provider == "openai":
+                url = "https://api.openai.com/v1/models"
+                headers = {"Authorization": f"Bearer {key}"}
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return {"valid": True, "provider": "openai", "models_count": len(data.get("data", []))}
+                else:
+                    err_msg = "अमान्य OpenAI API Key! कृपया platform.openai.com पर अपनी सही Key जांचें।"
+                    try:
+                        err_json = resp.json()
+                        if err_json.get("error", {}).get("message"):
+                            err_msg = err_json["error"]["message"]
+                    except Exception:
+                        pass
+                    return {"valid": False, "provider": "openai", "error": err_msg}
+
+            elif provider == "grok":
+                url = "https://api.x.ai/v1/models"
+                headers = {"Authorization": f"Bearer {key}"}
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return {"valid": True, "provider": "grok", "models_count": len(data.get("data", []))}
+                else:
+                    err_msg = "अमान्य Grok (xAI) API Key! कृपया console.x.ai पर अपनी सही Key जांचें।"
+                    try:
+                        err_json = resp.json()
+                        if err_json.get("error"):
+                            err_msg = str(err_json["error"])
+                    except Exception:
+                        pass
+                    return {"valid": False, "provider": "grok", "error": err_msg}
+
+            else:  # Google Gemini
+                url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models = [m.get("name", "") for m in data.get("models", [])]
+                    return {"valid": True, "provider": "gemini", "models_count": len(models)}
+                else:
+                    return {"valid": False, "provider": "gemini", "error": "अमान्य Gemini API Key! कृपया aistudio.google.com से सही Key जांचें।"}
     except Exception as e:
-        return {"valid": False, "error": str(e)}
+        return {"valid": False, "provider": provider, "error": str(e)}
 
 @app.post("/api/auth/record-login")
 def record_user_login(req: AuthRecordRequest, db: Session = Depends(get_db)):
@@ -804,7 +854,8 @@ async def _execute_quick_capture(
         prompt_query=user_msg,
         session_id=active_session_id,
         user_lat=req.latitude,
-        user_lon=req.longitude
+        user_lon=req.longitude,
+        user_city=req.city
     )
     lang = req.language or "auto"
     parsed = await parse_intent_with_llm(
@@ -816,7 +867,11 @@ async def _execute_quick_capture(
         api_key=req.api_key,
         user_name=req.user_name or "Operator",
         image_data=req.image_data,
-        user_email=eff_email
+        user_email=eff_email,
+        openai_key=req.openai_key,
+        grok_key=req.grok_key,
+        active_provider=req.active_provider,
+        user_city=req.city
     )
     
     action = parsed.get("action", "query")
@@ -1342,32 +1397,26 @@ async def translate_text(req: TranslateRequest):
 # ----------------- Location Detection -----------------
 @app.get("/api/location/detect")
 def detect_user_location(request: Request):
-    """Detect client geographic location from client IP header."""
+    """Detect client geographic location dynamically from client IP header or network IP."""
     client_ip = ""
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
         client_ip = xff.split(",")[0].strip()
     
-    # If no public client IP or local, return default India location
-    if not client_ip or client_ip.startswith("127.") or client_ip.startswith("10.") or client_ip.startswith("192.168."):
-        return {
-            "status": "success",
-            "city": "Jaipur",
-            "region": "Rajasthan",
-            "latitude": 26.9136,
-            "longitude": 75.7858,
-            "display_name": "Jaipur, Rajasthan"
-        }
+    # Query URL: if public IP use it, otherwise detect via public gateway
+    is_private_ip = not client_ip or client_ip.startswith("127.") or client_ip.startswith("10.") or client_ip.startswith("192.168.") or client_ip == "::1"
+    url = "http://ip-api.com/json/" if is_private_ip else f"http://ip-api.com/json/{client_ip}"
     
     try:
-        req = urllib.request.Request(f"http://ip-api.com/json/{client_ip}", headers={'User-Agent': 'Mozilla/5.0'})
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode())
             if data.get("status") == "success":
-                city = data.get("city", "Jaipur")
-                region = data.get("regionName", "Rajasthan")
-                # Safety: If geo service returned Singapore or foreign datacenter IP, default to Jaipur
-                if "singapore" in city.lower() or "singapore" in region.lower():
+                city = data.get("city") or "Jaipur"
+                region = data.get("regionName") or "Rajasthan"
+                country = data.get("country") or "India"
+                # Safety: If geo service returned foreign cloud datacenter IP (Singapore, Frankfurt, etc.), default to India
+                if any(f in (city + " " + region + " " + country).lower() for f in ["singapore", "frankfurt", "oregon", "virginia", "ireland", "amsterdam", "zurich"]):
                     city = "Jaipur"
                     region = "Rajasthan"
                 return {
@@ -2716,10 +2765,14 @@ _BRIEFING_CACHE_TTL = 5 * 60  # 5 minutes
 def get_executive_briefing(
     user_email: Optional[str] = Depends(get_user_email),
     user_name: Optional[str] = "Operator",
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+    city: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     # Rapid repeated calls पर cached response return करो
-    _cache_key = user_email or "guest"
+    loc_key = f"{round(lat, 2) if lat else ''}_{round(lon, 2) if lon else ''}_{(city or '').strip().lower()}"
+    _cache_key = f"{user_email or 'guest'}_{loc_key}"
     _cached = _BRIEFING_CACHE.get(_cache_key)
     if _cached and (_briefing_time.time() - _cached["ts"] < _BRIEFING_CACHE_TTL):
         return _cached["data"]
@@ -2763,19 +2816,21 @@ def get_executive_briefing(
         weather_icon = "moon"
 
     try:
-        from ai_engine import get_live_weather_data
+        from ai_engine import get_live_weather_data, get_city_travel_guide
     except ImportError:
-        from .ai_engine import get_live_weather_data
-    live_w = get_live_weather_data()
+        from .ai_engine import get_live_weather_data, get_city_travel_guide
+    live_w = get_live_weather_data(lat=lat, lon=lon, city_name=city)
+    city_guide = get_city_travel_guide(city_name=city or live_w.get("city"), lat=lat, lon=lon)
 
+    effective_city = (city or "").strip() or live_w.get("city") or "Jaipur"
     weather = {
         "temp": live_w.get("temp", 31.4),
         "condition_en": live_w.get("condition_en", "Mostly Sunny"),
         "condition_hi": live_w.get("condition_hi", "धूप खिली हुई"),
-        "city": live_w.get("city", "Jaipur (भांकरोटा)"),
-        "city_en": live_w.get("city_en", "Jaipur (Bhankrota)"),
-        "city_hi": live_w.get("city_hi", "Jaipur (भांकरोटा)"),
-        "city_hinglish": live_w.get("city_hinglish", "Jaipur (Bhankrota)"),
+        "city": effective_city,
+        "city_en": effective_city,
+        "city_hi": live_w.get("city_hi") or effective_city,
+        "city_hinglish": effective_city,
         "time_phase": time_phase,
         "icon": weather_icon,
         "humidity": live_w.get("humidity", "36%"),
@@ -2801,11 +2856,26 @@ def get_executive_briefing(
         "financial_snapshot": finance,
         "active_rules_count": len(memories),
         "weather": weather,
+        "city_guide": city_guide,
         "generated_at": now.isoformat()
     }
     # Cache save — अगले 5 min rapid calls इसी से serve होंगी
-    _BRIEFING_CACHE[user_email or "guest"] = {"data": response_data, "ts": _briefing_time.time()}
+    _BRIEFING_CACHE[_cache_key] = {"data": response_data, "ts": _briefing_time.time()}
     return response_data
+
+# ----------------- Dynamic City Explorer Guide Endpoint -----------------
+@app.get("/api/location/city-guide")
+def get_location_city_guide(
+    city: Optional[str] = None,
+    lat: Optional[float] = None,
+    lon: Optional[float] = None
+):
+    """Retrieve curated places to visit, famous food, and activities for any city."""
+    try:
+        from ai_engine import get_city_travel_guide
+    except ImportError:
+        from .ai_engine import get_city_travel_guide
+    return get_city_travel_guide(city_name=city, lat=lat, lon=lon)
 
 # ----------------- 2-Minute Executive Audio Briefing -----------------
 @app.get("/api/briefing/executive")

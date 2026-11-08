@@ -37,6 +37,7 @@ export default function App() {
   const [canGoBack, setCanGoBack] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingSeconds, setLoadingSeconds] = useState(0);
   const [retryCountdown, setRetryCountdown] = useState(5);
   const [errorDetails, setErrorDetails] = useState('');
 
@@ -45,18 +46,13 @@ export default function App() {
     const setupPermissions = async () => {
       if (Platform.OS === 'android') {
         try {
-          await PermissionsAndroid.request(
+          await PermissionsAndroid.requestMultiple([
             PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-            {
-              title: "Aether Microphone Permission",
-              message: "Aether needs microphone access so you can speak your voice prompts.",
-              buttonNeutral: "Ask Later",
-              buttonNegative: "Cancel",
-              buttonPositive: "Allow"
-            }
-          );
+            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+            PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION
+          ]);
         } catch (err) {
-          console.warn('Mic request error:', err);
+          console.warn('Startup permissions request error:', err);
         }
       }
 
@@ -104,6 +100,29 @@ export default function App() {
     }
   }, [canGoBack]);
 
+  // Loading watchdog & cold-start progress timer
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    if (isLoading) {
+      setLoadingSeconds(0);
+      timer = setInterval(() => {
+        setLoadingSeconds((prev) => {
+          const next = prev + 1;
+          // If server takes more than 45 seconds to respond (Render free tier cold hang)
+          if (next >= 45) {
+            setErrorDetails('TIMED_OUT: Cloud server cold start taking longer than usual');
+            setHasError(true);
+            setIsLoading(false);
+          }
+          return next;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isLoading]);
+
   // Auto-retry timer when connection error / timeout occurs
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -128,6 +147,7 @@ export default function App() {
   const handleRetry = () => {
     setHasError(false);
     setIsLoading(true);
+    setLoadingSeconds(0);
     webViewRef.current?.reload();
   };
 
@@ -179,6 +199,13 @@ export default function App() {
           {...({
             onPermissionRequest: (event: any) => {
               event?.grant?.(event.resources);
+            },
+            onGeolocationPermissionsShowPrompt: (event: any) => {
+              if (event && typeof event.allow === 'function') {
+                event.allow(event.origin, true, false);
+              } else if (event && typeof event.grant === 'function') {
+                event.grant(event.origin);
+              }
             }
           } as any)}
           originWhitelist={['*']}
@@ -516,6 +543,7 @@ export default function App() {
           }}
           onLoadEnd={async () => {
             setIsLoading(false);
+            setLoadingSeconds(0);
             try {
               const backup = await AsyncStorage.getItem('aether_offline_backup');
               if (backup) {
@@ -557,6 +585,7 @@ export default function App() {
             setErrorDetails(desc || 'Connection timeout');
             setHasError(true);
             setIsLoading(false);
+            setLoadingSeconds(0);
           }}
           renderError={(errorDomain, errorCode, errorDesc) => {
             if (
@@ -575,7 +604,21 @@ export default function App() {
                 <Text style={styles.logoText}>⚡ AETHER</Text>
               </View>
               <ActivityIndicator size="large" color="#06b6d4" />
-              <Text style={styles.loadingText}>Connecting to 24/7 Cloud Enclave...</Text>
+              <Text style={styles.loadingText}>
+                {loadingSeconds < 10
+                  ? 'Connecting to 24/7 Cloud Enclave...'
+                  : 'Waking up cloud server from cold sleep (~35-50s)...'}
+              </Text>
+              {loadingSeconds >= 5 && (
+                <Text style={styles.loadingSubText}>
+                  Elapsed: {loadingSeconds}s • Free tier spin-up
+                </Text>
+              )}
+              {loadingSeconds >= 20 && (
+                <TouchableOpacity style={styles.inlineRetryButton} onPress={handleRetry}>
+                  <Text style={styles.inlineRetryText}>⚡ Tap to Reload</Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
         />
@@ -621,6 +664,25 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     fontSize: 14,
     marginTop: 16,
+  },
+  loadingSubText: {
+    color: '#64748b',
+    fontSize: 12,
+    marginTop: 8,
+  },
+  inlineRetryButton: {
+    marginTop: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.4)',
+  },
+  inlineRetryText: {
+    color: '#38bdf8',
+    fontSize: 13,
+    fontWeight: '600',
   },
   errorContainer: {
     ...StyleSheet.absoluteFillObject,

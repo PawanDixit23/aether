@@ -19,15 +19,20 @@ jobs:
       - name: 🏓 Ping Aether Server (Keep-Alive)
         run: |
           echo "⚡ Pinging Aether server to prevent cold start..."
+          # Render free tier cold start can take ~50 seconds.
+          # Allow 65s timeout and gracefully trap errors so GitHub Actions doesn't fail with false alarms.
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "User-Agent: AetherPingBot/2.0 (KeepAlive)" \
-            --max-time 30 \
-            --retry 3 \
-            --retry-delay 3 \
-            "https://aether-kjrj.onrender.com/api/health")
+            --connect-timeout 20 \
+            --max-time 65 \
+            --retry 2 \
+            --retry-delay 5 \
+            "https://aether-kjrj.onrender.com/api/health" || echo "000")
           echo "Server response status: $STATUS"
           if [ "$STATUS" = "200" ]; then
             echo "✅ Server is awake and healthy!"
+          elif [ "$STATUS" = "000" ]; then
+            echo "⚠️ Server ping timed out / waking up from cold sleep (handled gracefully)"
           else
             echo "⚠️ Server returned $STATUS — waking up from sleep"
           fi
@@ -36,14 +41,17 @@ jobs:
         run: |
           echo "🔔 Triggering push notifications for due reminders..."
           PUSH_STATUS=$(curl -s -o /tmp/push_response.json -w "%{http_code}" \
-            --max-time 30 \
-            --retry 2 \
+            --connect-timeout 15 \
+            --max-time 45 \
+            --retry 1 \
             -X POST \
             -H "Content-Type: application/json" \
             -H "X-GitHub-Actions: true" \
-            "https://aether-kjrj.onrender.com/api/reminders/push-check")
+            "https://aether-kjrj.onrender.com/api/reminders/push-check" || echo "000")
           echo "Push check status: $PUSH_STATUS"
-          cat /tmp/push_response.json || true
+          if [ -s /tmp/push_response.json ]; then
+            cat /tmp/push_response.json || true
+          fi
 
       - name: 📊 Log Status
         run: |

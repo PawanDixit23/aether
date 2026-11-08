@@ -250,7 +250,84 @@ export const resolveSpeechVoice = (voiceId, lang = 'en') => {
 export const AETHER_MODELS = [
   { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', tag: 'Fast & Low Latency', desc: 'Ultra-fast responses with generous free limits' },
   { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', tag: 'Deep Reasoning', desc: 'Complex reasoning across lengthy context' },
-  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', tag: 'Next-Gen Preview', desc: 'Experimental next-gen multimodal speed' }
+  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', tag: 'Next-Gen Preview', desc: 'Experimental next-gen multimodal speed' },
+  { id: 'gpt-4o-mini', name: 'GPT-4o mini', tag: 'Fast & Smart', desc: 'OpenAI high-speed multimodal reasoning' },
+  { id: 'gpt-4o', name: 'GPT-4o', tag: 'Flagship Intelligence', desc: 'OpenAI premier intelligence model' },
+  { id: 'grok-2-latest', name: 'Grok 2', tag: 'Real-time Wit & Truth', desc: 'xAI premier model with deep real-time knowledge' }
+];
+
+export const AI_PROVIDERS = [
+  {
+    id: 'gemini',
+    name: 'Google Gemini',
+    shortName: 'Gemini',
+    badge: 'Free Tier Available',
+    icon: '♊',
+    color: '#38bdf8',
+    placeholder: 'Paste your Gemini API key (AIzaSy...)',
+    keyPrefix: 'AIzaSy',
+    storageKey: 'aether_gemini_key',
+    models: [
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', tag: 'Fast & Multimodal' },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', tag: 'Deep Reasoning' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', tag: 'Next-Gen Preview' }
+    ],
+    guideUrl: 'https://aistudio.google.com',
+    guideTitle: 'How to get a free Google Gemini key (takes 2 minutes)',
+    guideSteps: [
+      { text: 'Visit aistudio.google.com', link: 'https://aistudio.google.com' },
+      { text: 'Sign in with your Google account.' },
+      { text: 'Click "Get API key" → "Create API key".' },
+      { text: 'Copy the generated key (starts with AIzaSy...) and paste it here.' }
+    ]
+  },
+  {
+    id: 'openai',
+    name: 'ChatGPT (OpenAI)',
+    shortName: 'ChatGPT',
+    badge: 'GPT-4o & 4o-mini',
+    icon: '🤖',
+    color: '#10b981',
+    placeholder: 'Paste your OpenAI secret key (sk-...)',
+    keyPrefix: 'sk-',
+    storageKey: 'aether_openai_key',
+    models: [
+      { id: 'gpt-4o-mini', name: 'GPT-4o mini', tag: 'Fast & Efficient' },
+      { id: 'gpt-4o', name: 'GPT-4o', tag: 'Omni Flagship' }
+    ],
+    guideUrl: 'https://platform.openai.com/api-keys',
+    guideTitle: 'How to get an OpenAI (ChatGPT) API key (takes 2 minutes)',
+    guideSteps: [
+      { text: 'Visit platform.openai.com/api-keys', link: 'https://platform.openai.com/api-keys' },
+      { text: 'Sign in or create your OpenAI account.' },
+      { text: 'Click "+ Create new secret key", enter a name (e.g. "Aether"), and click Create.' },
+      { text: 'Copy the secret key (starts with sk-...) and paste it here.' }
+    ]
+  },
+  {
+    id: 'grok',
+    name: 'Grok (xAI)',
+    shortName: 'Grok',
+    badge: 'Grok 2 & Beta',
+    icon: '⚡',
+    color: '#f59e0b',
+    placeholder: 'Paste your Grok API key (xai-...)',
+    keyPrefix: 'xai-',
+    storageKey: 'aether_grok_key',
+    models: [
+      { id: 'grok-2-latest', name: 'Grok 2', tag: 'State of the Art' },
+      { id: 'grok-beta', name: 'Grok Beta', tag: 'Fast Preview' },
+      { id: 'grok-2-mini', name: 'Grok 2 mini', tag: 'Lightweight' }
+    ],
+    guideUrl: 'https://console.x.ai',
+    guideTitle: 'How to get a Grok (xAI) API key (takes 2 minutes)',
+    guideSteps: [
+      { text: 'Visit console.x.ai', link: 'https://console.x.ai' },
+      { text: 'Sign in with your X (Twitter) or xAI account.' },
+      { text: 'Go to the "API Keys" section in the sidebar and click "Create API Key".' },
+      { text: 'Copy the generated key (starts with xai-...) and paste it here.' }
+    ]
+  }
 ];
 
 export const GoogleIcon = () => (

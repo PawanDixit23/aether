@@ -128,7 +128,7 @@ WEATHER_BACKOFF_UNTIL = 0  # 429 मिलने पर इस timestamp तक 
 WEATHER_CACHE_TTL = 15 * 60        # 15 minutes default TTL
 WEATHER_429_BACKOFF = 20 * 60      # 429 मिलने पर 20 min के लिए API calls रोको
 
-def get_live_weather_data(lat: float = None, lon: float = None) -> dict:
+def get_live_weather_data(lat: float = None, lon: float = None, city_name: str = None) -> dict:
     """Fetch live accurate weather from Open-Meteo with per-coordinate caching (15 min TTL).
     
     FIX: 429 rate-limit handled with:
@@ -142,7 +142,7 @@ def get_live_weather_data(lat: float = None, lon: float = None) -> dict:
 
     use_lat = round(lat or 26.85, 4)
     use_lon = round(lon or 75.72, 4)
-    coord_key = f"{use_lat},{use_lon}"
+    coord_key = f"{use_lat},{use_lon}_{city_name or ''}"
 
     # 1. Per-coordinate cache check (15 min TTL)
     coord_entry = WEATHER_COORD_CACHE.get(coord_key)
@@ -170,7 +170,7 @@ def get_live_weather_data(lat: float = None, lon: float = None) -> dict:
             # 429 check on response status
             if resp.status == 429:
                 WEATHER_BACKOFF_UNTIL = now_ts + WEATHER_429_BACKOFF
-                print(f"[Aether Engine] ℹ️ Weather API rate-limited (429) — gracefully serving cached weather for Jaipur ({WEATHER_429_BACKOFF//60} min backoff)")
+                print(f"[Aether Engine] ℹ️ Weather API rate-limited (429) — gracefully serving cached weather ({WEATHER_429_BACKOFF//60} min backoff)")
                 if coord_entry and coord_entry.get("data"):
                     return coord_entry["data"]
                 if WEATHER_CACHE["data"]:
@@ -200,6 +200,10 @@ def get_live_weather_data(lat: float = None, lon: float = None) -> dict:
                 condition_en = "Rain Showers"
                 condition_hi = "बारिश / बूंदाबांदी"
 
+            clean_city = (city_name or "").strip()
+            if not clean_city:
+                clean_city = "Jaipur"
+
             result = {
                 "temp": temp,
                 "wind": f"{wind} km/h",
@@ -207,10 +211,10 @@ def get_live_weather_data(lat: float = None, lon: float = None) -> dict:
                 "icon": icon,
                 "condition_en": condition_en,
                 "condition_hi": condition_hi,
-                "city": "Jaipur (भांकरोटा)",
-                "city_en": "Jaipur (Bhankrota)",
-                "city_hi": "Jaipur (भांकरोटा)",
-                "city_hinglish": "Jaipur (Bhankrota)"
+                "city": clean_city,
+                "city_en": clean_city,
+                "city_hi": clean_city,
+                "city_hinglish": clean_city
             }
             # Per-coordinate cache save
             WEATHER_COORD_CACHE[coord_key] = {"data": result, "timestamp": now_ts}
@@ -224,7 +228,7 @@ def get_live_weather_data(lat: float = None, lon: float = None) -> dict:
         # 429 urllib error
         if "429" in err_str or "Too Many Requests" in err_str:
             WEATHER_BACKOFF_UNTIL = now_ts + WEATHER_429_BACKOFF
-            print(f"[Aether Engine] ℹ️ Weather API rate-limited (429) — gracefully serving cached weather for Jaipur ({WEATHER_429_BACKOFF//60} min backoff)")
+            print(f"[Aether Engine] ℹ️ Weather API rate-limited (429) — gracefully serving cached weather ({WEATHER_429_BACKOFF//60} min backoff)")
         else:
             print(f"[Aether Engine] Live weather fetch error: {e}")
         # Stale cache से serve करो (any age)
@@ -235,6 +239,7 @@ def get_live_weather_data(lat: float = None, lon: float = None) -> dict:
         import datetime
         cur_hour = datetime.datetime.now().hour
         dynamic_temp = 31.4 if 12 <= cur_hour <= 17 else (25.0 if cur_hour >= 20 or cur_hour <= 6 else 28.5)
+        fallback_city = (city_name or "").strip() or "Jaipur"
         return {
             "temp": dynamic_temp,
             "wind": "4.2 km/h",
@@ -242,26 +247,28 @@ def get_live_weather_data(lat: float = None, lon: float = None) -> dict:
             "icon": "☀️",
             "condition_en": "Sunny & Clear",
             "condition_hi": "धूप खिली हुई",
-            "city": "Jaipur (भांकरोटा)",
-            "city_en": "Jaipur (Bhankrota)",
-            "city_hi": "Jaipur (भांकरोटा)",
-            "city_hinglish": "Jaipur (Bhankrota)"
+            "city": fallback_city,
+            "city_en": fallback_city,
+            "city_hi": fallback_city,
+            "city_hinglish": fallback_city
         }
 
-def fetch_live_weather(user_query: str = "", lat: float = None, lon: float = None) -> str:
+def fetch_live_weather(user_query: str = "", lat: float = None, lon: float = None, city_name: str = None) -> str:
     """Fetch and format a proper, executive-grade weather report."""
-    location_name = "Jaipur (भांकरोटा / Jaisinghpura), Rajasthan, India"
     extracted = find_city_in_text(user_query) if user_query else None
     if extracted:
         lat = extracted["lat"]
         lon = extracted["lon"]
         location_name = extracted["name"]
+    elif city_name:
+        location_name = city_name
     else:
         loc = get_user_location()
         lat = lat or loc["lat"]
         lon = lon or loc["lon"]
+        location_name = loc.get("city", "Your Location")
 
-    w = get_live_weather_data(lat, lon)
+    w = get_live_weather_data(lat, lon, city_name=location_name)
     temp = w["temp"]
     wind = w["wind"]
     humidity = w.get("humidity", "35%")
@@ -277,6 +284,339 @@ def fetch_live_weather(user_query: str = "", lat: float = None, lon: float = Non
 • **Humidity (नमी):** {humidity}
 
 *Summary: Currently in {location_name}, it is {temp}°C with {condition_en.lower()}.*"""
+
+# ----------------- Dynamic City Explorer & Local Discovery Guide -----------------
+CITY_GUIDE_CACHE = {}
+
+CITY_DISCOVERY_DATABASE = {
+    "jaipur": {
+        "city": "Jaipur",
+        "state": "Rajasthan",
+        "hindi_name": "जयपुर (गुलाबी नगरी)",
+        "tagline": "The Pink City • राजस्थान की ऐतिहासिक धरोहर, शाही स्थापत्य व लज़ीज़ स्वाद",
+        "places_to_visit": [
+            {"name": "Hawa Mahal (हवा महल)", "desc": "गुलाबी बलुआ पत्थर से निर्मित 953 झरोखों वाला विश्व प्रसिद्ध 5-मंजिला महल।", "category": "Historical Heritage", "best_time": "सुबह 9:00 - 11:30 AM"},
+            {"name": "Amer Fort & Sheesh Mahal (आमेर किला)", "desc": "अरावली पर्वतमाला पर भव्य महल, मावठा झील और चमचमाता दर्पण महल।", "category": "Royal Fort", "best_time": "दोपहर 3:30 - शाम 6:30 PM (Light & Sound Show)"},
+            {"name": "City Palace & Jantar Mantar", "desc": "शाही संग्रहालय व यूनेस्को विश्व धरोहर की सबसे बड़ी खगोलीय वेधशाला।", "category": "Royal Palace & Astronomy", "best_time": "सुबह 10:00 AM - 1:00 PM"},
+            {"name": "Nahargarh Fort Sunset Point", "desc": "पहाड़ी से पूरे जयपुर शहर का विहंगम दृश्य और अरावली का जादुई सूर्यास्त।", "category": "Sunset Viewpoint", "best_time": "शाम 4:30 - 6:30 PM"},
+            {"name": "Patrika Gate & Albert Hall", "desc": "रंग-बिरंगे हस्तलिखित राजस्थानी भित्ति चित्र और ऐतिहासिक इंडो-सारासेनिक संग्रहालय।", "category": "Culture & Photography", "best_time": "शाम 6:00 - 8:30 PM (नाइट लाइटिंग)"}
+        ],
+        "foods_to_try": [
+            {"name": "Rawat Pyaaz Kachori (प्याज़ कचौरी)", "desc": "गर्मागर्म, तीखी और कुरकुरी प्याज़ की कचौरी — जयपुर की सबसे मशहूर पहचान।", "famous_at": "Rawat Mishthan Bhandar, Station Road"},
+            {"name": "Dal Baati Churma (दाल बाटी चूरमा)", "desc": "देशी घी में डूबी बाटी, पंचमेल दाल और मीठा चूरमा — राजस्थान का शाही भोजन।", "famous_at": "Laxmi Mishthan Bhandar (LMB) या Chokhi Dhani"},
+            {"name": "Ghewar & Rabdi (शाही घेवर व रबड़ी)", "desc": "मलाईदार, जालीदार पारंपरिक राजस्थानी मिष्ठान (मलाई/केसर घेवर)।", "famous_at": "LMB (Johari Bazaar) व Sambhar Fini"},
+            {"name": "Lassiwala Special Lassi", "desc": "मिट्टी के कुल्हड़ में गाढ़ी मलाईदार मीठी लस्सी (1944 से संचालित)।", "famous_at": "Lassiwala (Shop 312), MI Road"},
+            {"name": "Gulab Ji Chai & Bun Maska", "desc": "मसाला चाय और मक्खन वाले पाव का लाजवाब मेल।", "famous_at": "Gulab Ji Chai Wale, MI Road"}
+        ],
+        "popular_things": [
+            {"name": "Johari Bazaar (जौहरी बाज़ार)", "desc": "पारंपरिक कुंदन, मीनाकारी आभूषण और कीमती रत्नों की विश्व प्रसिद्ध मंडी।", "type": "Jewelry & Gems Shopping"},
+            {"name": "Bapu Bazaar & Nehru Bazaar", "desc": "जयपुरी रज़ाई, सांगानेरी ब्लॉक-प्रिंट कुर्तियाँ और हस्तनिर्मित चमड़े की मोजड़ियां।", "type": "Street & Textile Shopping"},
+            {"name": "Chokhi Dhani Ethnic Village", "desc": "लाइव कालबेलिया लोकनृत्य, कठपुतली शो और पारंपरिक गाँव के परिवेश में शाही डिनर।", "type": "Cultural Village Experience"}
+        ],
+        "local_tips": [
+            "चारदीवारी (Old Walled City) के बाज़ारों में खरीददारी करते समय हल्की बारगेनिंग ज़रूर करें।",
+            "पुराने शहर की संकरी गलियों में घूमने के लिए ई-रिक्शा सबसे तेज़ और किफायती है।"
+        ]
+    },
+    "delhi": {
+        "city": "Delhi",
+        "state": "Delhi NCR",
+        "hindi_name": "दिल्ली (दिलवालों की नगरी)",
+        "tagline": "The National Capital • सदियों पुराना इतिहास, आधुनिक वाइब और विश्व प्रसिद्ध स्ट्रीट फ़ूड",
+        "places_to_visit": [
+            {"name": "Red Fort & Chandni Chowk (लाल किला)", "desc": "मुगलकालीन लाल किला, जामा मस्जिद और पुरानी दिल्ली का जीवंत बाज़ार।", "category": "Mughal Heritage", "best_time": "सुबह 9:00 - 11:30 AM"},
+            {"name": "Qutub Minar & Mehrauli Complex", "desc": "यूनेस्को विश्व धरोहर ईंटों की दुनिया की सबसे ऊंची मीनार और ऐतिहासिक लौह स्तंभ।", "category": "UNESCO World Heritage", "best_time": "दोपहर 3:00 - शाम 5:30 PM"},
+            {"name": "India Gate & Kartavya Path", "desc": "अमर जवान ज्योति, राष्ट्रीय युद्ध स्मारक (National War Memorial) और भव्य राष्ट्रपति भवन का विस्टा।", "category": "National Monument", "best_time": "शाम 5:30 - 8:30 PM"},
+            {"name": "Humayun's Tomb & Sunder Nursery", "desc": "चारबाग शैली का भव्य मकबरा और दिल्ली का सबसे सुंदर हरियाली हेरिटेज पार्क।", "category": "Garden & Architecture", "best_time": "सुबह 8:00 - 11:00 AM"},
+            {"name": "Akshardham Temple", "desc": "अद्भुत नक्काशीदार गुलाबी बलुआ पत्थर का मंदिर परिसर और शाम का वॉटर लेज़र शो।", "category": "Spiritual & Cultural Wonder", "best_time": "दोपहर 3:00 PM से शाम तक"}
+        ],
+        "foods_to_try": [
+            {"name": "Chole Bhature (छोले भटूरे)", "desc": "फूले हुए कुरकुरे भटूरे, चटपटे पिंडी छोले और मसालेदार गाजर-मिर्च का अचार।", "famous_at": "Sita Ram Diwan Chand (Paharganj) या Chache Di Hatti (Kamla Nagar)"},
+            {"name": "Paranthe Wali Gali (पराठे वाली गली)", "desc": "काजू, खोया, पनीर, मिर्च और आलू के घी में तले हुए खस्ता पराठे।", "famous_at": "Chandni Chowk"},
+            {"name": "Butter Chicken & Dal Makhani", "desc": "क्रीमी मखमली ग्रेवी वाला बटर चिकन और काली दाल।", "famous_at": "Moti Mahal (Daryaganj) या Gulati (Pandara Road)"},
+            {"name": "Chandni Chowk Dahi Bhalle & Chaat", "desc": "खट्टी-मीठी सोंठ और गाढ़े दही से भरपूर कुरकुरी टिक्की व दही भल्ले।", "famous_at": "Natraj Dahi Bhalla Corner (Chandni Chowk)"}
+        ],
+        "popular_things": [
+            {"name": "Dilli Haat (INA)", "desc": "भारत के सभी राज्यों के हस्तशिल्प, कपड़े और क्षेत्रीय पारंपरिक पकवानों का खुला बाज़ार।", "type": "Crafts & Food Bazaar"},
+            {"name": "Sarojini Nagar & Janpath Market", "desc": "ट्रेंडी वेस्टर्न कपड़े, फुटवियर और फैशन एक्सेसरीज़ की बजट शॉपिंग।", "type": "Fashion Shopping"},
+            {"name": "Chandni Chowk Cycle Rickshaw Tour", "desc": "पुरानी दिल्ली की ऐतिहासिक गलियों और एशिया के सबसे बड़े मसाला बाज़ार (खारी बावली) की सैर।", "type": "Heritage Tour"}
+        ],
+        "local_tips": [
+            "दिल्ली में किसी भी स्थान पर पहुँचने के लिए 'दिल्ली मेट्रो' (Delhi Metro) सबसे तेज़ और ट्रैफिक-मुक्त साधन है।",
+            "पुरानी दिल्ली सोमवार से शनिवार पूरी रौनक में रहती है, रविवार को कई दुकानें बंद रहती हैं।"
+        ]
+    },
+    "mumbai": {
+        "city": "Mumbai",
+        "state": "Maharashtra",
+        "hindi_name": "मुंबई (सपनों का शहर)",
+        "tagline": "City of Dreams • अरब सागर की लहरें, बॉलीवुड की चमक और कभी न रुकने वाली रफ़्तार",
+        "places_to_visit": [
+            {"name": "Gateway of India & Taj Palace", "desc": "अरब सागर के किनारे ब्रिटिश राज का ऐतिहासिक प्रवेश द्वार और प्रतिष्ठित ताज होटल।", "category": "Iconic Landmark", "best_time": "सुबह 7:00 - 9:00 AM या शाम"},
+            {"name": "Marine Drive (Queen's Necklace)", "desc": "3 किमी लंबा सी-फेसिंग प्रोमेनेड, जहाँ शाम को ठंडी समुद्री हवा और जगमगाती रौशनी का जादुई नज़ारा होता है।", "category": "Seafront Promenade", "best_time": "शाम 5:30 - 8:30 PM"},
+            {"name": "Elephanta Caves (एलिफेंटा गुफाएं)", "desc": "गेटवे से फेरी की सवारी और भगवान शिव की त्रिमूर्ति वाली प्राचीन शैलकृत गुफाएं।", "category": "UNESCO World Heritage", "best_time": "सुबह 9:00 AM - 1:00 PM"},
+            {"name": "Bandra Bandstand & Mount Mary Church", "desc": "समुद्र तट, बॉलीवुड हस्तियों के आशियाने और ऐतिहासिक पुर्तगाली चर्च।", "category": "Sightseeing & Sea View", "best_time": "शाम 4:30 - 7:00 PM"},
+            {"name": "Chhatrapati Shivaji Maharaj Terminus (CSMT)", "desc": "गॉथिक रिवाइवल वास्तुकला का जीवंत विश्व धरोहर रेलवे स्टेशन।", "category": "Heritage Architecture", "best_time": "रात में तिरंगा व हेरिटेज लाइटिंग के समय"}
+        ],
+        "foods_to_try": [
+            {"name": "Vada Pav (मुंबई का वड़ा पाव)", "desc": "लहसुन की सूखी लाल चटनी और तली हरी मिर्च के साथ गर्मागर्म बटाटा वड़ा पाव।", "famous_at": "Ashok Vada Pav (Kirti College, Dadar) व Aram (CSMT)"},
+            {"name": "Pav Bhaji (मक्खन पाव भाजी)", "desc": "ढेर सारे मक्खन में लथपथ तीखी चटपटी भाजी और सिका हुआ पाव।", "famous_at": "Sardar Pav Bhaji (Tardeo) या Cannon (CSMT)"},
+            {"name": "Bombay Sandwich & Frankie", "desc": "हरी चटनी, उबले आलू, चुकंदर, ककड़ी और चीज़ से लोडेड टोस्टेड सैंडविच।", "famous_at": "Tibbs Frankie व चर्नी रोड स्ट्रीट स्टॉल्स"},
+            {"name": "Bun Maska & Irani Chai", "desc": "पारंपरिक पारसी कैफे की मलाईदार कड़क चाय और मक्खन वाला बन।", "famous_at": "Kyani & Co. (Marine Lines) या Britannia & Co."}
+        ],
+        "popular_things": [
+            {"name": "Colaba Causeway & Fashion Street", "desc": "एंटीक सामान, कपड़े, हैंडबैग और मशहूर कैफे लियोपोल्ड की जीवंत सैर।", "type": "Shopping & Cafes"},
+            {"name": "Marine Drive Evening Stroll", "desc": "समुद्र की लहरों के किनारे बैठना और शाम का सुकून भरा सूर्यास्त निहारना।", "type": "Relaxation"},
+            {"name": "Bandra-Worli Sea Link Drive", "desc": "समुद्र के ऊपर 8-लेन के इंजीनियरिंग अजूबे पर ड्राइव का रोमांचक अनुभव।", "type": "Scenic Drive"}
+        ],
+        "local_tips": [
+            "पीक ऑवर्स (सुबह 8:30-11:00 AM और शाम 5:30-8:30 PM) में लोकल ट्रेन में भीड़ से बचें या एसी लोकल चुनें।",
+            "काली-पीली टैक्सी और ऑटो मीटर के अनुसार ही किराया लेते हैं।"
+        ]
+    },
+    "bengaluru": {
+        "city": "Bengaluru",
+        "state": "Karnataka",
+        "hindi_name": "बेंगलुरु (गार्डन सिटी व सिलिकॉन वैली)",
+        "tagline": "Garden City & Tech Capital • सुहावना मौसम, फिल्टर कॉफी, शानदार पार्क व क्राफ्ट बियर",
+        "places_to_visit": [
+            {"name": "Lalbagh Botanical Garden", "desc": "240 एकड़ का ऐतिहासिक वानस्पतिक उद्यान, प्रसिद्ध ग्लास हाउस और सदियों पुराने दुर्लभ वृक्ष।", "category": "Botanical Garden", "best_time": "सुबह 6:00 - 9:30 AM"},
+            {"name": "Bangalore Palace", "desc": "विंडसर कैसल की तर्ज़ पर बना ट्यूडर शैली का खूबसूरत शाही महल।", "category": "Royal Heritage", "best_time": "सुबह 10:30 AM - 1:30 PM"},
+            {"name": "Cubbon Park & Vidhana Soudha", "desc": "300 एकड़ का हरा-भरा पार्क और नियो-द्रविड़ियन शैली का भव्य राज्य सचिवालय भवन।", "category": "Nature & Governance", "best_time": "सुबह 7:00 AM या रविवार"},
+            {"name": "ISKCON Temple Bangalore", "desc": "हरे कृष्णा हिल पर बना आधुनिक व भव्य द्रविड़ियन मंदिर परिसर।", "category": "Spiritual Landmark", "best_time": "सुबह या शाम की आरती"}
+        ],
+        "foods_to_try": [
+            {"name": "Benne Masala Dosa (मक्खन डोसा)", "desc": "सफेद मक्खन में सिका हुआ कुरकुरा डोसा, आलू मसाला और नारियल-पुदीना चटनी।", "famous_at": "Vidyarthi Bhavan (Gandhi Bazaar) या CTR (Malleshwaram)"},
+            {"name": "Authentic Filter Coffee", "desc": "पीतल के डबरे-सेट में परोसी जाने वाली कड़क झागदार दक्षिण भारतीय कॉफ़ी।", "famous_at": "Brahmin's Coffee Bar या Mavalli Tiffin Room (MTR)"},
+            {"name": "Bisi Bele Bath & Khara Bath", "desc": "चावल, दाल, इमली और मसालों से बना गरमागरम कर्नाटक का पारंपरिक व्यंजन।", "famous_at": "MTR Lalbagh"},
+            {"name": "Mangalorean Ghee Roast", "desc": "देशी घी और कुंदपुरा मसालों में भुना हुआ पनीर या चिकन घी रोस्ट।", "famous_at": "Coastuna या Sea Rock"}
+        ],
+        "popular_things": [
+            {"name": "Commercial Street & Brigade Road", "desc": "कपड़े, फुटवियर और आधुनिक फैशन बुटीक की चहल-पहल वाली शॉपिंग।", "type": "Fashion Shopping"},
+            {"name": "Indiranagar & Koramangala Breweries", "desc": "भारत की सबसे ट्रेंडी माइक्रोब्रेवरीज, रूफटॉप कैफे और लाइव म्यूजिक संस्कृति।", "type": "Cafes & Dining"}
+        ],
+        "local_tips": [
+            "बेंगलुरु के भारी ट्रैफिक से बचने के लिए 'नम्मा मेट्रो' (Namma Metro) सबसे आरामदायक विकल्प है।",
+            "सुबह-सुबह कब्बन पार्क में मॉर्निंग वॉक शहर का सबसे तरोताज़ा अनुभव है।"
+        ]
+    },
+    "udaipur": {
+        "city": "Udaipur",
+        "state": "Rajasthan",
+        "hindi_name": "उदयपुर (झीलों की नगरी)",
+        "tagline": "City of Lakes • पिछोला झील, संगमरमरी महल और शाही मेवाड़ी संस्कृति",
+        "places_to_visit": [
+            {"name": "City Palace (सिटी पैलेस)", "desc": "पिछोला झील के किनारे बना राजस्थान का सबसे बड़ा और भव्य महल परिसर।", "category": "Royal Palace", "best_time": "सुबह 9:30 AM - 1:00 PM"},
+            {"name": "Lake Pichola & Jag Mandir", "desc": "झील में बोट राइड और बीच पानी में बना ऐतिहासिक संगमरमरी जग मंदिर।", "category": "Scenic Boat Ride", "best_time": "शाम 4:30 - 6:00 PM (Sunset)"},
+            {"name": "Fateh Sagar Lake & Saheliyon Ki Bari", "desc": "फव्वारों और कमल के तालाबों से सजी सुंदर सहेलियों की बाड़ी व लेक ड्राइव।", "category": "Nature & Garden", "best_time": "शाम 5:00 - 7:00 PM"},
+            {"name": "Monsoon Palace (सज्जनगढ़ फोर्ट)", "desc": "पहाड़ी की चोटी से पूरे उदयपुर शहर और झीलों का विहंगम 360° सनसेट दृश्य।", "category": "Hilltop Viewpoint", "best_time": "शाम 5:00 PM"}
+        ],
+        "foods_to_try": [
+            {"name": "Mewari Dal Baati Churma", "desc": "शुद्ध देशी घी और पारम्परिक मसालों से सजी मेवाड़ी थाली।", "famous_at": "Krishna Dal Bati Restro या Traditional Khana"},
+            {"name": "Gatte ki Sabzi & Ker Sangri", "desc": "बेसन के गट्टे की दही वाली ग्रेवी और रेगिस्तानी केर-सांगरी।", "famous_at": "Tribute Restaurant"},
+            {"name": "Lakeview Rooftop Dinner", "desc": "रात में जगमगाती पिछोला झील के किनारे कैंडललाइट डिनर।", "famous_at": "Ambrai Restaurant या Upre by 1559 AD"}
+        ],
+        "popular_things": [
+            {"name": "Bagore Ki Haveli (बागौर की हवेली)", "desc": "शाम को 'धरोहर' लोकनृत्य शो, चरी नृत्य और 138 कमरों की ऐतिहासिक हवेली।", "type": "Cultural Show"},
+            {"name": "Hathi Pol Bazaar", "desc": "पारंपरिक पिछवाई पेंटिंग्स, लकड़ी की कलाकृतियाँ और मोजड़ियां।", "type": "Handicraft Shopping"}
+        ],
+        "local_tips": [
+            "पिछोला झील में सनसेट बोट राइड टिकट 1 दिन पहले बुक करें ताकि सही समय मिल सके।"
+        ]
+    },
+    "goa": {
+        "city": "Goa",
+        "state": "Goa",
+        "hindi_name": "गोवा (समुद्र तटों का स्वर्ग)",
+        "tagline": "Beaches & Heritage • सुनहरी रेत, पुर्तगाली धरोहर और सुकून भरी सुसेगाद ज़िंदगी",
+        "places_to_visit": [
+            {"name": "Baga, Calangute & Anjuna Beach", "desc": "नॉर्थ गोवा के जीवंत बीच, वॉटर स्पोर्ट्स, जेट स्की और बीच शेक्स।", "category": "Beach & Water Sports", "best_time": "सुबह 8:00 AM या शाम"},
+            {"name": "Aguada Fort & Chapora Fort", "desc": "समुद्र किनारे 17वीं सदी का पुर्तगाली किला और 'दिल चाहता है' व्यूप्वाइंट।", "category": "Coastal Fort", "best_time": "शाम 4:30 - 6:30 PM"},
+            {"name": "Basilica of Bom Jesus & Se Cathedral", "desc": "ओल्ड गोवा के 400 साल पुराने यूनेस्को चर्च और सेंट फ्रांसिस जेवियर का अवशेष।", "category": "UNESCO World Heritage", "best_time": "सुबह 9:00 AM - 12:00 PM"},
+            {"name": "Dudhsagar Waterfalls", "desc": "दूध की तरह बहता 4-टियर विशाल जलप्रपात (जीप सफारी अनुभव)।", "category": "Waterfall Adventure", "best_time": "सुबह 8:00 AM से दोपहर"}
+        ],
+        "foods_to_try": [
+            {"name": "Goan Fish Curry Thali", "desc": "नारियल और तीखी लाल मिर्च की ग्रेवी में किंगफिश/प्रॉन करी चावल।", "famous_at": "Ritz Classic (Panjim) या Fat Fish (Calangute)"},
+            {"name": "Bebinca (बेबिंका)", "desc": "नारियल के दूध और अंडों से बनी पारंपरिक 7-लेयर गोअन पेस्ट्री।", "famous_at": "Mr. Baker 1922 (Panjim)"},
+            {"name": "Poi & Chicken Cafreal", "desc": "पारंपरिक गोअन ब्रेड (पोई) और धनिया-मसालों में भुना कैफ्रियल।", "famous_at": "Mum's Kitchen (Panjim)"}
+        ],
+        "popular_things": [
+            {"name": "Fontainhas (Latin Quarter)", "desc": "रंग-बिरंगे पुर्तगाली विला, संकरी गलियाँ और हेरिटेज वॉक।", "type": "Heritage Walk"},
+            {"name": "Anjuna Flea Market / Saturday Night Market", "desc": "बोहो कपड़े, गहने, लाइव बैंड और अंतर्राष्ट्रीय स्ट्रीट फूड।", "type": "Night Market"}
+        ],
+        "local_tips": [
+            "गोवा में घूमने के लिए स्कूटी या खुली जीप रेंट करना सबसे लोकप्रिय और सुविधाजनक तरीका है।"
+        ]
+    },
+    "varanasi": {
+        "city": "Varanasi",
+        "state": "Uttar Pradesh",
+        "hindi_name": "वाराणसी (काशी / बनारस)",
+        "tagline": "Spiritual Capital • गंगा के पावन घाट, दिव्य महाआरती और सदियों पुरानी आध्यात्मिक ऊर्जा",
+        "places_to_visit": [
+            {"name": "Kashi Vishwanath Temple & Corridor", "desc": "द्वादश ज्योतिर्लिंगों में प्रमुख श्री काशी विश्वनाथ और भव्य नया गंगा कॉरिडोर।", "category": "Sacred Jyotirlinga", "best_time": "सुबह सुगम दर्शन"},
+            {"name": "Dashashwamedh Ghat Evening Ganga Aarti", "desc": "शाम को मंत्रोच्चार, शंखध्वनि और विशाल दीपकों से होने वाली अलौकिक गंगा आरती।", "category": "Spiritual Ganga Aarti", "best_time": "शाम 6:00 - 7:30 PM"},
+            {"name": "Assi Ghat & Sunrise Boat Ride", "desc": "सुबह गंगा नदी में नाव से 84 घाटों का मनोरम दृश्य और 'सुबह-ए-बनारस'।", "category": "Sunrise Boat Ride", "best_time": "सुबह 5:30 - 7:00 AM"},
+            {"name": "Sarnath (सारनाथ)", "desc": "जहाँ भगवान बुद्ध ने पहला उपदेश दिया था — धमेख स्तूप व अशोक स्तंभ।", "category": "Buddhist Heritage", "best_time": "सुबह 9:00 AM - 1:00 PM"}
+        ],
+        "foods_to_try": [
+            {"name": "Banarasi Paan (बनारसी पान)", "desc": "मुंह में घुल जाने वाला विश्व प्रसिद्ध मीठा या कत्था पान।", "famous_at": "Keshav Tambool Bhandar (Ravindrapuri)"},
+            {"name": "Kachori Jalebi (कचौरी-जलेबी)", "desc": "हींग और चने की दाल की कचौरी और क्रिस्पी रसीली जलेबी का नाश्ता।", "famous_at": "Ram Bhandar (Thatheri Bazaar)"},
+            {"name": "Malaiyo (मलयो - सर्दियों में)", "desc": "केसरिया दूध के झाग और पिस्ता-बादाम से बनी जादुई मिठाई।", "famous_at": "Chaukhamba व Godowlia"},
+            {"name": "Pehlwan Lassi (पहलवान लस्सी)", "desc": "रबड़ी से भरी मिट्टी के कुल्हड़ वाली गाढ़ी लस्सी।", "famous_at": "Pehlwan Lassi (Lanka)"}
+        ],
+        "popular_things": [
+            {"name": "Banarasi Silk Saree Shopping", "desc": "हाथ से बुनी असली ज़री वाली बनारसी साड़ियाँ और ब्रोकेड।", "type": "Handloom Shopping (Chowk)"},
+            {"name": "Evening Boat Ride along 84 Ghats", "desc": "मणिकर्णिका से अस्सी घाट तक दीपदान और शांत बहती गंगा का अनुभव।", "type": "Boat Experience"}
+        ],
+        "local_tips": [
+            "घाटों और विश्वनाथ मंदिर की संकरी गलियों में पैदल चलना ही सबसे अच्छा तरीका है।"
+        ]
+    },
+    "hyderabad": {
+        "city": "Hyderabad",
+        "state": "Telangana",
+        "hindi_name": "हैदराबाद (निज़ामों का शहर)",
+        "tagline": "City of Pearls • ऐतिहासिक चारमीनार, दम बिरयानी, गोलकुंडा और हाईटेक सिटी",
+        "places_to_visit": [
+            {"name": "Charminar & Mecca Masjid", "desc": "1591 में निर्मित चार मीनारों वाला ऐतिहासिक स्मारक और पुरानी गलियाँ।", "category": "Historical Heritage", "best_time": "सुबह 9:30 - 11:30 AM या शाम"},
+            {"name": "Golconda Fort & Qutb Shahi Tombs", "desc": "चमत्कारी ध्वनिकी (Acoustics) वाला अपराजेय किला और शाम का साउंड शो।", "category": "Fort & Architecture", "best_time": "दोपहर 3:00 - 6:00 PM"},
+            {"name": "Ramoji Film City", "desc": "2000 एकड़ में फैला दुनिया का सबसे बड़ा फिल्म स्टूडियो कॉम्प्लेक्स।", "category": "Film City & Theme Park", "best_time": "पूरा दिन (9:00 AM - 5:30 PM)"},
+            {"name": "Hussain Sagar Lake & Buddha Statue", "desc": "झील के बीचों-बीच स्थित अखंड ग्रेनाइट की विशाल बुद्ध प्रतिमा।", "category": "Scenic Lake", "best_time": "शाम 5:30 - 7:30 PM"}
+        ],
+        "foods_to_try": [
+            {"name": "Hyderabadi Dum Biryani", "desc": "धीमी आंच (दम) पर पके बासमती चावल, मसालों और सुगंधित ग्रेवी की शाही बिरयानी।", "famous_at": "Paradise (Secunderabad), Bawarchi (RTC X Roads) या Shadab"},
+            {"name": "Irani Chai & Osmania Biscuits", "desc": "गाढ़े उबले दूध की कड़क ईरानी चाय और खारे-मीठे उस्मानिया बिस्कुट।", "famous_at": "Nimrah Cafe (Charminar)"},
+            {"name": "Haleem & Double Ka Meetha", "desc": "रमज़ान का मशहूर मटन/दाल का हलीम और ब्रेड-रबड़ी का शाही मीठा।", "famous_at": "Pista House"}
+        ],
+        "popular_things": [
+            {"name": "Laad Bazaar (लाड़ बाज़ार)", "desc": "चमकीली लाख की चूड़ियां, पारंपरिक मोती और शादी के कपड़े।", "type": "Bangles & Pearls"},
+            {"name": "Shilparamam Arts & Crafts Village", "desc": "पारंपरिक ग्रामीण हस्तशिल्प और शाम के सांस्कृतिक शो।", "type": "Cultural Village (HITEC City)"}
+        ],
+        "local_tips": [
+            "चारमीनार के आसपास ऑटो चालक मीटर के बजाय निश्चित किराया मांगते हैं, बैठने से पहले तय कर लें।"
+        ]
+    },
+    "agra": {
+        "city": "Agra",
+        "state": "Uttar Pradesh",
+        "hindi_name": "आगरा (ताज नगरी)",
+        "tagline": "City of Taj • विश्व का सातवां आश्चर्य और मुगलकालीन शान",
+        "places_to_visit": [
+            {"name": "Taj Mahal (ताजमहल)", "desc": "प्रेम का अमर प्रतीक और विश्व का सातवां अजूबा — सफेद संगमरमर की बेमिसाल इमारत।", "category": "Wonder of the World", "best_time": "सूर्योदय (Sunrise 6:00 AM) — सबसे शांत व खूबसूरत रोशनी"},
+            {"name": "Agra Fort (आगरा किला)", "desc": "मुगल बादशाहों का मुख्य निवास — जहांगीरी महल, दीवान-ए-खास और मुसम्मन बुर्ज।", "category": "UNESCO World Heritage", "best_time": "सुबह 10:00 AM - 1:00 PM"},
+            {"name": "Fatehpur Sikri & Buland Darwaza", "desc": "अकबर की ऐतिहासिक राजधानी और 54 मीटर ऊंचा बुलंद दरवाज़ा।", "category": "Mughal Architecture", "best_time": "दोपहर 2:30 - शाम 5:30 PM"},
+            {"name": "Mehtab Bagh", "desc": "यमुना नदी के उस पार से ताज महल के सूर्यास्त का शांत और अद्भुत बैक-व्यू।", "category": "Sunset View", "best_time": "शाम 5:00 - 6:30 PM"}
+        ],
+        "foods_to_try": [
+            {"name": "Agra Petha (आगरा का पेठा)", "desc": "केसर पेठा, पान पेठा, अंगूरी पेठा और सैंडविच पेठा — आगरा की सबसे बड़ी पहचान।", "famous_at": "Panchi Petha (Hari Parwat / Sadar Bazaar)"},
+            {"name": "Bedmi Puri & Aloo Sabzi with Jalebi", "desc": "उड़द दाल भरी खस्ता बेड़मी पूरी और तीखी आलू की सब्ज़ी का पारंपरिक नाश्ता।", "famous_at": "Deviram Sweets (Pratap Pura)"},
+            {"name": "Mughlai Kebab & Biryani", "desc": "पारंपरिक मुगलई सीख कबाब और खमीरी रोटी।", "famous_at": "Pinch of Spice (MG Road)"}
+        ],
+        "popular_things": [
+            {"name": "Sadar Bazaar & Kinari Bazaar", "desc": "चमड़े के जूते-बैग, संगमरमर इनले (Pietra Dura) हस्तशिल्प और हस्तनिर्मित कालीन।", "type": "Marble & Leather Shopping"}
+        ],
+        "local_tips": [
+            "ताजमहल प्रत्येक शुक्रवार (Friday) को पर्यटकों के लिए बंद रहता है।"
+        ]
+    },
+    "amritsar": {
+        "city": "Amritsar",
+        "state": "Punjab",
+        "hindi_name": "अमृतसर (स्वर्ण मंदिर की पावन नगरी)",
+        "tagline": "The Golden City • आध्यात्मिक शांति, देशभक्ति का जज़्बा और लाजवाब पंजाबी स्वाद",
+        "places_to_visit": [
+            {"name": "Golden Temple (श्री हरमंदिर साहिब)", "desc": "सोने से मढ़ा पावन सरोवर के बीच स्थित सिख धर्म का सर्वोच्च आध्यात्मिक केंद्र।", "category": "Spiritual Wonder", "best_time": "अमृत वेला (सुबह 4:00 AM) या रात में रोशनी के समय"},
+            {"name": "Wagah Border (वाघा बॉर्डर रिट्रीट)", "desc": "भारत-पाकिस्तान सीमा पर होने वाली रोमांचक और देशभक्ति से ओत-प्रोत परेड।", "category": "Patriotic Ceremony", "best_time": "दोपहर 3:30 PM (समारोह शाम 4:30 से शुरू)"},
+            {"name": "Jallianwala Bagh (जलियांवाला बाग)", "desc": "1919 के अमर शहीदों का स्मारक, अमर ज्योति और ऐतिहासिक गोली निशान।", "category": "National Memorial", "best_time": "सुबह 10:00 AM - 12:00 PM"}
+        ],
+        "foods_to_try": [
+            {"name": "Amritsari Kulcha (अमृतसरी कुलचा)", "desc": "तंदूर में सिका खस्ता कुरकुरा आलू-प्याज भरा कुलचा, ढेर सारा मक्खन और छोले।", "famous_at": "Bhai Kulwant Singh Kulchian Wale या Kesar Da Dhaba"},
+            {"name": "Kesar Da Dhaba Dal Makhani", "desc": "1916 से शुद्ध देशी घी में 12 घंटे धीमी आंच पर पकने वाली प्रसिद्ध काली दाल।", "famous_at": "Kesar Da Dhaba (Chowk Passian)"},
+            {"name": "Ahuja / Gian Chand Lassi", "desc": "मक्खन के पेड़े वाली मलाईदार कड़क मीठी लस्सी।", "famous_at": "Giani Tea Stall व Ahuja Lassi"},
+            {"name": "Guru Ka Langar", "desc": "स्वर्ण मंदिर में प्रतिदिन 1 लाख से अधिक लोगों को श्रद्धापूर्वक परोसा जाने वाला नि:शुल्क लंगर।", "famous_at": "Golden Temple Langar Hall"}
+        ],
+        "popular_things": [
+            {"name": "Heritage Street & Hall Bazaar", "desc": "पारंपरिक फुलकारी दुपट्टे, पंजाबी जूतियां और पापड़-वड़ियां।", "type": "Shopping & Stroll"}
+        ],
+        "local_tips": [
+            "स्वर्ण मंदिर परिसर में प्रवेश करते समय सिर ढंकना और जूते उतारना अनिवार्य है।"
+        ]
+    }
+}
+
+def get_city_travel_guide(city_name: str = None, lat: float = None, lon: float = None) -> dict:
+    """Returns curated destination guide for the detected city with places to visit, famous food, and activities."""
+    clean_city = (city_name or "").strip()
+    
+    # Strip state or country qualifiers (e.g. "Jaipur, Rajasthan" -> "Jaipur")
+    if "," in clean_city:
+        clean_city = clean_city.split(",")[0].strip()
+    
+    if not clean_city and lat and lon:
+        # Heuristic coordinate mapping
+        if 26.5 <= lat <= 27.5 and 75.0 <= lon <= 76.5:
+            clean_city = "Jaipur"
+        elif 28.3 <= lat <= 28.9 and 76.8 <= lon <= 77.5:
+            clean_city = "Delhi"
+        elif 18.8 <= lat <= 19.3 and 72.7 <= lon <= 73.1:
+            clean_city = "Mumbai"
+        elif 12.8 <= lat <= 13.2 and 77.4 <= lon <= 77.8:
+            clean_city = "Bengaluru"
+        elif 24.4 <= lat <= 24.8 and 73.5 <= lon <= 73.9:
+            clean_city = "Udaipur"
+        elif 14.8 <= lat <= 15.8 and 73.6 <= lon <= 74.4:
+            clean_city = "Goa"
+        elif 25.1 <= lat <= 25.5 and 82.8 <= lon <= 83.2:
+            clean_city = "Varanasi"
+        elif 17.2 <= lat <= 17.6 and 78.2 <= lon <= 78.7:
+            clean_city = "Hyderabad"
+        elif 27.0 <= lat <= 27.3 and 77.9 <= lon <= 78.2:
+            clean_city = "Agra"
+        elif 31.5 <= lat <= 31.8 and 74.7 <= lon <= 75.0:
+            clean_city = "Amritsar"
+
+    if not clean_city:
+        clean_city = "Jaipur"
+
+    # Fast cache lookup
+    cache_key = clean_city.lower()
+    if cache_key in CITY_GUIDE_CACHE:
+        return CITY_GUIDE_CACHE[cache_key]
+
+    # Database search (case-insensitive substring match)
+    for k, data in CITY_DISCOVERY_DATABASE.items():
+        if k in cache_key or cache_key in k:
+            CITY_GUIDE_CACHE[cache_key] = data
+            return data
+
+    # Dynamic fallback generator for any city in India / worldwide
+    dynamic_guide = {
+        "city": clean_city,
+        "state": "Local Region",
+        "hindi_name": f"{clean_city} (स्थानीय भ्रमण)",
+        "tagline": f"Explore {clean_city} • स्थानीय संस्कृति, दर्शनीय स्थल व लोकप्रिय स्वाद",
+        "places_to_visit": [
+            {"name": f"City Center & Main Promenade ({clean_city})", "desc": f"{clean_city} का प्रमुख आकर्षण केंद्र, मुख्य चौक और ऐतिहासिक धरोहर स्थल।", "category": "City Landmark", "best_time": "सुबह 9:30 AM - 12:30 PM"},
+            {"name": f"Local Heritage & Historical Monument", "desc": f"{clean_city} का प्रतिष्ठित ऐतिहासिक स्मारक व क्षेत्रीय संग्रहालय।", "category": "Heritage", "best_time": "दोपहर 3:00 - 5:30 PM"},
+            {"name": f"Scenic Public Park & Sunset Point", "desc": "प्रकृति के बीच शांति, हरी-भरी हरियाली और शाम का मनोरम सूर्यास्त।", "category": "Nature & Leisure", "best_time": "शाम 5:00 - 7:00 PM"}
+        ],
+        "foods_to_try": [
+            {"name": f"Traditional Regional Thali ({clean_city})", "desc": "स्थानीय मसालों और शुद्ध घी से बनी प्रामाणिक क्षेत्रीय थाली।", "famous_at": "स्थानीय प्रसिद्ध भोजनालय / भण्डार"},
+            {"name": f"Famous Street Chaat & Crispy Snacks", "desc": "चटपटे गोलगप्पे, मसालेदार टिक्की और कुरकुरी स्थानीय नमकीन।", "famous_at": "मुख्य बाज़ार स्ट्रीट स्टॉल्स"},
+            {"name": "Local Special Sweet & Kulhad Chai", "desc": "क्षेत्रीय मशहूर मिष्ठान और मिट्टी के कुल्हड़ वाली कड़क चाय।", "famous_at": "प्रतिष्ठित मिष्ठान भंडार"}
+        ],
+        "popular_things": [
+            {"name": f"Main Bazaar & Handicraft Market", "desc": f"{clean_city} के पारंपरिक हस्तशिल्प, कपड़े और स्थानीय स्मृति चिन्हों (Souvenirs) की शॉपिंग।", "type": "Local Shopping"},
+            {"name": "Evening City Stroll & Culture", "desc": "शहर की मुख्य सड़कों और कैफे में शाम का चहल-पहल भरा अनुभव।", "type": "City Experience"}
+        ],
+        "local_tips": [
+            f"{clean_city} के स्थानीय बाज़ारों में खरीददारी करते समय स्थानीय लोगों से सबसे अच्छे स्टॉल्स की जानकारी लें।",
+            "पर्यटक स्थलों पर जाने के लिए सुबह का समय सबसे सुखद और कम भीड़-भाड़ वाला होता है।"
+        ]
+    }
+    CITY_GUIDE_CACHE[cache_key] = dynamic_guide
+    return dynamic_guide
 
 def fetch_live_news_items(query: str = "", limit: int = 5, lang: str = "en") -> str:
     """Fetch live top headlines or topic/location-specific news with direct article URLs from Google News RSS."""
@@ -1249,12 +1589,21 @@ def build_system_prompt(context: dict = None, live_feed: str = "", language: str
                 chat_lines.append(f"- {role}: {text_content}")
             chat_history_str = "\nFULL CONVERSATION HISTORY (Previous turns in this active chat session):\n" + "\n".join(chat_lines) + "\n"
 
+        user_loc_name = context.get('user_location') or 'Detected User Location'
+        city_guide_data = context.get('city_guide')
+        city_guide_summary = ""
+        if city_guide_data:
+            places = ", ".join([p.get('name', '') for p in city_guide_data.get('places_to_visit', [])[:5]])
+            foods = ", ".join([f.get('name', '') for f in city_guide_data.get('foods_to_try', [])[:5]])
+            things = ", ".join([t.get('name', '') for t in city_guide_data.get('popular_things', [])[:3]])
+            city_guide_summary = f"\n- Active City Travel & Food Guide ({user_loc_name}):\n  • Top Places to Visit: {places}\n  • Famous Local Food to Eat: {foods}\n  • Popular Things to Do & Markets: {things}"
+
         ctx_str = f"""
 CURRENT REAL-TIME CONTEXT:
 - Current Local Time: {current_time_str}
 - Current Year: 2026 (November 2026)
 - User Name: {display_name}
-- Detected Home Location: {context.get('user_location', 'Jaipur / Bhankrota, Rajasthan')}
+- Current Detected Location: {user_loc_name}{city_guide_summary}
 - Pending Tasks ({len(context.get('tasks', []))}): {', '.join([t.get('title', '') for t in context.get('tasks', [])]) or 'None'}
 - Financial Balance: ₹{context.get('balance', 0):,.2f}
 - Known User Memories/Rules: {json.dumps(context.get('memories', []))}
@@ -1308,6 +1657,10 @@ TEMPORAL GROUNDING & 2026 REAL-TIME DIRECTIVE:
    - ALWAYS provide the latest, up-to-date facts till today (November 2026).
    - If the LIVE REAL-TIME DATA FEED contains live headlines or developments, synthesize the answer directly from those latest verified real-time sources!
    - NEVER provide obsolete facts or past knowledge when asked for current information.
+6. DYNAMIC LOCAL CITY EXPLORATION & FOOD DIRECTIVE:
+   - When the user asks about what to visit, where to go, famous places, street food, famous delicacies, markets, or shopping in their city / location ("यहाँ क्या प्रसिद्ध है?", "यहाँ कहाँ घूमें?", "यहाँ क्या खाएं?", "places to visit here", "famous food here", "what should I try here?", "what to do here?"):
+   - Base your recommendations specifically on their CURRENT DETECTED LOCATION.
+   - Proactively recommend top sightseeing spots, iconic street food / regional dishes with famous shops, and popular bazaars from the Active City Travel & Food Guide context.
 """
 
     if live_feed:
@@ -1502,9 +1855,140 @@ Output Format (strictly valid JSON with no markdown wrapping):
 }}
 """
 
-async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat: float = None, user_lon: float = None, language: str = "auto", api_key: str = None, user_name: str = "Operator", image_data: str = None, user_email: str = None) -> dict:
+def _extract_llm_action_dict(raw_text: str, user_input: str, is_cricket_query: bool, live_cricket_matches: list) -> dict:
+    if not raw_text or not raw_text.strip():
+        return None
+    raw_text = raw_text.strip()
+    json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+    if json_match:
+        try:
+            json_str = json_match.group(0)
+            json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
+            parsed = json.loads(json_str)
+            if is_cricket_query and live_cricket_matches:
+                if not parsed.get("data"):
+                    parsed["data"] = {}
+                parsed["data"]["matches"] = live_cricket_matches
+                parsed["action"] = "cricket_scorecard"
+
+            if parsed.get("action") == "task":
+                try:
+                    r_time, r_dt = parse_reminder_time(user_input)
+                    if r_time and not parsed.get("data", {}).get("reminder_time"):
+                        parsed["data"]["reminder_time"] = r_time
+                    if r_dt and not parsed.get("data", {}).get("due_date"):
+                        parsed["data"]["due_date"] = r_dt.isoformat()
+                except Exception as t_err:
+                    print(f"[Aether Engine] Reminder parse notice: {t_err}")
+            return parsed
+        except Exception as parse_err:
+            print(f"[Aether Engine] JSON parse error: {parse_err}")
+
+    clean_resp = raw_text
+    if "```json" in clean_resp or (clean_resp.startswith("{") and "action" in clean_resp):
+        clean_resp = re.sub(r'^```(?:json)?\s*', '', clean_resp, flags=re.IGNORECASE)
+        clean_resp = re.sub(r'\s*```$', '', clean_resp).strip()
+        try:
+            fallback_dict = json.loads(clean_resp)
+            if fallback_dict.get("action"):
+                return fallback_dict
+            if fallback_dict.get("explanation"):
+                clean_resp = fallback_dict.get("explanation")
+            elif fallback_dict.get("data", {}).get("response"):
+                clean_resp = fallback_dict["data"]["response"]
+        except Exception:
+            clean_resp = "कार्य पूरा कर लिया गया है।"
+
+    return {
+        "action": "query",
+        "confidence": 0.98,
+        "confidence_level": "high",
+        "data": { "response": clean_resp },
+        "explanation": "Processed natural response"
+    }
+
+async def _call_openai_compatible_api(
+    endpoint: str,
+    api_key: str,
+    models: list,
+    sys_prompt: str,
+    recent_chat: list,
+    user_input: str,
+    image_data: str = None
+) -> str:
+    if not api_key or not api_key.strip():
+        return ""
+    
+    messages = [{"role": "system", "content": sys_prompt}]
+    if recent_chat:
+        for m in recent_chat[-40:]:
+            m_role = "user" if m.get("role") in ["User", "user"] else "assistant"
+            m_text = str(m.get("content", "")).strip()
+            if m_text:
+                messages.append({"role": m_role, "content": m_text})
+
+    if image_data and image_data.strip():
+        messages.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": user_input},
+                {"type": "image_url", "image_url": {"url": image_data.strip()}}
+            ]
+        })
+    else:
+        messages.append({"role": "user", "content": user_input})
+
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Content-Type": "application/json"
+    }
+
+    async with httpx.AsyncClient(timeout=22.0) as client:
+        for model in models:
+            try:
+                payload = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": 0.2
+                }
+                resp = await client.post(endpoint, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    choices = data.get("choices", [])
+                    if choices:
+                        content = choices[0].get("message", {}).get("content", "").strip()
+                        if content:
+                            return content
+                else:
+                    print(f"[Aether Multi-LLM] {model} at {endpoint} returned {resp.status_code}: {resp.text[:100]}")
+            except Exception as e:
+                print(f"[Aether Multi-LLM] Error calling {model} at {endpoint}: {e}")
+    return ""
+
+async def parse_intent_with_llm(
+    user_input: str, 
+    context: dict = None, 
+    user_lat: float = None, 
+    user_lon: float = None, 
+    language: str = "auto", 
+    api_key: str = None, 
+    user_name: str = "Operator", 
+    image_data: str = None, 
+    user_email: str = None,
+    openai_key: str = None,
+    grok_key: str = None,
+    active_provider: str = None,
+    user_city: str = None
+) -> dict:
     """Parse intent with live weather for user's actual location or requested city, news with links, match results, image/vision analysis, and language control."""
     user_lower = user_input.lower().strip()
+
+    if context is None:
+        context = {}
+    if user_city and not context.get('user_location'):
+        context['user_location'] = user_city
+    if not context.get('city_guide'):
+        context['city_guide'] = get_city_travel_guide(context.get('user_location') or user_city, user_lat, user_lon)
     
     # Detect language requirement in user prompt
     wants_hindi_in_prompt = any(w in user_lower for w in ["in hindi", "hindi me", "hindi mein", "हिंदी में", "हिंदी", "translate to hindi", "hindi news", "hindi me batao"])
@@ -1560,9 +2044,25 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
             live_feed += "\n".join(cric_lines) + "\n\n"
 
     if is_weather_query:
-        # Pass user_input so any mentioned city (London, Mumbai, etc.) is detected!
-        weather_info = fetch_live_weather(user_query=user_input, lat=user_lat, lon=user_lon)
+        # Pass user_input and user_city so detected or mentioned city is used
+        cur_city_loc = user_city or (context or {}).get("user_location")
+        weather_info = fetch_live_weather(user_query=user_input, lat=user_lat, lon=user_lon, city_name=cur_city_loc)
         live_feed += f"[TODAY'S LIVE ACCURATE WEATHER]:\n{weather_info}\n\n"
+
+    # 🗺️ Local Travel & Food Discovery Guide Injection
+    is_travel_or_food_query = any(w in user_lower for w in [
+        "place to visit", "places to visit", "visit", "sightseeing", "ghoomne", "ghumne", "kahan ghume", 
+        "kya khaye", "kya khana", "famous food", "what to eat", "street food", "popular thing", "famous for", 
+        "prassidh", "prasiddh", "प्रसिद्ध", "दर्शनीय", "खान-पान", "कहाँ घूमें", "क्या खाएं", "क्या देखें", "घूमने"
+    ])
+    if is_travel_or_food_query:
+        city_for_guide = user_city or (context or {}).get("user_location") or "Jaipur"
+        cg = get_city_travel_guide(city_for_guide, user_lat, user_lon)
+        live_feed += f"[AUTHENTIC LOCAL CITY TRAVEL & DELICACIES GUIDE FOR {cg['city']}]:\n"
+        live_feed += f"City: {cg['city']} ({cg.get('hindi_name', '')})\n"
+        live_feed += "Must-Visit Attractions:\n" + "\n".join([f"• {p['name']}: {p['desc']} [Best time: {p.get('best_time', 'Morning/Evening')}]" for p in cg.get("places_to_visit", [])]) + "\n"
+        live_feed += "Famous Foods to Try:\n" + "\n".join([f"• {f['name']}: {f['desc']} [Famous at: {f.get('famous_at', 'Local specialty')}]" for f in cg.get("foods_to_try", [])]) + "\n"
+        live_feed += "Popular Activities & Markets:\n" + "\n".join([f"• {t['name']}: {t['desc']}" for t in cg.get("popular_things", [])]) + "\n\n"
 
     # 🌐 Universal Real-Time Search Grounding for ANY Informational / News Query:
     # If the user asks for latest news, leaders, prices, events, sports, or current facts,
@@ -1602,6 +2102,54 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
     has_image = bool(image_data and image_data.strip())
     sys_prompt = build_system_prompt(context, live_feed, language=effective_lang, user_name=user_name, user_query=user_input, has_image=has_image)
     
+    # Determine effective primary AI Provider (gemini | openai | grok)
+    eff_provider = (active_provider or "").lower().strip()
+    clean_grok_key = (grok_key or "").strip()
+    clean_openai_key = (openai_key or "").strip()
+    clean_gemini_key = (api_key or "").strip()
+
+    if not eff_provider:
+        if clean_grok_key and not clean_gemini_key and not clean_openai_key:
+            eff_provider = "grok"
+        elif clean_openai_key and not clean_gemini_key and not clean_grok_key:
+            eff_provider = "openai"
+        else:
+            eff_provider = "gemini"
+
+    # 1. Primary route: Grok (xAI)
+    if eff_provider == "grok" and clean_grok_key:
+        grok_models = ["grok-2-latest", "grok-beta", "grok-2-mini"]
+        raw_text = await _call_openai_compatible_api(
+            "https://api.x.ai/v1/chat/completions",
+            clean_grok_key,
+            grok_models,
+            sys_prompt,
+            recent_chat,
+            user_input,
+            image_data
+        )
+        if raw_text:
+            parsed = _extract_llm_action_dict(raw_text, user_input, is_cricket_query, live_cricket_matches)
+            if parsed:
+                return parsed
+
+    # 2. Primary route: OpenAI (ChatGPT)
+    if eff_provider == "openai" and clean_openai_key:
+        openai_models = ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"]
+        raw_text = await _call_openai_compatible_api(
+            "https://api.openai.com/v1/chat/completions",
+            clean_openai_key,
+            openai_models,
+            sys_prompt,
+            recent_chat,
+            user_input,
+            image_data
+        )
+        if raw_text:
+            parsed = _extract_llm_action_dict(raw_text, user_input, is_cricket_query, live_cricket_matches)
+            if parsed:
+                return parsed
+
     # Strict Multi-Tenant BYOK (Bring Your Own Key) & Owner Account Quota Protection:
     # 1. Top Priority: Client-provided personal API key (from device App Settings / Onboarding)
     KNOWN_REVOKED_KEYS = {
@@ -1609,7 +2157,7 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
     }
 
     candidate_keys = []
-    client_key = (api_key or "").strip()
+    client_key = clean_gemini_key
     if client_key and client_key not in KNOWN_REVOKED_KEYS:
         candidate_keys.append(client_key)
 
@@ -1770,6 +2318,23 @@ async def parse_intent_with_llm(user_input: str, context: dict = None, user_lat:
                     print(f"[Aether Engine] Gemini call error: {e}")
             if not key_had_auth_error:
                 break
+
+        # Fallback to Grok or OpenAI if Gemini had auth failure or returned no response
+        if clean_grok_key and eff_provider != "grok":
+            grok_models = ["grok-2-latest", "grok-beta", "grok-2-mini"]
+            raw_text = await _call_openai_compatible_api("https://api.x.ai/v1/chat/completions", clean_grok_key, grok_models, sys_prompt, recent_chat, user_input, image_data)
+            if raw_text:
+                parsed = _extract_llm_action_dict(raw_text, user_input, is_cricket_query, live_cricket_matches)
+                if parsed:
+                    return parsed
+
+        if clean_openai_key and eff_provider != "openai":
+            openai_models = ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"]
+            raw_text = await _call_openai_compatible_api("https://api.openai.com/v1/chat/completions", clean_openai_key, openai_models, sys_prompt, recent_chat, user_input, image_data)
+            if raw_text:
+                parsed = _extract_llm_action_dict(raw_text, user_input, is_cricket_query, live_cricket_matches)
+                if parsed:
+                    return parsed
 
         if key_blocked_notice and not (is_weather_query or is_news_query):
             return {

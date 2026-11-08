@@ -1,6 +1,6 @@
-import React from 'react';
-import { Check, Database, Shield } from 'lucide-react';
-import { AETHER_VOICES } from '../common/constants';
+import React, { useState } from 'react';
+import { Check, Database, Shield, Key, ExternalLink, HelpCircle, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { AETHER_VOICES, AI_PROVIDERS } from '../common/constants';
 
 export const SettingsSubModals = ({
   activeSubModal,
@@ -12,6 +12,12 @@ export const SettingsSubModals = ({
   showToast,
   apiKey,
   setApiKey,
+  openaiKey,
+  setOpenaiKey,
+  grokKey,
+  setGrokKey,
+  activeProvider,
+  setActiveProvider,
   keyError,
   keyValidating,
   handleValidateApiKey,
@@ -42,6 +48,12 @@ export const SettingsSubModals = ({
   auditLogs,
   refreshAllData
 }) => {
+  const [modalProviderTab, setModalProviderTab] = useState(() => activeProvider || 'gemini');
+  const [showSettingsKeyGuide, setShowSettingsKeyGuide] = useState(false);
+
+  const currentSettingsProv = AI_PROVIDERS.find(p => p.id === modalProviderTab) || AI_PROVIDERS[0];
+  const currentKeyVal = modalProviderTab === 'openai' ? (openaiKey || '') : modalProviderTab === 'grok' ? (grokKey || '') : (apiKey || '');
+
   if (!activeSubModal) return null;
 
   return (
@@ -79,43 +91,254 @@ export const SettingsSubModals = ({
         </div>
       )}
 
-      {/* 2. Gemini API Key BYOK Modal */}
+      {/* 2. Multi-Provider (Gemini / ChatGPT / Grok) BYOK Key Modal */}
       {activeSubModal === 'key' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.78)', backdropFilter: 'blur(10px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0f172a', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '20px', padding: '24px', width: '100%', maxWidth: '420px' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>Google Gemini API Key</h3>
-            <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '14px' }}>BYOK direct validation with Google AI Studio models.</p>
-            <input
-              type="text"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="AIzaSy..."
-              style={{ width: '100%', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '12px', padding: '10px 14px', color: '#fff', marginBottom: '12px', boxSizing: 'border-box' }}
-            />
-            {keyError && <div style={{ color: '#ef4444', fontSize: '0.8rem', marginBottom: '12px' }}>{keyError}</div>}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.82)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.16)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '440px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+              <div>
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff', margin: 0 }}>AI Platform & API Keys</h3>
+                <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '4px', marginBottom: 0 }}>Configure Gemini, ChatGPT, or Grok keys with instant platform switching.</p>
+              </div>
               <button 
                 type="button" 
-                onClick={handleValidateApiKey} 
+                onClick={() => setActiveSubModal(null)} 
+                style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer', padding: '0 4px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Provider Tabs */}
+            <div style={{ display: 'flex', gap: '6px', background: 'rgba(255, 255, 255, 0.04)', padding: '4px', borderRadius: '14px', border: '1px solid rgba(255, 255, 255, 0.08)', margin: '16px 0 14px 0' }}>
+              {AI_PROVIDERS.map(p => {
+                const isActiveTab = modalProviderTab === p.id;
+                const isEngineActive = (activeProvider || 'gemini') === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => {
+                      setModalProviderTab(p.id);
+                      setShowSettingsKeyGuide(false);
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '8px 4px',
+                      borderRadius: '10px',
+                      border: isActiveTab ? `1px solid ${p.color}55` : '1px solid transparent',
+                      background: isActiveTab ? `${p.color}18` : 'transparent',
+                      color: isActiveTab ? p.color : '#94a3b8',
+                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '2px',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <span>{p.icon} {p.shortName}</span>
+                    {isEngineActive && (
+                      <span style={{ fontSize: '9px', background: `${p.color}33`, color: p.color, padding: '1px 5px', borderRadius: '6px' }}>
+                        Active
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Active Engine Toggle Bar */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '12px', padding: '10px 14px', marginBottom: '14px' }}>
+              <div>
+                <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#fff' }}>
+                  {currentSettingsProv.name}
+                </div>
+                <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                  {currentSettingsProv.badge}
+                </div>
+              </div>
+
+              {(activeProvider || 'gemini') === modalProviderTab ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#34d399', fontSize: '0.76rem', fontWeight: 600, background: 'rgba(52, 211, 153, 0.12)', padding: '4px 8px', borderRadius: '8px' }}>
+                  <Check size={12} />
+                  <span>Active Engine</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.setItem('aether_active_provider', modalProviderTab);
+                    if (setActiveProvider) setActiveProvider(modalProviderTab);
+                    showToast(`Active Engine: ${currentSettingsProv.name}`, 'success');
+                  }}
+                  style={{
+                    background: `${currentSettingsProv.color}22`,
+                    border: `1px solid ${currentSettingsProv.color}44`,
+                    color: currentSettingsProv.color,
+                    padding: '4px 10px',
+                    borderRadius: '8px',
+                    fontSize: '0.76rem',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  ⚡ Set as Active
+                </button>
+              )}
+            </div>
+
+            {/* API Key Input */}
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ display: 'block', fontSize: '0.76rem', color: '#cbd5e1', marginBottom: '6px', fontWeight: 500 }}>
+                {currentSettingsProv.name} Secret / API Key
+              </label>
+              <input
+                type="text"
+                value={currentKeyVal}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (modalProviderTab === 'openai') {
+                    if (setOpenaiKey) setOpenaiKey(val);
+                  } else if (modalProviderTab === 'grok') {
+                    if (setGrokKey) setGrokKey(val);
+                  } else {
+                    if (setApiKey) setApiKey(val);
+                  }
+                }}
+                placeholder={currentSettingsProv.placeholder}
+                style={{
+                  width: '100%',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  borderRadius: '12px',
+                  padding: '10px 14px',
+                  color: '#fff',
+                  fontSize: '0.84rem',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
+
+            {/* Key Error Alert */}
+            {keyError && (
+              <div style={{ color: '#ef4444', fontSize: '0.78rem', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: '10px', padding: '8px 12px', marginBottom: '12px' }}>
+                {keyError}
+              </div>
+            )}
+
+            {/* Buttons Row */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <button 
+                type="button" 
+                onClick={() => handleValidateApiKey(currentKeyVal, modalProviderTab)} 
                 disabled={keyValidating}
-                style={{ background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.3)', color: 'var(--accent-cyan)', padding: '8px 14px', borderRadius: '10px', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer' }}
+                style={{
+                  background: 'rgba(56, 189, 248, 0.12)',
+                  border: '1px solid rgba(56, 189, 248, 0.3)',
+                  color: 'var(--accent-cyan)',
+                  padding: '8px 12px',
+                  borderRadius: '10px',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
               >
                 {keyValidating ? 'Testing...' : 'Test & Verify Key'}
               </button>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', padding: '8px 12px', cursor: 'pointer' }}>Close</button>
+                <button 
+                  type="button" 
+                  onClick={() => setActiveSubModal(null)} 
+                  style={{ background: 'none', border: 'none', color: '#94a3b8', padding: '8px 10px', cursor: 'pointer', fontSize: '0.82rem' }}
+                >
+                  Close
+                </button>
                 <button 
                   type="button" 
                   onClick={() => {
-                    localStorage.setItem('aether_gemini_key', apiKey.trim());
+                    const clean = (currentKeyVal || '').trim();
+                    if (modalProviderTab === 'openai') {
+                      localStorage.setItem('aether_openai_key', clean);
+                    } else if (modalProviderTab === 'grok') {
+                      localStorage.setItem('aether_grok_key', clean);
+                    } else {
+                      localStorage.setItem('aether_gemini_key', clean);
+                    }
+                    localStorage.setItem('aether_active_provider', modalProviderTab);
+                    if (setActiveProvider) setActiveProvider(modalProviderTab);
+                    showToast(`${currentSettingsProv.name} Key Saved & Activated!`, 'success');
                     setActiveSubModal(null);
-                    showToast('Key saved to local storage', 'success');
                   }}
-                  style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 16px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}
+                  style={{
+                    background: currentSettingsProv.color,
+                    border: 'none',
+                    color: '#080c16',
+                    padding: '8px 16px',
+                    borderRadius: '10px',
+                    fontWeight: 700,
+                    fontSize: '0.82rem',
+                    cursor: 'pointer'
+                  }}
                 >
-                  Save
+                  Save & Activate
                 </button>
               </div>
+            </div>
+
+            {/* Generation Guide Accordion */}
+            <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)', paddingTop: '12px' }}>
+              <button
+                type="button"
+                onClick={() => setShowSettingsKeyGuide(!showSettingsKeyGuide)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#94a3b8',
+                  fontSize: '0.78rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: 0,
+                  textDecoration: 'underline'
+                }}
+              >
+                <HelpCircle size={14} />
+                <span>{currentSettingsProv.guideTitle}</span>
+              </button>
+
+              {showSettingsKeyGuide && (
+                <div style={{
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  borderRadius: '12px',
+                  padding: '12px',
+                  marginTop: '10px',
+                  fontSize: '0.78rem',
+                  color: '#cbd5e1',
+                  lineHeight: '1.5'
+                }}>
+                  <p style={{ margin: '0 0 6px 0', fontWeight: 600, color: currentSettingsProv.color }}>
+                    Quick Steps for {currentSettingsProv.name}:
+                  </p>
+                  <ol style={{ paddingLeft: '16px', margin: 0 }}>
+                    {currentSettingsProv.guideSteps.map((step, idx) => (
+                      <li key={idx} style={{ marginBottom: '4px' }}>
+                        {step.link ? (
+                          <a href={step.link} target="_blank" rel="noreferrer" style={{ color: currentSettingsProv.color, textDecoration: 'underline' }}>
+                            {step.text} ↗
+                          </a>
+                        ) : (
+                          step.text
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
             </div>
           </div>
         </div>

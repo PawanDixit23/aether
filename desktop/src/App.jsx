@@ -85,6 +85,7 @@ import { DashboardView } from './components/dashboard/DashboardView';
 import { TasksModal } from './components/modals/TasksModal';
 import { ConfirmModal } from './components/modals/ConfirmModal';
 import { ChatHistoryDrawer } from './components/chat/ChatHistoryDrawer';
+import { AI_PROVIDERS } from './components/common/constants';
 
 // Code-split heavy modals for instant mobile loading & 0-lag startup
 const FinanceModal = React.lazy(() => import('./components/modals/FinanceModal').then(m => ({ default: m.FinanceModal })));
@@ -446,6 +447,10 @@ export default function App() {
       return '';
     }
   });
+  const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem('aether_openai_key') || '');
+  const [grokKey, setGrokKey] = useState(() => localStorage.getItem('aether_grok_key') || '');
+  const [activeProvider, setActiveProvider] = useState(() => localStorage.getItem('aether_active_provider') || 'gemini');
+  const [selectedProviderTab, setSelectedProviderTab] = useState(() => localStorage.getItem('aether_active_provider') || 'gemini');
 
   // Main Jarvis Spec UI States
   const [activeTab, setActiveTab] = useState('aether'); // 'aether' | 'today' | 'memory'
@@ -662,6 +667,7 @@ export default function App() {
   
   // App data states
   const [briefing, setBriefing] = useState(null);
+  const [cityGuide, setCityGuide] = useState(null);
   const [chatSessions, setChatSessions] = useState(() => {
     try {
       const email = localStorage.getItem('aether_user_email');
@@ -1399,10 +1405,16 @@ export default function App() {
   };
 
   // Onboarding & BYOK Intelligence Handlers
-  const handleValidateApiKey = async () => {
-    const cleanKey = apiKey.trim();
+  const handleValidateApiKey = async (customKey, customProvider) => {
+    const prov = customProvider || selectedProviderTab || 'gemini';
+    const keyToValidate = customKey !== undefined
+      ? customKey
+      : (prov === 'openai' ? openaiKey : prov === 'grok' ? grokKey : apiKey);
+
+    const cleanKey = (keyToValidate || '').trim();
     if (!cleanKey) {
-      setKeyError('कृपया अपनी Gemini API Key दर्ज करें (Please enter your Gemini API key)');
+      const provLabel = prov === 'openai' ? 'OpenAI (ChatGPT)' : prov === 'grok' ? 'Grok (xAI)' : 'Gemini';
+      setKeyError(`कृपया अपनी ${provLabel} API Key दर्ज करें (Please enter your API key)`);
       return;
     }
     setKeyValidating(true);
@@ -1411,44 +1423,60 @@ export default function App() {
 
     try {
       let isValid = false;
-      // 1. Direct validation with Google AI Studio
-      try {
-        const testUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`;
-        const resp = await fetch(testUrl, { method: 'GET' });
-        if (resp.ok) {
-          const json = await resp.json();
-          if (json && json.models && json.models.length > 0) {
-            isValid = true;
+      // 1. Direct validation with Google AI Studio if Gemini
+      if (prov === 'gemini') {
+        try {
+          const testUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`;
+          const resp = await fetch(testUrl, { method: 'GET' });
+          if (resp.ok) {
+            const json = await resp.json();
+            if (json && json.models && json.models.length > 0) {
+              isValid = true;
+            }
           }
+        } catch (directErr) {
+          // Direct fetch may be blocked by CORS in some browsers
         }
-      } catch (directErr) {
-        // Direct fetch may be blocked by CORS in some browsers
       }
 
-      // 2. Fallback to server proxy
+      // 2. Validate via server proxy (for Gemini fallback, OpenAI, and Grok)
       if (!isValid) {
         const beResp = await fetch(`${API_BASE}/auth/validate-key`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ api_key: cleanKey })
+          body: JSON.stringify({ api_key: cleanKey, provider: prov })
         });
         const beData = await beResp.json();
         if (beData.valid) {
           isValid = true;
         } else {
-          setKeyError('अमान्य Gemini API Key! कृपया Google AI Studio से अपनी सही Key जांचें।');
+          setKeyError(beData.error || `अमान्य ${prov.toUpperCase()} API Key! कृपया अपनी सही Key जांचें।`);
           setKeyValidating(false);
           return;
         }
       }
 
       if (isValid) {
-        localStorage.setItem('aether_gemini_key', cleanKey);
+        if (prov === 'openai') {
+          localStorage.setItem('aether_openai_key', cleanKey);
+          setOpenaiKey(cleanKey);
+        } else if (prov === 'grok') {
+          localStorage.setItem('aether_grok_key', cleanKey);
+          setGrokKey(cleanKey);
+        } else {
+          localStorage.setItem('aether_gemini_key', cleanKey);
+          setApiKey(cleanKey);
+        }
+        localStorage.setItem('aether_active_provider', prov);
+        setActiveProvider(prov);
         setKeySuccess(true);
         setKeyError('');
-        showToast('Gemini API Key सत्यापित! (Key Verified)', 'success');
+        const provName = prov === 'openai' ? 'OpenAI (ChatGPT)' : prov === 'grok' ? 'Grok (xAI)' : 'Gemini';
+        showToast(`${provName} API Key सत्यापित! (Key Verified)`, 'success');
         setTimeout(() => {
-          setOnboardingStep(6);
+          if (onboardingStep === 5) {
+            setOnboardingStep(6);
+          }
           setKeySuccess(false);
         }, 500);
       }
@@ -2373,16 +2401,14 @@ export default function App() {
         async (pos) => {
           const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
           setUserCoords(coords);
-          if (!userLocationName) {
-            const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
-            if (locName) {
-              setUserLocationName(locName);
-              localStorage.setItem('aether_user_city', locName);
-            }
+          const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
+          if (locName) {
+            setUserLocationName(locName);
+            localStorage.setItem('aether_user_city', locName);
           }
         },
         () => {},
-        { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
       );
     }
   }, []);
@@ -3144,14 +3170,33 @@ export default function App() {
 
   // Browser Geolocation
   useEffect(() => {
-    if ('geolocation' in navigator) {
+    if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
-        pos => {
-          setUserCoords({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+        async pos => {
+          const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+          setUserCoords(coords);
+          try {
+            const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
+            if (locName && !locName.toLowerCase().includes('singapore')) {
+              setUserLocationName(locName);
+              localStorage.setItem('aether_user_city', locName);
+              localStorage.setItem('aether_location_enabled', 'true');
+            }
+          } catch (e) {}
         },
-        () => {
-          console.log("Using IP-based location detection (Jaipur / Bhankrota, Rajasthan)");
-        }
+        async () => {
+          try {
+            const srvRes = await fetch(`${API_BASE}/location/detect`);
+            if (srvRes.ok) {
+              const srvData = await srvRes.json();
+              if (srvData.display_name && !userLocationName) {
+                setUserLocationName(srvData.display_name);
+                setUserCoords({ latitude: srvData.latitude, longitude: srvData.longitude });
+              }
+            }
+          } catch (e) {}
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
       );
     }
   }, []);
@@ -3165,8 +3210,9 @@ export default function App() {
       const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
       const authHeaders = currentEmail ? { 'X-User-Email': currentEmail } : {};
       const curSessionId = activeSessionIdRef.current || 'default';
+      const briefLocParams = `&lat=${userCoords?.latitude || ''}&lon=${userCoords?.longitude || ''}&city=${encodeURIComponent(userLocationName || '')}`;
       const [resBrief, resChat, resSessions, resTasks, resFin, resFinSum, resMem, resAudit, resNews, resDue, resCricket] = await Promise.all([
-        fetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}`, { headers: authHeaders }),
+        fetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}${briefLocParams}`, { headers: authHeaders }),
         opts.skipChatHistory ? Promise.resolve({ ok: false }) : fetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(curSessionId)}&limit=60`, { headers: authHeaders }),
         fetch(`${API_BASE}/chat/sessions`, { headers: authHeaders }),
         fetch(`${API_BASE}/tasks`, { headers: authHeaders }),
@@ -3179,7 +3225,11 @@ export default function App() {
         fetch(`${API_BASE}/cricket/live`).catch(() => ({ ok: false }))
       ]);
 
-      if (resBrief.ok) setBriefing(await resBrief.json());
+      if (resBrief.ok) {
+        const bData = await resBrief.json();
+        setBriefing(bData);
+        if (bData.city_guide) setCityGuide(bData.city_guide);
+      }
       if (resSessions && resSessions.ok) {
         try {
           const sessData = await resSessions.json();
@@ -4137,6 +4187,7 @@ export default function App() {
         session_id: curSessionId,
         latitude: userCoords?.latitude || null,
         longitude: userCoords?.longitude || null,
+        city: userLocationName || null,
         language: selectedLang,
         client_time: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
@@ -4144,6 +4195,9 @@ export default function App() {
           const k = localStorage.getItem('aether_gemini_key') || '';
           return k.includes('AIzaSyCR3ZKXaMEGRU02hCrhhn4O978zMnDk0vU') ? '' : k;
         })(),
+        openai_key: (localStorage.getItem('aether_openai_key') || '').trim(),
+        grok_key: (localStorage.getItem('aether_grok_key') || '').trim(),
+        active_provider: localStorage.getItem('aether_active_provider') || 'gemini',
         user_name: localStorage.getItem('aether_user_name') || userName || 'Operator',
         user_email: userEmail || null
       };
@@ -4783,10 +4837,10 @@ export default function App() {
     temp: 28,
     condition_hi: 'धूप खिली हुई',
     condition_en: 'Mostly Sunny',
-    city: 'Jaipur (भांकरोटा)',
-    city_en: 'Jaipur (Bhankrota)',
-    city_hi: 'Jaipur (भांकरोटा)',
-    city_hinglish: 'Jaipur (Bhankrota)',
+    city: userLocationName || 'Jaipur',
+    city_en: userLocationName || 'Jaipur',
+    city_hi: userLocationName || 'Jaipur',
+    city_hinglish: userLocationName || 'Jaipur',
     humidity: '42%',
     wind: '10 km/h'
   };
@@ -5185,185 +5239,245 @@ export default function App() {
             </div>
           )}
 
-          {/* STEP 5: BYOK INTELLIGENCE KEY WITH LIVE GEMINI VALIDATION */}
-          {onboardingStep === 5 && (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', flex: 1 }}>
-              <div className="step-badge">Direct Intelligence BYOK</div>
-              <h1 className="serif-title">
-                Bring your own <span className="serif-italic">intelligence key.</span>
-              </h1>
-              <p className="step-desc">
-                Use your personal Google Gemini API key. Lightning-fast responses at near-zero cost directly with your own quotas.
-              </p>
+          {/* STEP 5: BYOK INTELLIGENCE KEY WITH MULTI-ENGINE (GEMINI / CHATGPT / GROK) */}
+          {onboardingStep === 5 && (() => {
+            const currentProv = AI_PROVIDERS.find(p => p.id === selectedProviderTab) || AI_PROVIDERS[0];
+            const currentVal = selectedProviderTab === 'openai' ? openaiKey : selectedProviderTab === 'grok' ? grokKey : apiKey;
 
-              {/* Model Choice Row */}
-              <div className="model-choice-row">
-                {AETHER_MODELS.map(m => (
-                  <div
-                    key={m.id}
-                    className={`model-card ${selectedModel === m.id ? 'selected' : ''}`}
-                    onClick={() => {
-                      setSelectedModel(m.id);
-                      localStorage.setItem('aether_selected_model', m.id);
-                    }}
-                  >
-                    <div className="model-card-title">{m.name}</div>
-                    <div style={{ fontSize: '10px', color: selectedModel === m.id ? '#00f0ff' : '#94a3b8', marginTop: '4px' }}>
-                      {m.tag}
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', flex: 1 }}>
+                <div className="step-badge">Direct Intelligence BYOK</div>
+                <h1 className="serif-title">
+                  Bring your own <span className="serif-italic">intelligence key.</span>
+                </h1>
+                <p className="step-desc">
+                  Choose your preferred AI platform. Enter a Gemini, ChatGPT (OpenAI), or Grok API key for direct high-speed responses.
+                </p>
+
+                {/* Provider Selector Tabs */}
+                <div style={{ display: 'flex', gap: '8px', width: '100%', maxWidth: '420px', marginBottom: '16px', background: 'rgba(255, 255, 255, 0.04)', padding: '5px', borderRadius: '16px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                  {AI_PROVIDERS.map(p => {
+                    const isSel = selectedProviderTab === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedProviderTab(p.id);
+                          setKeyError('');
+                          setKeySuccess(false);
+                          setShowKeyGuide(false);
+                        }}
+                        style={{
+                          flex: 1,
+                          padding: '10px 6px',
+                          borderRadius: '12px',
+                          border: isSel ? `1px solid ${p.color}66` : '1px solid transparent',
+                          background: isSel ? `${p.color}20` : 'transparent',
+                          color: isSel ? p.color : '#94a3b8',
+                          fontSize: '0.82rem',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: '2px',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <span style={{ fontSize: '1.05rem' }}>{p.icon}</span>
+                        <span>{p.shortName}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Model Choice Row for selected provider */}
+                <div className="model-choice-row" style={{ display: 'grid', gridTemplateColumns: `repeat(${currentProv.models.length}, 1fr)`, gap: '8px', width: '100%', maxWidth: '420px', marginBottom: '14px' }}>
+                  {currentProv.models.map(m => (
+                    <div
+                      key={m.id}
+                      className={`model-card ${selectedModel === m.id ? 'selected' : ''}`}
+                      onClick={() => {
+                        setSelectedModel(m.id);
+                        localStorage.setItem('aether_selected_model', m.id);
+                      }}
+                      style={{ padding: '10px 6px' }}
+                    >
+                      <div className="model-card-title" style={{ fontSize: '12px' }}>{m.name}</div>
+                      <div style={{ fontSize: '10px', color: selectedModel === m.id ? currentProv.color : '#94a3b8', marginTop: '3px' }}>
+                        {m.tag}
+                      </div>
                     </div>
+                  ))}
+                </div>
+
+                {/* API Key Input */}
+                <div className="onboarding-input-card" style={{ width: '100%', maxWidth: '420px' }}>
+                  <input
+                    type={showApiKey ? 'text' : 'password'}
+                    className="onboarding-input-field"
+                    placeholder={currentProv.placeholder}
+                    value={currentVal}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (selectedProviderTab === 'openai') setOpenaiKey(val);
+                      else if (selectedProviderTab === 'grok') setGrokKey(val);
+                      else setApiKey(val);
+                      setKeyError('');
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleValidateApiKey(currentVal, selectedProviderTab); }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 4px', display: 'flex', alignItems: 'center' }}
+                    title={showApiKey ? "Hide key" : "Show key"}
+                  >
+                    {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+
+                {/* Error Message Alert */}
+                {keyError && (
+                  <div style={{
+                    background: 'rgba(239, 68, 68, 0.12)',
+                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                    borderRadius: '12px',
+                    padding: '10px 14px',
+                    color: '#fca5a5',
+                    fontSize: '0.84rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    marginBottom: '10px',
+                    textAlign: 'left',
+                    width: '100%',
+                    maxWidth: '420px'
+                  }}>
+                    <AlertTriangle size={16} color="#ef4444" style={{ flexShrink: 0 }} />
+                    <span>{keyError}</span>
                   </div>
-                ))}
-              </div>
-
-              {/* API Key Input */}
-              <div className="onboarding-input-card">
-                <input
-                  type={showApiKey ? 'text' : 'password'}
-                  className="onboarding-input-field"
-                  placeholder="Paste your Gemini API key (AIzaSy...)"
-                  value={apiKey}
-                  onChange={(e) => { setApiKey(e.target.value); setKeyError(''); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleValidateApiKey(); }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowApiKey(!showApiKey)}
-                  style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 4px', display: 'flex', alignItems: 'center' }}
-                  title={showApiKey ? "Hide key" : "Show key"}
-                >
-                  {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-
-              {/* Error Message Alert */}
-              {keyError && (
-                <div style={{
-                  background: 'rgba(239, 68, 68, 0.12)',
-                  border: '1px solid rgba(239, 68, 68, 0.4)',
-                  borderRadius: '12px',
-                  padding: '10px 14px',
-                  color: '#fca5a5',
-                  fontSize: '0.84rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  marginBottom: '10px',
-                  textAlign: 'left',
-                  width: '100%',
-                  maxWidth: '380px'
-                }}>
-                  <AlertTriangle size={16} color="#ef4444" style={{ flexShrink: 0 }} />
-                  <span>{keyError}</span>
-                </div>
-              )}
-
-              {/* Key Success Confirmation */}
-              {keySuccess && (
-                <div style={{
-                  background: 'rgba(34, 197, 94, 0.12)',
-                  border: '1px solid rgba(34, 197, 94, 0.4)',
-                  borderRadius: '12px',
-                  padding: '10px 14px',
-                  color: '#86efac',
-                  fontSize: '0.84rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  marginBottom: '10px',
-                  textAlign: 'left',
-                  width: '100%',
-                  maxWidth: '380px'
-                }}>
-                  <CheckCircle2 size={16} color="#22c55e" style={{ flexShrink: 0 }} />
-                  <span>Key Verified ✓ Continuing...</span>
-                </div>
-              )}
-
-              <button
-                type="button"
-                className="btn-onboarding-primary"
-                onClick={handleValidateApiKey}
-                disabled={keyValidating}
-              >
-                {keyValidating ? (
-                  <>
-                    <span className="status-dot-pulse" style={{ background: '#ffffff' }}></span>
-                    <span>Validating with Google...</span>
-                  </>
-                ) : keySuccess ? (
-                  <>
-                    <Check size={16} />
-                    <span>Key Verified ✓</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Validate & Continue →</span>
-                  </>
                 )}
-              </button>
 
-              <button
-                type="button"
-                onClick={() => setOnboardingStep(6)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#94a3b8',
-                  fontSize: '0.82rem',
-                  cursor: 'pointer',
-                  marginTop: '12px',
-                  textDecoration: 'underline'
-                }}
-              >
-                Skip for now (Basic Mode: Weather, News, Finance & Tasks) →
-              </button>
+                {/* Key Success Confirmation */}
+                {keySuccess && (
+                  <div style={{
+                    background: 'rgba(34, 197, 94, 0.12)',
+                    border: '1px solid rgba(34, 197, 94, 0.4)',
+                    borderRadius: '12px',
+                    padding: '10px 14px',
+                    color: '#86efac',
+                    fontSize: '0.84rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    marginBottom: '10px',
+                    textAlign: 'left',
+                    width: '100%',
+                    maxWidth: '420px'
+                  }}>
+                    <CheckCircle2 size={16} color="#22c55e" style={{ flexShrink: 0 }} />
+                    <span>Key Verified ✓ Continuing...</span>
+                  </div>
+                )}
 
-              {/* Accordion Guide: How to get key */}
-              <div style={{ width: '100%', maxWidth: '380px', marginTop: '16px' }}>
                 <button
                   type="button"
-                  onClick={() => setShowKeyGuide(!showKeyGuide)}
+                  className="btn-onboarding-primary"
+                  onClick={() => handleValidateApiKey(currentVal, selectedProviderTab)}
+                  disabled={keyValidating}
+                  style={{ width: '100%', maxWidth: '420px' }}
+                >
+                  {keyValidating ? (
+                    <>
+                      <span className="status-dot-pulse" style={{ background: '#ffffff' }}></span>
+                      <span>Validating with {currentProv.name}...</span>
+                    </>
+                  ) : keySuccess ? (
+                    <>
+                      <Check size={16} />
+                      <span>Key Verified ✓</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Validate & Continue →</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setOnboardingStep(6)}
                   style={{
                     background: 'none',
                     border: 'none',
                     color: '#94a3b8',
-                    fontSize: '0.8rem',
+                    fontSize: '0.82rem',
                     cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    margin: '0 auto',
+                    marginTop: '12px',
                     textDecoration: 'underline'
                   }}
                 >
-                  <HelpCircle size={14} />
-                  <span>How to get a free Google Gemini key (takes 2 minutes)</span>
+                  Skip for now (Basic Mode: Weather, News, Finance & Tasks) →
                 </button>
 
-                {showKeyGuide && (
-                  <div style={{
-                    background: 'rgba(255, 255, 255, 0.03)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                    borderRadius: '12px',
-                    padding: '12px 14px',
-                    marginTop: '10px',
-                    fontSize: '0.8rem',
-                    color: '#cbd5e1',
-                    lineHeight: '1.5',
-                    textAlign: 'left'
-                  }}>
-                    <p style={{ margin: '0 0 6px 0', fontWeight: 600, color: 'var(--accent-cyan)' }}>Quick Steps:</p>
-                    <ol style={{ paddingLeft: '18px', margin: 0 }}>
-                      <li>Visit <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" style={{ color: '#38bdf8' }}>aistudio.google.com</a></li>
-                      <li>Sign in with your Google account.</li>
-                      <li>Click <strong>"Get API key"</strong> → <strong>"Create API key"</strong>.</li>
-                      <li>Copy the generated key (starts with <code>AIzaSy...</code>) and paste it above.</li>
-                    </ol>
-                  </div>
-                )}
+                {/* Accordion Guide: How to get key */}
+                <div style={{ width: '100%', maxWidth: '420px', marginTop: '16px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowKeyGuide(!showKeyGuide)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#94a3b8',
+                      fontSize: '0.8rem',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      margin: '0 auto',
+                      textDecoration: 'underline'
+                    }}
+                  >
+                    <HelpCircle size={14} />
+                    <span>{currentProv.guideTitle}</span>
+                  </button>
+
+                  {showKeyGuide && (
+                    <div style={{
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      borderRadius: '12px',
+                      padding: '12px 14px',
+                      marginTop: '10px',
+                      fontSize: '0.8rem',
+                      color: '#cbd5e1',
+                      lineHeight: '1.5',
+                      textAlign: 'left'
+                    }}>
+                      <p style={{ margin: '0 0 6px 0', fontWeight: 600, color: currentProv.color }}>
+                        Quick Steps for {currentProv.name}:
+                      </p>
+                      <ol style={{ paddingLeft: '18px', margin: 0 }}>
+                        {currentProv.guideSteps.map((s, idx) => (
+                          <li key={idx} style={{ marginBottom: '4px' }}>
+                            {s.link ? (
+                              <a href={s.link} target="_blank" rel="noreferrer" style={{ color: currentProv.color, textDecoration: 'underline' }}>
+                                {s.text} ↗
+                              </a>
+                            ) : (
+                              s.text
+                            )}
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* STEP 6: VOICE SELECTION */}
           {onboardingStep === 6 && (
@@ -5751,11 +5865,11 @@ export default function App() {
             <div className="settings-row-item" onClick={() => setActiveSubModal('key')}>
               <div className="settings-row-left">
                 <div className="settings-row-icon-box"><Key size={16} /></div>
-                <span>Key</span>
+                <span>AI Platform & Keys</span>
               </div>
               <div className="settings-row-right">
-                <span style={{ fontFamily: 'JetBrains Mono', fontSize: '0.8rem' }}>
-                  {apiKey ? `••••${apiKey.slice(-4)}` : 'Set Key'}
+                <span style={{ fontSize: '0.78rem', color: '#38bdf8', fontWeight: 600 }}>
+                  {activeProvider === 'openai' ? '🤖 ChatGPT' : activeProvider === 'grok' ? '⚡ Grok' : '♊ Gemini'}
                 </span>
                 <ChevronRight size={16} />
               </div>
@@ -5971,6 +6085,11 @@ export default function App() {
                     currentTime={currentTime}
                     weatherData={weather}
                     userLocationName={userLocationName}
+                    cityGuide={cityGuide}
+                    onAskAether={(q) => {
+                      setShowDashboard(false);
+                      setPrompt(q);
+                    }}
                     combinedTasks={combinedTasks}
                     tasks={tasks}
                     getTodayPendingCount={getTodayPendingCount}
@@ -7676,6 +7795,12 @@ export default function App() {
         showToast={showToast}
         apiKey={apiKey}
         setApiKey={setApiKey}
+        openaiKey={openaiKey}
+        setOpenaiKey={setOpenaiKey}
+        grokKey={grokKey}
+        setGrokKey={setGrokKey}
+        activeProvider={activeProvider}
+        setActiveProvider={setActiveProvider}
         keyError={keyError}
         keyValidating={keyValidating}
         handleValidateApiKey={handleValidateApiKey}

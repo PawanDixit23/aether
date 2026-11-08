@@ -13,7 +13,9 @@ import {
   MapPin,
   Sparkles,
   Plus,
-  Activity
+  Activity,
+  Compass,
+  ExternalLink
 } from 'lucide-react';
 import { AetherParticleSphere } from '../chat/AetherParticleSphere';
 
@@ -22,6 +24,8 @@ export const DashboardView = ({
   currentTime = new Date(),
   weatherData,
   userLocationName,
+  cityGuide,
+  onAskAether,
   combinedTasks = [],
   tasks = [],
   getTodayPendingCount,
@@ -41,6 +45,7 @@ export const DashboardView = ({
   onPlayBriefing
 }) => {
   const [selectedMode, setSelectedMode] = useState('voice'); // 'voice' | 'ask' | 'agent'
+  const [guideTab, setGuideTab] = useState('places'); // 'places' | 'foods' | 'things'
 
   // Dynamic greeting based on current hour
   const getGreeting = () => {
@@ -138,7 +143,7 @@ export const DashboardView = ({
   const spentTodayStr = `₹${calculatedSpentToday.toLocaleString('en-IN')}`;
 
   // 4. Dynamic Live Weather from real briefing API
-  const weatherCity = weatherData?.city_en || weatherData?.city || userLocationName || 'Jaipur (Rajasthan)';
+  const weatherCity = userLocationName || weatherData?.city_en || weatherData?.city || 'Your Location';
   const weatherTemp = weatherData?.temp !== undefined && weatherData?.temp !== null 
     ? `${Math.round(weatherData.temp)}°C` 
     : '25°C';
@@ -567,6 +572,321 @@ export const DashboardView = ({
           </div>
         </div>
       </div>
+
+      {/* 4.5 LOCAL CITY EXPLORER & DISCOVERY GUIDE */}
+      {cityGuide && (
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.85))',
+          border: '1px solid rgba(56, 189, 248, 0.25)',
+          borderRadius: '20px',
+          padding: '12px 14px',
+          marginBottom: '10px',
+          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.25)',
+          width: '100%',
+          boxSizing: 'border-box'
+        }}>
+          {/* Header */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div style={{
+                width: '26px',
+                height: '26px',
+                borderRadius: '8px',
+                background: 'rgba(56, 189, 248, 0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#38bdf8'
+              }}>
+                <Compass size={15} />
+              </div>
+              <div>
+                <div style={{ fontSize: '0.86rem', fontWeight: 800, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <span>{cityGuide.city}</span>
+                  <span style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: 500 }}>
+                    {cityGuide.hindi_name ? `• ${cityGuide.hindi_name}` : ''}
+                  </span>
+                </div>
+                <div style={{ fontSize: '0.68rem', color: '#38bdf8', fontWeight: 500 }}>
+                  {cityGuide.tagline || 'Local City Discovery & Flavors'}
+                </div>
+              </div>
+            </div>
+
+            {onAskAether && (
+              <button
+                type="button"
+                onClick={() => onAskAether(`मुझे ${cityGuide.city} के प्रमुख दर्शनीय स्थल और प्रसिद्ध खान-पान के बारे में विस्तार से बताएं।`)}
+                style={{
+                  background: 'rgba(56, 189, 248, 0.12)',
+                  border: '1px solid rgba(56, 189, 248, 0.3)',
+                  borderRadius: '12px',
+                  color: '#38bdf8',
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  padding: '4px 8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                <Sparkles size={11} />
+                <span>Ask Aether</span>
+              </button>
+            )}
+          </div>
+
+          {/* 3 Pills / Tabs: 🏛️ Places | 🍲 Food | 🛍️ Things To Do */}
+          <div style={{
+            display: 'flex',
+            gap: '6px',
+            background: 'rgba(2, 6, 23, 0.5)',
+            padding: '3px',
+            borderRadius: '12px',
+            marginBottom: '10px'
+          }}>
+            {[
+              { id: 'places', label: '🏛️ Places to Visit', count: (cityGuide.places_to_visit || []).length },
+              { id: 'foods', label: '🍲 Famous Food', count: (cityGuide.foods_to_try || []).length },
+              { id: 'things', label: '🛍️ Activities & Bazaars', count: (cityGuide.popular_things || []).length }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setGuideTab(tab.id)}
+                style={{
+                  flex: 1,
+                  padding: '6px 4px',
+                  borderRadius: '9px',
+                  border: guideTab === tab.id ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid transparent',
+                  background: guideTab === tab.id ? 'rgba(56, 189, 248, 0.2)' : 'transparent',
+                  color: guideTab === tab.id ? '#ffffff' : '#94a3b8',
+                  fontSize: '0.72rem',
+                  fontWeight: guideTab === tab.id ? 700 : 500,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  textAlign: 'center',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis'
+                }}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab Content 1: Places to Visit */}
+          {guideTab === 'places' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {(cityGuide.places_to_visit || []).slice(0, 4).map((p, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid rgba(255, 255, 255, 0.06)',
+                    borderRadius: '12px',
+                    padding: '8px 10px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '8px'
+                  }}
+                >
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#f8fafc' }}>
+                        {p.name}
+                      </span>
+                      {p.category && (
+                        <span style={{
+                          fontSize: '0.62rem',
+                          background: 'rgba(56, 189, 248, 0.15)',
+                          color: '#38bdf8',
+                          padding: '1px 5px',
+                          borderRadius: '6px',
+                          fontWeight: 600
+                        }}>
+                          {p.category}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px', lineHeight: 1.3 }}>
+                      {p.desc}
+                    </div>
+                    {p.best_time && (
+                      <div style={{ fontSize: '0.64rem', color: '#cbd5e1', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                        <Clock size={10} color="#38bdf8" />
+                        <span>Best time: {p.best_time}</span>
+                      </div>
+                    )}
+                  </div>
+                  <a
+                    href={`https://www.google.com/maps/search/${encodeURIComponent(p.name + ' ' + (cityGuide.city || ''))}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="View on Google Maps"
+                    style={{
+                      width: '26px',
+                      height: '26px',
+                      borderRadius: '8px',
+                      background: 'rgba(56, 189, 248, 0.1)',
+                      border: '1px solid rgba(56, 189, 248, 0.25)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#38bdf8',
+                      flexShrink: 0,
+                      textDecoration: 'none'
+                    }}
+                  >
+                    <ExternalLink size={12} />
+                  </a>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Tab Content 2: Famous Food to Try */}
+          {guideTab === 'foods' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {(cityGuide.foods_to_try || []).slice(0, 4).map((f, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid rgba(255, 255, 255, 0.06)',
+                    borderRadius: '12px',
+                    padding: '8px 10px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '8px'
+                  }}
+                >
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#f8fafc' }}>
+                      {f.name}
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px', lineHeight: 1.3 }}>
+                      {f.desc}
+                    </div>
+                    {f.famous_at && (
+                      <div style={{ fontSize: '0.64rem', color: '#fbbf24', marginTop: '2px', fontWeight: 500 }}>
+                        ⭐ प्रसिद्ध: {f.famous_at}
+                      </div>
+                    )}
+                  </div>
+                  <a
+                    href={`https://www.google.com/maps/search/${encodeURIComponent(f.name + ' ' + (cityGuide.city || ''))}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Search restaurant on Google Maps"
+                    style={{
+                      width: '26px',
+                      height: '26px',
+                      borderRadius: '8px',
+                      background: 'rgba(251, 191, 36, 0.12)',
+                      border: '1px solid rgba(251, 191, 36, 0.3)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#fbbf24',
+                      flexShrink: 0,
+                      textDecoration: 'none'
+                    }}
+                  >
+                    <ExternalLink size={12} />
+                  </a>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Tab Content 3: Popular Things to Do & Markets */}
+          {guideTab === 'things' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {(cityGuide.popular_things || []).slice(0, 3).map((t, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid rgba(255, 255, 255, 0.06)',
+                    borderRadius: '12px',
+                    padding: '8px 10px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '8px'
+                  }}
+                >
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#f8fafc' }}>
+                        {t.name}
+                      </span>
+                      {t.type && (
+                        <span style={{
+                          fontSize: '0.62rem',
+                          background: 'rgba(168, 85, 247, 0.15)',
+                          color: '#c084fc',
+                          padding: '1px 5px',
+                          borderRadius: '6px',
+                          fontWeight: 600
+                        }}>
+                          {t.type}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px', lineHeight: 1.3 }}>
+                      {t.desc}
+                    </div>
+                  </div>
+                  <a
+                    href={`https://www.google.com/maps/search/${encodeURIComponent(t.name + ' ' + (cityGuide.city || ''))}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="View on Google Maps"
+                    style={{
+                      width: '26px',
+                      height: '26px',
+                      borderRadius: '8px',
+                      background: 'rgba(168, 85, 247, 0.12)',
+                      border: '1px solid rgba(168, 85, 247, 0.3)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#c084fc',
+                      flexShrink: 0,
+                      textDecoration: 'none'
+                    }}
+                  >
+                    <ExternalLink size={12} />
+                  </a>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Local Tip Footer */}
+          {cityGuide.local_tips && cityGuide.local_tips.length > 0 && (
+            <div style={{
+              marginTop: '8px',
+              padding: '6px 8px',
+              background: 'rgba(255, 255, 255, 0.02)',
+              borderLeft: '2px solid #38bdf8',
+              borderRadius: '0 8px 8px 0',
+              fontSize: '0.66rem',
+              color: '#94a3b8',
+              lineHeight: 1.35
+            }}>
+              <strong style={{ color: '#38bdf8' }}>💡 लोकल टिप: </strong>
+              {cityGuide.local_tips[0]}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 5. TODAY'S OVERVIEW METRICS */}
       <div style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '20px', padding: '12px 10px', marginBottom: '10px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)', width: '100%', boxSizing: 'border-box' }}>

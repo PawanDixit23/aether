@@ -1,7 +1,7 @@
 // ⚡ Aether Service Worker — Background Push Notifications (VAPID)
 // Browser बंद होने पर भी GitHub Actions → Server → यह SW → OS Notification!
 
-const CACHE_NAME = 'aether-v3';
+const CACHE_NAME = 'aether-v5';
 const AETHER_ORIGIN = self.location.origin;
 
 self.addEventListener('install', (event) => {
