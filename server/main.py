@@ -447,7 +447,7 @@ async def validate_api_key(req: KeyValidationRequest):
     # Auto-detect provider if default was sent
     if key.startswith("sk-"):
         provider = "openai"
-    elif key.startswith("xai-"):
+    elif key.startswith("xai-") or key.startswith("grok_") or key.startswith("grok-"):
         provider = "grok"
     elif key.startswith("AIzaSy"):
         provider = "gemini"

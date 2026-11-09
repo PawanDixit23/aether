@@ -1418,8 +1418,8 @@ export default function App() {
       return;
     }
 
-    if (prov === 'grok' && !cleanKey.startsWith('xai-')) {
-      setKeyError('Grok (xAI) Secret Key "xai-" से शुरू होनी चाहिए। कृपया console.x.ai से असली Secret Key कॉपी करें (Key Name नहीं)।');
+    if (prov === 'grok' && !cleanKey.startsWith('xai-') && !cleanKey.startsWith('grok_') && !cleanKey.startsWith('grok-')) {
+      setKeyError('Grok (xAI) API Key "grok_" या "xai-" से शुरू होनी चाहिए। कृपया बॉक्स से पूरी Key कॉपी करें।');
       return;
     }
 

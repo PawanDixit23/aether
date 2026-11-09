@@ -311,8 +311,8 @@ export const AI_PROVIDERS = [
     badge: 'Grok 2 & Beta',
     icon: '⚡',
     color: '#f59e0b',
-    placeholder: 'Paste your Grok API key (xai-...)',
-    keyPrefix: 'xai-',
+    placeholder: 'Paste your Grok API key (grok_... or xai-...)',
+    keyPrefix: 'grok_',
     storageKey: 'aether_grok_key',
     models: [
       { id: 'grok-2-latest', name: 'Grok 2', tag: 'State of the Art' },
