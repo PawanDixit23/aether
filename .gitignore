@@ -83,3 +83,5 @@ local_storage/
 data/
 .vapid_keys.json
 *.vapid_keys.json
+*.apk
+local.properties

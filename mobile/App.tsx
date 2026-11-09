@@ -100,6 +100,30 @@ export default function App() {
     }
   }, [canGoBack]);
 
+  // Handle Deep Linking (Redirects back to App from external browser or OAuth)
+  useEffect(() => {
+    const handleDeepLink = (event: { url: string }) => {
+      const incomingUrl = event?.url;
+      if (incomingUrl) {
+        if (incomingUrl.includes('access_token') || incomingUrl.includes('code=')) {
+          const hashOrSearch = incomingUrl.includes('#') 
+            ? incomingUrl.substring(incomingUrl.indexOf('#'))
+            : (incomingUrl.includes('?') ? incomingUrl.substring(incomingUrl.indexOf('?')) : '');
+          webViewRef.current?.injectJavaScript(`window.location.href = "${AETHER_URL}/${hashOrSearch}"; true;`);
+        } else if (incomingUrl.startsWith('com.pawandixit.aether://') || incomingUrl.startsWith('aether://')) {
+          webViewRef.current?.injectJavaScript(`window.location.reload(); true;`);
+        }
+      }
+    };
+
+    const sub = Linking.addEventListener('url', handleDeepLink);
+    Linking.getInitialURL().then((initUrl) => {
+      if (initUrl) handleDeepLink({ url: initUrl });
+    });
+
+    return () => sub.remove();
+  }, []);
+
   // Loading watchdog & cold-start progress timer
   useEffect(() => {
     let timer: NodeJS.Timeout | null = null;
@@ -279,6 +303,19 @@ export default function App() {
             if (url.includes('/export-csv') || url.includes('/download') || url.endsWith('.csv')) {
               Linking.openURL(url).catch(() => {});
               return false;
+            }
+
+            // 7. Allow Google OAuth and Supabase authentication to complete seamlessly INSIDE the app!
+            // This prevents Google Sign-In from throwing the user into an external browser!
+            if (
+              url.includes('supabase.co') ||
+              url.includes('accounts.google.com') ||
+              url.includes('google.com/accounts') ||
+              url.includes('google.com/signin') ||
+              url.includes('google.com/o/oauth') ||
+              url.includes('oauth')
+            ) {
+              return true;
             }
 
             if (
