@@ -1399,24 +1399,47 @@ async def translate_text(req: TranslateRequest):
 def detect_user_location(request: Request):
     """Detect client geographic location dynamically from client IP header or network IP."""
     client_ip = ""
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        client_ip = xff.split(",")[0].strip()
+    for hdr in ["cf-connecting-ip", "x-real-ip", "x-forwarded-for"]:
+        val = request.headers.get(hdr, "")
+        if val:
+            first_ip = val.split(",")[0].strip()
+            if first_ip and not first_ip.startswith(("127.", "10.", "192.168.", "172.16.", "::1")):
+                client_ip = first_ip
+                break
     
-    # Query URL: if public IP use it, otherwise detect via public gateway
-    is_private_ip = not client_ip or client_ip.startswith("127.") or client_ip.startswith("10.") or client_ip.startswith("192.168.") or client_ip == "::1"
-    url = "http://ip-api.com/json/" if is_private_ip else f"http://ip-api.com/json/{client_ip}"
-    
+    # 1. Try ipwho.is with client IP
+    if client_ip:
+        try:
+            req = urllib.request.Request(f"https://ipwho.is/{client_ip}", headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode())
+                if data.get("success") and data.get("city"):
+                    city = data.get("city")
+                    region = data.get("region") or data.get("country") or ""
+                    lat = float(data.get("latitude") or 26.9136)
+                    lon = float(data.get("longitude") or 75.7858)
+                    return {
+                        "status": "success",
+                        "city": city,
+                        "region": region,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "display_name": f"{city}, {region}".strip(", ")
+                    }
+        except Exception as e:
+            print(f"[Aether Engine] ipwho.is error: {e}")
+
+    # 2. Try ip-api.com
+    url = f"http://ip-api.com/json/{client_ip}" if client_ip else "http://ip-api.com/json/"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode())
-            if data.get("status") == "success":
-                city = data.get("city") or "Jaipur"
-                region = data.get("regionName") or "Rajasthan"
-                country = data.get("country") or "India"
-                # Safety: If geo service returned foreign cloud datacenter IP (Singapore, Frankfurt, etc.), default to India
-                if any(f in (city + " " + region + " " + country).lower() for f in ["singapore", "frankfurt", "oregon", "virginia", "ireland", "amsterdam", "zurich"]):
+            if data.get("status") == "success" and data.get("city"):
+                city = data.get("city")
+                region = data.get("regionName") or data.get("country") or ""
+                # If foreign cloud server datacenter IP without client IP header
+                if not client_ip and any(f in (city + " " + region).lower() for f in ["singapore", "frankfurt", "oregon", "virginia"]):
                     city = "Jaipur"
                     region = "Rajasthan"
                 return {
@@ -1425,18 +1448,18 @@ def detect_user_location(request: Request):
                     "region": region,
                     "latitude": data.get("lat", 26.9136),
                     "longitude": data.get("lon", 75.7858),
-                    "display_name": f"{city}, {region}"
+                    "display_name": f"{city}, {region}".strip(", ")
                 }
     except Exception as e:
         print(f"[Aether Engine] IP Location lookup error: {e}")
     
     return {
-        "status": "success",
-        "city": "Jaipur",
-        "region": "Rajasthan",
+        "status": "unknown",
+        "city": "",
+        "region": "",
         "latitude": 26.9136,
         "longitude": 75.7858,
-        "display_name": "Jaipur, Rajasthan"
+        "display_name": ""
     }
 
 # ----------------- Chat Sessions & History -----------------

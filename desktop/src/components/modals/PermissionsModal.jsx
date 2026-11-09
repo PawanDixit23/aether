@@ -1,5 +1,5 @@
-import React from 'react';
-import { ShieldCheck, Mic, Bell, MapPin, Volume2, Sparkles, Radio } from 'lucide-react';
+import React, { useState } from 'react';
+import { ShieldCheck, Mic, Bell, MapPin, Volume2, Sparkles, Radio, RefreshCw, Edit2, Check } from 'lucide-react';
 
 export const PermissionsModal = ({
   isOpen,
@@ -14,6 +14,8 @@ export const PermissionsModal = ({
   locationEnabled,
   handleToggleLocation,
   userLocationName,
+  handleDetectLocation,
+  handleSetCustomCity,
   voiceOutputEnabled,
   setVoiceOutputEnabled,
   wakeWordEnabled,
@@ -22,6 +24,30 @@ export const PermissionsModal = ({
   showToast
 }) => {
   if (!isOpen) return null;
+
+  const [isEditingCity, setIsEditingCity] = useState(false);
+  const [tempCity, setTempCity] = useState(userLocationName || '');
+  const [isDetecting, setIsDetecting] = useState(false);
+
+  const onTriggerDetect = async (e) => {
+    if (e) e.stopPropagation();
+    if (!handleDetectLocation) return;
+    setIsDetecting(true);
+    try {
+      await handleDetectLocation(true);
+    } finally {
+      setIsDetecting(false);
+    }
+  };
+
+  const onSaveCustomCity = (e) => {
+    if (e) e.stopPropagation();
+    if (!tempCity || !tempCity.trim()) return;
+    if (handleSetCustomCity) {
+      handleSetCustomCity(tempCity.trim());
+    }
+    setIsEditingCity(false);
+  };
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', backdropFilter: 'blur(18px)', zIndex: 120, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
@@ -110,12 +136,62 @@ export const PermissionsModal = ({
               <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: locationEnabled ? 'rgba(244,63,94,0.2)' : 'rgba(255,255,255,0.06)', border: locationEnabled ? '1px solid rgba(244,63,94,0.4)' : '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: locationEnabled ? '#fb7185' : '#64748b', flexShrink: 0, transition: 'all 0.2s' }}>
                 <MapPin size={22} />
               </div>
-              <div style={{ minWidth: 0 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>Location & Maps</div>
-                <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>Local weather & city briefing</div>
-                {locationEnabled && userLocationName && (
-                  <div style={{ marginTop: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: '8px', padding: '3px 10px', color: '#34d399', fontSize: '0.72rem', fontWeight: 600, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    📍 {userLocationName}
+                <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>Dynamic weather, travel places & food guide</div>
+                
+                {locationEnabled && (
+                  <div style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: '8px', padding: '3px 9px', color: '#34d399', fontSize: '0.72rem', fontWeight: 600, maxWidth: '170px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      📍 {userLocationName || 'Detecting...'}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={onTriggerDetect}
+                      disabled={isDetecting}
+                      style={{ background: 'rgba(56,189,248,0.12)', border: '1px solid rgba(56,189,248,0.3)', color: '#38bdf8', padding: '3px 8px', borderRadius: '7px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                    >
+                      <RefreshCw size={11} style={{ animation: isDetecting ? 'spin 1s linear infinite' : 'none' }} />
+                      <span>{isDetecting ? 'Locating...' : 'Detect'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setTempCity(userLocationName || '');
+                        setIsEditingCity(!isEditingCity);
+                      }}
+                      style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#cbd5e1', padding: '3px 8px', borderRadius: '7px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                    >
+                      <Edit2 size={11} />
+                      <span>{isEditingCity ? 'Cancel' : 'Edit'}</span>
+                    </button>
+                  </div>
+                )}
+
+                {locationEnabled && isEditingCity && (
+                  <div style={{ marginTop: '8px', display: 'flex', gap: '6px', alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                    <input
+                      type="text"
+                      placeholder="Enter city (e.g. Mumbai, Delhi)..."
+                      value={tempCity}
+                      onChange={e => setTempCity(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') onSaveCustomCity(e);
+                      }}
+                      autoFocus
+                      style={{ flex: 1, background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(56,189,248,0.4)', borderRadius: '8px', padding: '4px 8px', color: '#fff', fontSize: '0.78rem', outline: 'none' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={onSaveCustomCity}
+                      style={{ background: '#38bdf8', color: '#090d16', border: 'none', borderRadius: '8px', padding: '4px 10px', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+                    >
+                      <Check size={12} />
+                      <span>Save</span>
+                    </button>
                   </div>
                 )}
               </div>

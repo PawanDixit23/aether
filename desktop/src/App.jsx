@@ -1417,6 +1417,16 @@ export default function App() {
       setKeyError(`कृपया अपनी ${provLabel} API Key दर्ज करें (Please enter your API key)`);
       return;
     }
+
+    if (prov === 'grok' && !cleanKey.startsWith('xai-')) {
+      setKeyError('Grok (xAI) Secret Key "xai-" से शुरू होनी चाहिए। कृपया console.x.ai से असली Secret Key कॉपी करें (Key Name नहीं)।');
+      return;
+    }
+
+    if (prov === 'openai' && !cleanKey.startsWith('sk-')) {
+      setKeyError('OpenAI (ChatGPT) Secret Key "sk-" से शुरू होनी चाहिए। कृपया platform.openai.com से Secret Key कॉपी करें।');
+      return;
+    }
     setKeyValidating(true);
     setKeyError('');
     setKeySuccess(false);
@@ -2298,7 +2308,138 @@ export default function App() {
     }
   };
 
-  const handleToggleLocation = () => {
+  const detectRealTimeLocation = async (manualToast = false) => {
+    if (manualToast) showToast('📍 सटीक लोकेशन खोजी जा रही है...', 'info');
+
+    const saveAndApply = (coords, locName) => {
+      if (!locName || locName.toLowerCase().includes('singapore')) return false;
+      setLocationEnabled(true);
+      localStorage.setItem('aether_location_enabled', 'true');
+      if (coords && coords.latitude && coords.longitude) {
+        setUserCoords(coords);
+      }
+      setUserLocationName(locName);
+      localStorage.setItem('aether_user_city', locName);
+      if (manualToast) showToast(`✓ लोकेशन सक्रिय: ${locName} 📍`, 'success');
+      return true;
+    };
+
+    // 1. Direct GPS Hardware Geolocation (Android native / Browser GPS)
+    const tryGps = () => new Promise((resolve) => {
+      if (typeof navigator === 'undefined' || !navigator.geolocation) return resolve(null);
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          try {
+            const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+            const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
+            if (locName && !locName.includes('°')) {
+              resolve({ coords, locName });
+              return;
+            }
+          } catch (e) {}
+          resolve(null);
+        },
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+      );
+    });
+
+    // 2. Multi-Source Client-Side IP Geocoding (Bypasses Android WebView GPS permission block 100%)
+    const tryClientIp = async () => {
+      // BigDataCloud client reverse geocoding
+      try {
+        const res = await fetch('https://api.bigdatacloud.net/data/reverse-geocode-client');
+        if (res.ok) {
+          const d = await res.json();
+          const city = d.city || d.locality || d.principalSubdivision;
+          const state = d.principalSubdivision;
+          const name = [city, state].filter(Boolean).join(', ');
+          if (name && !name.toLowerCase().includes('singapore')) {
+            return {
+              coords: { latitude: d.latitude, longitude: d.longitude },
+              locName: name
+            };
+          }
+        }
+      } catch (e) {}
+
+      // ipwho.is client geocoding
+      try {
+        const res = await fetch('https://ipwho.is/');
+        if (res.ok) {
+          const d = await res.json();
+          if (d.success && d.city) {
+            const name = [d.city, d.region].filter(Boolean).join(', ');
+            if (name && !name.toLowerCase().includes('singapore')) {
+              return {
+                coords: { latitude: d.latitude, longitude: d.longitude },
+                locName: name
+              };
+            }
+          }
+        }
+      } catch (e) {}
+
+      // freeipapi.com
+      try {
+        const res = await fetch('https://freeipapi.com/api/json');
+        if (res.ok) {
+          const d = await res.json();
+          if (d.cityName) {
+            const name = [d.cityName, d.regionName].filter(Boolean).join(', ');
+            if (name && !name.toLowerCase().includes('singapore')) {
+              return {
+                coords: { latitude: d.latitude, longitude: d.longitude },
+                locName: name
+              };
+            }
+          }
+        }
+      } catch (e) {}
+
+      return null;
+    };
+
+    // A: Try GPS first
+    const gpsRes = await tryGps();
+    if (gpsRes && saveAndApply(gpsRes.coords, gpsRes.locName)) {
+      return gpsRes.locName;
+    }
+
+    // B: Fall back to client phone network IP
+    const ipRes = await tryClientIp();
+    if (ipRes && saveAndApply(ipRes.coords, ipRes.locName)) {
+      return ipRes.locName;
+    }
+
+    // C: Fall back to server detection
+    try {
+      const srv = await fetch(`${API_BASE}/location/detect`);
+      if (srv.ok) {
+        const d = await srv.json();
+        if (d.display_name && !d.display_name.toLowerCase().includes('singapore')) {
+          if (saveAndApply({ latitude: d.latitude, longitude: d.longitude }, d.display_name)) {
+            return d.display_name;
+          }
+        }
+      }
+    } catch (e) {}
+
+    if (manualToast) showToast('लोकेशन स्वतः नहीं मिली, कृपया Permissions में Edit दबाकर शहर दर्ज करें 📍', 'warning');
+    return null;
+  };
+
+  const handleSetCustomCity = (cityName) => {
+    if (!cityName || !cityName.trim()) return;
+    const cleanCity = cityName.trim();
+    setUserLocationName(cleanCity);
+    localStorage.setItem('aether_user_city', cleanCity);
+    localStorage.setItem('aether_location_enabled', 'true');
+    setLocationEnabled(true);
+    showToast(`✓ शहर सेट किया गया: ${cleanCity} 📍`, 'success');
+  };
+
+  const handleToggleLocation = async () => {
     if (locationEnabled) {
       setLocationEnabled(false);
       localStorage.setItem('aether_location_enabled', 'false');
@@ -2307,85 +2448,7 @@ export default function App() {
       localStorage.removeItem('aether_user_city');
       showToast('लोकेशन अनुमति बंद की गई (Location Disabled)', 'info');
     } else {
-      showToast('📍 सटीक लोकेशन खोजी जा रही है...', 'info');
-
-      const applyLocation = (coords, locName) => {
-        let cleanName = locName;
-        let cleanCoords = coords;
-        if (!cleanName || cleanName.toLowerCase().includes('singapore')) {
-          cleanName = 'Jaipur, Rajasthan';
-          cleanCoords = { latitude: 26.9136, longitude: 75.7858 };
-        }
-        setLocationEnabled(true);
-        localStorage.setItem('aether_location_enabled', 'true');
-        if (cleanCoords) setUserCoords(cleanCoords);
-        if (cleanName) {
-          setUserLocationName(cleanName);
-          localStorage.setItem('aether_user_city', cleanName);
-        }
-      };
-
-      // 1. Direct GPS Hardware Geolocation (Top priority: accurate device physical position)
-      if (typeof navigator !== 'undefined' && navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          async (pos) => {
-            const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-            try {
-              let locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
-              if (!locName || locName.toLowerCase().includes('singapore')) {
-                locName = 'Jaipur, Rajasthan';
-              }
-              applyLocation(coords, locName);
-              showToast(`✓ लोकेशन सक्रिय: ${locName} 📍`, 'success');
-            } catch (geoErr) {
-              applyLocation(coords, 'Jaipur, Rajasthan');
-              showToast('✓ लोकेशन सक्रिय 📍', 'success');
-            }
-          },
-          async (err) => {
-            console.warn('GPS read failed, falling back to phone network location:', err);
-            // Fallback A: Direct client phone IP
-            try {
-              const ipRes = await fetch('https://ipapi.co/json/');
-              if (ipRes.ok) {
-                const ipData = await ipRes.json();
-                let cityName = [ipData.city, ipData.region].filter(Boolean).join(', ');
-                if (!cityName || cityName.toLowerCase().includes('singapore')) {
-                  cityName = 'Jaipur, Rajasthan';
-                }
-                const coords = { latitude: ipData.latitude || 26.9136, longitude: ipData.longitude || 75.7858 };
-                applyLocation(coords, cityName);
-                showToast(`✓ लोकेशन सक्रिय: ${cityName} 📍`, 'success');
-                return;
-              }
-            } catch (e) {}
-
-            // Fallback B: Server detect (with Singapore filter)
-            try {
-              const srvRes = await fetch(`${API_BASE}/location/detect`);
-              if (srvRes.ok) {
-                const srvData = await srvRes.json();
-                let name = srvData.display_name || `${srvData.city}, ${srvData.region}`;
-                if (!name || name.toLowerCase().includes('singapore')) {
-                  name = 'Jaipur, Rajasthan';
-                }
-                applyLocation({ latitude: srvData.latitude || 26.9136, longitude: srvData.longitude || 75.7858 }, name);
-                showToast(`✓ लोकेशन सक्रिय: ${name} 📍`, 'success');
-                return;
-              }
-            } catch (e) {}
-
-            applyLocation({ latitude: 26.9136, longitude: 75.7858 }, 'Jaipur, Rajasthan');
-            showToast('✓ लोकेशन सक्रिय: Jaipur, Rajasthan 📍', 'success');
-          },
-          { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
-        );
-      } else {
-        applyLocation({ latitude: 26.9136, longitude: 75.7858 }, 'Jaipur, Rajasthan');
-        showToast('✓ लोकेशन सक्रिय: Jaipur, Rajasthan 📍', 'success');
-      }
-
-      // Notify native shell if running in WebView
+      await detectRealTimeLocation(true);
       if (typeof window !== 'undefined' && window.ReactNativeWebView) {
         try {
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_LOCATION_PERMISSION' }));
@@ -2394,22 +2457,12 @@ export default function App() {
     }
   };
 
-  // Auto-refresh location if previously enabled
+  // Auto-refresh location if previously enabled or if stuck on old default
   useEffect(() => {
-    if (localStorage.getItem('aether_location_enabled') === 'true' && typeof navigator !== 'undefined' && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        async (pos) => {
-          const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-          setUserCoords(coords);
-          const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
-          if (locName) {
-            setUserLocationName(locName);
-            localStorage.setItem('aether_user_city', locName);
-          }
-        },
-        () => {},
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
-      );
+    const isLocEnabled = localStorage.getItem('aether_location_enabled') === 'true';
+    const savedCity = localStorage.getItem('aether_user_city') || '';
+    if (isLocEnabled || savedCity.includes('Jaipur, Rajasthan')) {
+      detectRealTimeLocation(false);
     }
   }, []);
 
@@ -3168,36 +3221,10 @@ export default function App() {
     return () => clearInterval(reminderChecker);
   }, [tasks, googleTasks]);
 
-  // Browser Geolocation
+  // Initial real-time location sync
   useEffect(() => {
-    if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        async pos => {
-          const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-          setUserCoords(coords);
-          try {
-            const locName = await reverseGeocodeLocation(coords.latitude, coords.longitude);
-            if (locName && !locName.toLowerCase().includes('singapore')) {
-              setUserLocationName(locName);
-              localStorage.setItem('aether_user_city', locName);
-              localStorage.setItem('aether_location_enabled', 'true');
-            }
-          } catch (e) {}
-        },
-        async () => {
-          try {
-            const srvRes = await fetch(`${API_BASE}/location/detect`);
-            if (srvRes.ok) {
-              const srvData = await srvRes.json();
-              if (srvData.display_name && !userLocationName) {
-                setUserLocationName(srvData.display_name);
-                setUserCoords({ latitude: srvData.latitude, longitude: srvData.longitude });
-              }
-            }
-          } catch (e) {}
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-      );
+    if (!userLocationName || userLocationName.includes('Jaipur, Rajasthan') || userLocationName.toLowerCase().includes('singapore')) {
+      detectRealTimeLocation(false);
     }
   }, []);
 
@@ -7846,6 +7873,11 @@ export default function App() {
         locationEnabled={locationEnabled}
         handleToggleLocation={handleToggleLocation}
         userLocationName={userLocationName}
+        handleDetectLocation={detectRealTimeLocation}
+        handleSetCustomCity={(city) => {
+          handleSetCustomCity(city);
+          refreshAllData({ force: true });
+        }}
         voiceOutputEnabled={voiceOutputEnabled}
         setVoiceOutputEnabled={setVoiceOutputEnabled}
         wakeWordEnabled={wakeWordEnabled}

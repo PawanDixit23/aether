@@ -1571,7 +1571,7 @@ def clean_task_title(text: str) -> str:
     cleaned = re.sub(r'\s+', ' ', cleaned).strip(' ?.,!:\n')
     return cleaned if len(cleaned) > 2 else text.strip(' ?.,!:\n')
 
-def build_system_prompt(context: dict = None, live_feed: str = "", language: str = "auto", user_name: str = "Operator", user_query: str = "", has_image: bool = False) -> str:
+def build_system_prompt(context: dict = None, live_feed: str = "", language: str = "auto", user_name: str = "Operator", user_query: str = "", has_image: bool = False, active_provider: str = "gemini") -> str:
     ctx_str = ""
     display_name = user_name.strip() if user_name and user_name.strip() else "Operator"
     current_time_str = (context.get('current_time') if context else None) or get_now_str()
@@ -1722,6 +1722,25 @@ GENERAL IMAGES (NON-RECEIPTS):
   3. Strictly respect the language instruction above (e.g. respond in beautiful, fluent Hindi when language is Hindi).
 """
 
+    norm_prov = (active_provider or "gemini").lower().strip()
+    if norm_prov in ["openai", "chatgpt"]:
+        prov_brand_name = "OpenAI ChatGPT (GPT-4o / GPT-4o-mini)"
+    elif norm_prov in ["grok", "xai"]:
+        prov_brand_name = "xAI Grok (Grok-2)"
+    else:
+        prov_brand_name = "Google Gemini (Gemini 2.5 Flash / 1.5 Pro)"
+
+    identity_rules = f"""
+AI ENGINE & ACTIVE MODEL IDENTITY DIRECTIVE:
+You are Aether ⚡, powered by {prov_brand_name}.
+CRITICAL HONESTY & IDENTITY RULES:
+- When the user asks about your model, provider, engine, or creator (e.g. "Which model you are using?", "Tum konsa model hoo?", "Kaun sa model ho?", "Who trained you?", "Are you ChatGPT or Gemini?"):
+  • YOU MUST STATE CLEARLY AND ACCURATELY THAT YOUR ACTIVE AI ENGINE IS {prov_brand_name}.
+  • IN HINDI: "मैं Aether AI हूँ, और वर्तमान में मेरा मुख्य इंटेलिजेंस इंजन {prov_brand_name} द्वारा संचालित है।"
+  • IN ENGLISH: "I am Aether AI, and my intelligence engine is currently powered by {prov_brand_name}."
+  • NEVER claim to be trained by Google if your active engine is OpenAI ChatGPT or xAI Grok!
+"""
+
     return f"""You are Aether ⚡, the Ultimate Autonomous AI Executive, Digital Chief of Staff, and Complete Work Engine for {display_name}.
 You are NOT just a finance or task assistant — YOU HANDLE AND EXECUTE ALL WORK for {display_name}:
 - Deep technical work, coding, debugging, software architecture, scripting, logic
@@ -1734,6 +1753,7 @@ Whatever work, challenge, or question {display_name} brings, you handle it maste
 {ctx_str}
 {lang_rules}
 {image_rules}
+{identity_rules}
 Your job is to analyze the user's input and return a strict JSON response.
 
 CRITICAL INSTRUCTIONS FOR TASKS & REMINDERS:
@@ -1915,9 +1935,10 @@ async def _call_openai_compatible_api(
     recent_chat: list,
     user_input: str,
     image_data: str = None
-) -> str:
+) -> tuple:
+    """Returns (content, error_msg)"""
     if not api_key or not api_key.strip():
-        return ""
+        return ("", "API key missing or empty")
     
     messages = [{"role": "system", "content": sys_prompt}]
     if recent_chat:
@@ -1943,6 +1964,7 @@ async def _call_openai_compatible_api(
         "Content-Type": "application/json"
     }
 
+    last_err = ""
     async with httpx.AsyncClient(timeout=22.0) as client:
         for model in models:
             try:
@@ -1958,12 +1980,22 @@ async def _call_openai_compatible_api(
                     if choices:
                         content = choices[0].get("message", {}).get("content", "").strip()
                         if content:
-                            return content
+                            return (content, "")
+                elif resp.status_code == 401:
+                    last_err = "गलत या अमान्य API Key (401 Unauthorized)"
+                    print(f"[Aether Multi-LLM] {model} at {endpoint} 401: Invalid key")
+                    break
+                elif resp.status_code == 429:
+                    last_err = "API कोटा समाप्त (429 Insufficient Quota / Rate Limited)"
+                    print(f"[Aether Multi-LLM] {model} at {endpoint} 429: Quota exhausted")
+                    break
                 else:
+                    last_err = f"HTTP {resp.status_code}: {resp.text[:80]}"
                     print(f"[Aether Multi-LLM] {model} at {endpoint} returned {resp.status_code}: {resp.text[:100]}")
             except Exception as e:
+                last_err = str(e)
                 print(f"[Aether Multi-LLM] Error calling {model} at {endpoint}: {e}")
-    return ""
+    return ("", last_err)
 
 async def parse_intent_with_llm(
     user_input: str, 
@@ -2100,10 +2132,14 @@ async def parse_intent_with_llm(
             live_feed += f"[{heading}]:\n{news_items}\n\n"
 
     has_image = bool(image_data and image_data.strip())
-    sys_prompt = build_system_prompt(context, live_feed, language=effective_lang, user_name=user_name, user_query=user_input, has_image=has_image)
     
     # Determine effective primary AI Provider (gemini | openai | grok)
     eff_provider = (active_provider or "").lower().strip()
+    if eff_provider in ["chatgpt", "openai"]:
+        eff_provider = "openai"
+    elif eff_provider in ["xai", "grok"]:
+        eff_provider = "grok"
+
     clean_grok_key = (grok_key or "").strip()
     clean_openai_key = (openai_key or "").strip()
     clean_gemini_key = (api_key or "").strip()
@@ -2116,10 +2152,50 @@ async def parse_intent_with_llm(
         else:
             eff_provider = "gemini"
 
+    # Dedicated AI Model & Provider Identity Intercept
+    model_query_triggers = [
+        "which model", "what model", "which ai", "what ai", "konsa model", "kaun sa model", 
+        "kaunsa model", "tum konsa model", "tum kaun sa model", "model name", "who made you",
+        "who created you", "who trained you", "tumhe kisne banaya", "tumhe kisne train kiya",
+        "chatgpt ho ya gemini", "grok ho ya gemini", "kon sa model"
+    ]
+    is_model_query = any(mq in user_lower for mq in model_query_triggers)
+    if is_model_query:
+        if eff_provider == "openai":
+            active_engine_name = "OpenAI ChatGPT (GPT-4o / GPT-4o-mini)"
+        elif eff_provider == "grok":
+            active_engine_name = "xAI Grok (Grok-2)"
+        else:
+            active_engine_name = "Google Gemini (Gemini 2.5 Flash / 1.5 Pro)"
+
+        is_hi = (effective_lang == "hi") or any(w in user_lower for w in ["tum", "konsa", "kaun", "hoo", "ho", "kisne", "मॉडल", "तुम", "कौन", "हो"])
+        if is_hi:
+            model_reply = f"मैं Aether AI हूँ, और वर्तमान में मेरा मुख्य इंटेलिजेंस इंजन **{active_engine_name}** द्वारा संचालित है। आपकी सभी क्वेरीज़ और कार्य इसी AI मॉडल द्वारा प्रोसेस किए जा रहे हैं।"
+        else:
+            model_reply = f"I am Aether AI, and my intelligence engine is currently powered by **{active_engine_name}**. All your requests and actions are processed directly through this model."
+
+        return {
+            "action": "query",
+            "confidence": 1.0,
+            "confidence_level": "high",
+            "data": { "response": model_reply },
+            "explanation": f"Active AI model inquiry handled for {active_engine_name}"
+        }
+
+    sys_prompt = build_system_prompt(
+        context, 
+        live_feed, 
+        language=effective_lang, 
+        user_name=user_name, 
+        user_query=user_input, 
+        has_image=has_image,
+        active_provider=eff_provider
+    )
+
     # 1. Primary route: Grok (xAI)
     if eff_provider == "grok" and clean_grok_key:
         grok_models = ["grok-2-latest", "grok-beta", "grok-2-mini"]
-        raw_text = await _call_openai_compatible_api(
+        raw_text, grok_err = await _call_openai_compatible_api(
             "https://api.x.ai/v1/chat/completions",
             clean_grok_key,
             grok_models,
@@ -2132,11 +2208,25 @@ async def parse_intent_with_llm(
             parsed = _extract_llm_action_dict(raw_text, user_input, is_cricket_query, live_cricket_matches)
             if parsed:
                 return parsed
+        elif grok_err and not clean_gemini_key:
+            is_hi = (effective_lang == "hi") or any('\u0900' <= ch <= '\u097f' for ch in user_input)
+            err_msg = (
+                f"⚠️ **xAI Grok API त्रुटि:** {grok_err}।\nकृपया Settings > AI Platform & API Keys में अपनी Grok API Key की जाँच करें।"
+                if is_hi else
+                f"⚠️ **xAI Grok API Error:** {grok_err}.\nPlease verify your Grok API key in Settings > AI Platform & API Keys."
+            )
+            return {
+                "action": "query",
+                "confidence": 0.9,
+                "confidence_level": "medium",
+                "data": { "response": err_msg },
+                "explanation": "Grok API error encountered"
+            }
 
     # 2. Primary route: OpenAI (ChatGPT)
     if eff_provider == "openai" and clean_openai_key:
         openai_models = ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"]
-        raw_text = await _call_openai_compatible_api(
+        raw_text, openai_err = await _call_openai_compatible_api(
             "https://api.openai.com/v1/chat/completions",
             clean_openai_key,
             openai_models,
@@ -2149,6 +2239,20 @@ async def parse_intent_with_llm(
             parsed = _extract_llm_action_dict(raw_text, user_input, is_cricket_query, live_cricket_matches)
             if parsed:
                 return parsed
+        elif openai_err and not clean_gemini_key:
+            is_hi = (effective_lang == "hi") or any('\u0900' <= ch <= '\u097f' for ch in user_input)
+            err_msg = (
+                f"⚠️ **OpenAI (ChatGPT) API त्रुटि:** {openai_err}।\nकृपया Settings > AI Platform & API Keys में अपनी OpenAI कुंजी और अकाउंट बिलिंग/क्रेडिट की जाँच करें।"
+                if is_hi else
+                f"⚠️ **OpenAI (ChatGPT) API Error:** {openai_err}.\nPlease verify your OpenAI API key and account billing credit in Settings > AI Platform & API Keys."
+            )
+            return {
+                "action": "query",
+                "confidence": 0.9,
+                "confidence_level": "medium",
+                "data": { "response": err_msg },
+                "explanation": "OpenAI API error encountered"
+            }
 
     # Strict Multi-Tenant BYOK (Bring Your Own Key) & Owner Account Quota Protection:
     # 1. Top Priority: Client-provided personal API key (from device App Settings / Onboarding)
