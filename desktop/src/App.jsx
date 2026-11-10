@@ -2512,6 +2512,7 @@ export default function App() {
           url: compressedUrl,
           size: Math.round((compressedUrl.length * 3) / 4)
         });
+        setShowDashboard(false);
         showToast('📸 फ़ोटो तैयार है! अपना सवाल पूछें।', 'success');
       }
     }
@@ -2530,6 +2531,7 @@ export default function App() {
           url: compressedUrl,
           size: Math.round((compressedUrl.length * 3) / 4)
         });
+        setShowDashboard(false);
         showToast('🖼️ फ़ोटो जोड़ी गई! अपना सवाल पूछें।', 'success');
       }
     }
@@ -2544,6 +2546,7 @@ export default function App() {
         name: file.name,
         size: (file.size / 1024).toFixed(1) + ' KB'
       });
+      setShowDashboard(false);
       showToast(`📁 फ़ाइल जोड़ी गई: ${file.name}`, 'success');
     }
     e.target.value = '';
@@ -2623,6 +2626,7 @@ export default function App() {
       cameraStreamRef.current = null;
     }
     setIsCameraModalOpen(false);
+    setShowDashboard(false);
     showToast('📸 फ़ोटो कैप्चर कर ली गई! अपना सवाल पूछें।', 'success');
   };
 
@@ -6060,7 +6064,7 @@ export default function App() {
                     )}
                   </button>
 
-                  {/* Settings Button */}
+                  {/* Settings & Profile Avatar Button */}
                   <button 
                     type="button" 
                     className="gemini-icon-btn" 
@@ -6071,19 +6075,30 @@ export default function App() {
                     title="Settings & Profile (सेटिंग्स)"
                     style={{
                       background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      border: userAvatar ? '1.5px solid rgba(56, 189, 248, 0.6)' : '1px solid rgba(255, 255, 255, 0.1)',
                       color: '#e2e8f0',
-                      borderRadius: '12px',
+                      borderRadius: '50%',
                       width: '38px',
                       height: '38px',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       cursor: 'pointer',
-                      transition: 'all 0.15s'
+                      transition: 'all 0.15s',
+                      overflow: 'hidden',
+                      padding: 0
                     }}
                   >
-                    <Settings size={19} />
+                    {userAvatar ? (
+                      <img 
+                        src={userAvatar} 
+                        alt="Profile" 
+                        referrerPolicy="no-referrer"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%', display: 'block' }} 
+                      />
+                    ) : (
+                      <Settings size={19} />
+                    )}
                   </button>
                 </div>
               </header>
@@ -6115,7 +6130,7 @@ export default function App() {
                     cityGuide={cityGuide}
                     onAskAether={(q) => {
                       setShowDashboard(false);
-                      setPrompt(q);
+                      handleSendPrompt(q);
                     }}
                     combinedTasks={combinedTasks}
                     tasks={tasks}
@@ -6128,6 +6143,11 @@ export default function App() {
                     onSwitchToChat={() => setShowDashboard(false)}
                     setActiveSubModal={(modal) => {
                       if (modal) stopBriefingAudio();
+                      if (modal === 'calendar') {
+                        setRemindersViewMode('calendar');
+                      } else if (modal === 'reminders') {
+                        setRemindersViewMode('list');
+                      }
                       setActiveSubModal(modal);
                     }}
                     setIsAddingExpense={setIsAddingExpense}
@@ -6136,10 +6156,12 @@ export default function App() {
                       if (open) stopBriefingAudio();
                       setIsSettingsOpen(open);
                     }}
-                    userAvatar={userAvatar}
+                    userAvatar={userAvatar || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_avatar') : '') || ''}
                     onClose={() => setShowDashboard(false)}
                     onToggleTask={handleToggleTask}
-                    onPlayBriefing={() => handlePlayExecutiveBriefing(false)}
+                    onPlayBriefing={() => handlePlayExecutiveBriefing(true)}
+                    setAgendaFilter={setAgendaFilter}
+                    setRemindersViewMode={setRemindersViewMode}
                   />
                 </div>
               ) : chatHistory.length === 0 ? (
@@ -6822,33 +6844,33 @@ export default function App() {
                 </div>
               )}
 
+              {/* Hidden File Inputs for Camera, Photos & Files — Always mounted for Instant Access from Dashboard and Chat */}
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                ref={cameraInputRef}
+                style={{ display: 'none' }}
+                onChange={handleCameraFileChange}
+              />
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/*"
+                ref={photosInputRef}
+                style={{ display: 'none' }}
+                onChange={handlePhotosFileChange}
+              />
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.txt,.csv,.json,.xls,.xlsx,.zip,application/pdf,text/*"
+                ref={filesInputRef}
+                style={{ display: 'none' }}
+                onChange={handleDocumentFileChange}
+              />
+
               {/* BOTTOM DOCK: CLEAN EXECUTIVE PROMPT BAR — Hidden when viewing Dashboard for full-screen immersive experience */}
               {!showDashboard && (
                 <div className="gemini-bottom-dock">
-                {/* Hidden File Inputs for Camera, Photos & Files */}
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  ref={cameraInputRef}
-                  style={{ display: 'none' }}
-                  onChange={handleCameraFileChange}
-                />
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/*"
-                  ref={photosInputRef}
-                  style={{ display: 'none' }}
-                  onChange={handlePhotosFileChange}
-                />
-                <input
-                  type="file"
-                  accept=".pdf,.doc,.docx,.txt,.csv,.json,.xls,.xlsx,.zip,application/pdf,text/*"
-                  ref={filesInputRef}
-                  style={{ display: 'none' }}
-                  onChange={handleDocumentFileChange}
-                />
-
                 {attachedMedia && (
                   <div className="gemini-attached-chip">
                     {attachedMedia.type === 'image' && (
@@ -7785,15 +7807,46 @@ export default function App() {
           API_BASE={API_BASE}
         />
 
-      {/* 4. Dedicated Executive Briefing Modal */}
+      {/* 4. Dedicated Executive Briefing & Agent Hub Modal */}
       <BriefingModal
-        isOpen={showBriefingModal}
-        onClose={() => setShowBriefingModal(false)}
+        isOpen={showBriefingModal || activeSubModal === 'briefing'}
+        onClose={() => {
+          setShowBriefingModal(false);
+          if (activeSubModal === 'briefing') setActiveSubModal(null);
+        }}
         isBriefingLoading={isBriefingLoading}
         executiveBriefingData={executiveBriefingData}
         isBriefingPlaying={isBriefingPlaying}
         stopBriefingAudio={stopBriefingAudio}
         speakBriefingAudio={speakBriefingAudio}
+        onRefreshBriefing={() => handlePlayExecutiveBriefing(true)}
+        userLocationName={userLocationName}
+        onExecuteGoal={(goalPrompt) => {
+          stopBriefingAudio();
+          setShowBriefingModal(false);
+          if (activeSubModal === 'briefing') setActiveSubModal(null);
+          setShowDashboard(false);
+          handleSendPrompt(goalPrompt);
+        }}
+        overdueCount={(combinedTasks || tasks || []).filter(t => {
+          if (t.is_completed || t.status === 'completed') return false;
+          if (t.recurrence === 'daily' || t.repeat === 'daily') return false;
+          const todayStr = new Date().toISOString().slice(0, 10);
+          return t.due_date && t.due_date.slice(0, 10) < todayStr;
+        }).length}
+        onRescheduleOverdue={handleRescheduleAllOverdue}
+        onOpenFinance={() => {
+          stopBriefingAudio();
+          setShowBriefingModal(false);
+          if (activeSubModal === 'briefing') setActiveSubModal(null);
+          setActiveSubModal('finance');
+        }}
+        onOpenTasks={() => {
+          stopBriefingAudio();
+          setShowBriefingModal(false);
+          if (activeSubModal === 'briefing') setActiveSubModal(null);
+          setActiveSubModal('reminders');
+        }}
       />
 
       {/* 5. Actions & Audit Trail Modal */}

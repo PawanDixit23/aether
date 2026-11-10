@@ -42,10 +42,13 @@ export const DashboardView = ({
   userAvatar,
   onClose,
   onToggleTask,
-  onPlayBriefing
+  onPlayBriefing,
+  setAgendaFilter,
+  setRemindersViewMode
 }) => {
   const [selectedMode, setSelectedMode] = useState('voice'); // 'voice' | 'ask' | 'agent'
   const [guideTab, setGuideTab] = useState('places'); // 'places' | 'foods' | 'things'
+  const [avatarError, setAvatarError] = useState(false);
 
   // Dynamic greeting based on current hour
   const getGreeting = () => {
@@ -262,15 +265,71 @@ export const DashboardView = ({
       
       {/* 1. GREETING & DATE HEADLINE */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', paddingTop: '2px', gap: '8px' }}>
-        <div>
-          <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: '#ffffff', margin: '0 0 2px 0', letterSpacing: '-0.02em' }}>
-            {getGreeting()}, {userName || 'Pawan Dixit'}
-          </h1>
-          <div style={{ fontSize: '0.84rem', color: '#60a5fa', fontWeight: 500, marginBottom: '2px' }}>
-            Let's make today productive ✨
+        <div 
+          onClick={() => {
+            if (setIsSettingsOpen) setIsSettingsOpen(true);
+          }}
+          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }}
+          title="Open Settings & Profile"
+        >
+          <div style={{ position: 'relative', width: '46px', height: '46px', flexShrink: 0 }}>
+            <div style={{
+              width: '100%',
+              height: '100%',
+              borderRadius: '50%',
+              background: 'linear-gradient(135deg, #0ea5e9 0%, #2563eb 50%, #4f46e5 100%)',
+              border: '2px solid rgba(56, 189, 248, 0.65)',
+              boxShadow: '0 0 16px rgba(56, 189, 248, 0.35)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#ffffff',
+              fontWeight: 800,
+              fontSize: '1.18rem',
+              overflow: 'hidden'
+            }}>
+              {userAvatar && !avatarError ? (
+                <img 
+                  src={userAvatar} 
+                  alt={userName || 'Avatar'} 
+                  referrerPolicy="no-referrer"
+                  onError={() => setAvatarError(true)}
+                  style={{ 
+                    width: '100%', 
+                    height: '100%', 
+                    objectFit: 'cover', 
+                    borderRadius: '50%',
+                    display: 'block' 
+                  }} 
+                />
+              ) : (
+                <span>{(userName || 'P').charAt(0).toUpperCase()}</span>
+              )}
+            </div>
+            {/* Active online pip */}
+            <span style={{
+              position: 'absolute',
+              bottom: '1px',
+              right: '1px',
+              width: '11px',
+              height: '11px',
+              borderRadius: '50%',
+              background: '#10b981',
+              border: '2px solid #0a101d',
+              boxShadow: '0 0 6px #10b981'
+            }} />
           </div>
-          <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 500 }}>
-            {formattedDate}
+          <div>
+            <h1 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#ffffff', margin: '0 0 2px 0', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>{getGreeting()}, {userName || 'Pawan'}</span>
+              <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>⚙️</span>
+            </h1>
+            <div style={{ fontSize: '0.80rem', color: '#60a5fa', fontWeight: 500, marginBottom: '2px' }}>
+              Let's make today productive ✨
+            </div>
+            <div style={{ fontSize: '0.70rem', color: '#64748b', fontWeight: 500 }}>
+              {formattedDate}
+            </div>
           </div>
         </div>
 
@@ -436,7 +495,11 @@ export const DashboardView = ({
             type="button"
             onClick={() => {
               setSelectedMode('agent');
-              setActiveSubModal('briefing');
+              if (onPlayBriefing) {
+                onPlayBriefing();
+              } else {
+                setActiveSubModal('briefing');
+              }
             }}
             style={{
               display: 'flex',
@@ -523,18 +586,26 @@ export const DashboardView = ({
       </div>
 
       {/* 4. PROMINENT LIVE WEATHER CARD (Fully Visible & High Contrast) */}
-      <div style={{
-        background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.14) 0%, rgba(30, 58, 138, 0.28) 100%)',
-        border: '1px solid rgba(56, 189, 248, 0.3)',
-        borderRadius: '18px',
-        padding: '11px 14px',
-        marginBottom: '10px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: '12px',
-        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25)'
-      }}>
+      <div 
+        onClick={() => {
+          if (setActiveSubModal) setActiveSubModal('permissions');
+        }}
+        title="Tap to manage Location & Weather settings"
+        style={{
+          background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.14) 0%, rgba(30, 58, 138, 0.28) 100%)',
+          border: '1px solid rgba(56, 189, 248, 0.3)',
+          borderRadius: '18px',
+          padding: '11px 14px',
+          marginBottom: '10px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25)',
+          cursor: 'pointer',
+          transition: 'all 0.15s ease'
+        }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
           <div style={{
             width: '40px',
@@ -683,6 +754,11 @@ export const DashboardView = ({
               {(cityGuide.places_to_visit || []).slice(0, 4).map((p, idx) => (
                 <div
                   key={idx}
+                  onClick={() => {
+                    if (onAskAether) {
+                      onAskAether(`मुझे ${cityGuide.city} में "${p.name}" (${p.desc}) के बारे में और जानकारी दीजिए।`);
+                    }
+                  }}
                   style={{
                     background: 'rgba(255, 255, 255, 0.03)',
                     border: '1px solid rgba(255, 255, 255, 0.06)',
@@ -691,8 +767,10 @@ export const DashboardView = ({
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    gap: '8px'
+                    gap: '8px',
+                    cursor: 'pointer'
                   }}
+                  title={`Ask Aether about ${p.name}`}
                 >
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -727,6 +805,7 @@ export const DashboardView = ({
                     target="_blank"
                     rel="noopener noreferrer"
                     title="View on Google Maps"
+                    onClick={(e) => e.stopPropagation()}
                     style={{
                       width: '26px',
                       height: '26px',
@@ -754,6 +833,11 @@ export const DashboardView = ({
               {(cityGuide.foods_to_try || []).slice(0, 4).map((f, idx) => (
                 <div
                   key={idx}
+                  onClick={() => {
+                    if (onAskAether) {
+                      onAskAether(`मुझे ${cityGuide.city} में "${f.name}" (${f.desc}) के बारे में बताएं।`);
+                    }
+                  }}
                   style={{
                     background: 'rgba(255, 255, 255, 0.03)',
                     border: '1px solid rgba(255, 255, 255, 0.06)',
@@ -762,8 +846,10 @@ export const DashboardView = ({
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    gap: '8px'
+                    gap: '8px',
+                    cursor: 'pointer'
                   }}
+                  title={`Ask Aether about ${f.name}`}
                 >
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#f8fafc' }}>
@@ -783,6 +869,7 @@ export const DashboardView = ({
                     target="_blank"
                     rel="noopener noreferrer"
                     title="Search restaurant on Google Maps"
+                    onClick={(e) => e.stopPropagation()}
                     style={{
                       width: '26px',
                       height: '26px',
@@ -810,6 +897,11 @@ export const DashboardView = ({
               {(cityGuide.popular_things || []).slice(0, 3).map((t, idx) => (
                 <div
                   key={idx}
+                  onClick={() => {
+                    if (onAskAether) {
+                      onAskAether(`मुझे ${cityGuide.city} में "${t.name}" (${t.desc}) के बारे में बताएं।`);
+                    }
+                  }}
                   style={{
                     background: 'rgba(255, 255, 255, 0.03)',
                     border: '1px solid rgba(255, 255, 255, 0.06)',
@@ -818,8 +910,10 @@ export const DashboardView = ({
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    gap: '8px'
+                    gap: '8px',
+                    cursor: 'pointer'
                   }}
+                  title={`Ask Aether about ${t.name}`}
                 >
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -848,6 +942,7 @@ export const DashboardView = ({
                     target="_blank"
                     rel="noopener noreferrer"
                     title="View on Google Maps"
+                    onClick={(e) => e.stopPropagation()}
                     style={{
                       width: '26px',
                       height: '26px',
@@ -925,7 +1020,10 @@ export const DashboardView = ({
 
           {/* Card 2: Events today */}
           <div 
-            onClick={() => setActiveSubModal('reminders')}
+            onClick={() => {
+              if (setRemindersViewMode) setRemindersViewMode('calendar');
+              setActiveSubModal('calendar');
+            }}
             style={{ minWidth: 0, boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '14px', padding: '8px 6px', cursor: 'pointer', transition: 'all 0.15s ease' }}
           >
             <div style={{ width: '22px', height: '22px', borderRadius: '7px', background: 'rgba(56, 189, 248, 0.18)', border: '1px solid rgba(56, 189, 248, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', marginBottom: '4px' }}>
@@ -959,7 +1057,14 @@ export const DashboardView = ({
 
         {/* Next Event Widget */}
         <div 
-          onClick={() => setActiveSubModal('reminders')}
+          onClick={() => {
+            if (nextEvent?.is_google_calendar && setRemindersViewMode) {
+              setRemindersViewMode('calendar');
+              setActiveSubModal('calendar');
+            } else {
+              setActiveSubModal('reminders');
+            }
+          }}
           style={{ minWidth: 0, overflow: 'hidden', boxSizing: 'border-box', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '12px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', transition: 'all 0.15s ease' }}
         >
           <div style={{ width: '4px', height: '28px', borderRadius: '4px', background: 'linear-gradient(180deg, #a855f7, #6366f1)', flexShrink: 0 }} />
@@ -978,7 +1083,10 @@ export const DashboardView = ({
       {/* Overdue Tasks Banner (Separated from Today's Tasks) */}
       {overdueTasksList.length > 0 && (
         <div 
-          onClick={() => setActiveSubModal('reminders')}
+          onClick={() => {
+            if (setAgendaFilter) setAgendaFilter('overdue');
+            setActiveSubModal('reminders');
+          }}
           style={{
             background: 'rgba(239, 68, 68, 0.08)',
             border: '1px solid rgba(239, 68, 68, 0.25)',
@@ -1117,6 +1225,7 @@ export const DashboardView = ({
               return (
                 <div
                   key={task.id}
+                  onClick={() => setActiveSubModal('reminders')}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -1134,13 +1243,16 @@ export const DashboardView = ({
                         ? '1px solid rgba(239, 68, 68, 0.2)' 
                         : '1px solid rgba(255, 255, 255, 0.06)',
                     gap: '8px',
+                    cursor: 'pointer',
                     transition: 'all 0.2s'
                   }}
+                  title="Click to view in agenda"
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '9px', minWidth: 0, flex: 1 }}>
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         if (onToggleTask) onToggleTask(task.id);
                       }}
                       style={{
