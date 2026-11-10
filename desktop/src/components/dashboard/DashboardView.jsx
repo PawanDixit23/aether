@@ -264,72 +264,15 @@ export const DashboardView = ({
     >
       
       {/* 1. GREETING & DATE HEADLINE */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', paddingTop: '2px', gap: '8px' }}>
-        <div 
-          onClick={() => {
-            if (setIsSettingsOpen) setIsSettingsOpen(true);
-          }}
-          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }}
-          title="Open Settings & Profile"
-        >
-          <div style={{ position: 'relative', width: '46px', height: '46px', flexShrink: 0 }}>
-            <div style={{
-              width: '100%',
-              height: '100%',
-              borderRadius: '50%',
-              background: 'linear-gradient(135deg, #0ea5e9 0%, #2563eb 50%, #4f46e5 100%)',
-              border: '2px solid rgba(56, 189, 248, 0.65)',
-              boxShadow: '0 0 16px rgba(56, 189, 248, 0.35)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#ffffff',
-              fontWeight: 800,
-              fontSize: '1.18rem',
-              overflow: 'hidden'
-            }}>
-              {userAvatar && !avatarError ? (
-                <img 
-                  src={userAvatar} 
-                  alt={userName || 'Avatar'} 
-                  referrerPolicy="no-referrer"
-                  onError={() => setAvatarError(true)}
-                  style={{ 
-                    width: '100%', 
-                    height: '100%', 
-                    objectFit: 'cover', 
-                    borderRadius: '50%',
-                    display: 'block' 
-                  }} 
-                />
-              ) : (
-                <span>{(userName || 'P').charAt(0).toUpperCase()}</span>
-              )}
-            </div>
-            {/* Active online pip */}
-            <span style={{
-              position: 'absolute',
-              bottom: '1px',
-              right: '1px',
-              width: '11px',
-              height: '11px',
-              borderRadius: '50%',
-              background: '#10b981',
-              border: '2px solid #0a101d',
-              boxShadow: '0 0 6px #10b981'
-            }} />
-          </div>
-          <div>
-            <h1 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#ffffff', margin: '0 0 2px 0', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span>{getGreeting()}, {userName || 'Pawan'}</span>
-              <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>⚙️</span>
-            </h1>
-            <div style={{ fontSize: '0.80rem', color: '#60a5fa', fontWeight: 500, marginBottom: '2px' }}>
-              Let's make today productive ✨
-            </div>
-            <div style={{ fontSize: '0.70rem', color: '#64748b', fontWeight: 500 }}>
-              {formattedDate}
-            </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', paddingTop: '4px', gap: '12px' }}>
+        <div>
+          <h1 style={{ fontSize: '1.32rem', fontWeight: 700, color: '#ffffff', margin: '0 0 4px 0', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>{getGreeting()}, {userName || 'Pawan Dixit'}</span>
+          </h1>
+          <div style={{ fontSize: '0.80rem', color: '#94a3b8', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span>{formattedDate}</span>
+            <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#475569' }} />
+            <span style={{ color: '#38bdf8' }}>Let's make today productive</span>
           </div>
         </div>
 
@@ -339,19 +282,20 @@ export const DashboardView = ({
             type="button"
             onClick={onPlayBriefing}
             style={{
-              background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.15) 0%, rgba(99, 102, 241, 0.2) 100%)',
-              border: '1px solid rgba(56, 189, 248, 0.35)',
-              borderRadius: '12px',
-              padding: '8px 12px',
+              background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(99, 102, 241, 0.16) 100%)',
+              border: '1px solid rgba(56, 189, 248, 0.3)',
+              borderRadius: '20px',
+              padding: '7px 14px',
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
               color: '#38bdf8',
               fontSize: '0.78rem',
-              fontWeight: 700,
+              fontWeight: 600,
               cursor: 'pointer',
               flexShrink: 0,
-              boxShadow: '0 4px 14px rgba(56, 189, 248, 0.15)'
+              boxShadow: '0 2px 10px rgba(56, 189, 248, 0.15)',
+              transition: 'all 0.2s ease'
             }}
             title="Listen to Executive Daily Briefing"
           >
@@ -361,18 +305,17 @@ export const DashboardView = ({
         )}
       </div>
 
-      {/* 2. CENTER ORB (Compact Holographic Sphere) */}
-      <div style={{ position: 'relative', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', margin: '0 0 4px' }}>
+      {/* 2. CENTER ORB (Refined Human-Crafted Pulse Sphere) */}
+      <div style={{ position: 'relative', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', margin: '6px 0 14px' }}>
         
-        {/* Orbital Ring Background Visual */}
         <div 
           onClick={() => {
             toggleListening();
           }}
           style={{ 
             position: 'relative', 
-            width: '130px', 
-            height: '115px', 
+            width: '110px', 
+            height: '110px', 
             display: 'flex', 
             alignItems: 'center', 
             justifyContent: 'center',
@@ -380,55 +323,47 @@ export const DashboardView = ({
           }}
           title="Tap to speak with Aether"
         >
-          {/* Outer glowing orbital rings */}
+          {/* Smooth Concentric Breathing Halo (Replaces rotated wireframe rings) */}
           <div style={{
             position: 'absolute',
-            width: '130px',
-            height: '52px',
-            border: isListening ? '1.5px solid rgba(56, 189, 248, 0.6)' : '1px solid rgba(56, 189, 248, 0.25)',
+            inset: isListening ? '-14px' : '-8px',
             borderRadius: '50%',
-            transform: 'rotate(-25deg)',
-            boxShadow: isListening ? '0 0 20px rgba(56, 189, 248, 0.4)' : 'none',
-            pointerEvents: 'none',
-            transition: 'all 0.3s ease'
+            background: isListening 
+              ? 'radial-gradient(circle, rgba(56, 189, 248, 0.25) 0%, rgba(56, 189, 248, 0.05) 60%, transparent 80%)'
+              : isSpeaking
+                ? 'radial-gradient(circle, rgba(168, 85, 247, 0.25) 0%, rgba(168, 85, 247, 0.05) 60%, transparent 80%)'
+                : 'radial-gradient(circle, rgba(56, 189, 248, 0.12) 0%, transparent 70%)',
+            transition: 'all 0.4s ease',
+            pointerEvents: 'none'
           }} />
 
+          {/* Central Sphere */}
           <div style={{
-            position: 'absolute',
-            width: '135px',
-            height: '56px',
-            border: isSpeaking ? '1.5px solid rgba(168, 85, 247, 0.6)' : '1px solid rgba(56, 189, 248, 0.15)',
+            width: '88px',
+            height: '88px',
             borderRadius: '50%',
-            transform: 'rotate(22deg)',
-            pointerEvents: 'none',
-            transition: 'all 0.3s ease'
-          }} />
-
-          {/* Central Holographic Blue Sphere with Canvas/Particles */}
-          <div style={{
-            width: '92px',
-            height: '92px',
-            borderRadius: '50%',
-            background: 'radial-gradient(circle at 35% 30%, #38bdf8 0%, #1d4ed8 50%, #030712 95%)',
+            background: 'radial-gradient(circle at 35% 30%, #38bdf8 0%, #1e40af 60%, #030712 100%)',
             boxShadow: isListening 
-              ? '0 0 40px rgba(56, 189, 248, 0.8), inset 0 0 22px rgba(255, 255, 255, 0.6)' 
-              : '0 0 26px rgba(37, 99, 235, 0.5), inset 0 0 16px rgba(56, 189, 248, 0.4)',
+              ? '0 0 32px rgba(56, 189, 248, 0.75), inset 0 0 18px rgba(255, 255, 255, 0.5)' 
+              : isSpeaking
+                ? '0 0 32px rgba(168, 85, 247, 0.75), inset 0 0 18px rgba(255, 255, 255, 0.5)'
+                : '0 0 20px rgba(37, 99, 235, 0.4), inset 0 0 12px rgba(56, 189, 248, 0.35)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             position: 'relative',
             overflow: 'hidden',
-            transition: 'box-shadow 0.3s ease'
+            transition: 'all 0.3s ease'
           }}>
             <div style={{ position: 'absolute', inset: 0, opacity: 0.75 }}>
               <AetherParticleSphere isListening={isListening} isSpeaking={isSpeaking} />
             </div>
 
             <div style={{
-              width: '36px',
-              height: '36px',
+              width: '32px',
+              height: '32px',
               borderRadius: '50%',
-              background: 'radial-gradient(circle, rgba(255,255,255,0.7) 0%, rgba(56,189,248,0.2) 60%, transparent 100%)',
+              background: 'radial-gradient(circle, rgba(255,255,255,0.6) 0%, rgba(56,189,248,0.2) 60%, transparent 100%)',
               filter: 'blur(3px)',
               pointerEvents: 'none'
             }} />
@@ -436,11 +371,11 @@ export const DashboardView = ({
         </div>
 
         {/* Caption below Orb */}
-        <div style={{ fontSize: '0.70rem', color: '#94a3b8', margin: '4px 0 6px 0', fontWeight: 500 }}>
-          Tap to talk • Hold for continuous
+        <div style={{ fontSize: '0.72rem', color: '#94a3b8', margin: '6px 0 10px 0', fontWeight: 500, letterSpacing: '0.01em' }}>
+          {isListening ? 'Listening... Speak now' : isSpeaking ? 'Aether is speaking...' : 'Tap to talk • Hold for continuous'}
         </div>
 
-        {/* Mode Switcher Capsule: [Voice] [Ask] [Agent] */}
+        {/* Mode Switcher Segmented Control: [Voice] [Ask] [Agent] */}
         <div style={{ display: 'flex', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '24px', padding: '3px', gap: '4px', marginBottom: '8px' }}>
           <button
             type="button"
@@ -452,15 +387,15 @@ export const DashboardView = ({
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              padding: '5px 12px',
+              padding: '6px 14px',
               borderRadius: '20px',
-              border: selectedMode === 'voice' ? '1px solid #38bdf8' : '1px solid transparent',
-              background: selectedMode === 'voice' ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
+              border: selectedMode === 'voice' ? '1px solid rgba(56, 189, 248, 0.5)' : '1px solid transparent',
+              background: selectedMode === 'voice' ? 'rgba(56, 189, 248, 0.16)' : 'transparent',
               color: selectedMode === 'voice' ? '#38bdf8' : '#94a3b8',
               fontSize: '0.76rem',
               fontWeight: 600,
               cursor: 'pointer',
-              boxShadow: selectedMode === 'voice' ? '0 0 12px rgba(56, 189, 248, 0.3)' : 'none'
+              transition: 'all 0.15s ease'
             }}
           >
             <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#38bdf8' }} />
@@ -477,14 +412,15 @@ export const DashboardView = ({
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              padding: '5px 12px',
+              padding: '6px 14px',
               borderRadius: '20px',
-              border: selectedMode === 'ask' ? '1px solid #38bdf8' : '1px solid transparent',
-              background: selectedMode === 'ask' ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
+              border: selectedMode === 'ask' ? '1px solid rgba(56, 189, 248, 0.5)' : '1px solid transparent',
+              background: selectedMode === 'ask' ? 'rgba(56, 189, 248, 0.16)' : 'transparent',
               color: selectedMode === 'ask' ? '#38bdf8' : '#94a3b8',
               fontSize: '0.76rem',
               fontWeight: 600,
-              cursor: 'pointer'
+              cursor: 'pointer',
+              transition: 'all 0.15s ease'
             }}
           >
             <Clock size={12} />
@@ -495,24 +431,21 @@ export const DashboardView = ({
             type="button"
             onClick={() => {
               setSelectedMode('agent');
-              if (onPlayBriefing) {
-                onPlayBriefing();
-              } else {
-                setActiveSubModal('briefing');
-              }
+              setActiveSubModal('briefing');
             }}
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              padding: '5px 12px',
+              padding: '6px 14px',
               borderRadius: '20px',
-              border: selectedMode === 'agent' ? '1px solid #38bdf8' : '1px solid transparent',
-              background: selectedMode === 'agent' ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
+              border: selectedMode === 'agent' ? '1px solid rgba(56, 189, 248, 0.5)' : '1px solid transparent',
+              background: selectedMode === 'agent' ? 'rgba(56, 189, 248, 0.16)' : 'transparent',
               color: selectedMode === 'agent' ? '#38bdf8' : '#94a3b8',
               fontSize: '0.76rem',
               fontWeight: 600,
-              cursor: 'pointer'
+              cursor: 'pointer',
+              transition: 'all 0.15s ease'
             }}
           >
             <Bot size={12} />

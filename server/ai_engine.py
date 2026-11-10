@@ -1598,6 +1598,24 @@ def build_system_prompt(context: dict = None, live_feed: str = "", language: str
             things = ", ".join([t.get('name', '') for t in city_guide_data.get('popular_things', [])[:3]])
             city_guide_summary = f"\n- Active City Travel & Food Guide ({user_loc_name}):\n  • Top Places to Visit: {places}\n  • Famous Local Food to Eat: {foods}\n  • Popular Things to Do & Markets: {things}"
 
+        fin_records = context.get('financial_records', [])
+        fin_breakdown = context.get('financial_category_breakdown', {})
+        cat_str = ", ".join([f"{k}: ₹{v:,.2f}" for k, v in fin_breakdown.items()]) if fin_breakdown else "None"
+        ledger_lines = []
+        for r in fin_records[:35]:
+            d_str = str(r.get('date') or '')[:10]
+            ledger_lines.append(f"  • {d_str} | {str(r.get('type') or 'expense').upper()} | ₹{float(r.get('amount') or 0):,.2f} | Category: {r.get('category', 'general')} | Note: {r.get('note', '')}")
+        ledger_summary = "\n".join(ledger_lines) if ledger_lines else "No recent transactions logged."
+
+        finance_details = f"""
+-- Detailed Financial Ledger (Direct from User's Finance Tab):
+  • Total Recorded Income: ₹{context.get('total_income', 0):,.2f}
+  • Total Recorded Expenses: ₹{context.get('total_expense', 0):,.2f}
+  • Current Net Balance: ₹{context.get('balance', 0):,.2f}
+  • Expense Breakdown by Category: {cat_str}
+  • Recent Individual Ledger Entries ({len(fin_records)} records):
+{ledger_summary}"""
+
         ctx_str = f"""
 CURRENT REAL-TIME CONTEXT:
 - Current Local Time: {current_time_str}
@@ -1606,6 +1624,7 @@ CURRENT REAL-TIME CONTEXT:
 - Current Detected Location: {user_loc_name}{city_guide_summary}
 - Pending Tasks ({len(context.get('tasks', []))}): {', '.join([t.get('title', '') for t in context.get('tasks', [])]) or 'None'}
 - Financial Balance: ₹{context.get('balance', 0):,.2f}
+{finance_details}
 - Known User Memories/Rules: {json.dumps(context.get('memories', []))}
 {chat_history_str}"""
 
@@ -1672,22 +1691,44 @@ TEMPORAL GROUNDING & 2026 REAL-TIME DIRECTIVE:
     wants_hindi_in_prompt = any(k in q_lower for k in ["in hindi", "hindi me", "hindi mein", "हिंदी में", "हिंदी", "translate to hindi", "hindi news", "hindi me batao"])
     wants_friend_in_prompt = any(k in q_lower for k in ["talk like a friend", "dost ki tarah", "bhai ki tarah", "friend mode", "दोस्त की तरह", "मित्र की तरह", "dost ban kar", "दोस्त बनकर"])
 
-    lang_rules = ""
-    if language == "hi_friend" or wants_friend_in_prompt:
-        lang_rules = f"""
-CRITICAL PERSONALITY & LANGUAGE INSTRUCTION: HINDI BEST FRIEND MODE (हिंदी मित्र मोड - ZERO DELAY)
-You are talking to {display_name} as their closest, smartest, most genuine real-life best friend (जिगरी दोस्त / पक्का यार).
-TONE & INTERACTION RULES:
-1. PURE CASUAL & WARM HINDI (स्वाभाविक दोस्ताना बोलचाल की हिन्दी):
-   - Talk naturally, warmly, casually, and engagingly just like two close friends chatting on a quick phone call or sitting together.
-   - Address them warmly: "अरे {display_name}!", "हाँ भाई", "बिल्कुल दोस्त", "अरे टेंशन मत ले यार", "चल बढ़िया है", "सही बात है".
-   - NEVER be robotic, formal, stiff, or bureaucratic. NEVER use words like "महोदय", "उपयोगकर्ता", "मैं एक AI मॉडल हूँ", "आपके निर्देशानुसार".
-2. ZERO DELAY & CONVERSATIONAL SPEED (तेज़ और सटीक जवाब):
-   - KEEP REPLIES CONCISE, PUNCHY, AND NATURAL (typically 1 to 3 friendly sentences for casual discussions, unless they specifically ask for code or detailed analysis).
-   - Get straight to the point with zero preamble.
-   - Make it feel like an effortless, lightning-fast voice chat with a real friend who gets them instantly!
+    finance_audit_rules = """
+FINANCIAL AUDIT & EXPENSE REVIEW DIRECTIVE:
+When the user asks to audit expenses, review finances, find leaks/wasteful spending, or give savings tips (e.g. "Audit Expenses", "खर्चों का ऑडिट करें", "कहाँ अनावश्यक खर्च हुआ है", "खर्चों का विश्लेषण"):
+1. 100% ACCURATE REAL DATA: Base your audit strictly on the 'Detailed Financial Ledger' above.
+2. REPORT EXACT FIGURES: State the exact total expenses, total income, net balance, and breakdown across top categories (e.g. Food, Fuel, Shopping, Bills) with real rupee amounts.
+3. IDENTIFY REAL LEAKS & ACTIONABLE TIPS: Look at their actual high-frequency or high-amount categories and highlight 2-3 specific transactions from their ledger that could be trimmed.
+4. Provide concrete, realistic savings tips tailored directly to what they actually spent!
 """
-    elif language == "hi" or wants_hindi_in_prompt:
+
+    if language == "hi_friend" or wants_friend_in_prompt:
+        return f"""You are Aether (जिगरी दोस्त / पक्का यार), the closest, smartest, and most genuine real-life best friend of {display_name}.
+You two have known each other for years, talk casually every day, and share a close bond of mutual trust, warmth, humor, and respect.
+
+CRITICAL FRIENDSHIP & CONVERSATIONAL RULES:
+1. PURE NATURAL HINDI FRIEND (सच्चे दोस्त की स्वाभाविक हिंदी):
+   - ALWAYS respond in natural, friendly, conversational Hindi (बोलचाल की स्वाभाविक हिन्दी).
+   - Talk just like a close real-life friend sitting with {display_name} over chai or chatting on a quick phone call.
+   - Address them warmly: "अरे {display_name}!", "हाँ भाई", "अरे यार", "अरे बिल्कुल", "चल बढ़िया है", "टेंशन मत ले यार", "सही बात है".
+   - NEVER use robotic, formal, or bureaucratic terms like "महोदय", "उपयोगकर्ता", "मैं एक AI मॉडल हूँ", "आपके निर्देशानुसार", "मैं आपकी क्या सहायता कर सकता हूँ".
+2. ZERO DELAY & QUICK REPLIES:
+   - Keep answers natural, lively, and punchy (1 to 3 friendly sentences for chats, unless they specifically ask for in-depth details).
+   - Get straight to the point like a friend who understands immediately.
+3. HELPFUL & SMART:
+   - If they tell you about their day, thoughts, or feelings, listen like a caring friend.
+   - If they ask about finances, tasks, or advice, give a sharp, smart answer while keeping that warm friendly buddy tone!
+
+{ctx_str}
+{finance_audit_rules}
+
+OUTPUT FORMAT:
+Return a strict JSON response:
+- For friendly discussions, chats, questions, or expense audits: action MUST be "query", and put your warm Hindi friend response in "data.response".
+- For reminders or tasks: action MUST be "task" with "title", "reminder_time", and a friendly acknowledgement in "data.response".
+- For expenses: action MUST be "expense" with "amount", "category", "note", and a friendly confirmation in "data.response".
+"""
+
+    lang_rules = ""
+    if language == "hi" or wants_hindi_in_prompt:
         lang_rules = """
 CRITICAL LANGUAGE INSTRUCTION:
 The user has requested or set language to HINDI (हिन्दी).
@@ -1769,6 +1810,7 @@ Whatever work, challenge, or question {display_name} brings, you handle it maste
 {lang_rules}
 {image_rules}
 {identity_rules}
+{finance_audit_rules}
 Your job is to analyze the user's input and return a strict JSON response.
 
 CRITICAL INSTRUCTIONS FOR TASKS & REMINDERS:

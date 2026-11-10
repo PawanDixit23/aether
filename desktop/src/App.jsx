@@ -631,16 +631,34 @@ export default function App() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [selectedLang, setSelectedLang] = useState(() => localStorage.getItem('aether_language') || 'auto');
   const [isFriendMode, setIsFriendMode] = useState(() => {
-    return typeof localStorage !== 'undefined' ? localStorage.getItem('aether_friend_mode') === 'true' : false;
+    return typeof localStorage !== 'undefined' 
+      ? (localStorage.getItem('aether_friend_mode') === 'true' || localStorage.getItem('aether_selected_voice') === 'mitra') 
+      : false;
   });
 
   const handleToggleFriendMode = (enabled) => {
     setIsFriendMode(enabled);
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('aether_friend_mode', enabled ? 'true' : 'false');
+      if (enabled) {
+        setSelectedVoice('mitra');
+        localStorage.setItem('aether_selected_voice', 'mitra');
+      } else if (selectedVoice === 'mitra') {
+        setSelectedVoice('puck');
+        localStorage.setItem('aether_selected_voice', 'puck');
+      }
     }
     showToast(enabled ? '🤝 मित्र मोड चालू है (Friend Mode Active)!' : 'मित्र मोड बंद (Standard Mode Active)', 'info');
   };
+
+  const isFriendActive = Boolean(
+    isFriendMode || 
+    selectedVoice === 'mitra' || 
+    (typeof localStorage !== 'undefined' && (
+      localStorage.getItem('aether_friend_mode') === 'true' || 
+      localStorage.getItem('aether_selected_voice') === 'mitra'
+    ))
+  );
 
   const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
   const [agendaFilter, setAgendaFilter] = useState('today'); // 'today' | 'overdue' | 'upcoming' | 'completed' | 'all'
@@ -666,7 +684,7 @@ export default function App() {
     }
   }, []);
 
-  const effectiveLang = (isFriendMode || selectedLang === 'hi_friend')
+  const effectiveLang = (isFriendActive || selectedLang === 'hi_friend')
     ? 'hi'
     : selectedLang === 'auto'
       ? (typeof navigator !== 'undefined' && navigator.language?.toLowerCase().startsWith('hi') ? 'hi' : 'en')
@@ -4234,7 +4252,7 @@ export default function App() {
         latitude: userCoords?.latitude || null,
         longitude: userCoords?.longitude || null,
         city: userLocationName || null,
-        language: isFriendMode ? 'hi_friend' : selectedLang,
+        language: isFriendActive ? 'hi_friend' : selectedLang,
         client_time: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
         api_key: (() => {
@@ -4245,7 +4263,9 @@ export default function App() {
         grok_key: (localStorage.getItem('aether_grok_key') || '').trim(),
         active_provider: localStorage.getItem('aether_active_provider') || 'gemini',
         user_name: localStorage.getItem('aether_user_name') || userName || 'Operator',
-        user_email: userEmail || null
+        user_email: userEmail || null,
+        finance_records: (financeRecords || []).slice(0, 40),
+        finance_summary: financeSummary
       };
 
       const resp = await fetch(`${API_BASE}/action/quick-capture`, {

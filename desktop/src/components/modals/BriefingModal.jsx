@@ -381,7 +381,7 @@ export const BriefingModal = ({
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
                 <button
                   type="button"
-                  onClick={() => handleQuickGoalClick('Aether, कृपया मेरे इस महीने के सभी खर्चों का विस्तृत ऑडिट करें, और बताएं कि कहाँ अनावश्यक खर्च हुआ है और बचत के क्या रास्ते हैं।')}
+                  onClick={() => handleQuickGoalClick('Aether, कृपया मेरे फाइनांस टैब के सभी रिकॉर्ड्स और खर्चों का विस्तृत ऑडिट करें। कुल खर्च, मुख्य कैटेगरी ब्रेकडाउन, बड़े खर्चे और बचत के सटीक रास्ते बताएं।')}
                   style={{
                     background: 'rgba(255, 255, 255, 0.03)',
                     border: '1px solid rgba(245, 158, 11, 0.25)',

@@ -233,6 +233,8 @@ class QuickCaptureRequest(BaseModel):
     grok_key: Optional[str] = None
     active_provider: Optional[str] = None
     user_name: Optional[str] = None
+    finance_records: Optional[list] = None
+    finance_summary: Optional[dict] = None
 
 class ChatSessionCreate(BaseModel):
     title: Optional[str] = "New Conversation"
@@ -422,12 +424,31 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
     total_expense = sum(float(r.amount or 0.0) for r in records if r.type == "expense")
     balance = total_income - total_expense
 
+    category_totals = {}
+    fin_list = []
+    for r in sorted(records, key=lambda x: x.date or datetime.min, reverse=True)[:60]:
+        r_type = (r.type or "expense").lower()
+        amt = float(r.amount or 0.0)
+        cat = (r.category or "general").strip().capitalize()
+        if r_type == "expense":
+            category_totals[cat] = category_totals.get(cat, 0.0) + amt
+        fin_list.append({
+            "id": r.id,
+            "type": r_type,
+            "category": cat,
+            "amount": amt,
+            "note": r.note or "",
+            "date": r.date.strftime("%Y-%m-%d %H:%M") if r.date else ""
+        })
+
     return {
         "current_time": get_current_time_str(client_time, tz_name),
         "tasks": [{"id": t.id, "title": str(t.title or "Task"), "priority": str(t.priority or "medium"), "reminder_time": t.reminder_time} for t in tasks],
         "total_income": total_income,
         "total_expense": total_expense,
         "balance": balance,
+        "financial_records": fin_list,
+        "financial_category_breakdown": category_totals,
         "memories": [{"category": str(m.category or "general"), "fact": str(m.fact or "")} for m in memories],
         "recent_chat": recent_chat,
         "user_location": user_loc,
@@ -857,6 +878,22 @@ async def _execute_quick_capture(
         user_lon=req.longitude,
         user_city=req.city
     )
+    if req.finance_records and isinstance(req.finance_records, list) and len(req.finance_records) > 0:
+        context["financial_records"] = req.finance_records
+        cat_map = {}
+        for r in req.finance_records:
+            if (r.get("type") or "expense").lower() == "expense":
+                cat = (r.get("category") or "General").capitalize()
+                cat_map[cat] = cat_map.get(cat, 0.0) + float(r.get("amount") or 0.0)
+        context["financial_category_breakdown"] = cat_map
+    if req.finance_summary and isinstance(req.finance_summary, dict):
+        if "total_income" in req.finance_summary:
+            context["total_income"] = float(req.finance_summary["total_income"])
+        if "total_expense" in req.finance_summary:
+            context["total_expense"] = float(req.finance_summary["total_expense"])
+        if "balance" in req.finance_summary:
+            context["balance"] = float(req.finance_summary["balance"])
+
     lang = req.language or "auto"
     parsed = await parse_intent_with_llm(
         user_msg, 

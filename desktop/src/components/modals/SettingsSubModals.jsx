@@ -438,6 +438,9 @@ export const SettingsSubModals = ({
                   onClick={() => {
                     setSelectedVoice(voice.id);
                     localStorage.setItem('aether_selected_voice', voice.id);
+                    if (voice.id === 'mitra') {
+                      if (handleToggleFriendMode) handleToggleFriendMode(true);
+                    }
                     setActiveSubModal(null);
                     showToast(`Voice set to ${voice.name}`, 'info');
                   }}
