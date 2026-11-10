@@ -1670,9 +1670,24 @@ TEMPORAL GROUNDING & 2026 REAL-TIME DIRECTIVE:
 
     q_lower = user_query.lower() if user_query else ""
     wants_hindi_in_prompt = any(k in q_lower for k in ["in hindi", "hindi me", "hindi mein", "हिंदी में", "हिंदी", "translate to hindi", "hindi news", "hindi me batao"])
+    wants_friend_in_prompt = any(k in q_lower for k in ["talk like a friend", "dost ki tarah", "bhai ki tarah", "friend mode", "दोस्त की तरह", "मित्र की तरह", "dost ban kar", "दोस्त बनकर"])
 
     lang_rules = ""
-    if language == "hi" or wants_hindi_in_prompt:
+    if language == "hi_friend" or wants_friend_in_prompt:
+        lang_rules = f"""
+CRITICAL PERSONALITY & LANGUAGE INSTRUCTION: HINDI BEST FRIEND MODE (हिंदी मित्र मोड - ZERO DELAY)
+You are talking to {display_name} as their closest, smartest, most genuine real-life best friend (जिगरी दोस्त / पक्का यार).
+TONE & INTERACTION RULES:
+1. PURE CASUAL & WARM HINDI (स्वाभाविक दोस्ताना बोलचाल की हिन्दी):
+   - Talk naturally, warmly, casually, and engagingly just like two close friends chatting on a quick phone call or sitting together.
+   - Address them warmly: "अरे {display_name}!", "हाँ भाई", "बिल्कुल दोस्त", "अरे टेंशन मत ले यार", "चल बढ़िया है", "सही बात है".
+   - NEVER be robotic, formal, stiff, or bureaucratic. NEVER use words like "महोदय", "उपयोगकर्ता", "मैं एक AI मॉडल हूँ", "आपके निर्देशानुसार".
+2. ZERO DELAY & CONVERSATIONAL SPEED (तेज़ और सटीक जवाब):
+   - KEEP REPLIES CONCISE, PUNCHY, AND NATURAL (typically 1 to 3 friendly sentences for casual discussions, unless they specifically ask for code or detailed analysis).
+   - Get straight to the point with zero preamble.
+   - Make it feel like an effortless, lightning-fast voice chat with a real friend who gets them instantly!
+"""
+    elif language == "hi" or wants_hindi_in_prompt:
         lang_rules = """
 CRITICAL LANGUAGE INSTRUCTION:
 The user has requested or set language to HINDI (हिन्दी).
@@ -2025,6 +2040,7 @@ async def parse_intent_with_llm(
     # Detect language requirement in user prompt
     wants_hindi_in_prompt = any(w in user_lower for w in ["in hindi", "hindi me", "hindi mein", "हिंदी में", "हिंदी", "translate to hindi", "hindi news", "hindi me batao"])
     wants_english_in_prompt = any(w in user_lower for w in ["in english", "english me", "english mein", "translate to english"])
+    wants_friend_in_prompt = any(w in user_lower for w in ["talk like a friend", "dost ki tarah", "bhai ki tarah", "friend mode", "दोस्त की तरह", "मित्र की तरह", "दोस्त बनकर"])
     
     # Detect Devanagari script in user input
     has_devanagari = bool(re.search(r'[\u0900-\u097F]', user_input))
@@ -2033,7 +2049,9 @@ async def parse_intent_with_llm(
     recent_chat = (context or {}).get("recent_chat", [])
     recent_has_hindi = any(bool(re.search(r'[\u0900-\u097F]', str(m.get("content", "")))) for m in recent_chat[-6:])
 
-    if wants_hindi_in_prompt or language == "hi" or (language == "auto" and (has_devanagari or recent_has_hindi)):
+    if language == "hi_friend" or wants_friend_in_prompt:
+        effective_lang = "hi_friend"
+    elif wants_hindi_in_prompt or language == "hi" or (language == "auto" and (has_devanagari or recent_has_hindi)):
         effective_lang = "hi"
     elif wants_english_in_prompt or language == "en":
         effective_lang = "en"
@@ -2096,15 +2114,23 @@ async def parse_intent_with_llm(
         live_feed += "Famous Foods to Try:\n" + "\n".join([f"• {f['name']}: {f['desc']} [Famous at: {f.get('famous_at', 'Local specialty')}]" for f in cg.get("foods_to_try", [])]) + "\n"
         live_feed += "Popular Activities & Markets:\n" + "\n".join([f"• {t['name']}: {t['desc']}" for t in cg.get("popular_things", [])]) + "\n\n"
 
-    # 🌐 Universal Real-Time Search Grounding for ANY Informational / News Query:
-    # If the user asks for latest news, leaders, prices, events, sports, or current facts,
-    # resolve contextual referents and inject live verified Google News RSS feed directly!
+    # 🌐 Universal Real-Time Search Grounding for Informational / News / Sports Queries:
+    # Trigger live news only when the query genuinely asks for current events/news/scores/ministers.
+    # Casual chatting, friend conversation, greetings, and tasks SKIP this for instant 0-delay response!
     is_action_command = any(user_lower.startswith(w) for w in [
         "remind me", "remind", "task", "todo", "spent", "spend", "expense", "kharch", 
         "paid", "add income", "call ", "phone ", "draft email", "email ", "play "
     ])
 
-    if not is_action_command and not is_weather_query:
+    is_news_or_info_query = is_match_query or any(w in user_lower for w in [
+        "news", "khabar", "samachar", "latest", "update", "current", "cm", "chief minister", 
+        "mukhyamantri", "prime minister", "president", "price", "stock", "score", "match", 
+        "headline", "election", "cabinet", "minister", "capital", "rajdhani", "gold price", 
+        "silver price", "petrol price", "weather forecast", "aaj ki khabar", "taza khabar",
+        "ताज़ा खबर", "समाचार", "न्यूज़", "मुख्य समाचार", "मुख्यमंत्री", "प्रधानमंत्री", "स्कोर", "मैच"
+    ])
+
+    if is_news_or_info_query and not is_action_command and not is_weather_query:
         # Resolve ambiguous state referents from recent conversation turns
         resolved_search_query = user_input
         if any(w in user_lower for w in ["cm", "chief minister", "mukhyamantri", "मुख्यमंत्री", "state", "rajya", "राज्य", "capital", "rajdhani", "राजधानी"]):
@@ -2333,10 +2359,11 @@ async def parse_intent_with_llm(
                         },
                         "contents": conversation_contents,
                         "generationConfig": {
-                            "temperature": 0.2
-                        },
-                        "tools": [{"googleSearch": {}}]
+                            "temperature": 0.35 if effective_lang == "hi_friend" else 0.2
+                        }
                     }
+                    if is_news_or_info_query:
+                        payload["tools"] = [{"googleSearch": {}}]
                     async with httpx.AsyncClient(timeout=16.0) as client:
                         resp = await client.post(url, json=payload)
                         # If model rejects googleSearch tool or system_instruction with 400, fallback gracefully

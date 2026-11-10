@@ -194,6 +194,7 @@ export const UI_TRANSLATIONS = {
 };
 
 export const AETHER_VOICES = [
+  { id: 'mitra', name: 'Mitra (दोस्त)', desc: 'Warm, natural, conversational Hindi buddy • Friend', pitch: 1.05, rate: 1.12, gender: 'male' },
   { id: 'puck', name: 'Puck', desc: 'Crisp, focused, analytical • Male', pitch: 1.0, rate: 1.05, gender: 'male' },
   { id: 'charon', name: 'Charon', desc: 'Deep, calm, authoritative • Male', pitch: 0.75, rate: 0.95, gender: 'male' },
   { id: 'kore', name: 'Kore', desc: 'Warm, articulate, balanced • Female', pitch: 1.05, rate: 1.0, gender: 'female' },

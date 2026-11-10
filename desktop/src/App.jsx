@@ -297,6 +297,7 @@ const UI_TRANSLATIONS = {
 };
 
 const AETHER_VOICES = [
+  { id: 'mitra', name: 'Mitra (दोस्त)', desc: 'Warm, natural, conversational Hindi buddy • Friend', pitch: 1.05, rate: 1.12, gender: 'male' },
   { id: 'puck', name: 'Puck', desc: 'Crisp, focused, analytical • Male', pitch: 1.0, rate: 1.05, gender: 'male' },
   { id: 'charon', name: 'Charon', desc: 'Deep, calm, authoritative • Male', pitch: 0.75, rate: 0.95, gender: 'male' },
   { id: 'kore', name: 'Kore', desc: 'Warm, articulate, balanced • Female', pitch: 1.05, rate: 1.0, gender: 'female' },
@@ -629,6 +630,18 @@ export default function App() {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [selectedLang, setSelectedLang] = useState(() => localStorage.getItem('aether_language') || 'auto');
+  const [isFriendMode, setIsFriendMode] = useState(() => {
+    return typeof localStorage !== 'undefined' ? localStorage.getItem('aether_friend_mode') === 'true' : false;
+  });
+
+  const handleToggleFriendMode = (enabled) => {
+    setIsFriendMode(enabled);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('aether_friend_mode', enabled ? 'true' : 'false');
+    }
+    showToast(enabled ? '🤝 मित्र मोड चालू है (Friend Mode Active)!' : 'मित्र मोड बंद (Standard Mode Active)', 'info');
+  };
+
   const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
   const [agendaFilter, setAgendaFilter] = useState('today'); // 'today' | 'overdue' | 'upcoming' | 'completed' | 'all'
   const [calAgendaFilter, setCalAgendaFilter] = useState('all'); // 'all' | 'pending' | 'completed'
@@ -653,9 +666,11 @@ export default function App() {
     }
   }, []);
 
-  const effectiveLang = selectedLang === 'auto' 
-    ? (typeof navigator !== 'undefined' && navigator.language?.toLowerCase().startsWith('hi') ? 'hi' : 'en')
-    : selectedLang;
+  const effectiveLang = (isFriendMode || selectedLang === 'hi_friend')
+    ? 'hi'
+    : selectedLang === 'auto'
+      ? (typeof navigator !== 'undefined' && navigator.language?.toLowerCase().startsWith('hi') ? 'hi' : 'en')
+      : selectedLang;
   const t = UI_TRANSLATIONS[effectiveLang] || UI_TRANSLATIONS.hi;
   const currentLangObj = LANG_OPTIONS.find(l => l.id === selectedLang) || LANG_OPTIONS[0];
 
@@ -3809,7 +3824,7 @@ export default function App() {
       recognitionRef.current = recognition;
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = selectedLang === 'hi' ? 'hi-IN' : 'en-IN';
+      recognition.lang = (isFriendMode || selectedLang === 'hi' || selectedLang === 'hi_friend') ? 'hi-IN' : 'en-IN';
 
       recognition.onstart = () => {
         setIsListening(true);
@@ -3899,7 +3914,7 @@ export default function App() {
       wakeWordRecognitionRef.current = wakeRec;
       wakeRec.continuous = true;
       wakeRec.interimResults = true;
-      wakeRec.lang = selectedLang === 'hi' ? 'hi-IN' : 'en-IN';
+      wakeRec.lang = (isFriendMode || selectedLang === 'hi' || selectedLang === 'hi_friend') ? 'hi-IN' : 'en-IN';
 
       wakeRec.onresult = (event) => {
         if (isDestroyed || isSpeaking) return;
@@ -4219,7 +4234,7 @@ export default function App() {
         latitude: userCoords?.latitude || null,
         longitude: userCoords?.longitude || null,
         city: userLocationName || null,
-        language: selectedLang,
+        language: isFriendMode ? 'hi_friend' : selectedLang,
         client_time: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
         api_key: (() => {
@@ -5751,7 +5766,9 @@ export default function App() {
                 <span>Assistants</span>
               </div>
               <div className="settings-row-right">
-                <span>Aether · Warm</span>
+                <span style={{ color: isFriendMode ? '#fbbf24' : '#94a3b8' }}>
+                  {isFriendMode ? '🤝 Friend Mode · Active' : 'Aether · Executive'}
+                </span>
                 <ChevronRight size={16} />
               </div>
             </div>
@@ -7910,6 +7927,8 @@ export default function App() {
         tasks={tasks}
         auditLogs={auditLogs}
         refreshAllData={refreshAllData}
+        isFriendMode={isFriendMode}
+        handleToggleFriendMode={handleToggleFriendMode}
       />
 
       {/* 8. App Permissions & Access Modal */}

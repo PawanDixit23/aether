@@ -46,7 +46,9 @@ export const SettingsSubModals = ({
   serverOnline,
   tasks,
   auditLogs,
-  refreshAllData
+  refreshAllData,
+  isFriendMode,
+  handleToggleFriendMode
 }) => {
   const [modalProviderTab, setModalProviderTab] = useState(() => activeProvider || 'gemini');
   const [showSettingsKeyGuide, setShowSettingsKeyGuide] = useState(false);
@@ -366,15 +368,70 @@ export const SettingsSubModals = ({
         </div>
       )}
 
-      {/* 6. Assistant Voice Selector Modal */}
+      {/* 6. Assistant Voice & Personality Modal */}
       {activeSubModal === 'assistant' && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '420px' }}>
+          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '440px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>Choose Assistant Personality</h3>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>Assistant & Personality</h3>
               <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+
+            {/* Friend Mode Master Switch Card */}
+            <div style={{
+              background: isFriendMode ? 'linear-gradient(135deg, rgba(245, 158, 11, 0.18) 0%, rgba(239, 68, 68, 0.12) 100%)' : 'rgba(255, 255, 255, 0.04)',
+              border: `1px solid ${isFriendMode ? 'rgba(245, 158, 11, 0.5)' : 'rgba(255, 255, 255, 0.1)'}`,
+              borderRadius: '16px',
+              padding: '16px',
+              marginBottom: '20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px'
+            }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '1.2rem' }}>🤝</span>
+                  <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.95rem' }}>हिंदी मित्र मोड (Best Friend)</span>
+                  {isFriendMode && (
+                    <span style={{ background: 'rgba(245, 158, 11, 0.25)', color: '#fbbf24', fontSize: '0.68rem', padding: '2px 7px', borderRadius: '6px', fontWeight: 700 }}>
+                      ACTIVE
+                    </span>
+                  )}
+                </div>
+                <div style={{ color: '#94a3b8', fontSize: '0.78rem', lineHeight: '1.4' }}>
+                  Aether आपसे एक सच्चे दोस्त की तरह बिना किसी देरी (Zero Delay) के अनौपचारिक हिंदी में बात करेगा।
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (handleToggleFriendMode) {
+                    handleToggleFriendMode(!isFriendMode);
+                  }
+                }}
+                style={{
+                  background: isFriendMode ? 'linear-gradient(135deg, #f59e0b, #ef4444)' : 'rgba(255, 255, 255, 0.12)',
+                  border: 'none',
+                  color: isFriendMode ? '#000' : '#94a3b8',
+                  padding: '8px 18px',
+                  borderRadius: '20px',
+                  fontWeight: 700,
+                  fontSize: '0.8rem',
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                  boxShadow: isFriendMode ? '0 0 14px rgba(245, 158, 11, 0.4)' : 'none',
+                  transition: 'all 0.2s'
+                }}
+              >
+                {isFriendMode ? 'ON' : 'OFF'}
+              </button>
+            </div>
+
+            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#94a3b8', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Voice Personality
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {AETHER_VOICES.map(voice => (
                 <div
                   key={voice.id}
