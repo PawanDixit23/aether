@@ -4436,6 +4436,87 @@ def ask_personal_document(
     answer = " ".join(top_matches) if top_matches else "No matching information found in the provided document."
     return {"answer": answer, "source": "extractive"}
 
+@app.get("/api/digest/weekly")
+def get_weekly_digest(
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    """Returns a 7-day life & spend digest for the authenticated user."""
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        return {
+            "weekly_expense": 0,
+            "top_category": "none",
+            "tasks_completed": 0,
+            "tasks_pending": 0,
+            "summary": "Sign in to see your weekly digest."
+        }
+    since = datetime.utcnow() - timedelta(days=7)
+    expenses = db.query(FinancialRecord).filter(
+        FinancialRecord.user_email == eff_email,
+        FinancialRecord.type == "expense",
+        FinancialRecord.date >= since
+    ).all()
+    weekly_expense = sum(float(e.amount or 0) for e in expenses)
+    cat_totals: Dict[str, float] = {}
+    for e in expenses:
+        c = (e.category or "general").lower()
+        cat_totals[c] = cat_totals.get(c, 0.0) + float(e.amount or 0)
+    top_category = max(cat_totals, key=cat_totals.get) if cat_totals else "none"
+
+    all_tasks = db.query(Task).filter(Task.user_email == eff_email).all()
+    tasks_completed = sum(1 for t in all_tasks if t.is_completed)
+    tasks_pending = sum(1 for t in all_tasks if not t.is_completed)
+
+    summary = (
+        f"Last 7 days: You spent ₹{weekly_expense:,.0f} (top category: {top_category}). "
+        f"You have completed {tasks_completed} task(s) with {tasks_pending} pending."
+    )
+    return {
+        "weekly_expense": weekly_expense,
+        "top_category": top_category,
+        "tasks_completed": tasks_completed,
+        "tasks_pending": tasks_pending,
+        "summary": summary
+    }
+
+class ChatStreamRequest(BaseModel):
+    prompt: str
+    document_text: Optional[str] = None
+    api_key: Optional[str] = None
+
+@app.post("/api/chat/stream")
+async def stream_chat_response(
+    req: ChatStreamRequest,
+    user_email: Optional[str] = Depends(get_user_email)
+):
+    """Streams assistant output over Server-Sent Events (SSE) for real-time typing."""
+    from fastapi.responses import StreamingResponse
+
+    async def event_generator():
+        q = req.prompt.strip()
+        key = (req.api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
+        if key and not key.startswith("sk-"):
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=key)
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                response = model.generate_content(q, stream=True)
+                for chunk in response:
+                    text = getattr(chunk, "text", "")
+                    if text:
+                        yield f"data: {json.dumps({'chunk': text})}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                return
+            except Exception as e:
+                yield f"data: {json.dumps({'chunk': f'Stream fallback: {str(e)}'})}\n\n"
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                return
+        yield f"data: {json.dumps({'chunk': 'Streaming ready. Provide a Gemini API key to stream tokens.'})}\n\n"
+        yield f"data: {json.dumps({'done': True})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 # ----------------- Static Frontend Hosting (Single-Service Cloud Deployment) -----------------
 DIST_DIR = os.path.join(os.path.dirname(__file__), "..", "desktop", "dist")
 if os.path.exists(DIST_DIR):

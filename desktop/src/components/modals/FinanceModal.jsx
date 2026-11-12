@@ -756,6 +756,39 @@ export const FinanceModal = ({
               </div>
             </div>
           </div>
+
+          {/* Monthly Spend Cap Guardrail Bar */}
+          {(() => {
+            const cap = Number(localStorage.getItem('aether_monthly_budget') || 0);
+            const pct = cap > 0 ? Math.min(100, Math.round((effectiveExpense / cap) * 100)) : 0;
+            const barColor = pct >= 100 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#10b981';
+            return (
+              <div style={{ marginTop: '10px', padding: '8px 10px', borderRadius: '12px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', color: '#94a3b8', marginBottom: cap > 0 ? '6px' : 0 }}>
+                  <span>Monthly Budget Guardrail {cap > 0 ? `(${pct}% used)` : '(Not set)'}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const val = window.prompt('Set Monthly Expense Budget (₹):', cap > 0 ? String(cap) : '30000');
+                      if (val !== null) {
+                        const num = Math.max(0, Number(val) || 0);
+                        localStorage.setItem('aether_monthly_budget', String(num));
+                        if (showToast) showToast(num > 0 ? `Monthly budget set to ₹${num.toLocaleString('en-IN')}` : 'Monthly budget cleared', 'info');
+                      }
+                    }}
+                    style={{ background: 'none', border: 'none', color: '#38bdf8', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                  >
+                    {cap > 0 ? `₹${cap.toLocaleString('en-IN')} • Edit` : '+ Set Cap'}
+                  </button>
+                </div>
+                {cap > 0 && (
+                  <div style={{ width: '100%', height: '6px', borderRadius: '999px', background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+                    <div style={{ width: `${pct}%`, height: '100%', background: barColor, transition: 'width 0.3s ease' }} />
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Unified Bank SMS Auto-Logger Section */}

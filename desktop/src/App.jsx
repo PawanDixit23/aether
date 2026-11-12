@@ -99,6 +99,7 @@ const AuditModal = React.lazy(() => import('./components/modals/AuditModal').the
 const ObservabilityModal = React.lazy(() => import('./components/modals/ObservabilityModal').then(m => ({ default: m.ObservabilityModal })));
 const PermissionsModal = React.lazy(() => import('./components/modals/PermissionsModal').then(m => ({ default: m.PermissionsModal })));
 const SettingsSubModals = React.lazy(() => import('./components/modals/SettingsSubModals').then(m => ({ default: m.SettingsSubModals })));
+const WorkspaceToolsModal = React.lazy(() => import('./components/modals/WorkspaceToolsModal').then(m => ({ default: m.WorkspaceToolsModal })));
 
 const API_BASE = typeof window !== 'undefined' && window.location.port === '5173'
   ? `http://${window.location.hostname}:8000/api`
@@ -399,6 +400,8 @@ export default function App() {
 
   // ESPNcricinfo Live Scorecards & International Fixtures
   const [isCricketModalOpen, setIsCricketModalOpen] = useState(false);
+  const [isWorkspaceToolsOpen, setIsWorkspaceToolsOpen] = useState(false);
+  const [continuousVoiceMode, setContinuousVoiceMode] = useState(() => localStorage.getItem('aether_continuous_voice') === 'true');
   const [cricketMatches, setCricketMatches] = useState([]);
   const [isCricketLoading, setIsCricketLoading] = useState(false);
 
@@ -1058,6 +1061,9 @@ export default function App() {
           activeUtteranceRef.current = null;
           setIsSpeaking(false);
           setIsBriefingPlaying(false);
+          if (continuousVoiceMode && micEnabled && !isListening) {
+            setTimeout(() => { try { toggleVoiceRecognition(); } catch {} }, 300);
+          }
         };
         utterance.onerror = () => {
           activeUtteranceRef.current = null;
@@ -5796,6 +5802,34 @@ export default function App() {
               </div>
             </div>
 
+            <div className="settings-row-item" onClick={() => setIsWorkspaceToolsOpen(true)}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><Layers size={16} /></div>
+                <span>Routines, Ask Docs & Weekly Digest</span>
+              </div>
+              <div className="settings-row-right">
+                <span>Tools</span>
+                <ChevronRight size={16} />
+              </div>
+            </div>
+
+            <div className="settings-row-item" onClick={() => {
+              const next = !continuousVoiceMode;
+              setContinuousVoiceMode(next);
+              try { localStorage.setItem('aether_continuous_voice', String(next)); } catch {}
+              showToast(next ? 'Continuous Jarvis Mode Active' : 'Continuous Jarvis Mode Off', 'info');
+            }}>
+              <div className="settings-row-left">
+                <div className="settings-row-icon-box"><Mic size={16} /></div>
+                <span>Hands-Free Continuous Voice</span>
+              </div>
+              <div className="settings-row-right">
+                <span style={{ color: continuousVoiceMode ? '#10b981' : '#94a3b8', fontWeight: 600 }}>
+                  {continuousVoiceMode ? 'ON' : 'OFF'}
+                </span>
+              </div>
+            </div>
+
             <div className="settings-row-item" onClick={() => setActiveSubModal('memory')}>
               <div className="settings-row-left">
                 <div className="settings-row-icon-box"><Database size={16} /></div>
@@ -8129,6 +8163,15 @@ export default function App() {
         isLoading={isCricketLoading}
         onRefresh={fetchLiveCricketScores}
         apiBase={API_BASE}
+      />
+
+      <WorkspaceToolsModal
+        isOpen={isWorkspaceToolsOpen}
+        onClose={() => setIsWorkspaceToolsOpen(false)}
+        apiBase={API_BASE}
+        userEmail={userEmail}
+        apiKey={apiKey}
+        showToast={showToast}
       />
       </React.Suspense>
 
