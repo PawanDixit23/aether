@@ -185,5 +185,26 @@ class TestEndToEndAndSecurityAudit(unittest.TestCase):
         # Ensure Alice does not see Pawan's greeting name
         self.assertNotIn("पवन", data["greeting"])
 
+    def test_08_finance_bulk_create(self):
+        """Functionality: Verify batch logging of 3 or more expenses at once."""
+        bulk_payload = {
+            "records": [
+                {"type": "expense", "amount": 120.0, "category": "food", "note": "Morning Chai"},
+                {"type": "expense", "amount": 250.0, "category": "transport", "note": "Auto ride"},
+                {"type": "expense", "amount": 800.0, "category": "shopping", "note": "Weekly Grocery"}
+            ],
+            "user_email": self.user_a
+        }
+        resp = self.client.post("/api/finance/records/bulk", json=bulk_payload, headers={"X-User-Email": self.user_a})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data.get("status"), "success")
+        self.assertEqual(data.get("count"), 3)
+        self.assertEqual(data.get("total_amount"), 1170.0)
+
+        # Cleanup created records
+        for rid in data.get("records", []):
+            self.client.delete(f"/api/finance/records/{rid}", headers={"X-User-Email": self.user_a})
+
 if __name__ == "__main__":
     unittest.main()

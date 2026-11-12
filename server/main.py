@@ -323,6 +323,10 @@ class FinancialRecordCreate(BaseModel):
     note: Optional[str] = None
     monthly_budget: Optional[float] = None
 
+class FinancialRecordBulkCreate(BaseModel):
+    records: List[FinancialRecordCreate]
+    user_email: Optional[str] = None
+
 class FinancialRecordUpdate(BaseModel):
     type: Optional[str] = None
     category: Optional[str] = None
@@ -2606,6 +2610,57 @@ def create_finance_record(
             }
 
     return {"status": "success", "record": new_rec, "budget_alert": budget_alert}
+
+@app.post("/api/finance/records/bulk")
+def create_finance_records_bulk(
+    req: FinancialRecordBulkCreate,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(req.user_email or user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    if not req.records or len(req.records) == 0:
+        raise HTTPException(status_code=400, detail="No records provided")
+
+    now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
+    created = []
+    for item in req.records:
+        rec_type = (item.type or "expense").strip().lower()
+        if rec_type not in ["expense", "income"]:
+            rec_type = "expense"
+        try:
+            amt = abs(float(item.amount))
+        except (ValueError, TypeError):
+            continue
+        if amt <= 0:
+            continue
+        new_rec = FinancialRecord(
+            user_email=eff_email,
+            type=rec_type,
+            category=(item.category or "general").strip().lower(),
+            amount=amt,
+            currency=item.currency or "INR",
+            payment_mode=(item.payment_mode or "upi").strip().lower(),
+            note=(item.note or "").strip() or None,
+            date=now
+        )
+        db.add(new_rec)
+        created.append(new_rec)
+    
+    if not created:
+        raise HTTPException(status_code=400, detail="No valid amounts provided")
+
+    db.commit()
+    for rec in created:
+        db.refresh(rec)
+    return {
+        "status": "success",
+        "count": len(created),
+        "total_amount": sum(r.amount for r in created),
+        "records": [r.id for r in created]
+    }
 
 @app.get("/api/finance/summary")
 def get_finance_summary(

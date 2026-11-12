@@ -110,6 +110,15 @@ export const FinanceModal = ({
   const [hoveredDayIdx, setHoveredDayIdx] = useState(null);
   const [selectedDayDetail, setSelectedDayDetail] = useState(null);
 
+  // Multi-Expense (3+ at once) Batch Mode State
+  const [expenseEntryMode, setExpenseEntryMode] = useState('single'); // 'single' | 'multi'
+  const [multiExpenses, setMultiExpenses] = useState([
+    { amount: '', category: 'food', note: '' },
+    { amount: '', category: 'transport', note: '' },
+    { amount: '', category: 'shopping', note: '' }
+  ]);
+  const [isSavingMulti, setIsSavingMulti] = useState(false);
+
   const triggerHaptic = (duration = 15) => {
     if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try { navigator.vibrate(duration); } catch (_) {}
@@ -1609,6 +1618,94 @@ export const FinanceModal = ({
           const themeColor = isIncome ? '#10b981' : '#f43f5e';
           const themeBorder = isIncome ? 'rgba(16, 185, 129, 0.4)' : 'rgba(244, 63, 94, 0.4)';
 
+          const updateMultiExpense = (index, field, value) => {
+            setMultiExpenses(prev => {
+              const next = [...prev];
+              next[index] = { ...next[index], [field]: value };
+              return next;
+            });
+          };
+
+          const addMultiExpenseRow = () => {
+            setMultiExpenses(prev => [
+              ...prev,
+              { amount: '', category: 'food', note: '' }
+            ]);
+          };
+
+          const removeMultiExpenseRow = (index) => {
+            if (multiExpenses.length <= 1) return;
+            setMultiExpenses(prev => prev.filter((_, i) => i !== index));
+          };
+
+          const handleSaveMultiExpenses = async () => {
+            const validRows = multiExpenses.filter(r => {
+              const a = parseFloat(r.amount);
+              return !isNaN(a) && a > 0;
+            });
+
+            if (validRows.length === 0) {
+              if (showToast) showToast("Please enter at least 1 valid amount", "info");
+              return;
+            }
+
+            setIsSavingMulti(true);
+            try {
+              const recordsToSave = validRows.map(r => ({
+                type: 'expense',
+                amount: parseFloat(r.amount),
+                category: r.category || 'food',
+                note: (r.note || '').trim() || 'Expense',
+                payment_mode: 'upi',
+                user_email: userEmail || null
+              }));
+
+              let saved = false;
+              try {
+                const resp = await fetch(`${API_BASE}/finance/records/bulk`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    ...(userEmail ? { 'X-User-Email': userEmail } : {})
+                  },
+                  body: JSON.stringify({ records: recordsToSave, user_email: userEmail || null })
+                });
+                const data = await resp.json();
+                if (resp.ok && data.status === 'success') {
+                  saved = true;
+                }
+              } catch (_) {}
+
+              if (!saved) {
+                await Promise.all(recordsToSave.map(rec => 
+                  fetch(`${API_BASE}/finance/records`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      ...(userEmail ? { 'X-User-Email': userEmail } : {})
+                    },
+                    body: JSON.stringify(rec)
+                  })
+                ));
+              }
+
+              const totalAmt = validRows.reduce((sum, r) => sum + parseFloat(r.amount), 0);
+              setIsAddingExpense(false);
+              setMultiExpenses([
+                { amount: '', category: 'food', note: '' },
+                { amount: '', category: 'transport', note: '' },
+                { amount: '', category: 'shopping', note: '' }
+              ]);
+              setExpenseEntryMode('single');
+              if (showToast) showToast(`✅ ${validRows.length} expenses logged (₹${totalAmt.toLocaleString('en-IN')})!`, "success");
+              if (refreshAllData) refreshAllData();
+            } catch (err) {
+              if (showToast) showToast("Error saving expenses", "error");
+            } finally {
+              setIsSavingMulti(false);
+            }
+          };
+
           const handleSaveTransactionForm = async () => {
             const amtVal = parseFloat(newExpenseForm.amount);
             if (isNaN(amtVal) || amtVal <= 0) {
@@ -1657,193 +1754,401 @@ export const FinanceModal = ({
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <span style={{ fontSize: '0.90rem', fontWeight: 800, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <span>{isIncome ? '💰' : '💸'}</span>
-                  <span>{isIncome ? 'Record Income' : 'Record Expense'}</span>
+                  <span>{isIncome ? 'Record Income' : (expenseEntryMode === 'multi' ? 'Multi-Expense (Batch)' : 'Record Expense')}</span>
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setIsAddingExpense(false)}
-                  style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1rem', padding: '2px 6px' }}
-                >
-                  ✕
-                </button>
-              </div>
+                
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {!isIncome && (
+                    <div style={{
+                      display: 'inline-flex',
+                      background: 'rgba(255, 255, 255, 0.06)',
+                      borderRadius: '12px',
+                      padding: '2px',
+                      border: '1px solid rgba(255, 255, 255, 0.1)'
+                    }}>
+                      <button
+                        type="button"
+                        onClick={() => setExpenseEntryMode('single')}
+                        style={{
+                          background: expenseEntryMode === 'single' ? 'rgba(244, 63, 94, 0.35)' : 'transparent',
+                          color: expenseEntryMode === 'single' ? '#fda4af' : '#94a3b8',
+                          border: 'none',
+                          borderRadius: '10px',
+                          padding: '3px 9px',
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s'
+                        }}
+                      >
+                        Single
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setExpenseEntryMode('multi')}
+                        style={{
+                          background: expenseEntryMode === 'multi' ? 'rgba(244, 63, 94, 0.35)' : 'transparent',
+                          color: expenseEntryMode === 'multi' ? '#fda4af' : '#94a3b8',
+                          border: 'none',
+                          borderRadius: '10px',
+                          padding: '3px 9px',
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s'
+                        }}
+                        title="Enter 3 or more expenses together"
+                      >
+                        ⚡ Multi (3+)
+                      </button>
+                    </div>
+                  )}
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
-                <div>
-                  <label style={{ fontSize: '0.7rem', color: isIncome ? '#34d399' : '#f87171', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
-                    {isIncome ? '₹ Income Amount' : '₹ Expense Amount'}
-                  </label>
-                  <input
-                    type="number"
-                    placeholder="e.g. 5000"
-                    value={newExpenseForm.amount}
-                    onChange={e => setNewExpenseForm({ ...newExpenseForm, amount: e.target.value })}
-                    style={{
-                      width: '100%',
-                      boxSizing: 'border-box',
-                      background: '#060a14',
-                      border: `1px solid ${themeBorder}`,
-                      borderRadius: '10px',
-                      padding: '9px 10px',
-                      color: '#fff',
-                      fontSize: '0.90rem',
-                      fontWeight: 700
-                    }}
-                  />
-                </div>
-                <div style={{ position: 'relative' }}>
-                  <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Category</label>
                   <button
                     type="button"
-                    onClick={() => setIsCategoryPickerOpen(!isCategoryPickerOpen)}
-                    style={{
-                      width: '100%',
-                      boxSizing: 'border-box',
-                      background: '#060a14',
-                      border: isCategoryPickerOpen ? `1.5px solid ${themeColor}` : '1px solid rgba(255,255,255,0.12)',
-                      borderRadius: '10px',
-                      padding: '8px 10px',
-                      color: '#fff',
-                      fontSize: '0.8rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      cursor: 'pointer',
-                      textAlign: 'left'
-                    }}
+                    onClick={() => setIsAddingExpense(false)}
+                    style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1rem', padding: '2px 6px' }}
                   >
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      <span>{currentCategories.find(c => c.id === newExpenseForm.category)?.icon || (isIncome ? '💼' : '🍔')}</span>
-                      <span style={{ fontWeight: 600 }}>{currentCategories.find(c => c.id === newExpenseForm.category)?.label || (isIncome ? 'Salary' : 'Food & Dining')}</span>
-                    </span>
-                    <ChevronDown size={14} color="#94a3b8" />
+                    ✕
                   </button>
                 </div>
               </div>
 
-              {/* Category Picker Drawer */}
-              {isCategoryPickerOpen && (
-                <div style={{
-                  background: '#070d1d',
-                  border: `1px solid ${themeBorder}`,
-                  borderRadius: '14px',
-                  padding: '8px',
-                  marginBottom: '12px',
-                  display: 'grid',
-                  gridTemplateColumns: '1fr',
-                  gap: '4px',
-                  boxShadow: '0 12px 32px rgba(0,0,0,0.85)'
-                }}>
-                  <div style={{ fontSize: '0.68rem', color: '#94a3b8', padding: '2px 8px 4px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    Select {isIncome ? 'Income Source' : 'Expense Category'}
+              {/* MULTI-EXPENSE ENTRY MODE */}
+              {!isIncome && expenseEntryMode === 'multi' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(244, 63, 94, 0.08)', border: '1px solid rgba(244, 63, 94, 0.2)', borderRadius: '12px', padding: '8px 12px' }}>
+                    <span style={{ fontSize: '0.76rem', color: '#fda4af', fontWeight: 600 }}>
+                      Log 3+ expenses at the same time:
+                    </span>
+                    <span style={{ fontSize: '0.82rem', color: '#ffffff', fontWeight: 700 }}>
+                      Total: ₹{multiExpenses.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0).toLocaleString('en-IN')}
+                    </span>
                   </div>
-                  {currentCategories.map(cat => {
-                    const isSelected = newExpenseForm.category === cat.id;
-                    return (
-                      <button
-                        key={cat.id}
-                        type="button"
-                        onClick={() => {
-                          setNewExpenseForm({ ...newExpenseForm, category: cat.id });
-                          setIsCategoryPickerOpen(false);
-                        }}
+
+                  {multiExpenses.map((row, idx) => (
+                    <div 
+                      key={idx}
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: '14px',
+                        padding: '10px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#f43f5e', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Expense #{idx + 1}
+                        </span>
+                        {multiExpenses.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeMultiExpenseRow(idx)}
+                            style={{ background: 'none', border: 'none', color: '#ef4444', opacity: 0.7, cursor: 'pointer', padding: '2px 4px' }}
+                            title="Remove this expense row"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                        <div>
+                          <input
+                            type="number"
+                            placeholder="₹ Amount"
+                            value={row.amount}
+                            onChange={e => updateMultiExpense(idx, 'amount', e.target.value)}
+                            style={{
+                              width: '100%',
+                              boxSizing: 'border-box',
+                              background: '#060a14',
+                              border: '1px solid rgba(244, 63, 94, 0.35)',
+                              borderRadius: '10px',
+                              padding: '8px 10px',
+                              color: '#fff',
+                              fontSize: '0.86rem',
+                              fontWeight: 700
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <select
+                            value={row.category}
+                            onChange={e => updateMultiExpense(idx, 'category', e.target.value)}
+                            style={{
+                              width: '100%',
+                              boxSizing: 'border-box',
+                              background: '#060a14',
+                              border: '1px solid rgba(255, 255, 255, 0.12)',
+                              borderRadius: '10px',
+                              padding: '8px 10px',
+                              color: '#e2e8f0',
+                              fontSize: '0.80rem'
+                            }}
+                          >
+                            {FINANCE_CATEGORIES.map(c => (
+                              <option key={c.id} value={c.id}>
+                                {c.icon} {c.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div>
+                        <input
+                          type="text"
+                          placeholder="Note (e.g. Chai, Petrol, Groceries)"
+                          value={row.note}
+                          onChange={e => updateMultiExpense(idx, 'note', e.target.value)}
+                          style={{
+                            width: '100%',
+                            boxSizing: 'border-box',
+                            background: '#060a14',
+                            border: '1px solid rgba(255, 255, 255, 0.1)',
+                            borderRadius: '8px',
+                            padding: '7px 10px',
+                            color: '#fff',
+                            fontSize: '0.80rem'
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={addMultiExpenseRow}
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px dashed rgba(244, 63, 94, 0.4)',
+                      color: '#fda4af',
+                      borderRadius: '12px',
+                      padding: '8px 12px',
+                      fontSize: '0.78rem',
+                      fontWeight: 700,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    <Plus size={14} />
+                    <span>+ Add Another Expense ({multiExpenses.length + 1})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSavingMulti}
+                    onClick={handleSaveMultiExpenses}
+                    style={{
+                      width: '100%',
+                      background: 'linear-gradient(135deg, #f43f5e 0%, #e11d48 100%)',
+                      border: 'none',
+                      color: '#ffffff',
+                      padding: '11px',
+                      borderRadius: '12px',
+                      fontWeight: 700,
+                      fontSize: '0.86rem',
+                      cursor: isSavingMulti ? 'not-allowed' : 'pointer',
+                      boxShadow: '0 4px 14px rgba(244, 63, 94, 0.4)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      marginTop: '4px'
+                    }}
+                  >
+                    <span>💾 Save All ({multiExpenses.filter(r => parseFloat(r.amount) > 0).length} Expenses)</span>
+                  </button>
+                </div>
+              ) : (
+                /* SINGLE EXPENSE / INCOME ENTRY MODE */
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
+                    <div>
+                      <label style={{ fontSize: '0.7rem', color: isIncome ? '#34d399' : '#f87171', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
+                        {isIncome ? '₹ Income Amount' : '₹ Expense Amount'}
+                      </label>
+                      <input
+                        type="number"
+                        placeholder="e.g. 5000"
+                        value={newExpenseForm.amount}
+                        onChange={e => setNewExpenseForm({ ...newExpenseForm, amount: e.target.value })}
                         style={{
+                          width: '100%',
+                          boxSizing: 'border-box',
+                          background: '#060a14',
+                          border: `1px solid ${themeBorder}`,
+                          borderRadius: '10px',
+                          padding: '9px 10px',
+                          color: '#fff',
+                          fontSize: '0.90rem',
+                          fontWeight: 700
+                        }}
+                      />
+                    </div>
+                    <div style={{ position: 'relative' }}>
+                      <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Category</label>
+                      <button
+                        type="button"
+                        onClick={() => setIsCategoryPickerOpen(!isCategoryPickerOpen)}
+                        style={{
+                          width: '100%',
+                          boxSizing: 'border-box',
+                          background: '#060a14',
+                          border: isCategoryPickerOpen ? `1.5px solid ${themeColor}` : '1px solid rgba(255,255,255,0.12)',
+                          borderRadius: '10px',
+                          padding: '8px 10px',
+                          color: '#fff',
+                          fontSize: '0.8rem',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          padding: '8px 12px',
-                          background: isSelected ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                          border: isSelected ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid transparent',
-                          borderRadius: '10px',
                           cursor: 'pointer',
                           textAlign: 'left'
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <span style={{ fontSize: '1.1rem' }}>{cat.icon}</span>
-                          <span style={{ fontSize: '0.82rem', fontWeight: isSelected ? 700 : 500, color: isSelected ? '#38bdf8' : '#e2e8f0' }}>
-                            {cat.label}
-                          </span>
-                        </div>
-                        {isSelected ? (
-                          <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: themeColor, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <Check size={12} color="#080e1e" strokeWidth={3} />
-                          </div>
-                        ) : (
-                          <div style={{ width: '16px', height: '16px', borderRadius: '50%', border: '1.5px solid rgba(255, 255, 255, 0.2)' }} />
-                        )}
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span>{currentCategories.find(c => c.id === newExpenseForm.category)?.icon || (isIncome ? '💼' : '🍔')}</span>
+                          <span style={{ fontWeight: 600 }}>{currentCategories.find(c => c.id === newExpenseForm.category)?.label || (isIncome ? 'Salary' : 'Food & Dining')}</span>
+                        </span>
+                        <ChevronDown size={14} color="#94a3b8" />
                       </button>
-                    );
-                  })}
-                </div>
+                    </div>
+                  </div>
+
+                  {/* Category Picker Drawer */}
+                  {isCategoryPickerOpen && (
+                    <div style={{
+                      background: '#070d1d',
+                      border: `1px solid ${themeBorder}`,
+                      borderRadius: '14px',
+                      padding: '8px',
+                      marginBottom: '12px',
+                      display: 'grid',
+                      gridTemplateColumns: '1fr',
+                      gap: '4px',
+                      boxShadow: '0 12px 32px rgba(0,0,0,0.85)'
+                    }}>
+                      <div style={{ fontSize: '0.68rem', color: '#94a3b8', padding: '2px 8px 4px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        Select {isIncome ? 'Income Source' : 'Expense Category'}
+                      </div>
+                      {currentCategories.map(cat => {
+                        const isSelected = newExpenseForm.category === cat.id;
+                        return (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() => {
+                              setNewExpenseForm({ ...newExpenseForm, category: cat.id });
+                              setIsCategoryPickerOpen(false);
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '8px 12px',
+                              background: isSelected ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                              border: isSelected ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid transparent',
+                              borderRadius: '10px',
+                              cursor: 'pointer',
+                              textAlign: 'left'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <span style={{ fontSize: '1.1rem' }}>{cat.icon}</span>
+                              <span style={{ fontSize: '0.82rem', fontWeight: isSelected ? 700 : 500, color: isSelected ? '#38bdf8' : '#e2e8f0' }}>
+                                {cat.label}
+                              </span>
+                            </div>
+                            {isSelected ? (
+                              <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: themeColor, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <Check size={12} color="#080e1e" strokeWidth={3} />
+                              </div>
+                            ) : (
+                              <div style={{ width: '16px', height: '16px', borderRadius: '50%', border: '1.5px solid rgba(255, 255, 255, 0.2)' }} />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* 1-Tap Quick Tags */}
+                  <div style={{ marginBottom: '10px' }}>
+                    <div style={{ fontSize: '0.68rem', color: '#94a3b8', display: 'block', marginBottom: '5px', fontWeight: 600 }}>
+                      ⚡ 1-Tap Quick Tags:
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
+                      {currentChips.map(chip => (
+                        <button
+                          key={chip.id}
+                          type="button"
+                          onClick={() => {
+                            triggerHaptic(10);
+                            setNewExpenseForm({
+                              ...newExpenseForm,
+                              note: chip.text,
+                              category: chip.cat || newExpenseForm.category
+                            });
+                          }}
+                          style={{
+                            background: newExpenseForm.note === chip.text ? 'rgba(56, 189, 248, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                            border: newExpenseForm.note === chip.text ? `1px solid ${themeColor}` : '1px solid rgba(255, 255, 255, 0.1)',
+                            color: newExpenseForm.note === chip.text ? themeColor : '#e2e8f0',
+                            borderRadius: '8px',
+                            padding: '4px 8px',
+                            fontSize: '0.70rem',
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {chip.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>
+                      {isIncome ? 'Source / Note' : 'Note / Description'}
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={isIncome ? "e.g. Monthly salary, Google AdSense, consulting..." : "e.g. Swiggy lunch, petrol refill, dinner with friends..."}
+                      value={newExpenseForm.note}
+                      onChange={e => setNewExpenseForm({ ...newExpenseForm, note: e.target.value })}
+                      style={{ width: '100%', boxSizing: 'border-box', background: '#060a14', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '0.82rem' }}
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveTransactionForm}
+                    style={{
+                      width: '100%',
+                      background: isIncome ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'linear-gradient(135deg, #f43f5e 0%, #e11d48 100%)',
+                      border: 'none',
+                      color: '#ffffff',
+                      padding: '11px',
+                      borderRadius: '12px',
+                      fontWeight: 700,
+                      fontSize: '0.86rem',
+                      cursor: 'pointer',
+                      boxShadow: isIncome ? '0 4px 14px rgba(16, 185, 129, 0.4)' : '0 4px 14px rgba(244, 63, 94, 0.4)'
+                    }}
+                  >
+                    {isIncome ? '💾 Save Income' : '💾 Save Expense'}
+                  </button>
+                </>
               )}
-
-              {/* 1-Tap Quick Tags */}
-              <div style={{ marginBottom: '10px' }}>
-                <div style={{ fontSize: '0.68rem', color: '#94a3b8', display: 'block', marginBottom: '5px', fontWeight: 600 }}>
-                  ⚡ 1-Tap Quick Tags:
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
-                  {currentChips.map(chip => (
-                    <button
-                      key={chip.id}
-                      type="button"
-                      onClick={() => {
-                        triggerHaptic(10);
-                        setNewExpenseForm({
-                          ...newExpenseForm,
-                          note: chip.text,
-                          category: chip.cat || newExpenseForm.category
-                        });
-                      }}
-                      style={{
-                        background: newExpenseForm.note === chip.text ? 'rgba(56, 189, 248, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                        border: newExpenseForm.note === chip.text ? `1px solid ${themeColor}` : '1px solid rgba(255, 255, 255, 0.1)',
-                        color: newExpenseForm.note === chip.text ? themeColor : '#e2e8f0',
-                        borderRadius: '8px',
-                        padding: '4px 8px',
-                        fontSize: '0.70rem',
-                        fontWeight: 600,
-                        cursor: 'pointer'
-                      }}
-                    >
-                      {chip.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>
-                  {isIncome ? 'Source / Note' : 'Note / Description'}
-                </label>
-                <input
-                  type="text"
-                  placeholder={isIncome ? "e.g. Monthly salary, Google AdSense, consulting..." : "e.g. Swiggy lunch, petrol refill, dinner with friends..."}
-                  value={newExpenseForm.note}
-                  onChange={e => setNewExpenseForm({ ...newExpenseForm, note: e.target.value })}
-                  style={{ width: '100%', boxSizing: 'border-box', background: '#060a14', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '0.82rem' }}
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={handleSaveTransactionForm}
-                style={{
-                  width: '100%',
-                  background: isIncome ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'linear-gradient(135deg, #f43f5e 0%, #e11d48 100%)',
-                  border: 'none',
-                  color: '#ffffff',
-                  padding: '11px',
-                  borderRadius: '12px',
-                  fontWeight: 700,
-                  fontSize: '0.86rem',
-                  cursor: 'pointer',
-                  boxShadow: isIncome ? '0 4px 14px rgba(16, 185, 129, 0.4)' : '0 4px 14px rgba(244, 63, 94, 0.4)'
-                }}
-              >
-                {isIncome ? '💾 Save Income' : '💾 Save Expense'}
-              </button>
             </div>
           );
         })()}

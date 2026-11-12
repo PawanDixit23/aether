@@ -42,7 +42,9 @@ export const ChatHistoryDrawer = ({
   todayTasks = [],
   todayPendingCount = 0,
   onToggleTask,
-  onOpenTasksModal
+  onOpenTasksModal,
+  isTemporaryChat = false,
+  onStartTemporaryChat
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [renamingSession, setRenamingSession] = useState(null);
@@ -368,8 +370,8 @@ export const ChatHistoryDrawer = ({
           </button>
         </div>
 
-        {/* Action: New Chat Button */}
-        <div style={{ padding: '14px 18px 8px', flexShrink: 0 }}>
+        {/* Action: 2-Part New Chat & Temporary Chat */}
+        <div style={{ padding: '14px 18px 8px', flexShrink: 0, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
           <button
             type="button"
             onClick={() => {
@@ -377,25 +379,57 @@ export const ChatHistoryDrawer = ({
               onClose();
             }}
             style={{
-              width: '100%',
-              background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.2) 0%, rgba(59, 130, 246, 0.2) 100%)',
-              border: '1px solid rgba(56, 189, 248, 0.45)',
-              color: '#38bdf8',
-              borderRadius: '14px',
-              padding: '11px 18px',
+              background: !isTemporaryChat 
+                ? 'linear-gradient(135deg, rgba(56, 189, 248, 0.22) 0%, rgba(59, 130, 246, 0.22) 100%)'
+                : 'rgba(255, 255, 255, 0.04)',
+              border: !isTemporaryChat ? '1px solid rgba(56, 189, 248, 0.5)' : '1px solid rgba(255, 255, 255, 0.1)',
+              color: !isTemporaryChat ? '#38bdf8' : '#94a3b8',
+              borderRadius: '12px',
+              padding: '10px 10px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '10px',
+              gap: '6px',
               fontWeight: 700,
-              fontSize: '0.92rem',
+              fontSize: '0.84rem',
               cursor: 'pointer',
               transition: 'all 0.2s',
-              boxShadow: '0 4px 16px rgba(56, 189, 248, 0.16)'
+              boxShadow: !isTemporaryChat ? '0 4px 14px rgba(56, 189, 248, 0.16)' : 'none'
             }}
+            title="Start a new persistent conversation"
           >
-            <Plus size={18} />
-            <span>{activeProject !== 'all' ? `New ${activeProject.charAt(0).toUpperCase() + activeProject.slice(1)} Chat` : 'New Chat'}</span>
+            <Plus size={16} />
+            <span style={{ whiteSpace: 'nowrap' }}>New Chat</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (onStartTemporaryChat) onStartTemporaryChat();
+              onClose();
+            }}
+            style={{
+              background: isTemporaryChat 
+                ? 'linear-gradient(135deg, rgba(245, 158, 11, 0.25) 0%, rgba(217, 119, 6, 0.25) 100%)'
+                : 'rgba(255, 255, 255, 0.04)',
+              border: isTemporaryChat ? '1px solid rgba(245, 158, 11, 0.55)' : '1px solid rgba(255, 255, 255, 0.1)',
+              color: isTemporaryChat ? '#fbbf24' : '#94a3b8',
+              borderRadius: '12px',
+              padding: '10px 10px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              fontWeight: 700,
+              fontSize: '0.84rem',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              boxShadow: isTemporaryChat ? '0 4px 14px rgba(245, 158, 11, 0.2)' : 'none'
+            }}
+            title="Start temporary chat (history will not be saved)"
+          >
+            <Clock size={16} />
+            <span style={{ whiteSpace: 'nowrap' }}>Temp Chat</span>
           </button>
         </div>
 

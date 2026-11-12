@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Check, Database, Shield, Key, ExternalLink, HelpCircle, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { AETHER_VOICES, AI_PROVIDERS } from '../common/constants';
 
@@ -65,6 +65,20 @@ export const SettingsSubModals = ({
     try { return JSON.parse(localStorage.getItem('aether_pinned_memories') || '[]'); } catch { return []; }
   });
   const [pauseMemoryLearning, setPauseMemoryLearning] = useState(() => localStorage.getItem('aether_pause_memory_learning') === 'true');
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth <= 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const currentSettingsProv = AI_PROVIDERS.find(p => p.id === modalProviderTab) || AI_PROVIDERS[0];
   const currentKeyVal = modalProviderTab === 'openai' ? (openaiKey || '') : modalProviderTab === 'grok' ? (grokKey || '') : (apiKey || '');
@@ -778,32 +792,89 @@ export const SettingsSubModals = ({
         };
 
         return (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-            <div style={{ background: '#0d1527', border: '1px solid rgba(56, 189, 248, 0.25)', borderRadius: '24px', padding: '22px', width: '100%', maxWidth: '560px', maxHeight: '88vh', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8', fontWeight: 700 }}>
-                  <Database size={18} />
-                  <span>MEMORY DASHBOARD</span>
-                  <span style={{ fontSize: '0.72rem', background: 'rgba(56, 189, 248, 0.14)', padding: '2px 8px', borderRadius: '999px', color: '#7dd3fc' }}>
-                    {(memories || []).length} facts
-                  </span>
+          <div 
+            className="aether-edge-modal-overlay"
+            style={{ 
+              position: 'fixed', 
+              inset: 0, 
+              background: 'rgba(0, 0, 0, 0.92)', 
+              backdropFilter: 'blur(16px)', 
+              WebkitBackdropFilter: 'blur(16px)',
+              zIndex: 120, 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              padding: isMobile ? 0 : '16px' 
+            }}
+          >
+            <div 
+              className="aether-edge-content-container aether-edge-modal-container"
+              style={{ 
+                background: '#080f1d', 
+                border: isMobile ? 'none' : '1px solid rgba(255, 255, 255, 0.1)', 
+                borderRadius: isMobile ? 0 : '28px', 
+                padding: isMobile ? '16px 14px 24px 14px' : '22px 20px', 
+                paddingTop: isMobile ? 'max(52px, calc(env(safe-area-inset-top, 0px) + 16px))' : '22px',
+                paddingBottom: isMobile ? 'max(24px, env(safe-area-inset-bottom))' : '20px',
+                width: '100%', 
+                maxWidth: isMobile ? '100%' : '520px', 
+                height: isMobile ? '100dvh' : 'auto',
+                maxHeight: isMobile ? '100dvh' : '92vh', 
+                overflowY: 'auto', 
+                display: 'flex', 
+                flexDirection: 'column', 
+                boxSizing: 'border-box', 
+                boxShadow: isMobile ? 'none' : '0 24px 64px rgba(0,0,0,0.85)',
+                gap: '12px'
+              }}
+            >
+              {/* Header: Edge to Edge matching Finance Tab */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ width: '38px', height: '38px', borderRadius: '12px', background: 'rgba(56, 189, 248, 0.14)', border: '1px solid rgba(56, 189, 248, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8' }}>
+                    <Database size={19} />
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '1.25rem', fontWeight: 700, color: '#ffffff', letterSpacing: '-0.02em' }}>Memory Vault</span>
+                      <span style={{ fontSize: '0.68rem', fontWeight: 700, background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.3)', padding: '2px 8px', borderRadius: '999px', color: '#38bdf8' }}>
+                        {(memories || []).length} facts
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '0.70rem', color: '#64748b', marginTop: '1px' }}>Personal context & continuous learning</div>
+                  </div>
                 </div>
+
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <button
                     type="button"
                     onClick={handleExportMemories}
-                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#cbd5e1', fontSize: '0.72rem', padding: '4px 10px', borderRadius: '8px', cursor: 'pointer' }}
+                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#cbd5e1', fontSize: '0.72rem', fontWeight: 600, padding: '7px 11px', borderRadius: '10px', cursor: 'pointer', transition: 'all 0.15s' }}
+                    title="Export memories as JSON"
                   >
                     Export JSON
                   </button>
-                  <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+                  <button 
+                    type="button" 
+                    onClick={() => setActiveSubModal(null)} 
+                    style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '1.1rem', cursor: 'pointer', flexShrink: 0 }}
+                    title="Close"
+                  >
+                    ✕
+                  </button>
                 </div>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.07)' }}>
-                <span style={{ fontSize: '0.78rem', color: '#cbd5e1' }}>
-                  Auto-Learn from Chat {pauseMemoryLearning ? '(Paused)' : '(Active)'}
-                </span>
+              {/* Auto-Learn Status Banner */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
+                <div>
+                  <div style={{ fontSize: '0.80rem', fontWeight: 600, color: '#e2e8f0' }}>
+                    Auto-Learn from Chat
+                  </div>
+                  <div style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                    {pauseMemoryLearning ? 'Learning is currently paused' : 'Automatically learns preferences from conversation'}
+                  </div>
+                </div>
                 <button
                   type="button"
                   onClick={() => {
@@ -817,8 +888,8 @@ export const SettingsSubModals = ({
                     border: `1px solid ${pauseMemoryLearning ? 'rgba(239,68,68,0.4)' : 'rgba(16,185,129,0.4)'}`,
                     color: pauseMemoryLearning ? '#fca5a5' : '#6ee7b7',
                     fontSize: '0.72rem',
-                    fontWeight: 600,
-                    padding: '4px 10px',
+                    fontWeight: 700,
+                    padding: '5px 12px',
                     borderRadius: '999px',
                     cursor: 'pointer'
                   }}
@@ -827,11 +898,12 @@ export const SettingsSubModals = ({
                 </button>
               </div>
 
-              <form onSubmit={handleDirectAddMemory} style={{ display: 'flex', gap: '8px' }}>
+              {/* Add Fact Form */}
+              <form onSubmit={handleDirectAddMemory} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', flexShrink: 0 }}>
                 <select
                   value={newMemCategory}
                   onChange={(e) => setNewMemCategory(e.target.value)}
-                  style={{ background: '#111b33', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '10px', padding: '8px', color: '#cbd5e1', fontSize: '0.78rem' }}
+                  style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '10px', padding: '9px 10px', color: '#cbd5e1', fontSize: '0.78rem', boxSizing: 'border-box' }}
                 >
                   <option value="personal">Personal</option>
                   <option value="preference">Preference</option>
@@ -843,37 +915,40 @@ export const SettingsSubModals = ({
                   placeholder="Add a new fact directly..."
                   value={newMemoryText}
                   onChange={(e) => setNewMemoryText(e.target.value)}
-                  style={{ flex: 1, background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.84rem' }}
+                  style={{ flex: '1 1 180px', minWidth: '150px', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '10px', padding: '9px 12px', color: '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
                 />
-                <button type="submit" disabled={memSaving} style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 14px', borderRadius: '10px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}>
+                <button type="submit" disabled={memSaving} style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '9px 16px', borderRadius: '10px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                   {memSaving ? '...' : '+ Add'}
                 </button>
               </form>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {/* Search & Filter Pills */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
                 <input
                   type="text"
                   placeholder="Search memories..."
                   value={memSearch}
                   onChange={(e) => setMemSearch(e.target.value)}
-                  style={{ background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '10px', padding: '7px 12px', color: '#fff', fontSize: '0.8rem' }}
+                  style={{ background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.80rem', boxSizing: 'border-box' }}
                 />
-                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '2px', scrollbarWidth: 'none' }}>
                   {categories.map((cat) => (
                     <button
                       key={cat}
                       type="button"
                       onClick={() => setMemCategoryFilter(cat)}
                       style={{
-                        background: memCategoryFilter === cat ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255,255,255,0.04)',
-                        border: `1px solid ${memCategoryFilter === cat ? 'rgba(56, 189, 248, 0.5)' : 'rgba(255,255,255,0.08)'}`,
-                        color: memCategoryFilter === cat ? '#7dd3fc' : '#94a3b8',
+                        background: memCategoryFilter === cat ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255,255,255,0.04)',
+                        border: `1px solid ${memCategoryFilter === cat ? 'rgba(56, 189, 248, 0.55)' : 'rgba(255,255,255,0.08)'}`,
+                        color: memCategoryFilter === cat ? '#38bdf8' : '#94a3b8',
                         fontSize: '0.72rem',
                         fontWeight: 600,
-                        padding: '4px 10px',
+                        padding: '4px 12px',
                         borderRadius: '999px',
                         cursor: 'pointer',
-                        textTransform: 'capitalize'
+                        textTransform: 'capitalize',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
                       }}
                     >
                       {cat}
@@ -882,9 +957,10 @@ export const SettingsSubModals = ({
                 </div>
               </div>
 
-              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {/* Memory List with Fixed Edit Form */}
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', minHeight: 0 }}>
                 {filteredMemories.length === 0 ? (
-                  <div style={{ color: '#64748b', fontSize: '0.84rem', textAlign: 'center', padding: '30px 0' }}>
+                  <div style={{ color: '#64748b', fontSize: '0.84rem', textAlign: 'center', padding: '36px 0' }}>
                     No matching memories found.
                   </div>
                 ) : (
@@ -893,32 +969,34 @@ export const SettingsSubModals = ({
                     const isEditing = editingMemId === mem.id;
                     const catLabel = (mem.category || 'personal').toLowerCase();
                     return (
-                      <div key={mem.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 14px', background: isPinned ? 'rgba(56, 189, 248, 0.06)' : 'rgba(255, 255, 255, 0.03)', border: `1px solid ${isPinned ? 'rgba(56, 189, 248, 0.3)' : 'rgba(255, 255, 255, 0.07)'}`, borderRadius: '12px' }}>
+                      <div key={mem.id} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 14px', background: isPinned ? 'rgba(56, 189, 248, 0.07)' : 'rgba(255, 255, 255, 0.03)', border: `1px solid ${isPinned ? 'rgba(56, 189, 248, 0.35)' : 'rgba(255, 255, 255, 0.07)'}`, borderRadius: '14px', transition: 'border 0.2s' }}>
                         {isEditing ? (
-                          <div style={{ display: 'flex', gap: '6px' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                             <input
                               type="text"
                               value={editingMemText}
                               onChange={(e) => setEditingMemText(e.target.value)}
-                              style={{ flex: 1, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(56,189,248,0.4)', borderRadius: '8px', padding: '6px 10px', color: '#fff', fontSize: '0.84rem' }}
+                              style={{ width: '100%', boxSizing: 'border-box', background: '#050a14', border: '1px solid rgba(56,189,248,0.5)', borderRadius: '8px', padding: '8px 10px', color: '#fff', fontSize: '0.84rem' }}
                             />
-                            <button type="button" onClick={() => handleSaveEditMemory(mem)} style={{ background: '#10b981', border: 'none', color: '#fff', padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}>Save</button>
-                            <button type="button" onClick={() => setEditingMemId(null)} style={{ background: 'rgba(255,255,255,0.08)', border: 'none', color: '#cbd5e1', padding: '4px 8px', borderRadius: '8px', fontSize: '0.75rem', cursor: 'pointer' }}>Cancel</button>
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', flexShrink: 0 }}>
+                              <button type="button" onClick={() => setEditingMemId(null)} style={{ background: 'rgba(255,255,255,0.08)', border: 'none', color: '#cbd5e1', padding: '6px 14px', borderRadius: '8px', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+                              <button type="button" onClick={() => handleSaveEditMemory(mem)} style={{ background: '#10b981', border: 'none', color: '#fff', padding: '6px 16px', borderRadius: '8px', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer' }}>Save</button>
+                            </div>
                           </div>
                         ) : (
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-                            <div style={{ color: '#e2e8f0', fontSize: '0.86rem', flex: 1, lineHeight: '1.4' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                            <div style={{ color: '#f1f5f9', fontSize: '0.86rem', flex: 1, lineHeight: '1.45', wordBreak: 'break-word' }}>
                               {mem.fact || mem.content || mem.text}
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                              <button type="button" onClick={() => togglePin(mem.id)} title={isPinned ? 'Unpin' : 'Pin'} style={{ background: 'none', border: 'none', color: isPinned ? '#fbbf24' : '#64748b', cursor: 'pointer', fontSize: '0.85rem', padding: '2px 4px' }}>📌</button>
-                              <button type="button" onClick={() => { setEditingMemId(mem.id); setEditingMemText(mem.fact || mem.content || mem.text || ''); }} title="Edit fact" style={{ background: 'none', border: 'none', color: '#38bdf8', cursor: 'pointer', fontSize: '0.8rem', padding: '2px 4px' }}>Edit</button>
-                              <button type="button" onClick={() => handleDeleteMemory(mem.id)} title="Delete fact" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.95rem', padding: '2px 4px' }}>✕</button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                              <button type="button" onClick={() => togglePin(mem.id)} title={isPinned ? 'Unpin' : 'Pin'} style={{ background: isPinned ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255,255,255,0.04)', border: 'none', borderRadius: '6px', color: isPinned ? '#fbbf24' : '#64748b', cursor: 'pointer', fontSize: '0.85rem', padding: '3px 6px' }}>📌</button>
+                              <button type="button" onClick={() => { setEditingMemId(mem.id); setEditingMemText(mem.fact || mem.content || mem.text || ''); }} title="Edit fact" style={{ background: 'rgba(56, 189, 248, 0.1)', border: 'none', borderRadius: '6px', color: '#38bdf8', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, padding: '3px 8px' }}>Edit</button>
+                              <button type="button" onClick={() => handleDeleteMemory(mem.id)} title="Delete fact" style={{ background: 'rgba(239, 68, 68, 0.1)', border: 'none', borderRadius: '6px', color: '#f87171', cursor: 'pointer', fontSize: '0.85rem', padding: '3px 6px' }}>✕</button>
                             </div>
                           </div>
                         )}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.68rem', color: '#64748b' }}>
-                          <span style={{ textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7dd3fc' }}>{catLabel}</span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.68rem', color: '#64748b', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '6px' }}>
+                          <span style={{ textTransform: 'uppercase', letterSpacing: '0.04em', color: '#38bdf8', fontWeight: 600 }}>{catLabel}</span>
                           <span>{mem.created_at ? new Date(mem.created_at).toLocaleDateString() : 'Saved'}</span>
                         </div>
                       </div>

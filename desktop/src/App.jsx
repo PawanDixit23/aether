@@ -4393,9 +4393,23 @@ export default function App() {
     }
   };
 
+  // Start a Temporary Chat (Incognito session, messages not saved to history)
+  const handleStartTemporaryChat = () => {
+    const tempId = `temp_${Date.now()}`;
+    activeSessionIdRef.current = tempId;
+    setActiveSessionId(tempId);
+    setChatHistory([]);
+    setInputText('');
+    setShowConversation(false);
+    setShowDashboard(false);
+    setIsTemporaryChat(true);
+    showToast("Temporary Chat On — messages will not be saved", "info");
+  };
+
   // Switch to an existing chat session from drawer
   const handleSelectSession = async (sessionId) => {
     if (!sessionId) return;
+    setIsTemporaryChat(false);
     activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId);
     setInputText('');
@@ -6105,60 +6119,6 @@ export default function App() {
                 </div>
 
                 <div className="gemini-top-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {/* Temporary Chat Toggle */}
-                  <button 
-                    type="button" 
-                    className="gemini-icon-btn"
-                    onClick={() => {
-                      if (!isTemporaryChat) {
-                        // Switch to Temporary Chat: open a clean, fresh new chat immediately!
-                        const tempId = `temp_${Date.now()}`;
-                        activeSessionIdRef.current = tempId;
-                        setActiveSessionId(tempId);
-                        setChatHistory([]);
-                        setInputText('');
-                        setShowConversation(false);
-                        setShowDashboard(false);
-                        setIsTemporaryChat(true);
-                        showToast("Temporary Chat On — messages will not be saved", "info");
-                      } else {
-                        // Switch back to normal chat mode
-                        setIsTemporaryChat(false);
-                        handleStartNewChat();
-                        showToast("Temporary Chat Off — Normal Mode Active", "info");
-                      }
-                    }}
-                    title={isTemporaryChat ? "Temporary Chat is Active (History paused)" : "Start Temporary Chat"}
-                    style={{
-                      background: isTemporaryChat ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255, 255, 255, 0.05)',
-                      border: isTemporaryChat ? '1px solid rgba(56, 189, 248, 0.55)' : '1px solid rgba(255, 255, 255, 0.1)',
-                      color: isTemporaryChat ? '#38bdf8' : '#94a3b8',
-                      borderRadius: '12px',
-                      width: '38px',
-                      height: '38px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s',
-                      position: 'relative'
-                    }}
-                  >
-                    <Clock size={19} />
-                    {isTemporaryChat && (
-                      <span style={{
-                        position: 'absolute',
-                        top: '5px',
-                        right: '5px',
-                        width: '7px',
-                        height: '7px',
-                        borderRadius: '50%',
-                        background: '#38bdf8',
-                        boxShadow: '0 0 6px #38bdf8'
-                      }} />
-                    )}
-                  </button>
-
                   {/* Settings & Profile Avatar Button */}
                   <button 
                     type="button" 
@@ -7869,6 +7829,8 @@ export default function App() {
         activeSessionId={activeSessionId}
         onSelectSession={handleSelectSession}
         onNewChat={handleStartNewChat}
+        isTemporaryChat={isTemporaryChat}
+        onStartTemporaryChat={handleStartTemporaryChat}
         onRenameSession={handleRenameSession}
         onDeleteSession={handleDeleteSession}
         userEmail={userEmail}
