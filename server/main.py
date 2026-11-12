@@ -184,10 +184,42 @@ def get_system_metrics():
 # In-memory deduplication cache for WhatsApp incoming webhooks (prevents duplicate replies)
 PROCESSED_WABA_MSG_IDS = set()
 
+def _verify_supabase_jwt(token: str, secret: str) -> Optional[dict]:
+    """Verifies an HS256 Supabase JWT without external dependencies."""
+    import base64
+    import hashlib
+    import hmac
+    import time as _jwt_time
+
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    header_b64, payload_b64, sig_b64 = parts
+    signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
+    expected_sig = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    expected_b64 = base64.urlsafe_b64encode(expected_sig).rstrip(b"=").decode("utf-8")
+    if not hmac.compare_digest(expected_b64, sig_b64):
+        return None
+    padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+    payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+    exp = payload.get("exp")
+    if exp is not None and _jwt_time.time() > float(exp):
+        return None
+    return payload
+
 def get_user_email(
     x_user_email: Optional[str] = Header(None, alias="X-User-Email"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
     user_email: Optional[str] = None
 ) -> Optional[str]:
+    jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
+    if authorization and authorization.startswith("Bearer ") and jwt_secret:
+        token = authorization[7:].strip()
+        payload = _verify_supabase_jwt(token, jwt_secret)
+        if not payload or not payload.get("email"):
+            raise HTTPException(status_code=401, detail="Invalid or expired authentication token")
+        return str(payload["email"]).strip().lower()
+
     email = x_user_email or user_email
     if email and email.strip():
         return email.strip().lower()
@@ -289,6 +321,7 @@ class FinancialRecordCreate(BaseModel):
     currency: Optional[str] = "INR"
     payment_mode: Optional[str] = "upi"
     note: Optional[str] = None
+    monthly_budget: Optional[float] = None
 
 class FinancialRecordUpdate(BaseModel):
     type: Optional[str] = None
@@ -2544,7 +2577,35 @@ def create_finance_record(
     db.add(new_rec)
     db.commit()
     db.refresh(new_rec)
-    return {"status": "success", "record": new_rec}
+
+    budget_alert = None
+    if rec_type == "expense" and req.monthly_budget and req.monthly_budget > 0:
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month_expenses = db.query(FinancialRecord).filter(
+            FinancialRecord.user_email == eff_email,
+            FinancialRecord.type == "expense",
+            FinancialRecord.date >= month_start
+        ).all()
+        total_spent = sum(float(r.amount or 0) for r in month_expenses)
+        pct = round((total_spent / float(req.monthly_budget)) * 100.0, 1)
+        if pct >= 100.0:
+            budget_alert = {
+                "level": "exceeded",
+                "percent": pct,
+                "spent": total_spent,
+                "budget": float(req.monthly_budget),
+                "message": f"Monthly budget exceeded ({pct}% used: ₹{total_spent:,.0f} / ₹{req.monthly_budget:,.0f})"
+            }
+        elif pct >= 80.0:
+            budget_alert = {
+                "level": "warning",
+                "percent": pct,
+                "spent": total_spent,
+                "budget": float(req.monthly_budget),
+                "message": f"Monthly budget alert: {pct}% used (₹{total_spent:,.0f} / ₹{req.monthly_budget:,.0f})"
+            }
+
+    return {"status": "success", "record": new_rec, "budget_alert": budget_alert}
 
 @app.get("/api/finance/summary")
 def get_finance_summary(
@@ -2825,6 +2886,33 @@ def create_memory(
     db.commit()
     db.refresh(item)
     return {"id": item.id, "fact": item.fact, "category": item.category, "created": True}
+
+@app.put("/api/memory/{item_id}")
+def update_memory(
+    item_id: int,
+    req: MemoryCreate,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(req.user_email or user_email)
+    query = db.query(MemoryItem).filter(MemoryItem.id == item_id)
+    if eff_email:
+        query = query.filter(MemoryItem.user_email == eff_email)
+    else:
+        query = query.filter(MemoryItem.user_email.is_(None))
+    item = query.first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Memory item not found")
+    fact_str = (req.fact or "").strip()
+    if not fact_str:
+        raise HTTPException(status_code=400, detail="Empty fact")
+    item.fact = fact_str
+    if req.category:
+        item.category = req.category.strip().lower()
+    item.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(item)
+    return {"id": item.id, "fact": item.fact, "category": item.category, "updated": True}
 
 @app.delete("/api/memory/{item_id}")
 def delete_memory(
@@ -4196,6 +4284,157 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
     except Exception as e:
         print(f"[Twilio WA Error] {e}")
         return Response(content='<Response><Message>Error processing</Message></Response>', media_type="application/xml")
+
+# ----------------- Play Store Account Deletion, Routines & Docs Q&A -----------------
+@app.delete("/api/account/data")
+def delete_account_data(
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    """Permanently deletes all server-side user data (Play Store account/data deletion compliance)."""
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    deleted = {}
+    for model_cls, col, label in [
+        (Task, Task.user_email, "tasks"),
+        (FinancialRecord, FinancialRecord.user_email, "financial_records"),
+        (MemoryItem, MemoryItem.user_email, "memory_vault"),
+        (AuditLog, AuditLog.user_email, "audit_logs"),
+        (PushSubscription, PushSubscription.user_email, "push_subscriptions"),
+        (ScheduledJob, ScheduledJob.user_email, "scheduled_jobs"),
+        (ChatSession, ChatSession.user_email, "chat_sessions"),
+    ]:
+        deleted[label] = db.query(model_cls).filter(col == eff_email).delete(synchronize_session=False)
+    db.commit()
+    return {"status": "deleted", "user_email": eff_email, "deleted": deleted}
+
+class RoutineCreateRequest(BaseModel):
+    title: str
+    schedule_time: str = "21:30"
+    prompt: str
+    recurrence: str = "daily"
+
+@app.get("/api/routines")
+def list_routines(
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        return []
+    jobs = db.query(ScheduledJob).filter(
+        ScheduledJob.user_email == eff_email,
+        ScheduledJob.job_type == "routine"
+    ).order_by(ScheduledJob.created_at.desc()).all()
+    results = []
+    for j in jobs:
+        try:
+            payload = json.loads(j.payload_json or "{}")
+        except Exception:
+            payload = {}
+        results.append({
+            "id": j.id,
+            "title": payload.get("title", "Routine"),
+            "schedule_time": payload.get("schedule_time", "21:30"),
+            "prompt": payload.get("prompt", ""),
+            "recurrence": j.recurrence or "daily",
+            "status": j.status,
+            "scheduled_at": j.scheduled_at.isoformat() if j.scheduled_at else None
+        })
+    return results
+
+@app.post("/api/routines")
+def create_routine(
+    req: RoutineCreateRequest,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    now = datetime.utcnow()
+    job = ScheduledJob(
+        user_email=eff_email,
+        job_type="routine",
+        payload_json=json.dumps({
+            "title": req.title.strip(),
+            "schedule_time": req.schedule_time.strip(),
+            "prompt": req.prompt.strip()
+        }),
+        scheduled_at=now,
+        recurrence=req.recurrence.strip() or "daily",
+        status="pending"
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return {"status": "created", "id": job.id, "title": req.title.strip()}
+
+@app.delete("/api/routines/{job_id}")
+def delete_routine(
+    job_id: int,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    job = db.query(ScheduledJob).filter(
+        ScheduledJob.id == job_id,
+        ScheduledJob.user_email == eff_email,
+        ScheduledJob.job_type == "routine"
+    ).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Routine not found")
+    db.delete(job)
+    db.commit()
+    return {"status": "deleted", "id": job_id}
+
+class DocsAskRequest(BaseModel):
+    question: str
+    document_text: str
+    api_key: Optional[str] = None
+
+@app.post("/api/docs/ask")
+def ask_personal_document(
+    req: DocsAskRequest,
+    user_email: Optional[str] = Depends(get_user_email)
+):
+    """Answers questions grounded in user-supplied document/note text."""
+    q = req.question.strip()
+    doc = req.document_text.strip()
+    if not q or not doc:
+        raise HTTPException(status_code=400, detail="Both question and document_text are required")
+
+    key = (req.api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
+    if key and not key.startswith("sk-"):
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            prompt = (
+                "Answer the user's question strictly using the provided document text. "
+                "If the answer is not in the document, say so clearly.\n\n"
+                f"Document:\n{doc[:24000]}\n\nQuestion: {q}"
+            )
+            resp = model.generate_content(prompt)
+            if resp and getattr(resp, "text", None):
+                return {"answer": resp.text.strip(), "source": "gemini"}
+        except Exception as e:
+            print(f"[Docs Q&A Gemini Fallback] {e}")
+
+    # Deterministic keyword-sentence extractive fallback when offline / no key
+    q_words = {w.lower().strip("?.,!") for w in q.split() if len(w) > 2}
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?।])\s+|\n+', doc) if s.strip()]
+    scored = sorted(
+        sentences,
+        key=lambda s: sum(1 for w in q_words if w in s.lower()),
+        reverse=True
+    )
+    top_matches = [s for s in scored[:3] if sum(1 for w in q_words if w in s.lower()) > 0]
+    answer = " ".join(top_matches) if top_matches else "No matching information found in the provided document."
+    return {"answer": answer, "source": "extractive"}
 
 # ----------------- Static Frontend Hosting (Single-Service Cloud Deployment) -----------------
 DIST_DIR = os.path.join(os.path.dirname(__file__), "..", "desktop", "dist")

@@ -112,7 +112,13 @@ export default function App() {
           const safeTargetUrl = JSON.stringify(`${AETHER_URL}/${hashOrSearch}`);
           webViewRef.current?.injectJavaScript(`window.location.href = ${safeTargetUrl}; true;`);
         } else if (incomingUrl.startsWith('com.pawandixit.aether://') || incomingUrl.startsWith('aether://')) {
-          webViewRef.current?.injectJavaScript(`window.location.reload(); true;`);
+          if (incomingUrl.includes('?')) {
+            const qSearch = incomingUrl.substring(incomingUrl.indexOf('?'));
+            const safeDeepUrl = JSON.stringify(`${AETHER_URL}/${qSearch}`);
+            webViewRef.current?.injectJavaScript(`window.location.href = ${safeDeepUrl}; true;`);
+          } else {
+            webViewRef.current?.injectJavaScript(`window.location.reload(); true;`);
+          }
         }
       }
     };

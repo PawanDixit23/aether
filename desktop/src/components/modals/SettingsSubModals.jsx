@@ -39,7 +39,10 @@ export const SettingsSubModals = ({
   setNewMemoryText,
   handleSendPrompt,
   memories,
+  setMemories,
   handleDeleteMemory,
+  apiBase,
+  userEmail,
   customUsername,
   setCustomUsername,
   handleConfirmAccountReset,
@@ -52,6 +55,16 @@ export const SettingsSubModals = ({
 }) => {
   const [modalProviderTab, setModalProviderTab] = useState(() => activeProvider || 'gemini');
   const [showSettingsKeyGuide, setShowSettingsKeyGuide] = useState(false);
+  const [memSearch, setMemSearch] = useState('');
+  const [memCategoryFilter, setMemCategoryFilter] = useState('all');
+  const [newMemCategory, setNewMemCategory] = useState('personal');
+  const [editingMemId, setEditingMemId] = useState(null);
+  const [editingMemText, setEditingMemText] = useState('');
+  const [memSaving, setMemSaving] = useState(false);
+  const [pinnedMemoryIds, setPinnedMemoryIds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('aether_pinned_memories') || '[]'); } catch { return []; }
+  });
+  const [pauseMemoryLearning, setPauseMemoryLearning] = useState(() => localStorage.getItem('aether_pause_memory_learning') === 'true');
 
   const currentSettingsProv = AI_PROVIDERS.find(p => p.id === modalProviderTab) || AI_PROVIDERS[0];
   const currentKeyVal = modalProviderTab === 'openai' ? (openaiKey || '') : modalProviderTab === 'grok' ? (grokKey || '') : (apiKey || '');
@@ -659,64 +672,264 @@ export const SettingsSubModals = ({
         </div>
       )}
 
-      {/* 11. Memory Vault Manager Modal */}
-      {activeSubModal === 'memory' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '480px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8', fontWeight: 700 }}>
-                <Database size={18} />
-                <span>EXECUTIVE MEMORY VAULT</span>
-              </div>
-              <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
-            </div>
-            
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              if (newMemoryText.trim()) {
-                handleSendPrompt("Remember that: " + newMemoryText.trim());
-                setNewMemoryText('');
-                showToast("Fact added to memory", 'success');
-              }
-            }} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-              <input
-                type="text"
-                placeholder="Add a new fact to remember..."
-                value={newMemoryText}
-                onChange={(e) => setNewMemoryText(e.target.value)}
-                style={{ flex: 1, background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.84rem' }}
-              />
-              <button type="submit" style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 14px', borderRadius: '10px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}>
-                + Add
-              </button>
-            </form>
+      {/* 11. Memory Vault Dashboard Modal */}
+      {activeSubModal === 'memory' && (() => {
+        const categories = ['all', 'personal', 'preference', 'routine', 'contact'];
+        const q = memSearch.trim().toLowerCase();
+        const filteredMemories = (memories || [])
+          .filter((mem) => {
+            const cat = (mem.category || 'personal').toLowerCase();
+            if (memCategoryFilter !== 'all' && cat !== memCategoryFilter) return false;
+            if (!q) return true;
+            const text = (mem.fact || mem.content || mem.text || '').toLowerCase();
+            return text.includes(q) || cat.includes(q);
+          })
+          .sort((a, b) => {
+            const aPin = pinnedMemoryIds.includes(a.id) ? 1 : 0;
+            const bPin = pinnedMemoryIds.includes(b.id) ? 1 : 0;
+            return bPin - aPin;
+          });
 
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {memories.length === 0 ? (
-                <div style={{ color: '#64748b', fontSize: '0.84rem', textAlign: 'center', padding: '30px 0' }}>
-                  No facts recorded yet.
+        const togglePin = (id) => {
+          setPinnedMemoryIds((prev) => {
+            const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+            try { localStorage.setItem('aether_pinned_memories', JSON.stringify(next)); } catch {}
+            return next;
+          });
+        };
+
+        const handleDirectAddMemory = async (e) => {
+          e.preventDefault();
+          const fact = newMemoryText.trim();
+          if (!fact || memSaving) return;
+          if (!apiBase) {
+            handleSendPrompt("Remember that: " + fact);
+            setNewMemoryText('');
+            return;
+          }
+          setMemSaving(true);
+          try {
+            const res = await fetch(`${apiBase}/memory`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(userEmail ? { 'X-User-Email': userEmail } : {})
+              },
+              body: JSON.stringify({ fact, category: newMemCategory, user_email: userEmail || null })
+            });
+            if (res.ok) {
+              setNewMemoryText('');
+              showToast("Fact saved to Memory Vault", 'success');
+              if (refreshAllData) refreshAllData();
+            } else {
+              showToast("Failed to save memory", 'error');
+            }
+          } catch {
+            showToast("Network error saving memory", 'error');
+          } finally {
+            setMemSaving(false);
+          }
+        };
+
+        const handleSaveEditMemory = async (mem) => {
+          const updatedFact = editingMemText.trim();
+          if (!updatedFact || !apiBase) return;
+          try {
+            const res = await fetch(`${apiBase}/memory/${mem.id}`, {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(userEmail ? { 'X-User-Email': userEmail } : {})
+              },
+              body: JSON.stringify({
+                fact: updatedFact,
+                category: mem.category || 'personal',
+                user_email: userEmail || null
+              })
+            });
+            if (res.ok) {
+              if (setMemories) {
+                setMemories(prev => prev.map(m => m.id === mem.id ? { ...m, fact: updatedFact } : m));
+              }
+              setEditingMemId(null);
+              setEditingMemText('');
+              showToast("Memory updated", 'success');
+            } else {
+              showToast("Failed to update memory", 'error');
+            }
+          } catch {
+            showToast("Error updating memory", 'error');
+          }
+        };
+
+        const handleExportMemories = () => {
+          try {
+            const blob = new Blob([JSON.stringify(memories || [], null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'aether-memories.json';
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast("Exported memories JSON", 'success');
+          } catch {
+            showToast("Export failed", 'error');
+          }
+        };
+
+        return (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+            <div style={{ background: '#0d1527', border: '1px solid rgba(56, 189, 248, 0.25)', borderRadius: '24px', padding: '22px', width: '100%', maxWidth: '560px', maxHeight: '88vh', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8', fontWeight: 700 }}>
+                  <Database size={18} />
+                  <span>MEMORY DASHBOARD</span>
+                  <span style={{ fontSize: '0.72rem', background: 'rgba(56, 189, 248, 0.14)', padding: '2px 8px', borderRadius: '999px', color: '#7dd3fc' }}>
+                    {(memories || []).length} facts
+                  </span>
                 </div>
-              ) : (
-                memories.map(mem => (
-                  <div key={mem.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '10px' }}>
-                    <div style={{ color: '#e2e8f0', fontSize: '0.86rem', flex: 1, paddingRight: '10px', lineHeight: '1.4' }}>
-                      {mem.fact || mem.content || mem.text}
-                    </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={handleExportMemories}
+                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#cbd5e1', fontSize: '0.72rem', padding: '4px 10px', borderRadius: '8px', cursor: 'pointer' }}
+                  >
+                    Export JSON
+                  </button>
+                  <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.07)' }}>
+                <span style={{ fontSize: '0.78rem', color: '#cbd5e1' }}>
+                  Auto-Learn from Chat {pauseMemoryLearning ? '(Paused)' : '(Active)'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !pauseMemoryLearning;
+                    setPauseMemoryLearning(next);
+                    try { localStorage.setItem('aether_pause_memory_learning', String(next)); } catch {}
+                    showToast(next ? "Auto-learning paused" : "Auto-learning resumed", 'info');
+                  }}
+                  style={{
+                    background: pauseMemoryLearning ? 'rgba(239, 68, 68, 0.18)' : 'rgba(16, 185, 129, 0.18)',
+                    border: `1px solid ${pauseMemoryLearning ? 'rgba(239,68,68,0.4)' : 'rgba(16,185,129,0.4)'}`,
+                    color: pauseMemoryLearning ? '#fca5a5' : '#6ee7b7',
+                    fontSize: '0.72rem',
+                    fontWeight: 600,
+                    padding: '4px 10px',
+                    borderRadius: '999px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {pauseMemoryLearning ? 'Paused' : 'Active'}
+                </button>
+              </div>
+
+              <form onSubmit={handleDirectAddMemory} style={{ display: 'flex', gap: '8px' }}>
+                <select
+                  value={newMemCategory}
+                  onChange={(e) => setNewMemCategory(e.target.value)}
+                  style={{ background: '#111b33', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '10px', padding: '8px', color: '#cbd5e1', fontSize: '0.78rem' }}
+                >
+                  <option value="personal">Personal</option>
+                  <option value="preference">Preference</option>
+                  <option value="routine">Routine</option>
+                  <option value="contact">Contact</option>
+                </select>
+                <input
+                  type="text"
+                  placeholder="Add a new fact directly..."
+                  value={newMemoryText}
+                  onChange={(e) => setNewMemoryText(e.target.value)}
+                  style={{ flex: 1, background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.84rem' }}
+                />
+                <button type="submit" disabled={memSaving} style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 14px', borderRadius: '10px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}>
+                  {memSaving ? '...' : '+ Add'}
+                </button>
+              </form>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <input
+                  type="text"
+                  placeholder="Search memories..."
+                  value={memSearch}
+                  onChange={(e) => setMemSearch(e.target.value)}
+                  style={{ background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '10px', padding: '7px 12px', color: '#fff', fontSize: '0.8rem' }}
+                />
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {categories.map((cat) => (
                     <button
+                      key={cat}
                       type="button"
-                      onClick={() => handleDeleteMemory(mem.id)}
-                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem', padding: '2px 6px' }}
-                      title="Delete this fact"
+                      onClick={() => setMemCategoryFilter(cat)}
+                      style={{
+                        background: memCategoryFilter === cat ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255,255,255,0.04)',
+                        border: `1px solid ${memCategoryFilter === cat ? 'rgba(56, 189, 248, 0.5)' : 'rgba(255,255,255,0.08)'}`,
+                        color: memCategoryFilter === cat ? '#7dd3fc' : '#94a3b8',
+                        fontSize: '0.72rem',
+                        fontWeight: 600,
+                        padding: '4px 10px',
+                        borderRadius: '999px',
+                        cursor: 'pointer',
+                        textTransform: 'capitalize'
+                      }}
                     >
-                      ✕
+                      {cat}
                     </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {filteredMemories.length === 0 ? (
+                  <div style={{ color: '#64748b', fontSize: '0.84rem', textAlign: 'center', padding: '30px 0' }}>
+                    No matching memories found.
                   </div>
-                ))
-              )}
+                ) : (
+                  filteredMemories.map((mem) => {
+                    const isPinned = pinnedMemoryIds.includes(mem.id);
+                    const isEditing = editingMemId === mem.id;
+                    const catLabel = (mem.category || 'personal').toLowerCase();
+                    return (
+                      <div key={mem.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 14px', background: isPinned ? 'rgba(56, 189, 248, 0.06)' : 'rgba(255, 255, 255, 0.03)', border: `1px solid ${isPinned ? 'rgba(56, 189, 248, 0.3)' : 'rgba(255, 255, 255, 0.07)'}`, borderRadius: '12px' }}>
+                        {isEditing ? (
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <input
+                              type="text"
+                              value={editingMemText}
+                              onChange={(e) => setEditingMemText(e.target.value)}
+                              style={{ flex: 1, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(56,189,248,0.4)', borderRadius: '8px', padding: '6px 10px', color: '#fff', fontSize: '0.84rem' }}
+                            />
+                            <button type="button" onClick={() => handleSaveEditMemory(mem)} style={{ background: '#10b981', border: 'none', color: '#fff', padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}>Save</button>
+                            <button type="button" onClick={() => setEditingMemId(null)} style={{ background: 'rgba(255,255,255,0.08)', border: 'none', color: '#cbd5e1', padding: '4px 8px', borderRadius: '8px', fontSize: '0.75rem', cursor: 'pointer' }}>Cancel</button>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                            <div style={{ color: '#e2e8f0', fontSize: '0.86rem', flex: 1, lineHeight: '1.4' }}>
+                              {mem.fact || mem.content || mem.text}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                              <button type="button" onClick={() => togglePin(mem.id)} title={isPinned ? 'Unpin' : 'Pin'} style={{ background: 'none', border: 'none', color: isPinned ? '#fbbf24' : '#64748b', cursor: 'pointer', fontSize: '0.85rem', padding: '2px 4px' }}>📌</button>
+                              <button type="button" onClick={() => { setEditingMemId(mem.id); setEditingMemText(mem.fact || mem.content || mem.text || ''); }} title="Edit fact" style={{ background: 'none', border: 'none', color: '#38bdf8', cursor: 'pointer', fontSize: '0.8rem', padding: '2px 4px' }}>Edit</button>
+                              <button type="button" onClick={() => handleDeleteMemory(mem.id)} title="Delete fact" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.95rem', padding: '2px 4px' }}>✕</button>
+                            </div>
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.68rem', color: '#64748b' }}>
+                          <span style={{ textTransform: 'uppercase', letterSpacing: '0.04em', color: '#7dd3fc' }}>{catLabel}</span>
+                          <span>{mem.created_at ? new Date(mem.created_at).toLocaleDateString() : 'Saved'}</span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* 12. Custom Username Editor Modal */}
       {activeSubModal === 'username' && (

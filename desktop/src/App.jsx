@@ -79,6 +79,7 @@ const YoutubeIcon = ({ size = 20, color = "#fff" }) => (
   </svg>
 );
 import { supabase } from './supabase';
+import { flushOfflineQueue } from './utils/offlineSync';
 import { FormattedMessage } from './components/chat/FormattedMessage';
 import { AetherParticleSphere } from './components/chat/AetherParticleSphere';
 import { DashboardView } from './components/dashboard/DashboardView';
@@ -1805,14 +1806,67 @@ export default function App() {
   };
 
   const handleConfirmAccountReset = async () => {
+    if (userEmail) {
+      try {
+        await fetch(`${API_BASE}/account/data`, {
+          method: 'DELETE',
+          headers: { 'X-User-Email': userEmail }
+        });
+      } catch (e) {
+        console.warn('Server data deletion notice:', e);
+      }
+    }
     localStorage.clear();
     await handleSignOut();
     setActiveSubModal(null);
     showToast(
-      "Account data reset successfully",
+      "Account data permanently deleted & reset",
       "info"
     );
   };
+
+  const handleApproveAgentAction = async (msgId, promptText, pendingToolName) => {
+    if (!pendingToolName) return;
+    try {
+      const res = await fetch(`${API_BASE}/agent/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(userEmail ? { 'X-User-Email': userEmail } : {})
+        },
+        body: JSON.stringify({
+          prompt: promptText || '',
+          user_email: userEmail || null,
+          language: selectedLang || 'auto',
+          approved_tools: [pendingToolName]
+        })
+      });
+      const data = await res.json();
+      setChatHistory(prev => prev.map(m => m.id === msgId ? {
+        ...m,
+        content: data.message || 'Approved and executed.',
+        action: 'approval_resolved',
+        actionData: { ...m.actionData, approved: true }
+      } : m));
+      showToast('Action approved and executed', 'success');
+      refreshAllData();
+    } catch (e) {
+      showToast('Failed to execute approved action', 'error');
+    }
+  };
+
+  useEffect(() => {
+    const onOnline = async () => {
+      const count = await flushOfflineQueue();
+      if (count > 0) {
+        showToast(`Synced ${count} offline item(s)`, 'success');
+        refreshAllData();
+      }
+    };
+    window.addEventListener('online', onOnline);
+    onOnline();
+    return () => window.removeEventListener('online', onOnline);
+  }, []);
 
   // Play pleasant executive reminder chime
   const playReminderChime = () => {
@@ -6318,6 +6372,58 @@ export default function App() {
                             </div>
                           );
                         }
+                        if (actType === 'approval_required' && aData?.pending_action) {
+                          return (
+                            <div style={{
+                              marginTop: '10px',
+                              padding: '12px 14px',
+                              borderRadius: '14px',
+                              background: 'rgba(245, 158, 11, 0.08)',
+                              border: '1px solid rgba(245, 158, 11, 0.35)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '10px'
+                            }}>
+                              <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#fbbf24' }}>
+                                Approval Required: {aData.pending_action.tool_name}
+                              </div>
+                              <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleApproveAgentAction(msg.id, aData.original_prompt, aData.pending_action.tool_name)}
+                                  style={{
+                                    background: 'linear-gradient(135deg, #10b981, #059669)',
+                                    border: 'none',
+                                    color: '#fff',
+                                    padding: '6px 14px',
+                                    borderRadius: '8px',
+                                    fontSize: '0.78rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Approve & Execute
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setChatHistory(prev => prev.map(m => m.id === msg.id ? { ...m, action: 'approval_cancelled', content: 'Action cancelled by user.' } : m))}
+                                  style={{
+                                    background: 'rgba(239, 68, 68, 0.15)',
+                                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                                    color: '#f87171',
+                                    padding: '6px 12px',
+                                    borderRadius: '8px',
+                                    fontSize: '0.78rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        }
                         if (actType === 'cricket_scorecard' || aData?.matches?.length > 0) {
                           const matchesToShow = (aData?.matches && aData.matches.length > 0) ? aData.matches : cricketMatches;
                           const intlMatches = matchesToShow.filter(m => m.is_international);
@@ -7934,7 +8040,10 @@ export default function App() {
         setNewMemoryText={setNewMemoryText}
         handleSendPrompt={handleSendPrompt}
         memories={memories}
+        setMemories={setMemories}
         handleDeleteMemory={handleDeleteMemory}
+        apiBase={API_BASE}
+        userEmail={userEmail}
         customUsername={customUsername}
         setCustomUsername={setCustomUsername}
         handleConfirmAccountReset={handleConfirmAccountReset}
