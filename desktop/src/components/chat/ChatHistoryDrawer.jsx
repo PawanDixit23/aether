@@ -44,7 +44,8 @@ export const ChatHistoryDrawer = ({
   onToggleTask,
   onOpenTasksModal,
   isTemporaryChat = false,
-  onStartTemporaryChat
+  onStartTemporaryChat,
+  onOpenSocialModal
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [renamingSession, setRenamingSession] = useState(null);
@@ -432,6 +433,41 @@ export const ChatHistoryDrawer = ({
             <span style={{ whiteSpace: 'nowrap' }}>Temp Chat</span>
           </button>
         </div>
+
+        {/* Quick Social Hub Entry */}
+        {onOpenSocialModal && (
+          <div style={{ padding: '0 18px 8px', flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={() => {
+                onOpenSocialModal();
+                onClose();
+              }}
+              style={{
+                width: '100%',
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid rgba(56, 189, 248, 0.25)',
+                color: '#e2e8f0',
+                borderRadius: '12px',
+                padding: '8px 12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                fontSize: '0.80rem',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '0.95rem' }}>🌐</span>
+                <span style={{ fontWeight: 600 }}>Social Media Hub</span>
+              </div>
+              <span style={{ fontSize: '0.66rem', color: '#38bdf8', fontWeight: 700, background: 'rgba(56, 189, 248, 0.15)', padding: '2px 6px', borderRadius: '6px' }}>
+                8 Apps →
+              </span>
+            </button>
+          </div>
+        )}
 
         {/* Search Bar */}
         {sessions.length > 2 && (

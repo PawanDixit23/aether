@@ -100,6 +100,7 @@ const ObservabilityModal = React.lazy(() => import('./components/modals/Observab
 const PermissionsModal = React.lazy(() => import('./components/modals/PermissionsModal').then(m => ({ default: m.PermissionsModal })));
 const SettingsSubModals = React.lazy(() => import('./components/modals/SettingsSubModals').then(m => ({ default: m.SettingsSubModals })));
 const WorkspaceToolsModal = React.lazy(() => import('./components/modals/WorkspaceToolsModal').then(m => ({ default: m.WorkspaceToolsModal })));
+const SocialMediaModal = React.lazy(() => import('./components/modals/SocialMediaModal').then(m => ({ default: m.SocialMediaModal })));
 
 const API_BASE = typeof window !== 'undefined' && window.location.port === '5173'
   ? `http://${window.location.hostname}:8000/api`
@@ -7843,6 +7844,10 @@ export default function App() {
           setActiveSubModal('reminders');
           setRemindersViewMode('list');
         }}
+        onOpenSocialModal={() => {
+          setIsChatDrawerOpen(false);
+          setActiveSubModal('social');
+        }}
       />
 
       {/* 0. Tasks & Agenda Modal (Redesigned Clean UI matching Screenshot) */}
@@ -8192,6 +8197,20 @@ export default function App() {
         userEmail={userEmail}
         apiKey={apiKey}
         showToast={showToast}
+      />
+
+      {/* 13. All-in-One Social Media Command Center (WhatsApp, X, LinkedIn, Insta, YT, Telegram, Reddit, FB) */}
+      <SocialMediaModal
+        isOpen={activeSubModal === 'social'}
+        onClose={() => setActiveSubModal(null)}
+        showToast={showToast}
+        userEmail={userEmail}
+        API_BASE={API_BASE}
+        onSendToChat={(prompt) => {
+          setActiveSubModal(null);
+          setShowDashboard(false);
+          handleSendPrompt(prompt);
+        }}
       />
       </React.Suspense>
 

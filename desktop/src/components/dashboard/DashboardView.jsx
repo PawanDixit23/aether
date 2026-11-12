@@ -15,7 +15,8 @@ import {
   Plus,
   Activity,
   Compass,
-  ExternalLink
+  ExternalLink,
+  Share2
 } from 'lucide-react';
 import { AetherParticleSphere } from '../chat/AetherParticleSphere';
 
@@ -516,6 +517,57 @@ export const DashboardView = ({
             Create Note
           </span>
         </button>
+      </div>
+
+      {/* 3.1 ALL-IN-ONE SOCIAL MEDIA COMMAND CENTER */}
+      <div 
+        onClick={() => {
+          if (setActiveSubModal) setActiveSubModal('social');
+        }}
+        title="Open All-in-One Social Media Command Center"
+        style={{
+          background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(168, 85, 247, 0.12) 100%)',
+          border: '1px solid rgba(56, 189, 248, 0.3)',
+          borderRadius: '16px',
+          padding: '11px 14px',
+          marginBottom: '10px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          cursor: 'pointer',
+          transition: 'all 0.15s ease',
+          boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25)'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{
+            width: '36px',
+            height: '36px',
+            borderRadius: '11px',
+            background: 'linear-gradient(135deg, #38bdf8 0%, #a855f7 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#ffffff',
+            boxShadow: '0 4px 12px rgba(56, 189, 248, 0.35)'
+          }}>
+            <Share2 size={18} />
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '0.86rem', fontWeight: 700, color: '#ffffff' }}>Social Media Hub</span>
+              <span style={{ fontSize: '0.66rem', fontWeight: 700, background: 'rgba(56, 189, 248, 0.2)', border: '1px solid rgba(56, 189, 248, 0.35)', padding: '1px 6px', borderRadius: '999px', color: '#7dd3fc' }}>
+                8 Platforms
+              </span>
+            </div>
+            <div style={{ fontSize: '0.69rem', color: '#94a3b8', marginTop: '1px' }}>
+              WhatsApp • X • Insta • Telegram • YT • LinkedIn • Reddit • FB
+            </div>
+          </div>
+        </div>
+        <div style={{ fontSize: '0.78rem', color: '#38bdf8', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '2px' }}>
+          <span>Open →</span>
+        </div>
       </div>
 
       {/* 4. PROMINENT LIVE WEATHER CARD (Fully Visible & High Contrast) */}

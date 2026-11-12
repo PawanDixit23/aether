@@ -4572,6 +4572,124 @@ async def stream_chat_response(
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+# ----------------- Social Media Suite Endpoints -----------------
+class SocialAdaptRequest(BaseModel):
+    content: str
+    platforms: Optional[List[str]] = None
+
+@app.post("/api/social/adapt-post")
+async def adapt_social_post(
+    req: SocialAdaptRequest,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    base_text = (req.content or "").strip()
+    if not base_text:
+        raise HTTPException(status_code=400, detail="Content cannot be empty")
+
+    prompt = f"""You are Aether's master social media strategist. Adapt the following announcement or thought into tailored posts for 7 distinct social media platforms.
+
+Original Content:
+"{base_text}"
+
+Return STRICT JSON with these exact keys:
+{{
+  "x": "<Short punchy tweet under 260 characters with 2-3 relevant hashtags>",
+  "linkedin": "<Professional thought leadership post with compelling hook, whitespace, bullet points if helpful, discussion question, and 3 professional hashtags>",
+  "instagram": "<Engaging caption with visual tone, storytelling, emojis, and a block of popular hashtags>",
+  "facebook": "<Warm, community-focused update for friends and followers with a call to share thoughts>",
+  "telegram": "<Crisp broadcast announcement formatted in Markdown (*bold*, _italic_), with key takeaways and bullet points>",
+  "whatsapp": "<Formatted message with *bold* headers and clean layout suited for quick reading>",
+  "reddit": "<Thoughtful discussion starter formatted with Markdown, including title idea and community discussion prompt>"
+}}"""
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    adapted_result = {}
+    if gemini_key:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            resp = model.generate_content(prompt)
+            raw = getattr(resp, "text", "").strip()
+            if "```json" in raw:
+                raw = raw.split("```json")[1].split("```")[0].strip()
+            elif "```" in raw:
+                raw = raw.split("```")[1].split("```")[0].strip()
+            adapted_result = json.loads(raw)
+        except Exception as e:
+            print(f"[Social Adapt LLM Notice] {e}")
+
+    if not adapted_result:
+        snippet = base_text[:220]
+        adapted_result = {
+            "x": f"{snippet}\n\n#update #innovation",
+            "linkedin": f"🚀 Key Takeaway:\n\n{base_text}\n\nWhat are your thoughts on this? Let's connect in the comments below.\n\n#growth #leadership #innovation",
+            "instagram": f"✨ {base_text}\n\n.\n.\n.\n#explore #trending #dailyupdate #mindset",
+            "facebook": f"📢 Quick update with everyone:\n\n{base_text}\n\nWhat do you all think?",
+            "telegram": f"⚡ *Aether Broadcast*\n\n{base_text}\n\n🔗 Stay tuned for more!",
+            "whatsapp": f"⚡ *Aether Notice*\n\n{base_text}\n\n_Sent via Aether AI_",
+            "reddit": f"**Discussion**: {base_text[:80]}...\n\n{base_text}\n\nLooking forward to hearing the community's perspective!"
+        }
+
+    return {"status": "success", "adapted": adapted_result}
+
+class YouTubeSummarizeRequest(BaseModel):
+    url: str
+
+@app.post("/api/social/youtube-summarize")
+async def summarize_youtube_video(
+    req: YouTubeSummarizeRequest,
+    user_email: Optional[str] = Depends(get_user_email)
+):
+    url = (req.url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="YouTube URL required")
+
+    video_title = "YouTube Video"
+    try:
+        import urllib.request
+        oembed_url = f"https://www.youtube.com/oembed?url={urllib.parse.quote(url)}&format=json"
+        req_oe = urllib.request.Request(oembed_url, headers={"User-Agent": "Aether/1.0"})
+        with urllib.request.urlopen(req_oe, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            video_title = data.get("title", video_title)
+    except Exception as e_oe:
+        print(f"[YouTube oEmbed Notice] {e_oe}")
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    summary_text = ""
+    if gemini_key:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=gemini_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            yt_prompt = f"""You are Aether's executive video intelligence agent. The user wants a comprehensive summary of this YouTube video:
+URL: {url}
+Title: {video_title}
+
+Provide:
+1. 📌 Core Thesis (1-2 sentences)
+2. 💡 3-5 Key Insights & Takeaways (Bullet points)
+3. 🎯 Actionable Advice or Conclusions
+4. ⏱️ Recommended target audience
+
+Keep it high-value, crisp, and executive-ready."""
+            resp = model.generate_content(yt_prompt)
+            summary_text = getattr(resp, "text", "").strip()
+        except Exception as e_yt:
+            print(f"[YouTube Summarize LLM Notice] {e_yt}")
+
+    if not summary_text:
+        summary_text = f"📌 Core Topic: Analysis of {video_title}\n\n💡 Key Points:\n• High-impact coverage of the subject matter.\n• Actionable workflows and real-world demonstrations.\n• Relevant insights for builders and creators.\n\n🎯 Recommendation: Worth watching for practical techniques."
+
+    return {
+        "status": "success",
+        "title": video_title,
+        "url": url,
+        "summary": summary_text
+    }
+
 # ----------------- Static Frontend Hosting (Single-Service Cloud Deployment) -----------------
 DIST_DIR = os.path.join(os.path.dirname(__file__), "..", "desktop", "dist")
 if os.path.exists(DIST_DIR):

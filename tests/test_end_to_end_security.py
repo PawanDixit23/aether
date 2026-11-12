@@ -206,5 +206,28 @@ class TestEndToEndAndSecurityAudit(unittest.TestCase):
         for rid in data.get("records", []):
             self.client.delete(f"/api/finance/records/{rid}", headers={"X-User-Email": self.user_a})
 
+    def test_09_social_media_suite(self):
+        """Functionality: Verify social media content adaptation & YouTube summarization."""
+        # Test Multi-platform post adaptation
+        adapt_resp = self.client.post("/api/social/adapt-post", json={
+            "content": "Aether 2.0 is officially released with full autonomous agents!"
+        }, headers={"X-User-Email": self.user_a})
+        self.assertEqual(adapt_resp.status_code, 200)
+        adapt_data = adapt_resp.json()
+        self.assertEqual(adapt_data.get("status"), "success")
+        self.assertIn("x", adapt_data["adapted"])
+        self.assertIn("linkedin", adapt_data["adapted"])
+        self.assertIn("instagram", adapt_data["adapted"])
+        self.assertIn("whatsapp", adapt_data["adapted"])
+
+        # Test YouTube summarizer endpoint
+        yt_resp = self.client.post("/api/social/youtube-summarize", json={
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        }, headers={"X-User-Email": self.user_a})
+        self.assertEqual(yt_resp.status_code, 200)
+        yt_data = yt_resp.json()
+        self.assertEqual(yt_data.get("status"), "success")
+        self.assertTrue(bool(yt_data.get("summary")))
+
 if __name__ == "__main__":
     unittest.main()
