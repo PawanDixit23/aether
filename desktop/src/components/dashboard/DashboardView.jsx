@@ -462,12 +462,12 @@ export const DashboardView = ({
         <button
           type="button"
           onClick={() => setActiveSubModal('reminders')}
-          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '9px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', transition: 'transform 0.15s' }}
+          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '9px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', transition: 'transform 0.15s', minWidth: 0 }}
         >
           <div style={{ width: '36px', height: '36px', borderRadius: '11px', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', boxShadow: '0 4px 12px rgba(16, 185, 129, 0.35)' }}>
             <Check size={19} strokeWidth={2.8} />
           </div>
-          <span style={{ fontSize: '0.71rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: '0.71rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             Add Task
           </span>
         </button>
@@ -479,12 +479,12 @@ export const DashboardView = ({
             setActiveSubModal('finance');
             setIsAddingExpense(true);
           }}
-          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '9px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', transition: 'transform 0.15s' }}
+          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '9px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', transition: 'transform 0.15s', minWidth: 0 }}
         >
           <div style={{ width: '36px', height: '36px', borderRadius: '11px', background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', boxShadow: '0 4px 12px rgba(245, 158, 11, 0.35)' }}>
             <Wallet size={18} />
           </div>
-          <span style={{ fontSize: '0.71rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: '0.71rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             Add Expense
           </span>
         </button>
@@ -493,12 +493,12 @@ export const DashboardView = ({
         <button
           type="button"
           onClick={() => setIsCameraOpen(true)}
-          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '9px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', transition: 'transform 0.15s' }}
+          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '9px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', transition: 'transform 0.15s', minWidth: 0 }}
         >
           <div style={{ width: '36px', height: '36px', borderRadius: '11px', background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', boxShadow: '0 4px 12px rgba(168, 85, 247, 0.35)' }}>
             <Camera size={18} />
           </div>
-          <span style={{ fontSize: '0.71rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: '0.71rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             Scan Bill
           </span>
         </button>
@@ -507,12 +507,12 @@ export const DashboardView = ({
         <button
           type="button"
           onClick={() => setActiveSubModal('memory')}
-          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '9px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', transition: 'transform 0.15s' }}
+          style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)', borderRadius: '16px', padding: '9px 4px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', transition: 'transform 0.15s', minWidth: 0 }}
         >
           <div style={{ width: '36px', height: '36px', borderRadius: '11px', background: 'linear-gradient(135deg, #0284c7 0%, #2563eb 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', boxShadow: '0 4px 12px rgba(2, 132, 199, 0.35)' }}>
             <FileText size={18} />
           </div>
-          <span style={{ fontSize: '0.71rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: '0.71rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             Create Note
           </span>
         </button>
@@ -651,9 +651,9 @@ export const DashboardView = ({
             marginBottom: '10px'
           }}>
             {[
-              { id: 'places', label: '🏛️ Places to Visit', count: (cityGuide.places_to_visit || []).length },
-              { id: 'foods', label: '🍲 Famous Food', count: (cityGuide.foods_to_try || []).length },
-              { id: 'things', label: '🛍️ Activities & Bazaars', count: (cityGuide.popular_things || []).length }
+              { id: 'places', label: '🏛️ Places', count: (cityGuide.places_to_visit || []).length },
+              { id: 'foods', label: '🍲 Food', count: (cityGuide.foods_to_try || []).length },
+              { id: 'things', label: '🛍️ Activities', count: (cityGuide.popular_things || []).length }
             ].map(tab => (
               <button
                 key={tab.id}

@@ -1977,6 +1977,12 @@ body.theme-oled .settings-user-card {
   flex-shrink: 0;
 }
 
+@media (max-width: 480px) {
+  .aether-switcher-label {
+    display: none;
+  }
+}
+
 .gemini-top-left {
   display: flex;
   align-items: center;

@@ -6043,8 +6043,66 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Center space kept clean — Aether model/voice selection moved to Settings modal */}
-                <div className="gemini-top-center" style={{ flex: 1 }} />
+                {/* Center view switcher: Chat vs Dashboard */}
+                <div className="gemini-top-center" style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                  <div style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: '20px',
+                    padding: '3px',
+                    gap: '2px',
+                    boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.3)'
+                  }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowDashboard(false)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '5px 12px',
+                        borderRadius: '16px',
+                        fontSize: '12px',
+                        fontWeight: 500,
+                        border: 'none',
+                        cursor: 'pointer',
+                        transition: 'all 0.18s ease',
+                        background: !showDashboard ? 'rgba(99, 102, 241, 0.25)' : 'transparent',
+                        color: !showDashboard ? '#818cf8' : 'rgba(255, 255, 255, 0.55)',
+                        boxShadow: !showDashboard ? '0 1px 4px rgba(0,0,0,0.2)' : 'none'
+                      }}
+                      title="AI Chat"
+                    >
+                      <MessageSquare size={14} />
+                      <span className="aether-switcher-label">Chat</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowDashboard(true)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '5px 12px',
+                        borderRadius: '16px',
+                        fontSize: '12px',
+                        fontWeight: 500,
+                        border: 'none',
+                        cursor: 'pointer',
+                        transition: 'all 0.18s ease',
+                        background: showDashboard ? 'rgba(99, 102, 241, 0.25)' : 'transparent',
+                        color: showDashboard ? '#818cf8' : 'rgba(255, 255, 255, 0.55)',
+                        boxShadow: showDashboard ? '0 1px 4px rgba(0,0,0,0.2)' : 'none'
+                      }}
+                      title="Dashboard"
+                    >
+                      <LayoutDashboard size={14} />
+                      <span className="aether-switcher-label">Dashboard</span>
+                    </button>
+                  </div>
+                </div>
 
                 <div className="gemini-top-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   {/* Temporary Chat Toggle */}

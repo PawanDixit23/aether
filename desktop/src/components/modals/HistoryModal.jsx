@@ -39,15 +39,24 @@ export const HistoryModal = ({
               <div style={{ fontSize: '0.72rem', color: msg.role === 'user' ? 'var(--accent-cyan)' : '#a855f7', fontWeight: 700, marginBottom: '3px' }}>
                 {msg.role === 'user' ? (userName || 'You') : 'Aether'}
               </div>
-              {msg.image_url && (
-                <div style={{ marginBottom: '6px' }}>
-                  <img 
-                    src={msg.image_url} 
-                    alt="Attachment" 
-                    style={{ maxWidth: '100%', maxHeight: '140px', borderRadius: '8px', objectFit: 'cover' }} 
-                  />
-                </div>
-              )}
+              {(() => {
+                const imgs = Array.isArray(msg.images) && msg.images.length > 0 
+                  ? msg.images 
+                  : (msg.image_url ? [msg.image_url] : []);
+                if (imgs.length === 0) return null;
+                return (
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                    {imgs.map((src, imgIdx) => (
+                      <img 
+                        key={imgIdx}
+                        src={src} 
+                        alt="Attachment" 
+                        style={{ maxWidth: imgs.length > 1 ? '120px' : '100%', maxHeight: '140px', borderRadius: '8px', objectFit: 'cover' }} 
+                      />
+                    ))}
+                  </div>
+                );
+              })()}
               <div style={{ fontSize: '0.86rem', color: '#ffffff', lineHeight: '1.4' }}>
                 <FormattedMessage text={msg.content} />
               </div>

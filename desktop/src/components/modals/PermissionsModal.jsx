@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ShieldCheck, Mic, Bell, MapPin, Volume2, Sparkles, Radio, RefreshCw, Edit2, Check } from 'lucide-react';
 
 export const PermissionsModal = ({
@@ -26,6 +26,18 @@ export const PermissionsModal = ({
   const [isEditingCity, setIsEditingCity] = useState(false);
   const [tempCity, setTempCity] = useState(userLocationName || '');
   const [isDetecting, setIsDetecting] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.innerWidth <= 640;
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 640);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   if (!isOpen) return null;
 
@@ -50,8 +62,8 @@ export const PermissionsModal = ({
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', backdropFilter: 'blur(18px)', zIndex: 120, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div style={{ background: 'linear-gradient(180deg, #0f1b2d 0%, #0a1220 100%)', borderRadius: '28px 28px 0 0', padding: '28px 24px 40px', width: '100%', maxWidth: '480px', maxHeight: '92vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', boxShadow: '0 -8px 40px rgba(0,0,0,0.6)' }}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(18px)', zIndex: 120, display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center', padding: isMobile ? 0 : '16px' }}>
+      <div style={{ background: 'linear-gradient(180deg, #0f1b2d 0%, #0a1220 100%)', borderRadius: isMobile ? '28px 28px 0 0' : '24px', border: isMobile ? 'none' : '1px solid rgba(255, 255, 255, 0.1)', padding: isMobile ? '28px 24px 40px' : '28px 24px', width: '100%', maxWidth: '480px', maxHeight: isMobile ? '92vh' : '88vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', boxShadow: isMobile ? '0 -8px 40px rgba(0,0,0,0.6)' : '0 25px 70px rgba(0, 0, 0, 0.85)' }}>
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -71,8 +83,10 @@ export const PermissionsModal = ({
           >✕</button>
         </div>
 
-        {/* Drag handle visual */}
-        <div style={{ width: '40px', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.12)', margin: '12px auto 24px' }} />
+        {/* Drag handle visual on mobile */}
+        {isMobile && (
+          <div style={{ width: '40px', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.12)', margin: '12px auto 24px' }} />
+        )}
 
         {/* Permission Cards */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>

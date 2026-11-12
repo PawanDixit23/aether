@@ -11,7 +11,6 @@ import {
   Calendar, 
   Wallet, 
   Zap, 
-  Clock,
   ArrowRight,
   Target,
   Mic,

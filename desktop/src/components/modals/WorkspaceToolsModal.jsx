@@ -187,38 +187,38 @@ export const WorkspaceToolsModal = ({
           {activeTab === 'routines' && (
             <>
               <form onSubmit={handleCreateRoutine} style={{ display: 'flex', flexDirection: 'column', gap: '8px', background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <input
                     type="text"
                     placeholder="Routine name (e.g. Nightly Spend Summary)"
                     value={routineTitle}
                     onChange={(e) => setRoutineTitle(e.target.value)}
-                    style={{ flex: 1, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px 10px', color: '#fff', fontSize: '0.82rem' }}
+                    style={{ flex: '1 1 180px', minWidth: '160px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px 10px', color: '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
                   />
                   <input
                     type="time"
                     value={routineTime}
                     onChange={(e) => setRoutineTime(e.target.value)}
-                    style={{ background: '#111b33', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '0.82rem' }}
+                    style={{ background: '#111b33', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
                   />
                   <select
                     value={routineRecurrence}
                     onChange={(e) => setRoutineRecurrence(e.target.value)}
-                    style={{ background: '#111b33', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#cbd5e1', fontSize: '0.8rem' }}
+                    style={{ background: '#111b33', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px', color: '#cbd5e1', fontSize: '0.8rem', boxSizing: 'border-box' }}
                   >
                     <option value="daily">Daily</option>
                     <option value="weekly">Weekly</option>
                   </select>
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <input
                     type="text"
                     placeholder="Instruction (e.g. Summarize today's expenses and tomorrow's tasks)"
                     value={routinePrompt}
                     onChange={(e) => setRoutinePrompt(e.target.value)}
-                    style={{ flex: 1, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px 10px', color: '#fff', fontSize: '0.82rem' }}
+                    style={{ flex: '1 1 200px', minWidth: '180px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px 10px', color: '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
                   />
-                  <button type="submit" style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 14px', borderRadius: '8px', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer' }}>
+                  <button type="submit" style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 14px', borderRadius: '8px', fontWeight: 700, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
                     + Schedule
                   </button>
                 </div>
