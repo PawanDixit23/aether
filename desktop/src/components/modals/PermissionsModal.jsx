@@ -23,11 +23,11 @@ export const PermissionsModal = ({
   userEmail,
   showToast
 }) => {
-  if (!isOpen) return null;
-
   const [isEditingCity, setIsEditingCity] = useState(false);
   const [tempCity, setTempCity] = useState(userLocationName || '');
   const [isDetecting, setIsDetecting] = useState(false);
+
+  if (!isOpen) return null;
 
   const onTriggerDetect = async (e) => {
     if (e) e.stopPropagation();

@@ -30,7 +30,7 @@ Notifications.setNotificationHandler({
   }),
 });
 
-const AETHER_URL = 'https://aether-kjrj.onrender.com';
+const AETHER_URL = process.env.EXPO_PUBLIC_AETHER_URL || 'https://aether-kjrj.onrender.com';
 
 export default function App() {
   const webViewRef = useRef<WebView>(null);
@@ -109,7 +109,8 @@ export default function App() {
           const hashOrSearch = incomingUrl.includes('#') 
             ? incomingUrl.substring(incomingUrl.indexOf('#'))
             : (incomingUrl.includes('?') ? incomingUrl.substring(incomingUrl.indexOf('?')) : '');
-          webViewRef.current?.injectJavaScript(`window.location.href = "${AETHER_URL}/${hashOrSearch}"; true;`);
+          const safeTargetUrl = JSON.stringify(`${AETHER_URL}/${hashOrSearch}`);
+          webViewRef.current?.injectJavaScript(`window.location.href = ${safeTargetUrl}; true;`);
         } else if (incomingUrl.startsWith('com.pawandixit.aether://') || incomingUrl.startsWith('aether://')) {
           webViewRef.current?.injectJavaScript(`window.location.reload(); true;`);
         }

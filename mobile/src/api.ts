@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const DEFAULT_SERVER_URL = 'https://aether-kjrj.onrender.com';
+const DEFAULT_SERVER_URL = process.env.EXPO_PUBLIC_AETHER_URL || 'https://aether-kjrj.onrender.com';
 const STORAGE_KEY_SERVER_URL = 'aether_server_url';
 
 export async function getServerUrl(): Promise<string> {

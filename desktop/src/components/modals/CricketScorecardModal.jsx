@@ -117,21 +117,6 @@ export function CricketScorecardModal({
     }
   }, [isOpen, effectiveApiBase]);
 
-  // Fetch detailed scorecard when match is selected with 0-lag optimistic cache
-  useEffect(() => {
-    if (!selectedMatch) {
-      setDetailData(null);
-      return;
-    }
-    const cached = detailCacheRef.current[selectedMatch.id];
-    if (cached) {
-      setDetailData(cached);
-    } else {
-      setDetailData(null);
-    }
-    fetchMatchDetail(selectedMatch, Boolean(cached));
-  }, [selectedMatch?.id, effectiveApiBase]);
-
   const fetchMatchDetail = async (match, isSilent = false, isForce = false) => {
     if (!match?.id) return;
     // Only display full-panel loader on cold start if no match detail exists yet
@@ -151,6 +136,21 @@ export function CricketScorecardModal({
       setIsRefreshing(false);
     }
   };
+
+  // Fetch detailed scorecard when match is selected with 0-lag optimistic cache
+  useEffect(() => {
+    if (!selectedMatch) {
+      setDetailData(null);
+      return;
+    }
+    const cached = detailCacheRef.current[selectedMatch.id];
+    if (cached) {
+      setDetailData(cached);
+    } else {
+      setDetailData(null);
+    }
+    fetchMatchDetail(selectedMatch, Boolean(cached));
+  }, [selectedMatch?.id, effectiveApiBase]);
 
   // Real-time live auto-refresh without user interaction (ultra-low 3s latency for live games)
   useEffect(() => {
@@ -318,7 +318,6 @@ export function CricketScorecardModal({
         style={{
           width: '100%',
           maxWidth: isMobile ? '100%' : '820px',
-          height: isMobile ? '100%' : 'auto',
           height: isMobile ? '100dvh' : 'auto',
           maxHeight: isMobile ? '100dvh' : '92vh',
           background: '#0a0f1d',

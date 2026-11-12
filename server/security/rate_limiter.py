@@ -24,6 +24,15 @@ class TokenBucketRateLimiter:
         Returns: (is_allowed: bool, remaining_tokens: int, retry_after_sec: float)
         """
         now = time.time()
+        if client_key not in self._buckets and len(self._buckets) >= 10000:
+            # Evict oldest/stale buckets to prevent unbounded memory growth
+            stale_cutoff = now - (self.capacity / max(self.refill_rate, 0.1))
+            stale_keys = [k for k, (_, ts) in self._buckets.items() if ts < stale_cutoff]
+            for k in stale_keys:
+                del self._buckets[k]
+            if len(self._buckets) >= 10000:
+                oldest_key = min(self._buckets, key=lambda k: self._buckets[k][1])
+                del self._buckets[oldest_key]
         tokens, last_refill = self._buckets.get(client_key, (float(self.capacity), now))
 
         # Refill tokens based on elapsed time

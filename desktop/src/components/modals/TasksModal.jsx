@@ -425,7 +425,6 @@ export const TasksModal = ({
         borderRadius: isMobile ? 0 : '24px',
         width: '100%',
         maxWidth: isMobile ? '100%' : '560px',
-        height: isMobile ? '100%' : 'auto',
         height: isMobile ? '100dvh' : 'auto',
         maxHeight: isMobile ? '100dvh' : '92vh',
         display: 'flex',

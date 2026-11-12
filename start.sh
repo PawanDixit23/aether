@@ -14,14 +14,16 @@ else
     source venv/bin/activate
 fi
 
-echo "Starting FastAPI server on http://0.0.0.0:8000..."
-uvicorn main:app --host 0.0.0.0 --port 8000 &
+BIND_HOST="${AETHER_BIND_HOST:-127.0.0.1}"
+
+echo "Starting FastAPI server on http://${BIND_HOST}:8000..."
+uvicorn main:app --host "$BIND_HOST" --port 8000 &
 SERVER_PID=$!
 
 # 2. Start Desktop / Web Frontend
 cd ../desktop
-echo "Starting Aether Command Center UI on http://0.0.0.0:5173..."
-npm run dev -- --host 0.0.0.0 &
+echo "Starting Aether Command Center UI on http://${BIND_HOST}:5173..."
+npm run dev -- --host "$BIND_HOST" &
 FRONTEND_PID=$!
 
 trap "kill $SERVER_PID $FRONTEND_PID; exit" INT TERM EXIT

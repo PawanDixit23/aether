@@ -320,12 +320,7 @@ export default function App() {
   const [userName, setUserName] = useState(() => localStorage.getItem('aether_user_name') || '');
   const [apiKey, setApiKey] = useState(() => {
     try {
-      const k = localStorage.getItem('aether_gemini_key') || '';
-      if (k.includes('AIzaSyCR3ZKXaMEGRU02hCrhhn4O978zMnDk0vU')) {
-        localStorage.removeItem('aether_gemini_key');
-        return '';
-      }
-      return k;
+      return localStorage.getItem('aether_gemini_key') || '';
     } catch {
       return '';
     }
@@ -1045,7 +1040,7 @@ export default function App() {
 
     const cleanText = text
       .replace(/\[.*?\]\(.*?\)/g, '')
-      .replace(/[*_#`🔗]/g, '')
+      .replace(/[*_#`🔗]/gu, '')
       .replace(/\n+/g, ' ')
       .trim();
 
@@ -3977,7 +3972,7 @@ export default function App() {
       .replace(/\[(.*?)\]\([^)]*\)/g, '$1')   // preserve headline text from markdown links
       .replace(/https?:\/\/[^\s]+/g, '')      // remove raw URLs
       .replace(/Link:\s*(?:स्रोत पढ़ें|Read Source)?/gi, '') // clean link labels
-      .replace(/[*_#`🔗🏆📰•⚡✨🎯💡📌|]/g, '') // remove markdown formatting & symbols/emojis
+      .replace(/[*_#`🔗🏆📰•⚡✨🎯💡📌|]/gu, '') // remove markdown formatting & symbols/emojis
       .replace(/```[\s\S]*?```/g, '')         // remove code blocks
       .replace(/₹\s*([0-9,.-]+)/g, (match, p1) => hasDevanagari ? `${p1} रुपये` : `${p1} Rupees`)
       .replace(/[!]/g, '')                    // remove exclamation points
@@ -4175,10 +4170,7 @@ export default function App() {
         language: isFriendActive ? 'hi_friend' : selectedLang,
         client_time: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
-        api_key: (() => {
-          const k = localStorage.getItem('aether_gemini_key') || '';
-          return k.includes('AIzaSyCR3ZKXaMEGRU02hCrhhn4O978zMnDk0vU') ? '' : k;
-        })(),
+        api_key: (localStorage.getItem('aether_gemini_key') || '').trim(),
         openai_key: (localStorage.getItem('aether_openai_key') || '').trim(),
         grok_key: (localStorage.getItem('aether_grok_key') || '').trim(),
         active_provider: localStorage.getItem('aether_active_provider') || 'gemini',

@@ -23,7 +23,12 @@ class AgentOrchestrator:
         self.user_email = user_email
         self.lang = lang
 
-    async def run(self, user_prompt: str, context: Optional[Dict[str, Any]] = None) -> AgentState:
+    async def run(
+        self,
+        user_prompt: str,
+        context: Optional[Dict[str, Any]] = None,
+        approved_tools: Optional[List[str]] = None
+    ) -> AgentState:
         state = AgentState(
             user_msg=user_prompt,
             user_email=self.user_email,
@@ -33,6 +38,7 @@ class AgentOrchestrator:
 
         # 1. Multi-Step Plan Decomposition
         state.plan = self._decompose_plan(user_prompt)
+        approved_set = set(approved_tools or [])
 
         # 2. Execution Cycle across Plan Steps
         messages = []
@@ -50,13 +56,14 @@ class AgentOrchestrator:
             tier = PermissionEngine.classify_action(tool_name, params)
             tool_call.tier = tier
 
-            if tier == ActionTier.TIER_3_CRITICAL:
+            if tier == ActionTier.TIER_3_CRITICAL and tool_name not in approved_set:
                 state.requires_approval = True
                 state.approval_prompt = (
                     f"⚠️ **Approval Required for Critical Action:**\n"
                     f"Aether wants to execute **{tool_name}** with details: {json.dumps(params)}.\n"
                     f"Do you authorize this transaction?"
                 )
+                state.metadata["pending_action"] = {"tool_name": tool_name, "parameters": params}
                 tool_call.status = "waiting_approval"
                 state.executed_tools.append(tool_call)
                 state.final_message = state.approval_prompt

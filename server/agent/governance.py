@@ -20,8 +20,21 @@ class PermissionEngine:
         if tool_name in ["weather", "query_tasks", "query_finances", "query_notes", "query_memory"]:
             return ActionTier.TIER_1_READ
 
-        # Tier 3: Critical Confirmations
-        if tool_name == "delete_all_tasks":
+        # Tier 3: Critical Confirmations (Deleting, Messaging/Calling, Large/Direct Spending)
+        if tool_name in [
+            "delete_all_tasks",
+            "delete_task",
+            "delete_financial_record",
+            "delete_memory",
+            "bulk_delete",
+            "send_whatsapp",
+            "send_email",
+            "send_sms",
+            "send_message",
+            "make_payment",
+            "transfer_money",
+            "create_call_card",
+        ]:
             return ActionTier.TIER_3_CRITICAL
         if tool_name == "record_expense":
             amount = params.get("amount", 0)
@@ -30,8 +43,6 @@ class PermissionEngine:
                     return ActionTier.TIER_3_CRITICAL
             except (ValueError, TypeError):
                 pass
-        if tool_name == "delete_financial_record":
-            return ActionTier.TIER_3_CRITICAL
 
         # Tier 2: Safe Mutating Actions (Reversible with AuditLog)
         return ActionTier.TIER_2_MUTATE_SAFE

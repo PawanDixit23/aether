@@ -6,7 +6,7 @@ services:
     container_name: aether-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -22,7 +22,7 @@ services:
     container_name: aether-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - TZ=Asia/Kolkata
       - TIMEZONE=Asia/Kolkata
@@ -51,7 +51,7 @@ services:
       - ./desktop:/app
       - /app/node_modules
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     environment:
       - VITE_API_URL=http://backend:8000
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"

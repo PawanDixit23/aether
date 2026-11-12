@@ -169,7 +169,7 @@ async def security_and_observability_middleware(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
     # High-Performance Stale-While-Revalidate (SWR) Caching
-    if request.url.path in ("/api/cricket/live", "/api/finance/summary", "/api/news"):
+    if request.url.path in ("/api/cricket/live", "/api/news"):
         response.headers["Cache-Control"] = "public, max-age=3, stale-while-revalidate=15"
     elif request.url.path.startswith("/api/") and "Cache-Control" not in response.headers:
         response.headers["Cache-Control"] = "private, no-cache"
@@ -650,8 +650,10 @@ class AgentRunRequest(BaseModel):
     prompt: str
     user_email: Optional[str] = None
     language: Optional[str] = "auto"
+    approved_tools: Optional[List[str]] = None
 
 @app.post("/api/agent/run")
+@app.post("/api/agent/approve")
 async def run_agent_workflow(
     req: AgentRunRequest,
     user_email: Optional[str] = Depends(get_user_email),
@@ -664,11 +666,12 @@ async def run_agent_workflow(
     from agent import AgentOrchestrator
     eff_email = req.user_email or user_email or "operator@aether.local"
     orchestrator = AgentOrchestrator(db=db, user_email=eff_email, lang=req.language or "auto")
-    result_state = await orchestrator.run(req.prompt)
+    result_state = await orchestrator.run(req.prompt, approved_tools=req.approved_tools)
     return {
         "status": "completed" if result_state.completed else "partial",
         "requires_approval": result_state.requires_approval,
         "approval_prompt": result_state.approval_prompt,
+        "pending_action": result_state.metadata.get("pending_action"),
         "message": result_state.final_message,
         "plan": result_state.plan,
         "tools_executed": [t.tool_name for t in result_state.executed_tools],
@@ -2028,9 +2031,9 @@ def toggle_task(
     query = db.query(Task).filter(Task.id == task_id)
     if eff_email:
         query = query.filter(Task.user_email == eff_email)
+    else:
+        query = query.filter(Task.user_email.is_(None))
     task = query.first()
-    if not task:
-        task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     
@@ -2126,7 +2129,7 @@ def set_task_date_completion(
     if not eff_email:
         raise HTTPException(status_code=401, detail="User email required")
 
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = db.query(Task).filter(Task.id == task_id, Task.user_email == eff_email).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -2169,9 +2172,9 @@ def reschedule_task(
     query = db.query(Task).filter(Task.id == task_id)
     if eff_email:
         query = query.filter(Task.user_email == eff_email)
+    else:
+        query = query.filter(Task.user_email.is_(None))
     task = query.first()
-    if not task:
-        task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     if req.due_date:
@@ -2221,9 +2224,9 @@ def delete_task(
     query = db.query(Task).filter(Task.id == task_id)
     if eff_email:
         query = query.filter(Task.user_email == eff_email)
+    else:
+        query = query.filter(Task.user_email.is_(None))
     task = query.first()
-    if not task:
-        task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     # Delete child subtasks if parent is deleted
@@ -2237,10 +2240,33 @@ def delete_task(
 
 @app.post("/api/calendar/sync-ical")
 def sync_ical_feed(req: ICalSyncRequest, user_email: Optional[str] = Depends(get_user_email)):
+    import ipaddress
+    import socket
+    import urllib.parse
     import urllib.request
+
     raw_url = req.url.strip()
-    if not raw_url.startswith("http"):
-        raise HTTPException(status_code=400, detail="अमान्य लिंक। लिंक http:// या https:// से शुरू होना चाहिए।")
+    parsed = urllib.parse.urlparse(raw_url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="Invalid URL. Link must start with http:// or https://")
+
+    try:
+        addr_infos = socket.getaddrinfo(parsed.hostname, None)
+    except socket.gaierror:
+        raise HTTPException(status_code=400, detail="Could not resolve calendar host")
+
+    for info in addr_infos:
+        ip_str = info[4][0].split("%")[0]
+        ip_obj = ipaddress.ip_address(ip_str)
+        if (
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_multicast
+            or ip_obj.is_reserved
+            or ip_obj.is_unspecified
+        ):
+            raise HTTPException(status_code=400, detail="Private or local calendar URLs are not allowed")
 
     # Detect common mistake: user pasting the Google Calendar browser URL instead of the secret iCal URL
     if "calendar.google.com/calendar/u/" in raw_url or "/calendar/r" in raw_url:
@@ -2618,7 +2644,7 @@ def delete_finance_record(
     if not rec:
         raise HTTPException(status_code=404, detail="Financial record not found")
     eff_email = (user_email or "").strip().lower()
-    if eff_email and rec.user_email and rec.user_email.strip().lower() != eff_email:
+    if rec.user_email and rec.user_email.strip().lower() != eff_email:
         raise HTTPException(status_code=403, detail="Not authorized to delete this record")
     db.delete(rec)
     db.commit()
@@ -2635,7 +2661,7 @@ def update_finance_record(
     if not rec:
         raise HTTPException(status_code=404, detail="Financial record not found")
     eff_email = (user_email or "").strip().lower()
-    if eff_email and rec.user_email and rec.user_email.strip().lower() != eff_email:
+    if rec.user_email and rec.user_email.strip().lower() != eff_email:
         raise HTTPException(status_code=403, detail="Not authorized to edit this record")
     if req.type is not None:
         rec.type = req.type
@@ -2806,9 +2832,12 @@ def delete_memory(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
+    eff_email = get_effective_email(user_email)
     query = db.query(MemoryItem).filter(MemoryItem.id == item_id)
-    if user_email:
-        query = query.filter(MemoryItem.user_email == user_email)
+    if eff_email:
+        query = query.filter(MemoryItem.user_email == eff_email)
+    else:
+        query = query.filter(MemoryItem.user_email.is_(None))
     item = query.first()
     if not item:
         raise HTTPException(status_code=404, detail="Memory item not found")
@@ -2941,7 +2970,7 @@ def get_location_city_guide(
 
 # ----------------- 2-Minute Executive Audio Briefing -----------------
 @app.get("/api/briefing/executive")
-def get_executive_briefing(
+def get_executive_audio_briefing(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
@@ -3009,10 +3038,17 @@ def list_audit_logs(
     return db.query(AuditLog).filter(AuditLog.user_email == user_email).order_by(AuditLog.executed_at.desc()).limit(limit).all()
 
 @app.post("/api/audit-logs/{log_id}/undo")
-def undo_action(log_id: int, db: Session = Depends(get_db)):
+def undo_action(
+    log_id: int,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
     log = db.query(AuditLog).filter(AuditLog.id == log_id).first()
     if not log or not log.undo_payload:
         raise HTTPException(status_code=404, detail="Log or undo payload not found")
+    if log.user_email and log.user_email.strip().lower() != (eff_email or ""):
+        raise HTTPException(status_code=403, detail="Not authorized to undo this action")
     if log.is_undone:
         return {"message": "Already undone"}
 
@@ -3135,15 +3171,6 @@ def health():
         "timestamp": datetime.utcnow().isoformat()
     }
 
-@app.get("/api/metrics")
-def get_metrics():
-    """Returns real-time operational telemetry and latency metrics."""
-    try:
-        from observability import tracker
-        return tracker.get_summary()
-    except Exception as e:
-        return {"status": "degraded", "error": str(e), "timestamp": datetime.utcnow().isoformat()}
-
 # ----------------- Web Push Subscription Endpoints -----------------
 class PushSubscribeRequest(BaseModel):
     user_email: str
@@ -3240,7 +3267,10 @@ def unsubscribe_push(user_email: str, endpoint: str, db: Session = Depends(get_d
             if s.get("endpoint") != endpoint
         ]
     try:
-        db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint).delete()
+        db.query(PushSubscription).filter(
+            PushSubscription.endpoint == endpoint,
+            PushSubscription.user_email == email
+        ).delete()
         db.commit()
     except Exception as dbe:
         print(f"[PushUnsubscribe DB Error] {dbe}")
