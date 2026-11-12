@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Radio, 
   Play, 
@@ -13,7 +13,10 @@ import {
   Zap, 
   Clock,
   ArrowRight,
-  Target
+  Target,
+  Mic,
+  Square,
+  Moon
 } from 'lucide-react';
 
 export const BriefingModal = ({
@@ -34,8 +37,73 @@ export const BriefingModal = ({
 }) => {
   const [activeTab, setActiveTab] = useState('briefing'); // 'briefing' | 'goals'
   const [customGoal, setCustomGoal] = useState('');
+  const [meetingNotesText, setMeetingNotesText] = useState('');
+  const [isRecordingNotes, setIsRecordingNotes] = useState(false);
+  const notesRecRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (notesRecRef.current) {
+        try { notesRecRef.current.stop(); } catch (e) {}
+        notesRecRef.current = null;
+      }
+    };
+  }, []);
 
   if (!isOpen) return null;
+
+  const toggleMeetingRecorder = () => {
+    if (isRecordingNotes) {
+      if (notesRecRef.current) {
+        try { notesRecRef.current.stop(); } catch (e) {}
+        notesRecRef.current = null;
+      }
+      setIsRecordingNotes(false);
+      return;
+    }
+    const SpeechRec = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (!SpeechRec) return;
+    try {
+      const rec = new SpeechRec();
+      rec.continuous = true;
+      rec.interimResults = false;
+      rec.lang = 'en-IN';
+      rec.onresult = (event) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            transcript += event.results[i][0].transcript + ' ';
+          }
+        }
+        if (transcript.trim()) {
+          setMeetingNotesText(prev => (prev ? `${prev.trim()} ${transcript.trim()}` : transcript.trim()));
+        }
+      };
+      rec.onerror = () => {
+        setIsRecordingNotes(false);
+        notesRecRef.current = null;
+      };
+      rec.onend = () => {
+        setIsRecordingNotes(false);
+        notesRecRef.current = null;
+      };
+      rec.start();
+      notesRecRef.current = rec;
+      setIsRecordingNotes(true);
+    } catch (e) {
+      setIsRecordingNotes(false);
+    }
+  };
+
+  const handleExtractMeetingTasks = (e) => {
+    e?.preventDefault();
+    if (!meetingNotesText.trim() || !onExecuteGoal) return;
+    if (isRecordingNotes) toggleMeetingRecorder();
+    onExecuteGoal(
+      `Summarize the key decisions from these meeting notes and automatically create all action items as pending tasks with priorities and due dates:\n\n${meetingNotesText.trim()}`
+    );
+    setMeetingNotesText('');
+  };
 
   const handleGoalSubmit = (e) => {
     e?.preventDefault();
@@ -381,7 +449,7 @@ export const BriefingModal = ({
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
                 <button
                   type="button"
-                  onClick={() => handleQuickGoalClick('Aether, कृपया मेरे फाइनांस टैब के सभी रिकॉर्ड्स और खर्चों का विस्तृत ऑडिट करें। कुल खर्च, मुख्य कैटेगरी ब्रेकडाउन, बड़े खर्चे और बचत के सटीक रास्ते बताएं।')}
+                  onClick={() => handleQuickGoalClick('Aether, please perform a detailed audit of all records and expenses in my Finance tab. Provide total spending, category breakdown, top expenses, and practical savings tips.')}
                   style={{
                     background: 'rgba(255, 255, 255, 0.03)',
                     border: '1px solid rgba(245, 158, 11, 0.25)',
@@ -404,7 +472,7 @@ export const BriefingModal = ({
 
                 <button
                   type="button"
-                  onClick={() => handleQuickGoalClick('Aether, मेरे आज के सभी कार्यों और मीटिंग्स का विश्लेषण करें और दिन का सबसे कुशल समय-सारिणी (optimal prioritized schedule) तैयार करें।')}
+                  onClick={() => handleQuickGoalClick('Aether, analyze all my tasks and meetings for today and build the most efficient, prioritized schedule.')}
                   style={{
                     background: 'rgba(255, 255, 255, 0.03)',
                     border: '1px solid rgba(56, 189, 248, 0.25)',
@@ -427,7 +495,7 @@ export const BriefingModal = ({
 
                 <button
                   type="button"
-                  onClick={() => handleQuickGoalClick('Aether, अगले 7 दिनों का पूरा वर्क शेड्यूल, जरूरी डेडलाइन्स और टास्क प्रायोरिटीज प्लान करें।')}
+                  onClick={() => handleQuickGoalClick('Aether, plan my work schedule, key deadlines, and top task priorities for the next 7 days.')}
                   style={{
                     background: 'rgba(255, 255, 255, 0.03)',
                     border: '1px solid rgba(168, 85, 247, 0.25)',
@@ -450,7 +518,7 @@ export const BriefingModal = ({
 
                 <button
                   type="button"
-                  onClick={() => handleQuickGoalClick(`Aether, मुझे ${cityName} में इस वीकेंड के लिए टॉप दर्शनीय स्थलों, प्रसिद्ध खान-पान और एक्टिविटीज का कम्पलीट इटिनेररी तैयार करके दें।`)}
+                  onClick={() => handleQuickGoalClick(`Aether, create a complete weekend itinerary for ${cityName} including top sights, famous local food, and activities.`)}
                   style={{
                     background: 'rgba(255, 255, 255, 0.03)',
                     border: '1px solid rgba(16, 185, 129, 0.25)',
@@ -471,6 +539,125 @@ export const BriefingModal = ({
                   <div style={{ fontSize: '0.68rem', color: '#94a3b8', lineHeight: 1.3 }}>Local food & places plan</div>
                 </button>
               </div>
+            </div>
+
+            {/* 2.5 Nightly Wrap-Up & Auto-Reschedule + Voice Meeting Notes -> Tasks */}
+            <div style={{
+              background: 'rgba(99, 102, 241, 0.06)',
+              border: '1px solid rgba(99, 102, 241, 0.25)',
+              borderRadius: '16px',
+              padding: '12px 14px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '10px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                <div style={{ width: '32px', height: '32px', borderRadius: '10px', background: 'rgba(99, 102, 241, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a5b4fc', flexShrink: 0 }}>
+                  <Moon size={16} />
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.80rem', fontWeight: 700, color: '#f8fafc' }}>Evening Wrap-Up & Rollover</div>
+                  <div style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Review unfinished work & prep tomorrow</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (overdueCount > 0 && onRescheduleOverdue) onRescheduleOverdue();
+                  handleQuickGoalClick('Aether, run an Evening Wrap-Up: summarize my completed vs pending tasks today, review today expenses, and suggest a clean prioritized agenda for tomorrow morning.');
+                }}
+                style={{
+                  background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '10px',
+                  padding: '7px 12px',
+                  fontSize: '0.74rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                Wrap Up Day
+              </button>
+            </div>
+
+            {/* 2.6 Voice Meeting Notes -> Auto Tasks */}
+            <div style={{
+              background: 'rgba(255, 255, 255, 0.02)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              borderRadius: '16px',
+              padding: '14px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Mic size={15} color="#34d399" />
+                  <span style={{ fontSize: '0.84rem', fontWeight: 700, color: '#ffffff' }}>
+                    Meeting Notes to Tasks
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleMeetingRecorder}
+                  style={{
+                    background: isRecordingNotes ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.15)',
+                    border: `1px solid ${isRecordingNotes ? 'rgba(239, 68, 68, 0.45)' : 'rgba(16, 185, 129, 0.35)'}`,
+                    color: isRecordingNotes ? '#f87171' : '#34d399',
+                    borderRadius: '8px',
+                    padding: '4px 10px',
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px'
+                  }}
+                >
+                  {isRecordingNotes ? <Square size={11} /> : <Mic size={12} />}
+                  <span>{isRecordingNotes ? 'Stop Recording' : 'Record Voice'}</span>
+                </button>
+              </div>
+              <div style={{ fontSize: '0.71rem', color: '#94a3b8', marginBottom: '8px', lineHeight: 1.4 }}>
+                Record or paste meeting notes and Aether will summarize key decisions and create pending tasks automatically.
+              </div>
+              <form onSubmit={handleExtractMeetingTasks} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <textarea
+                  rows={2}
+                  placeholder="Record voice or paste meeting discussion here..."
+                  value={meetingNotesText}
+                  onChange={(e) => setMeetingNotesText(e.target.value)}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    borderRadius: '12px',
+                    padding: '9px 12px',
+                    color: '#ffffff',
+                    fontSize: '0.80rem',
+                    outline: 'none',
+                    resize: 'vertical'
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={!meetingNotesText.trim()}
+                  style={{
+                    alignSelf: 'flex-end',
+                    background: meetingNotesText.trim() ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'rgba(255, 255, 255, 0.08)',
+                    color: meetingNotesText.trim() ? '#042f2e' : '#64748b',
+                    border: 'none',
+                    borderRadius: '10px',
+                    padding: '7px 14px',
+                    fontWeight: 700,
+                    fontSize: '0.76rem',
+                    cursor: meetingNotesText.trim() ? 'pointer' : 'not-allowed'
+                  }}
+                >
+                  Summarize & Create Tasks
+                </button>
+              </form>
             </div>
 
             {/* 3. Assign Custom Multi-Step Autonomous Goal (Option 3) */}

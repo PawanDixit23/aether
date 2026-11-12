@@ -104,200 +104,82 @@ const API_BASE = typeof window !== 'undefined' && window.location.port === '5173
   : '/api';
 
 const LANG_OPTIONS = [
-  { id: 'auto', label: 'Auto', fullLabel: 'Auto (स्वचालित)', icon: '🌐' },
-  { id: 'hi', label: 'हिन्दी', fullLabel: 'हिन्दी (Hindi)', icon: '🇮🇳' },
-  { id: 'en', label: 'English', fullLabel: 'English (अंग्रेजी)', icon: '🇬🇧' },
-  { id: 'hinglish', label: 'Hinglish', fullLabel: 'Hinglish (हिंग्लिश)', icon: '✨' }
+  { id: 'auto', label: 'Auto', fullLabel: 'Auto (Automatic)', icon: '🌐' },
+  { id: 'hi', label: 'Hindi', fullLabel: 'Hindi (Conversational)', icon: '🇮🇳' },
+  { id: 'en', label: 'English', fullLabel: 'English', icon: '🇬🇧' },
+  { id: 'hinglish', label: 'Hinglish', fullLabel: 'Hinglish (Hindi + English)', icon: '✨' }
 ];
 
-const UI_TRANSLATIONS = {
-  hi: {
-    subtitle: "आपका व्यक्तिगत AI सहायक",
-    briefingTag: "आज की ब्रीफिंग",
-    greetingSub: "आज के आपके महत्वपूर्ण काम और अपडेट।",
-    userName: "पवन",
-    pendingTasks: "बाकी काम",
-    clickToView: "क्लिक करें",
-    upcoming: "आगामी काम",
-    events: "इवेंट्स",
-    alerts: "महत्वपूर्ण अलर्ट",
-    alertsBadge: "अलर्ट्स",
-    liveData: "लाइव डेटा",
-    lastUpdate: "अंतिम अपडेट",
-    syncNote: "Open-Meteo और Google News से लाइव सिंक",
-    newsHeading: "आज की प्रमुख खबरें",
-    viewAll: "सभी देखें",
-    readFull: "पूरी खबर पढ़ें",
-    newsFooter: "वास्तविक समाचार स्रोत; Google News RSS से राष्ट्रीय व अंतर्राष्ट्रीय लाइव अपडेट।",
-    agendaDesc: "काम और रिमाइंडर",
-    wealthDesc: "बजट और निवेश",
-    vaultDesc: "फ़ाइलें और मेमोरी",
-    activityDesc: "एक्शन और सुरक्षा",
-    askAether: "AETHER से पूछें",
-    responseLang: "उत्तर भाषा",
-    placeholder: "कुछ भी पूछें या कोई काम बताएं...",
-    listeningPlaceholder: "Listening... बोलिए...",
-    newChat: "नई चैट",
-    viewChat: "बातचीत देखें (View Chat Stream)",
-    hideChat: "बातचीत छुपाएँ (Hide Chat)",
-    chatStream: "AETHER INTELLIGENCE STREAM // बातचीत इतिहास",
-    messages: "संदेश",
-    reminderDue: "⏰ रिमाइंडर अलर्ट · REMINDER DUE NOW",
-    markComplete: "✓ पूरा हुआ (Complete)",
-    dismiss: "Dismiss",
-    share: "Share",
-    online: "Online",
-    offline: "Offline",
-    ready: "READY (तैयार)",
-    listening: "LISTENING (सुन रहा हूँ...)",
-    processing: "PROCESSING (Aether सोच रहा है...)",
-    speaking: "SPEAKING (बोल रहा है...)",
-    thinkingMsg: "Aether सोच रहा है व लाइव डेटा ला रहा है...",
-    city: "Jaipur (भांकरोटा)",
-    tabPending: "बाकी काम",
-    tabCompleted: "पूरे हो चुके काम",
-    tabAll: "सभी काम",
-    completedTag: "पूरा हुआ",
-    langToast: (name) => `भाषा सेट: ${name}`,
-    greetings: {
-      morning: "सुप्रभात",
-      afternoon: "शुभ दोपहर",
-      evening: "शुभ संध्या",
-      night: "शुभ रात्रि"
-    },
-    periods: {
-      morning: "प्रातःकाल • सूर्योदय",
-      afternoon: "दोपहर • खिली हुई धूप",
-      evening: "संध्याकाल • सूर्यास्त",
-      night: "रात्रि काल • शांत रात"
-    }
+const EN_UI_DICTIONARY = {
+  subtitle: "Your Autonomous Personal AI Executive",
+  briefingTag: "DAILY BRIEFING",
+  greetingSub: "Your key agenda, tasks and real-time executive updates.",
+  userName: "Pawan",
+  pendingTasks: "Pending Tasks",
+  clickToView: "View",
+  upcoming: "Upcoming",
+  events: "Events",
+  alerts: "Critical Alerts",
+  alertsBadge: "Alerts",
+  liveData: "Live Data",
+  lastUpdate: "Last sync",
+  syncNote: "Synced live with Open-Meteo & Google News",
+  newsHeading: "Today's Top Headlines",
+  viewAll: "View All",
+  readFull: "Read Full Article",
+  newsFooter: "Verified real news feed via Google News RSS national & global reports.",
+  agendaDesc: "Tasks & Reminders",
+  wealthDesc: "Budget & Wealth",
+  vaultDesc: "Files & Memories",
+  activityDesc: "Actions & Audit",
+  askAether: "Ask AETHER",
+  responseLang: "Output Language",
+  placeholder: "Ask anything or command Aether...",
+  listeningPlaceholder: "Listening... Speak now...",
+  newChat: "New Chat",
+  viewChat: "View Conversation Stream",
+  hideChat: "Hide Conversation Stream",
+  chatStream: "AETHER INTELLIGENCE STREAM // Conversation Log",
+  messages: "messages",
+  reminderDue: "⏰ REMINDER DUE NOW",
+  markComplete: "✓ Complete",
+  dismiss: "Dismiss",
+  share: "Share",
+  online: "Online",
+  offline: "Offline",
+  ready: "READY",
+  listening: "LISTENING...",
+  processing: "PROCESSING (Aether is thinking...)",
+  speaking: "SPEAKING...",
+  thinkingMsg: "Aether is thinking & fetching live intelligence...",
+  city: "Jaipur (Bhankrota)",
+  tabPending: "Pending Tasks",
+  tabCompleted: "Completed Tasks",
+  tabAll: "All Tasks",
+  completedTag: "Completed",
+  langToast: (name) => `Language set to: ${name}`,
+  greetings: {
+    morning: "Good morning",
+    afternoon: "Good afternoon",
+    evening: "Good evening",
+    night: "Good night"
   },
-  en: {
-    subtitle: "Your Autonomous Personal AI Executive",
-    briefingTag: "DAILY BRIEFING",
-    greetingSub: "Your key agenda, tasks and real-time executive updates.",
-    userName: "Pawan",
-    pendingTasks: "Pending Tasks",
-    clickToView: "View",
-    upcoming: "Upcoming",
-    events: "Events",
-    alerts: "Critical Alerts",
-    alertsBadge: "Alerts",
-    liveData: "Live Data",
-    lastUpdate: "Last sync",
-    syncNote: "Synced live with Open-Meteo & Google News",
-    newsHeading: "Today's Top Headlines",
-    viewAll: "View All",
-    readFull: "Read Full Article",
-    newsFooter: "Verified real news feed via Google News RSS national & global reports.",
-    agendaDesc: "Tasks & Reminders",
-    wealthDesc: "Budget & Wealth",
-    vaultDesc: "Files & Memories",
-    activityDesc: "Actions & Audit",
-    askAether: "Ask AETHER",
-    responseLang: "Output Language",
-    placeholder: "Ask anything or command Aether...",
-    listeningPlaceholder: "Listening... Speak now...",
-    newChat: "New Chat",
-    viewChat: "View Conversation Stream",
-    hideChat: "Hide Conversation Stream",
-    chatStream: "AETHER INTELLIGENCE STREAM // Conversation Log",
-    messages: "messages",
-    reminderDue: "⏰ REMINDER DUE NOW",
-    markComplete: "✓ Complete",
-    dismiss: "Dismiss",
-    share: "Share",
-    online: "Online",
-    offline: "Offline",
-    ready: "READY",
-    listening: "LISTENING...",
-    processing: "PROCESSING (Aether is thinking...)",
-    speaking: "SPEAKING...",
-    thinkingMsg: "Aether is thinking & fetching live intelligence...",
-    city: "Jaipur (Bhankrota)",
-    tabPending: "Pending Tasks",
-    tabCompleted: "Completed Tasks",
-    tabAll: "All Tasks",
-    completedTag: "Completed",
-    langToast: (name) => `Language set to: ${name}`,
-    greetings: {
-      morning: "Good morning",
-      afternoon: "Good afternoon",
-      evening: "Good evening",
-      night: "Good night"
-    },
-    periods: {
-      morning: "Morning • Sunrise",
-      afternoon: "Afternoon • Sunny",
-      evening: "Evening • Sunset",
-      night: "Night • Clear Sky"
-    }
-  },
-  hinglish: {
-    subtitle: "Aapka Personal AI Executive",
-    briefingTag: "AAJ KI BRIEFING",
-    greetingSub: "Aaj ke aapke zaroori kaam aur live updates.",
-    userName: "Pawan",
-    pendingTasks: "Pending Kaam",
-    clickToView: "Click karein",
-    upcoming: "Aane Wale Events",
-    events: "Events",
-    alerts: "Zaroori Alerts",
-    alertsBadge: "Alerts",
-    liveData: "Live Data",
-    lastUpdate: "Last update",
-    syncNote: "Open-Meteo aur Google News se live sync",
-    newsHeading: "Aaj Ki Top Headlines",
-    viewAll: "Sabhi Dekhein",
-    readFull: "Poori Khabar Padhein",
-    newsFooter: "Verified news source; Google News RSS se live national aur global updates.",
-    agendaDesc: "Kaam aur Reminders",
-    wealthDesc: "Budget aur Kharch",
-    vaultDesc: "Files aur Memory",
-    activityDesc: "Actions aur Audit",
-    askAether: "AETHER Se Poochein",
-    responseLang: "Answer Language",
-    placeholder: "Kuch bhi poochein ya koi kaam batayein...",
-    listeningPlaceholder: "Sun raha hoon... Boliye...",
-    newChat: "Nayi Chat",
-    viewChat: "Chat History Dekhein",
-    hideChat: "Chat Chhupayein",
-    chatStream: "AETHER INTELLIGENCE STREAM // Chat History",
-    messages: "messages",
-    reminderDue: "⏰ REMINDER ALERT · TIME HO GAYA HAI",
-    markComplete: "✓ Complete Karein",
-    dismiss: "Dismiss",
-    share: "Share",
-    online: "Online",
-    offline: "Offline",
-    ready: "READY",
-    listening: "LISTENING (Sun raha hoon...)",
-    processing: "PROCESSING (Aether soch raha hai...)",
-    speaking: "SPEAKING (Bol raha hai...)",
-    thinkingMsg: "Aether soch raha hai aur live data la raha hai...",
-    city: "Jaipur (Bhankrota)",
-    tabPending: "Pending Kaam",
-    tabCompleted: "Completed Kaam",
-    tabAll: "Sabhi Kaam",
-    completedTag: "Complete",
-    langToast: (name) => `Language badli gayi: ${name}`,
-    greetings: {
-      morning: "Good Morning",
-      afternoon: "Good Afternoon",
-      evening: "Good Evening",
-      night: "Good Night"
-    },
-    periods: {
-      morning: "Subah • Sunrise",
-      afternoon: "Dopahar • Dhoop",
-      evening: "Shaam • Sunset",
-      night: "Raat • Shaant Aasmaan"
-    }
+  periods: {
+    morning: "Morning • Sunrise",
+    afternoon: "Afternoon • Sunny",
+    evening: "Evening • Sunset",
+    night: "Night • Clear Sky"
   }
 };
 
+const UI_TRANSLATIONS = {
+  hi: EN_UI_DICTIONARY,
+  en: EN_UI_DICTIONARY,
+  hinglish: EN_UI_DICTIONARY
+};
+
 const AETHER_VOICES = [
-  { id: 'mitra', name: 'Mitra (दोस्त)', desc: 'Warm, natural, conversational Hindi buddy • Friend', pitch: 1.05, rate: 1.12, gender: 'male' },
+  { id: 'mitra', name: 'Mitra (Friend)', desc: 'Warm, natural conversational buddy voice • Male', pitch: 1.05, rate: 1.12, gender: 'male' },
   { id: 'puck', name: 'Puck', desc: 'Crisp, focused, analytical • Male', pitch: 1.0, rate: 1.05, gender: 'male' },
   { id: 'charon', name: 'Charon', desc: 'Deep, calm, authoritative • Male', pitch: 0.75, rate: 0.95, gender: 'male' },
   { id: 'kore', name: 'Kore', desc: 'Warm, articulate, balanced • Female', pitch: 1.05, rate: 1.0, gender: 'female' },
@@ -491,20 +373,20 @@ export default function App() {
   });
   const wakeWordRecognitionRef = useRef(null);
   const speechSilenceTimeoutRef = useRef(null);
-  const [attachedMedia, setAttachedMedia] = useState(null); // { type: 'image' | 'file' | 'drive' | 'map', name: string, url?: string, size?: string }
+  const [attachedMediaList, setAttachedMediaList] = useState([]); // Array of { id, type: 'image' | 'file' | 'drive' | 'map', name: string, url?: string, size?: string }
 
   // Modern Confirmation Dialog State (Zero ugly window.confirm popups)
   const [confirmDialog, setConfirmDialog] = useState({
     isOpen: false,
     title: '',
     message: '',
-    confirmText: 'हटाएं (Delete)',
-    cancelText: 'रद्द करें',
+    confirmText: 'Delete',
+    cancelText: 'Cancel',
     isDestructive: true,
     onConfirm: () => {}
   });
 
-  const showConfirm = ({ title, message, confirmText = "हटाएं (Delete)", cancelText = "रद्द करें", isDestructive = true, onConfirm }) => {
+  const showConfirm = ({ title, message, confirmText = "Delete", cancelText = "Cancel", isDestructive = true, onConfirm }) => {
     setConfirmDialog({
       isOpen: true,
       title,
@@ -648,7 +530,7 @@ export default function App() {
         localStorage.setItem('aether_selected_voice', 'puck');
       }
     }
-    showToast(enabled ? '🤝 मित्र मोड चालू है (Friend Mode Active)!' : 'मित्र मोड बंद (Standard Mode Active)', 'info');
+    showToast(enabled ? '🤝 Friend Mode Active!' : 'Standard Mode Active', 'info');
   };
 
   const isFriendActive = Boolean(
@@ -1083,12 +965,12 @@ export default function App() {
             headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
           });
           if (resp.ok) {
-            showToast("रिकॉर्ड हटा दिया गया", "success");
+            showToast("Record deleted", "success");
           } else {
-            showToast("रिकॉर्ड हटाने में समस्या आई", "error");
+            showToast("Failed to delete record", "error");
           }
         } catch (e) {
-          showToast("नेटवर्क त्रुटि", "error");
+          showToast("Network error", "error");
         }
       }
     });
@@ -1242,7 +1124,7 @@ export default function App() {
 
     try {
       setIsBriefingLoading(true);
-      showToast("🎙️ Aether एग्जीक्यूटिव ब्रीफिंग तैयार कर रहा है...", "info");
+      showToast("🎙️ Aether is preparing your executive briefing...", "info");
       const resp = await fetch(`${API_BASE}/briefing/executive`, {
         headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
       });
@@ -1256,7 +1138,7 @@ export default function App() {
     } catch (e) {
       console.error(e);
       setIsBriefingLoading(false);
-      showToast("ब्रीफिंग लोड करने में समस्या आई", "error");
+      showToast("Failed to load briefing", "error");
     }
   };
 
@@ -1447,17 +1329,17 @@ export default function App() {
     const cleanKey = (keyToValidate || '').trim();
     if (!cleanKey) {
       const provLabel = prov === 'openai' ? 'OpenAI (ChatGPT)' : prov === 'grok' ? 'Grok (xAI)' : 'Gemini';
-      setKeyError(`कृपया अपनी ${provLabel} API Key दर्ज करें (Please enter your API key)`);
+      setKeyError(`Please enter your ${provLabel} API key`);
       return;
     }
 
     if (prov === 'grok' && !cleanKey.startsWith('xai-') && !cleanKey.startsWith('grok_') && !cleanKey.startsWith('grok-')) {
-      setKeyError('Grok (xAI) API Key "grok_" या "xai-" से शुरू होनी चाहिए। कृपया बॉक्स से पूरी Key कॉपी करें।');
+      setKeyError('Grok (xAI) API Key should start with "grok_" or "xai-". Please copy the full key.');
       return;
     }
 
     if (prov === 'openai' && !cleanKey.startsWith('sk-')) {
-      setKeyError('OpenAI (ChatGPT) Secret Key "sk-" से शुरू होनी चाहिए। कृपया platform.openai.com से Secret Key कॉपी करें।');
+      setKeyError('OpenAI (ChatGPT) Secret Key should start with "sk-". Please copy your secret key from platform.openai.com.');
       return;
     }
     setKeyValidating(true);
@@ -1493,7 +1375,7 @@ export default function App() {
         if (beData.valid) {
           isValid = true;
         } else {
-          setKeyError(beData.error || `अमान्य ${prov.toUpperCase()} API Key! कृपया अपनी सही Key जांचें।`);
+          setKeyError(beData.error || `Invalid ${prov.toUpperCase()} API Key. Please check your key.`);
           setKeyValidating(false);
           return;
         }
@@ -1515,7 +1397,7 @@ export default function App() {
         setKeySuccess(true);
         setKeyError('');
         const provName = prov === 'openai' ? 'OpenAI (ChatGPT)' : prov === 'grok' ? 'Grok (xAI)' : 'Gemini';
-        showToast(`${provName} API Key सत्यापित! (Key Verified)`, 'success');
+        showToast(`${provName} API Key Verified!`, 'success');
         setTimeout(() => {
           if (onboardingStep === 5) {
             setOnboardingStep(6);
@@ -1524,7 +1406,7 @@ export default function App() {
         }, 500);
       }
     } catch (err) {
-      setKeyError('सत्यापन में त्रुटि। कृपया इंटरनेट या Key जांचें।');
+      setKeyError('Verification error. Please check your internet connection or API key.');
     } finally {
       setKeyValidating(false);
     }
@@ -1639,7 +1521,7 @@ export default function App() {
         }
 
         if (window.location.hash.includes('access_token')) {
-          showToast(`Google से सफलतापूर्वक लिंक: ${gName}`, 'success');
+          showToast(`Linked with Google: ${gName}`, 'success');
           window.history.replaceState(null, '', window.location.pathname);
         }
       }
@@ -1735,7 +1617,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('Google Sign In err:', err);
-      setGoogleError('Google Sign-In प्रारंभ करने में समस्या आई।');
+      setGoogleError('Failed to start Google Sign-In.');
       setShowGoogleModal(true);
     } finally {
       setGoogleAuthLoading(false);
@@ -1746,7 +1628,7 @@ export default function App() {
     e?.preventDefault();
     const email = (googleCustomEmail || userEmail).trim();
     if (!email || !email.includes('@')) {
-      setGoogleError('कृपया एक वैध Google ईमेल दर्ज करें (e.g. name@gmail.com)');
+      setGoogleError('Please enter a valid Google email address (e.g. name@gmail.com)');
       return;
     }
     const name = (googleCustomName || userName).trim() || email.split('@')[0];
@@ -1756,7 +1638,7 @@ export default function App() {
     setUserEmail(email);
     setGoogleLoginSuccess(true);
     setGoogleError('');
-    showToast(`Google Account कनेक्ट हुआ: ${email}`, 'success');
+    showToast(`Google Account connected: ${email}`, 'success');
     setShowGoogleModal(false);
     const alreadyDone = localStorage.getItem('aether_onboarding_done') === 'true';
     if (alreadyDone) {
@@ -1860,7 +1742,7 @@ export default function App() {
 
       localStorage.setItem('aether_onboarding_done', 'true');
       setOnboardingDone(true);
-      showToast('Aether सिस्टम सक्रिय! स्वागत है। (Aether Activated)', 'success');
+      showToast('Aether Activated! Welcome.', 'success');
     } catch (e) {
       console.log('Complete onboarding catch:', e);
       localStorage.setItem('aether_onboarding_done', 'true');
@@ -1918,7 +1800,7 @@ export default function App() {
     setOnboardingStep(1);
     setIsSettingsOpen(false);
     showToast(
-      effectiveLang === 'en' ? "Signed out successfully" : effectiveLang === 'hinglish' ? "Successfully sign out ho gaye" : "सफलतापूर्वक साइन आउट किया गया",
+      "Signed out successfully",
       "info"
     );
   };
@@ -1932,7 +1814,7 @@ export default function App() {
     await handleSignOut();
     setActiveSubModal(null);
     showToast(
-      effectiveLang === 'en' ? "Account data reset successfully" : effectiveLang === 'hinglish' ? "Account data reset ho gaya" : "खाता डेटा सफलतापूर्वक रीसेट कर दिया गया",
+      "Account data reset successfully",
       "info"
     );
   };
@@ -2033,19 +1915,19 @@ export default function App() {
         const res = await Notification.requestPermission();
         setPushPermission(res);
         if (res === 'granted') {
-          showToast("✓ मोबाइल व डेस्कटॉप पुश अलर्ट सक्रिय हो गए!", 'success');
+          showToast("✓ Mobile & Desktop push alerts enabled!", 'success');
           triggerPushNotification(
-            "⚡ AETHER: पुश अलर्ट सक्रिय है!",
-            "अब आपके सभी रिमाइंडर्स और अलर्ट स्क्रीन पर सीधे रिंग करेंगे।"
+            "⚡ AETHER: Push Alerts Active!",
+            "All your reminders and alerts will now ring directly on your screen."
           );
         } else {
-          showToast("सूचना: पुश नोटिफिकेशन अनुमति अस्वीकार कर दी गई", 'error');
+          showToast("Notice: Push notification permission denied", 'error');
         }
       } catch (e) {
         console.error("Permission request error:", e);
       }
     } else {
-      showToast("यह ब्राउज़र पुश नोटिफिकेशन सपोर्ट नहीं करता", 'error');
+      showToast("This browser does not support push notifications", 'error');
     }
   };
 
@@ -2140,29 +2022,29 @@ export default function App() {
     // 1. Foreground local browser alert & Native Mobile Alert
     triggerPushNotification(
       "⚡ AETHER TEST ALERT 🎉",
-      "लोकल पुश नोटिफिकेशन एकदम सही काम कर रहे हैं!",
+      "Local push notifications are working properly!",
       "aether-test"
     );
 
     // If on native React Native WebView, native notification was already delivered!
     const isReactNative = typeof window !== 'undefined' && !!window.ReactNativeWebView;
     if (isReactNative) {
-      showToast("📲 मोबाइल ऐप नोटिफिकेशन सक्रिय व कनेक्टेड है! 🎉", 'success');
+      showToast("📲 Mobile app notifications active & connected! 🎉", 'success');
       return;
     }
 
     // 2. Real Cloud VAPID Web Push from Server to Device (Browser / Desktop / PWA)
     const emailToUse = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
     if (!emailToUse || !emailToUse.includes('@')) {
-      showToast("⚠️ क्लाउड पुश के लिए कृपया पहले सेटिंग्स में अपना ईमेल दर्ज करें!", 'info');
+      showToast("⚠️ Please enter your email in Settings first for cloud push!", 'info');
       return;
     }
 
     // Auto-register/sync device before testing so "No registered push devices" error never happens
-    showToast("📡 डिवाइस सिंक किया जा रहा है...", 'info');
+    showToast("📡 Syncing device...", 'info');
     const registeredSub = await ensurePushSubscribed(emailToUse);
     if (!registeredSub) {
-      showToast("⚠️ डिवाइस सिंक नहीं हो सका। कृपया ब्राउज़र नोटिफिकेशन अनुमति जांचें!", 'error');
+      showToast("⚠️ Could not sync device. Please check browser notification permission!", 'error');
       return;
     }
 
@@ -2170,12 +2052,12 @@ export default function App() {
       const res = await fetch(`${API_BASE}/push/test?user_email=${encodeURIComponent(emailToUse)}`, { method: 'POST' });
       const data = await res.json();
       if (data.status === 'success' && data.sent > 0) {
-        showToast(`📲 क्लाउड पुश भेजा गया! (${data.sent} डिवाइस कनेक्टेड)`, 'success');
+        showToast(`📲 Cloud push sent! (${data.sent} device connected)`, 'success');
       } else {
-        showToast(data.message || "📲 टेस्ट पुश नोटिफिकेशन भेजा गया!", 'info');
+        showToast(data.message || "📲 Test push notification sent!", 'info');
       }
     } catch (e) {
-      showToast("📲 टेस्ट पुश नोटिफिकेशन भेजा गया!", 'success');
+      showToast("📲 Test push notification sent!", 'success');
     }
   };
 
@@ -2232,10 +2114,10 @@ export default function App() {
       if (granted) {
         setMicPermissionStatus('granted');
         localStorage.setItem('aether_mic_granted', 'true');
-        showToast('✓ माइक्रोफ़ोन अनुमति सक्रिय कर दी गई है! (Microphone Granted)', 'success');
+        showToast('✓ Microphone permission granted!', 'success');
       } else {
         setMicPermissionStatus('denied');
-        showToast('माइक्रोफ़ोन अनुमति नहीं मिल सकी। कृपया सिस्टम सेटिंग्स में जांचें।', 'error');
+        showToast('Microphone permission denied. Please check your device settings.', 'error');
       }
     } catch (e) {
       console.log('Mic request catch:', e);
@@ -2246,24 +2128,24 @@ export default function App() {
 
   const handleTestMic = async () => {
     setIsMicTesting(true);
-    showToast('माइक टेस्ट: कुछ बोलें... (Speak now)', 'info');
+    showToast('Mic Test: Speak now...', 'info');
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         setTimeout(() => {
           stream.getTracks().forEach(t => t.stop());
           setIsMicTesting(false);
-          showToast('✓ माइक स्पष्ट काम कर रहा है! (Microphone Working)', 'success');
+          showToast('✓ Microphone is working clearly!', 'success');
         }, 2000);
       } else {
         setTimeout(() => {
           setIsMicTesting(false);
-          showToast('✓ माइक कनेक्शन सक्रिय है', 'success');
+          showToast('✓ Microphone connection is active', 'success');
         }, 1500);
       }
     } catch (err) {
       setIsMicTesting(false);
-      showToast('माइक टेस्ट विफल। अनुमति जांचें।', 'error');
+      showToast('Mic test failed. Please check permissions.', 'error');
     }
   };
 
@@ -2271,7 +2153,7 @@ export default function App() {
     if (micEnabled) {
       setMicEnabled(false);
       localStorage.setItem('aether_mic_enabled', 'false');
-      showToast('माइक्रोफ़ोन अक्षम किया गया (Microphone Disabled)', 'info');
+      showToast('Microphone disabled', 'info');
     } else {
       await handleRequestMicPermission();
       setMicEnabled(true);
@@ -2290,8 +2172,8 @@ export default function App() {
     localStorage.setItem('aether_wake_word_enabled', String(nextVal));
     showToast(
       nextVal 
-        ? '🎙️ "Hey Aether" वेक-वर्ड चालू! बोलें "Hey Aether"' 
-        : '🔇 "Hey Aether" वेक-वर्ड बंद', 
+        ? '🎙️ "Hey Aether" wake-word active! Say "Hey Aether"'
+        : '🔇 "Hey Aether" wake-word paused', 
       'info'
     );
   };
@@ -2327,7 +2209,7 @@ export default function App() {
     if (pushEnabled) {
       setPushEnabled(false);
       localStorage.setItem('aether_push_enabled', 'false');
-      showToast('पुश नोटिफिकेशन्स म्यूट किए गए (Notifications Muted)', 'info');
+      showToast('Push notifications muted', 'info');
     } else {
       setPushEnabled(true);
       localStorage.setItem('aether_push_enabled', 'true');
@@ -2342,7 +2224,7 @@ export default function App() {
   };
 
   const detectRealTimeLocation = async (manualToast = false) => {
-    if (manualToast) showToast('📍 सटीक लोकेशन खोजी जा रही है...', 'info');
+    if (manualToast) showToast('📍 Detecting your location...', 'info');
 
     const saveAndApply = (coords, locName) => {
       if (!locName || locName.toLowerCase().includes('singapore')) return false;
@@ -2353,7 +2235,7 @@ export default function App() {
       }
       setUserLocationName(locName);
       localStorage.setItem('aether_user_city', locName);
-      if (manualToast) showToast(`✓ लोकेशन सक्रिय: ${locName} 📍`, 'success');
+      if (manualToast) showToast(`✓ Location enabled: ${locName} 📍`, 'success');
       return true;
     };
 
@@ -2458,7 +2340,7 @@ export default function App() {
       }
     } catch (e) {}
 
-    if (manualToast) showToast('लोकेशन स्वतः नहीं मिली, कृपया Permissions में Edit दबाकर शहर दर्ज करें 📍', 'warning');
+    if (manualToast) showToast('Location could not be detected automatically. Tap Edit in Permissions to enter your city 📍', 'warning');
     return null;
   };
 
@@ -2469,7 +2351,7 @@ export default function App() {
     localStorage.setItem('aether_user_city', cleanCity);
     localStorage.setItem('aether_location_enabled', 'true');
     setLocationEnabled(true);
-    showToast(`✓ शहर सेट किया गया: ${cleanCity} 📍`, 'success');
+    showToast(`✓ City updated: ${cleanCity} 📍`, 'success');
   };
 
   const handleToggleLocation = async () => {
@@ -2479,7 +2361,7 @@ export default function App() {
       setUserCoords(null);
       setUserLocationName('');
       localStorage.removeItem('aether_user_city');
-      showToast('लोकेशन अनुमति बंद की गई (Location Disabled)', 'info');
+      showToast('Location permission disabled', 'info');
     } else {
       await detectRealTimeLocation(true);
       if (typeof window !== 'undefined' && window.ReactNativeWebView) {
@@ -2534,38 +2416,59 @@ export default function App() {
   };
 
   const handleCameraFileChange = async (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      showToast('📸 फ़ोटो प्रोसेस हो रही है...', 'info');
-      const compressedUrl = await compressImage(file);
-      if (compressedUrl) {
-        setAttachedMedia({
-          type: 'image',
-          name: file.name || `Camera_${Date.now()}.jpg`,
-          url: compressedUrl,
-          size: Math.round((compressedUrl.length * 3) / 4)
-        });
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      showToast('📸 Processing photo...', 'info');
+      const newItems = [];
+      for (const file of files) {
+        const compressedUrl = await compressImage(file);
+        if (compressedUrl) {
+          newItems.push({
+            id: `cam-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            type: 'image',
+            name: file.name || `Camera_${Date.now()}.jpg`,
+            url: compressedUrl,
+            size: Math.round((compressedUrl.length * 3) / 4)
+          });
+        }
+      }
+      if (newItems.length > 0) {
+        setAttachedMediaList(prev => [...prev, ...newItems].slice(0, 6));
         setShowDashboard(false);
-        showToast('📸 फ़ोटो तैयार है! अपना सवाल पूछें।', 'success');
+        showToast('📸 Photo ready! Ask your question.', 'success');
       }
     }
     e.target.value = '';
   };
 
   const handlePhotosFileChange = async (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      showToast('🖼️ फ़ोटो प्रोसेस हो रही है...', 'info');
-      const compressedUrl = await compressImage(file);
-      if (compressedUrl) {
-        setAttachedMedia({
-          type: 'image',
-          name: file.name || `Photo_${Date.now()}.jpg`,
-          url: compressedUrl,
-          size: Math.round((compressedUrl.length * 3) / 4)
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      showToast(files.length > 1 ? `🖼️ Processing ${files.length} photos...` : '🖼️ Processing photo...', 'info');
+      const newItems = [];
+      for (const file of files) {
+        const compressedUrl = await compressImage(file);
+        if (compressedUrl) {
+          newItems.push({
+            id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            type: 'image',
+            name: file.name || `Photo_${Date.now()}.jpg`,
+            url: compressedUrl,
+            size: Math.round((compressedUrl.length * 3) / 4)
+          });
+        }
+      }
+      if (newItems.length > 0) {
+        setAttachedMediaList(prev => {
+          const combined = [...prev, ...newItems];
+          if (combined.length > 6) {
+            showToast('Maximum 6 attachments supported per message.', 'info');
+            return combined.slice(0, 6);
+          }
+          return combined;
         });
         setShowDashboard(false);
-        showToast('🖼️ फ़ोटो जोड़ी गई! अपना सवाल पूछें।', 'success');
+        showToast(newItems.length > 1 ? `🖼️ ${newItems.length} photos attached!` : '🖼️ Photo attached! Ask your question.', 'success');
       }
     }
     e.target.value = '';
@@ -2574,13 +2477,14 @@ export default function App() {
   const handleDocumentFileChange = (e) => {
     const file = e.target.files?.[0];
     if (file) {
-      setAttachedMedia({
+      setAttachedMediaList(prev => [...prev, {
+        id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         type: 'file',
         name: file.name,
         size: (file.size / 1024).toFixed(1) + ' KB'
-      });
+      }].slice(0, 6));
       setShowDashboard(false);
-      showToast(`📁 फ़ाइल जोड़ी गई: ${file.name}`, 'success');
+      showToast(`📁 File attached: ${file.name}`, 'success');
     }
     e.target.value = '';
   };
@@ -2620,7 +2524,7 @@ export default function App() {
         })
         .catch(err => {
           console.warn("Camera access error:", err);
-          showToast("कैमरा चालू नहीं हो सका। फ़ाइल सेलेक्टर खोला जा रहा है...", "info");
+          showToast("Could not start camera. Opening file picker...", "info");
           setIsCameraModalOpen(false);
           cameraInputRef.current?.click();
         });
@@ -2648,11 +2552,12 @@ export default function App() {
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
 
-    setAttachedMedia({
+    setAttachedMediaList(prev => [...prev, {
+      id: `snap-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       type: 'image',
       name: `Live_Photo_${new Date().toLocaleTimeString().replace(/:/g, '-')}.jpg`,
       url: dataUrl
-    });
+    }].slice(0, 6));
 
     if (cameraStreamRef.current) {
       cameraStreamRef.current.getTracks().forEach(t => t.stop());
@@ -2660,22 +2565,23 @@ export default function App() {
     }
     setIsCameraModalOpen(false);
     setShowDashboard(false);
-    showToast('📸 फ़ोटो कैप्चर कर ली गई! अपना सवाल पूछें।', 'success');
+    showToast('📸 Photo captured! Ask your question.', 'success');
   };
 
   const handleAttachDriveFromModal = (e) => {
     e?.preventDefault?.();
     const url = driveInputUrl.trim() || 'https://drive.google.com';
     const name = driveDocName.trim() || 'Google Drive File';
-    setAttachedMedia({
+    setAttachedMediaList(prev => [...prev, {
+      id: `drive-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       type: 'drive',
       name: name,
       url: url
-    });
+    }].slice(0, 6));
     setIsDriveModalOpen(false);
     setDriveInputUrl('');
     setDriveDocName('');
-    showToast('📂 Google Drive फ़ाइल जोड़ी गई!', 'success');
+    showToast('📂 Google Drive file attached!', 'success');
   };
 
   // Open Map in native Map app on mobile or in a new tab on desktop
@@ -2728,28 +2634,29 @@ export default function App() {
   const handleAttachLocation = () => {
     setIsPlusMenuOpen(false);
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
-      showToast('📍 GPS लोकेशन प्राप्त कर मैप खोला जा रहा है...', 'info');
+      showToast('📍 Getting GPS location & opening map...', 'info');
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const { latitude, longitude } = pos.coords;
           const mapsLink = `https://www.google.com/maps?q=${latitude},${longitude}`;
-          setAttachedMedia({
+          setAttachedMediaList(prev => [...prev, {
+            id: `map-${Date.now()}`,
             type: 'map',
             name: `📍 Lat ${latitude.toFixed(4)}, Lon ${longitude.toFixed(4)}`,
             url: mapsLink,
             latitude,
             longitude
-          });
+          }].slice(0, 6));
           setLocationEnabled(true);
           localStorage.setItem('aether_location_enabled', 'true');
           setUserCoords({ latitude, longitude });
-          showToast('✓ मैप खुल रहा है!', 'success');
+          showToast('✓ Opening map!', 'success');
           // Open map: in mobile native Map app, in desktop browser tab
           openMapApp(latitude, longitude);
         },
         (err) => {
           console.warn('Geolocation error:', err);
-          showToast('GPS अनुमति नहीं मिली। मैप खोला जा रहा है...', 'info');
+          showToast('GPS permission unavailable. Opening map...', 'info');
           openMapApp();
         },
         { enableHighAccuracy: true, timeout: 6000 }
@@ -2831,9 +2738,9 @@ export default function App() {
         headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ due_date: `${finalDate}T10:00:00` })
       });
-      showToast('कार्य सफलतापूर्वक रीशेड्यूल किया गया!', 'success');
+      showToast('Task rescheduled successfully!', 'success');
     } catch (e) {
-      showToast('रीशेड्यूल करने में त्रुटि', 'error');
+      showToast('Failed to reschedule', 'error');
     }
   };
 
@@ -2846,9 +2753,9 @@ export default function App() {
       });
       const data = await res.json();
       refreshAllData();
-      showToast(`${data.rescheduled_count || 0} बकाया कार्य आज के लिए रीशेड्यूल किए गए!`, 'success');
+      showToast(`${data.rescheduled_count || 0} overdue tasks rescheduled to today!`, 'success');
     } catch (e) {
-      showToast('रीशेड्यूल करने में त्रुटि', 'error');
+      showToast('Failed to reschedule', 'error');
     }
   };
 
@@ -2858,7 +2765,7 @@ export default function App() {
     if (!targetStr || targetStr === todayStr) return;
     const todayTasks = tasks.filter(t => getTaskDateStr(t) === todayStr);
     if (todayTasks.length === 0) {
-      showToast('आज का कोई कार्य कॉपी करने के लिए नहीं मिला', 'info');
+      showToast('No tasks found for today to copy', 'info');
       return;
     }
     try {
@@ -2879,9 +2786,9 @@ export default function App() {
         count++;
       }
       refreshAllData();
-      showToast(`${count} दैनिक कार्य ${targetStr} के एजेंडा में जोड़े गए!`, 'success');
+      showToast(`${count} daily tasks added to ${targetStr}'s agenda!`, 'success');
     } catch (err) {
-      showToast('कार्य कॉपी करने में त्रुटि', 'error');
+      showToast('Failed to copy tasks', 'error');
     }
   };
 
@@ -2889,7 +2796,7 @@ export default function App() {
     const todayStr = formatLocalDateStr(new Date());
     const completedToday = tasks.filter(t => (t.is_completed || t.status === 'completed') && getTaskDateStr(t) === todayStr);
     if (completedToday.length === 0) {
-      showToast('आज कोई पूर्ण कार्य नहीं है जिसे रीसेट किया जा सके', 'info');
+      showToast('No completed tasks today to reset', 'info');
       return;
     }
     completedToday.forEach(t => {
@@ -2913,16 +2820,16 @@ export default function App() {
         });
         pendingTaskStatusRef.current.delete(String(t.id));
       }
-      showToast(`आज के लिए ${completedToday.length} कार्य पुनः सक्रिय (Reset) किए गए!`, 'success');
+      showToast(`${completedToday.length} tasks reactivated for today!`, 'success');
     } catch (err) {
-      showToast('रीसेट करने में त्रुटि', 'error');
+      showToast('Failed to reset tasks', 'error');
     }
   };
 
   const downloadAllRemindersIcs = () => {
     const activeTasks = tasks.filter(t => !t.is_completed && t.status !== 'completed');
     if (activeTasks.length === 0) {
-      showToast('कोई सक्रिय रिमाइंडर नहीं मिला', 'info');
+      showToast('No active reminders found', 'info');
       return;
     }
     const formatIcs = (dt) => dt.toISOString().replace(/-|:|\.\d\d\d/g, '');
@@ -2962,7 +2869,7 @@ export default function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast('✓ Google Calendar (.ics) फ़ाइल डाउनलोड हो गई!', 'success');
+    showToast('✓ Google Calendar (.ics) file downloaded!', 'success');
   };
 
   const openTaskInGoogleCalendar = (t) => {
@@ -3016,23 +2923,23 @@ export default function App() {
       if (res.ok) {
         setNewCalReminderTitle('');
         refreshAllData();
-        showToast('✓ कैलेंडर में रिमाइंडर जोड़ा गया!', 'success');
+        showToast('✓ Reminder added to calendar!', 'success');
       }
     } catch (err) {
       console.error(err);
-      showToast('रिमाइंडर जोड़ने में त्रुटि', 'error');
+      showToast('Failed to add reminder', 'error');
     }
   };
 
   const syncGCalViaIcalUrl = async (customUrl, isManual = false, _retryCount = 0) => {
     const url = (customUrl || gcalIcalUrl).trim();
     if (!url || !url.startsWith('http')) {
-      if (isManual) showToast('कृपया वैध Google Calendar iCal लिंक दर्ज करें (https://...)', 'error');
+      if (isManual) showToast('Please enter a valid Google Calendar iCal link (https://...)', 'error');
       return;
     }
     if (url.includes('calendar.google.com/calendar/u/') || url.includes('/calendar/r')) {
       if (isManual) {
-        showToast('यह Google Calendar का वेब ब्राउज़र लिंक है! कृपया नीचे "Secret address in iCal format" (.ics) लिंक डालें।', 'error');
+        showToast('This is a Google Calendar web link! Please paste your "Secret address in iCal format" (.ics) link below.', 'error');
         setShowGCalConnectModal(true);
       }
       return;
@@ -3055,7 +2962,7 @@ export default function App() {
         // Check if we already have synced events stored locally
         const cachedCount = googleTasks.length;
         if (cachedCount > 0 && isManual) {
-          showToast(`⚡ सिंक बैकग्राउंड में चालू है (${cachedCount} इवेंट्स पहले से सुरक्षित हैं)`, 'info');
+          showToast(`⚡ Syncing in background (${cachedCount} events cached safely)`, 'info');
           setShowGCalConnectModal(false);
           setIsSyncingGCal(false);
           return;
@@ -3064,14 +2971,14 @@ export default function App() {
         if (_retryCount < 2) {
           const waitSec = (_retryCount + 1) * 8;
           if (isManual) {
-            showToast(`सर्वर कनेक्ट हो रहा है... ${waitSec}s में ऑटो-सिंक 🔄`, 'info');
+            showToast(`Connecting to server... auto-syncing in ${waitSec}s 🔄`, 'info');
           }
           setIsSyncingGCal(false);
           setTimeout(() => syncGCalViaIcalUrl(customUrl, isManual, _retryCount + 1), waitSec * 1000);
           return;
         }
         if (isManual) {
-          showToast('क्लाउड सर्वर रिस्पॉन्ड नहीं कर रहा। कृपया कुछ देर बाद सिंक करें।', 'error');
+          showToast('Cloud server not responding. Please try syncing in a moment.', 'error');
         }
         return;
       }
@@ -3086,7 +2993,7 @@ export default function App() {
       setGcalIcalUrl(url);
       setShowGCalConnectModal(false);
       if (isManual) {
-        showToast(`Google Calendar से ${events.length} इवेंट्स और रिमाइंडर्स सिंक हुए! 📅`, 'success');
+        showToast(`Synced ${events.length} events & reminders from Google Calendar! 📅`, 'success');
       }
     } catch (err) {
       console.error(err);
@@ -3094,14 +3001,14 @@ export default function App() {
       if ((err.name === 'TimeoutError' || err.name === 'AbortError') && _retryCount < 2) {
         const waitSec = (_retryCount + 1) * 12;
         if (isManual) {
-          showToast(`सर्वर respond नहीं कर रहा... ${waitSec} सेकंड में retry 🔄`, 'info');
+          showToast(`Server not responding... retrying in ${waitSec}s 🔄`, 'info');
         }
         setIsSyncingGCal(false);
         setTimeout(() => syncGCalViaIcalUrl(customUrl, isManual, _retryCount + 1), waitSec * 1000);
         return;
       }
       if (isManual) {
-        showToast('Google Calendar सिंक त्रुटि: ' + err.message, 'error');
+        showToast('Google Calendar sync error: ' + err.message, 'error');
       }
     } finally {
       setIsSyncingGCal(false);
@@ -3192,12 +3099,12 @@ export default function App() {
             localStorage.setItem('aether_gcal_events', JSON.stringify(next));
             return next;
           });
-          showToast(`Google Calendar (.ics) से ${events.length} इवेंट्स इम्पोर्ट हुए!`, 'success');
+          showToast(`Imported ${events.length} events from Google Calendar (.ics)!`, 'success');
         } else {
-          showToast('कोई इवेंट नहीं मिला। कृपया वैध .ics फ़ाइल चुनें।', 'info');
+          showToast('No events found. Please select a valid .ics file.', 'info');
         }
       } catch (err) {
-        showToast('फ़ाइल पढ़ने में त्रुटि आई', 'error');
+        showToast('Failed to read file', 'error');
       }
     };
     reader.readAsText(file);
@@ -3241,13 +3148,13 @@ export default function App() {
         if (currentHrs === hrs && currentMins === mins) {
           alertedRemindersRef.current[alertKey] = true;
           playReminderChime();
-          showToast(`⏰ रिमाइंडर: ${t.title}`, 'warning');
+          showToast(`⏰ Reminder: ${t.title}`, 'warning');
           if (typeof window !== 'undefined' && window.ReactNativeWebView) {
             try {
               window.ReactNativeWebView.postMessage(JSON.stringify({
                 type: 'TRIGGER_NOTIFICATION',
-                title: `⏰ AETHER रिमाइंडर: ${t.title}`,
-                body: `समय: ${t.reminder_time} • कार्य का समय हो गया है!`
+                title: `⏰ AETHER Reminder: ${t.title}`,
+                body: `Time: ${t.reminder_time} • Your reminder is due now!`
               }));
             } catch (err) {}
           }
@@ -3600,8 +3507,8 @@ export default function App() {
             setActiveReminderAlert(dueItem);
             
             triggerPushNotification(
-              `⏰ AETHER रिमाइंडर: ${dueItem.title}`,
-              `समय: ${dueItem.reminder_time || 'अभी'} • कार्य का समय हो गया है!`,
+              `⏰ AETHER Reminder: ${dueItem.title}`,
+              `Time: ${dueItem.reminder_time || 'Now'} • Your reminder is due now!`,
               `reminder-${dueItem.id}`
             );
           }
@@ -3615,7 +3522,7 @@ export default function App() {
       
       setServerOnline(prev => {
         if (!prev) {
-          showToast("✓ Aether कोर कनेक्ट हो गया!", "success");
+          showToast("✓ Aether Core connected!", "success");
         }
         return true;
       });
@@ -3760,7 +3667,7 @@ export default function App() {
     return {
       phase,
       phaseClass,
-      greetingLabel: t.greetings[phase] || 'नमस्ते',
+      greetingLabel: t.greetings[phase] || 'Hello',
       periodDesc: t.periods[phase] || '',
       iconName,
       color,
@@ -3785,7 +3692,7 @@ export default function App() {
     }
 
     if (!micEnabled) {
-      showToast("माइक्रोफ़ोन सेटिंग्स में अक्षम है। कृपया सेटिंग्स में सक्षम करें।", 'info');
+      showToast("Microphone is disabled in Settings. Please enable it there.", 'info');
       setActiveSubModal('permissions');
       return;
     }
@@ -3828,7 +3735,7 @@ export default function App() {
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      showToast("इस डिवाइस/WebView में वॉयस इनपुट उपलब्ध नहीं है। कृपया टाइप करें।", 'info');
+      showToast("Voice input is unavailable on this device/WebView. Please type your message.", 'info');
       setIsTypeInputOpen(true);
       return;
     }
@@ -3846,7 +3753,7 @@ export default function App() {
 
       recognition.onstart = () => {
         setIsListening(true);
-        showToast("🎙️ Aether सुन रहा है... बोलिए", 'info');
+        showToast("🎙️ Aether is listening... Speak now", 'info');
       };
 
       recognition.onresult = (event) => {
@@ -3885,7 +3792,7 @@ export default function App() {
       recognition.onerror = (event) => {
         console.warn("Speech recognition notice:", event.error);
         if (event.error === 'not-allowed') {
-          showToast("कृपया सेटिंग्स में Aether ऐप को माइक्रोफ़ोन अनुमति दें।", 'error');
+          showToast("Please grant microphone permission to Aether in Settings.", 'error');
           setIsListening(false);
           clearTimeout(speechSilenceTimeoutRef.current);
         } else if (event.error !== 'no-speech') {
@@ -3903,7 +3810,7 @@ export default function App() {
       console.error("Failed to start speech recognition:", err);
       setIsListening(false);
       clearTimeout(speechSilenceTimeoutRef.current);
-      showToast("माइक शुरू करने में समस्या आई। टाइप प्रॉम्प्ट का उपयोग करें।", 'error');
+      showToast("Failed to start microphone. Please use the text prompt.", 'error');
       setIsTypeInputOpen(true);
     }
   };
@@ -3952,7 +3859,7 @@ export default function App() {
 
         if (match) {
           console.log("[Wake Word Detected]:", text);
-          showToast("⚡ 'Hey Aether' पहचाना गया!", "info");
+          showToast("⚡ 'Hey Aether' detected!", "info");
           playWakeChime();
           if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
             try { navigator.vibrate([25, 20, 25]); } catch (e) {}
@@ -4155,7 +4062,7 @@ export default function App() {
   // Translate Message to Hindi
   const handleTranslateMessage = async (msgIdx, originalText) => {
     try {
-      showToast("हिन्दी अनुवाद किया जा रहा है...", "info");
+      showToast("Translating to Hindi...", "info");
       const resp = await fetch(`${API_BASE}/translate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4164,7 +4071,7 @@ export default function App() {
       const data = await resp.json();
       if (data.translated) {
         setChatHistory(prev => prev.map((m, idx) => idx === msgIdx ? { ...m, content: data.translated, isTranslated: true } : m));
-        showToast("हिन्दी अनुवाद तैयार है!", "success");
+        showToast("Hindi translation ready!", "success");
       }
     } catch (err) {
       showToast("Translation error", "error");
@@ -4174,30 +4081,41 @@ export default function App() {
   // Send Command / Prompt
   const handleSendPrompt = async (textToSend) => {
     const rawPrompt = (textToSend || inputText).trim();
-    if (!rawPrompt && !attachedMedia) return;
+    const hasAttachments = attachedMediaList.length > 0;
+    if (!rawPrompt && !hasAttachments) return;
     if (isProcessing) return;
 
     let prompt = rawPrompt;
     // Direct voice trigger for Executive Briefing
-    if (!attachedMedia && /\b(morning briefing|executive briefing|daily briefing|ब्रीफिंग सुनाओ|आज का ब्रीफिंग|दिन का हाल)\b/i.test(prompt)) {
+    if (!hasAttachments && /\b(morning briefing|executive briefing|daily briefing|ब्रीफिंग सुनाओ|आज का ब्रीफिंग|दिन का हाल)\b/i.test(prompt)) {
       handlePlayExecutiveBriefing(false);
       setInputText('');
       return;
     }
-    let sendingImageUrl = null;
-    if (attachedMedia) {
-      if (attachedMedia.type === 'image') {
-        sendingImageUrl = attachedMedia.url;
-        prompt = rawPrompt || 'कृपया इस फ़ोटो को देखकर विस्तार से बताएं कि इसमें क्या है और महत्वपूर्ण जानकारी समझाइए।';
-      } else if (attachedMedia.type === 'file') {
-        prompt = `[Attached File: ${attachedMedia.name} (${attachedMedia.size || ''})] ${rawPrompt || 'Review this file.'}`;
-      } else if (attachedMedia.type === 'drive') {
-        prompt = `[Google Drive: ${attachedMedia.url}] ${rawPrompt || 'Analyze this Google Drive file.'}`;
-      } else if (attachedMedia.type === 'map') {
-        prompt = `[Current Location: ${attachedMedia.url}] ${rawPrompt || 'What is near my location?'}`;
+    const sendingImages = [];
+    const contextPrefixes = [];
+    if (hasAttachments) {
+      attachedMediaList.forEach((item) => {
+        if (item.type === 'image' && item.url) {
+          sendingImages.push(item.url);
+        } else if (item.type === 'file') {
+          contextPrefixes.push(`[Attached File: ${item.name} (${item.size || ''})]`);
+        } else if (item.type === 'drive') {
+          contextPrefixes.push(`[Google Drive: ${item.url}]`);
+        } else if (item.type === 'map') {
+          contextPrefixes.push(`[Current Location: ${item.url}]`);
+        }
+      });
+      if (contextPrefixes.length > 0) {
+        prompt = `${contextPrefixes.join(' ')} ${rawPrompt || 'Review and analyze these attachments.'}`;
+      } else if (sendingImages.length > 0) {
+        prompt = rawPrompt || (sendingImages.length > 1
+          ? `Analyze all ${sendingImages.length} attached images in detail, extract any bills, schedules, or tasks if present, and summarize the key information.`
+          : 'Analyze this image in detail, extract any bills, schedules, or tasks if present, and summarize the key information.');
       }
-      setAttachedMedia(null);
+      setAttachedMediaList([]);
     }
+    const sendingImageUrl = sendingImages[0] || null;
 
     const curSessionId = isTemporaryChat 
       ? (`temp_${activeSessionIdRef.current || Date.now()}`) 
@@ -4211,6 +4129,7 @@ export default function App() {
         role: 'user', 
         content: prompt, 
         image_url: sendingImageUrl,
+        images: sendingImages.length > 0 ? sendingImages : undefined,
         created_at: new Date().toISOString() 
       }];
       if (!isTemporaryChat && userEmail && curSessionId) {
@@ -4248,6 +4167,7 @@ export default function App() {
       const payload = {
         input_text: prompt,
         image_data: sendingImageUrl || null,
+        images: sendingImages.length > 0 ? sendingImages : null,
         session_id: curSessionId,
         latitude: userCoords?.latitude || null,
         longitude: userCoords?.longitude || null,
@@ -4287,7 +4207,7 @@ export default function App() {
           if (parsedInner.explanation) {
             assistantReply = parsedInner.explanation;
           } else if (parsedInner.data?.title) {
-            assistantReply = `रिमाइंडर एजेंडा में सेट किया गया: "${parsedInner.data.title}" ⏰`;
+            assistantReply = `Reminder scheduled: "${parsedInner.data.title}" ⏰`;
           } else if (parsedInner.data?.response) {
             assistantReply = parsedInner.data.response;
           }
@@ -4370,10 +4290,10 @@ export default function App() {
     } catch (err) {
       setChatHistory(prev => [...prev, {
         role: 'assistant',
-        content: "Aether कोर से संपर्क नहीं हो पाया। कृपया इंटरनेट या सर्वर जांचें।",
+        content: "Could not reach Aether Core. Please check your internet connection or server status.",
         created_at: new Date().toISOString()
       }]);
-      showToast("Aether कोर से संपर्क नहीं हो पाया", 'error');
+      showToast("Could not reach Aether Core", 'error');
     } finally {
       isProcessingRef.current = false;
       setIsProcessing(false);
@@ -4635,7 +4555,7 @@ export default function App() {
           }
           return t;
         }));
-        showToast("स्थिति अपडेट की गई (Status Updated)", 'info');
+        showToast("Task status updated", 'info');
       } else {
         pendingTaskStatusRef.current.delete(String(actualTaskId));
         setTasks(prev => prev.map(t => {
@@ -4644,7 +4564,7 @@ export default function App() {
           }
           return t;
         }));
-        showToast("स्थिति अपडेट करने में समस्या आई", 'error');
+        showToast("Failed to update task status", 'error');
       }
     } catch (err) {
       console.error(err);
@@ -4655,18 +4575,18 @@ export default function App() {
         }
         return t;
       }));
-      showToast("स्थिति अपडेट करने में समस्या आई", 'error');
+      showToast("Failed to update task status", 'error');
     }
   };
 
   const handleDeleteTask = (taskId) => {
     const target = tasks.find(t => String(t.id) === String(taskId));
-    const title = target?.title || 'यह कार्य';
+    const title = target?.title || 'this task';
     showConfirm({
-      title: "कार्य हटाएं?",
-      message: `क्या आप "${title}" को हटाना चाहते हैं?`,
-      confirmText: "हटाएं (Delete)",
-      cancelText: "रद्द करें",
+      title: "Delete Task?",
+      message: `Are you sure you want to delete "${title}"?`,
+      confirmText: "Delete",
+      cancelText: "Cancel",
       isDestructive: true,
       onConfirm: async () => {
         deletedTaskIdsRef.current.add(String(taskId));
@@ -4685,11 +4605,11 @@ export default function App() {
             headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
           });
           if (resp.ok) {
-            showToast("कार्य हटा दिया गया", 'info');
+            showToast("Task deleted", 'info');
           }
         } catch (err) {
           console.error(err);
-          showToast("कार्य हटाने में समस्या आई", 'error');
+          showToast("Failed to delete task", 'error');
         }
       }
     });
@@ -4699,7 +4619,7 @@ export default function App() {
     if (e && e.preventDefault) e.preventDefault();
     const rawTitle = (customTitle !== undefined ? customTitle : newTaskInput || '').trim();
     if (!rawTitle) {
-      showToast("कृपया कार्य का नाम लिखें (e.g. Drink 2L water at 3 PM)", 'info');
+      showToast("Please enter a task title (e.g. Drink 2L water at 3 PM)", 'info');
       return;
     }
     const effEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
@@ -4790,7 +4710,7 @@ export default function App() {
       });
       setNewTaskInput('');
       refreshAllData();
-      showToast("नया कार्य एजेंडा में जोड़ा गया!", 'success');
+      showToast("New task added to your agenda!", 'success');
     } catch (err) {
       showToast("Failed to add task", 'error');
     }
@@ -4798,12 +4718,12 @@ export default function App() {
 
   const handleDeleteMemory = (memId) => {
     const mem = memories.find(m => String(m.id) === String(memId));
-    const key = mem?.key || 'यह स्मृति';
+    const key = mem?.key || 'this memory';
     showConfirm({
-      title: "स्मृति हटाएं?",
-      message: `क्या आप स्मृति "${key}" को हमेशा के लिए हटाना चाहते हैं?`,
-      confirmText: "हटाएं (Delete)",
-      cancelText: "रद्द करें",
+      title: "Delete Memory?",
+      message: `Are you sure you want to permanently delete "${key}"?`,
+      confirmText: "Delete",
+      cancelText: "Cancel",
       isDestructive: true,
       onConfirm: async () => {
         deletedMemoryIdsRef.current.add(String(memId));
@@ -4814,7 +4734,7 @@ export default function App() {
             headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
           });
           if (resp.ok) {
-            showToast("स्मृति वॉल्ट से हटा दी गई", 'info');
+            showToast("Memory removed from vault", 'info');
           }
         } catch (err) {
           console.error(err);
@@ -4839,13 +4759,13 @@ export default function App() {
   const handleShare = () => {
     if (navigator.share) {
       navigator.share({
-        title: 'AETHER — आपका व्यक्तिगत AI सहायक',
-        text: 'AETHER पर्सनल AI एग्जीक्यूटिव डैशबोर्ड',
+        title: 'AETHER — Your Personal AI Executive',
+        text: 'AETHER Personal AI Executive Dashboard',
         url: window.location.href
       }).catch(() => {});
     } else {
       navigator.clipboard.writeText(window.location.href);
-      showToast("AETHER डैशबोर्ड लिंक कॉपी हो गया!", "success");
+      showToast("AETHER dashboard link copied!", "success");
     }
   };
 
@@ -4901,7 +4821,7 @@ export default function App() {
 
   const weather = briefing?.weather || {
     temp: 28,
-    condition_hi: 'धूप खिली हुई',
+    condition_hi: 'Mostly Sunny',
     condition_en: 'Mostly Sunny',
     city: userLocationName || 'Jaipur',
     city_en: userLocationName || 'Jaipur',
@@ -5718,7 +5638,7 @@ export default function App() {
                   onClick={handleDeleteAccount}
                   style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '0.74rem', textDecoration: 'underline', cursor: 'pointer', marginTop: '4px', padding: 0 }}
                 >
-                  {effectiveLang === 'en' ? 'Delete account' : effectiveLang === 'hinglish' ? 'Account delete karein' : 'खाता हटाएं (Delete account)'}
+                  Delete account
                 </button>
               </div>
             </div>
@@ -5727,7 +5647,7 @@ export default function App() {
               onClick={handleSignOut} 
               className="settings-signout-btn"
             >
-              {effectiveLang === 'en' ? 'Sign out' : effectiveLang === 'hinglish' ? 'Sign out' : 'साइन आउट'}
+              Sign out
             </button>
           </div>
 
@@ -6002,7 +5922,7 @@ export default function App() {
                       type="button"
                       className="gemini-icon-btn"
                       onClick={() => setShowDashboard(false)}
-                      title="Back to Chat (चैट पर वापस जाएं)"
+                      title="Back to Chat"
                       style={{
                         background: 'rgba(255, 255, 255, 0.05)',
                         border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -6023,7 +5943,7 @@ export default function App() {
                       type="button"
                       className="gemini-icon-btn"
                       onClick={() => setIsChatDrawerOpen(true)}
-                      title="Chat History / पुरानी चैट"
+                      title="Chat History"
                       style={{
                         background: 'rgba(255, 255, 255, 0.05)',
                         border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -6062,15 +5982,15 @@ export default function App() {
                         setShowConversation(false);
                         setShowDashboard(false);
                         setIsTemporaryChat(true);
-                        showToast("अस्थायी चैट चालू है (Temporary Chat On — कोई मैसेज सेव नहीं होगा)", "info");
+                        showToast("Temporary Chat On — messages will not be saved", "info");
                       } else {
                         // Switch back to normal chat mode
                         setIsTemporaryChat(false);
                         handleStartNewChat();
-                        showToast("अस्थायी चैट बंद की गई (Normal Mode Active)", "info");
+                        showToast("Temporary Chat Off — Normal Mode Active", "info");
                       }
                     }}
-                    title={isTemporaryChat ? "Temporary Chat is Active (History paused)" : "Start Temporary Chat (अस्थायी चैट)"}
+                    title={isTemporaryChat ? "Temporary Chat is Active (History paused)" : "Start Temporary Chat"}
                     style={{
                       background: isTemporaryChat ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255, 255, 255, 0.05)',
                       border: isTemporaryChat ? '1px solid rgba(56, 189, 248, 0.55)' : '1px solid rgba(255, 255, 255, 0.1)',
@@ -6109,7 +6029,7 @@ export default function App() {
                       stopBriefingAudio();
                       setIsSettingsOpen(true);
                     }}
-                    title="Settings & Profile (सेटिंग्स)"
+                    title="Settings & Profile"
                     style={{
                       background: 'rgba(255, 255, 255, 0.05)',
                       border: userAvatar ? '1.5px solid rgba(56, 189, 248, 0.6)' : '1px solid rgba(255, 255, 255, 0.1)',
@@ -6236,23 +6156,32 @@ export default function App() {
                       key={msg.id ? `msg-${msg.id}` : (msg.created_at ? `msg-${msg.created_at}-${idx}` : `msg-${idx}`)} 
                       className={msg.role === 'user' ? 'gemini-msg-user' : 'gemini-msg-assistant'}
                     >
-                      {msg.image_url && (
-                        <div style={{ marginBottom: '8px' }}>
-                          <img 
-                            src={msg.image_url} 
-                            alt="Attached" 
-                            style={{ 
-                              maxWidth: '100%', 
-                              maxHeight: '220px', 
-                              borderRadius: '12px', 
-                              objectFit: 'cover',
-                              boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
-                              border: '1px solid rgba(255,255,255,0.12)',
-                              display: 'block'
-                            }} 
-                          />
-                        </div>
-                      )}
+                      {(() => {
+                        const msgImages = Array.isArray(msg.images) && msg.images.length > 0
+                          ? msg.images
+                          : (msg.image_url ? [msg.image_url] : []);
+                        if (msgImages.length === 0) return null;
+                        return (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+                            {msgImages.map((imgSrc, imgIdx) => (
+                              <img
+                                key={imgIdx}
+                                src={imgSrc}
+                                alt={`Attached ${imgIdx + 1}`}
+                                style={{
+                                  maxWidth: msgImages.length > 1 ? '140px' : '100%',
+                                  maxHeight: msgImages.length > 1 ? '140px' : '220px',
+                                  borderRadius: '12px',
+                                  objectFit: 'cover',
+                                  boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+                                  border: '1px solid rgba(255,255,255,0.12)',
+                                  display: 'block'
+                                }}
+                              />
+                            ))}
+                          </div>
+                        );
+                      })()}
                       <FormattedMessage text={msg.content} />
                       {(() => {
                         const actType = msg.action || msg.action_type;
@@ -6303,7 +6232,7 @@ export default function App() {
                                           <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#34d399', display: 'inline-block' }}></span>
                                           Now Playing
                                         </>
-                                      ) : 'चलाने के लिए प्ले दबाएं (Click Play)'}
+                                      ) : 'Click Play to start'}
                                     </div>
                                   </div>
                                 </div>
@@ -6326,7 +6255,7 @@ export default function App() {
                                         cursor: 'pointer'
                                       }}
                                     >
-                                      <span>⏹ रोकें (Stop)</span>
+                                      <span>⏹ Stop</span>
                                     </button>
                                   ) : (
                                     <button
@@ -6577,7 +6506,7 @@ export default function App() {
                                       {contactName}
                                     </div>
                                     <div style={{ fontSize: '0.72rem', color: '#86efac' }}>
-                                      {knownPhone ? knownPhone : "नंबर दर्ज करें या सीधे डायलर खोलें"}
+                                      {knownPhone ? knownPhone : "Enter phone number or open dialer"}
                                     </div>
                                   </div>
                                 </div>
@@ -6626,7 +6555,7 @@ export default function App() {
                                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                     <input
                                       type="tel"
-                                      placeholder={`${contactName} का मोबाइल नंबर (e.g. 8949546909)`}
+                                      placeholder={`${contactName}'s mobile number (e.g. 8949546909)`}
                                       value={currentInputVal}
                                       onChange={(e) => {
                                         const val = e.target.value;
@@ -6689,7 +6618,7 @@ export default function App() {
                                   </div>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
-                                      💡 एक बार नंबर डालकर Call करने पर Aether इसे याद रखेगा
+                                      💡 Enter once and Aether will remember this contact number
                                     </span>
                                     <a
                                       href="tel:"
@@ -6839,33 +6768,78 @@ export default function App() {
                         return null;
                       })()}
                       {msg.role !== 'user' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (isSpeaking) {
-                                stopBriefingAudio();
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isSpeaking) {
+                                  stopBriefingAudio();
+                                } else {
+                                  speakText(msg.content);
+                                }
+                              }}
+                              title={isSpeaking ? "Stop speaking" : "Listen aloud"}
+                              style={{
+                                background: isSpeaking ? 'rgba(239, 68, 68, 0.12)' : 'rgba(255, 255, 255, 0.06)',
+                                border: `1px solid ${isSpeaking ? 'rgba(239, 68, 68, 0.35)' : 'rgba(255, 255, 255, 0.12)'}`,
+                                color: isSpeaking ? '#f87171' : '#38bdf8',
+                                borderRadius: '8px',
+                                padding: '3px 8px',
+                                fontSize: '0.72rem',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                            >
+                              {isSpeaking ? <Pause size={12} /> : <Volume2 size={12} />}
+                              <span>{isSpeaking ? 'Stop' : 'Listen'}</span>
+                            </button>
+                          </div>
+                          {idx === chatHistory.length - 1 && !isProcessing && (() => {
+                            let aData = msg.actionData;
+                            if (!aData && typeof msg.action_data === 'string') {
+                              try { aData = JSON.parse(msg.action_data); } catch (e) {}
+                            }
+                            const actType = msg.action || msg.action_type;
+                            const customChips = Array.isArray(aData?.follow_ups) ? aData.follow_ups.filter(Boolean).slice(0, 3) : [];
+                            let chips = customChips;
+                            if (chips.length === 0) {
+                              if (actType === 'expense' || actType === 'income') {
+                                chips = ['Audit my expenses', 'Monthly budget status', 'View today summary'];
+                              } else if (actType === 'task') {
+                                chips = ['Show my pending tasks', 'Optimize today agenda', 'Remind me 1 hour earlier'];
+                              } else if (actType === 'draft_email') {
+                                chips = ['Make tone shorter', 'Make tone formal', 'Create follow-up task'];
                               } else {
-                                speakText(msg.content);
+                                chips = ['Turn key points into tasks', 'Summarize in 3 bullets'];
                               }
-                            }}
-                            title={isSpeaking ? "रोकें (Stop speaking)" : "Aether की आवाज में सुनें (Listen aloud)"}
-                            style={{
-                              background: isSpeaking ? 'rgba(239, 68, 68, 0.12)' : 'rgba(255, 255, 255, 0.06)',
-                              border: `1px solid ${isSpeaking ? 'rgba(239, 68, 68, 0.35)' : 'rgba(255, 255, 255, 0.12)'}`,
-                              color: isSpeaking ? '#f87171' : '#38bdf8',
-                              borderRadius: '8px',
-                              padding: '3px 8px',
-                              fontSize: '0.72rem',
-                              cursor: 'pointer',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
-                          >
-                            {isSpeaking ? <Pause size={12} /> : <Volume2 size={12} />}
-                            <span>{isSpeaking ? 'रोकें (Stop)' : 'सुनें (Listen)'}</span>
-                          </button>
+                            }
+                            return (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '2px' }}>
+                                {chips.map((chipText, cIdx) => (
+                                  <button
+                                    key={cIdx}
+                                    type="button"
+                                    onClick={() => handleSendPrompt(chipText)}
+                                    style={{
+                                      background: 'rgba(56, 189, 248, 0.08)',
+                                      border: '1px solid rgba(56, 189, 248, 0.24)',
+                                      color: '#cbd5e1',
+                                      borderRadius: '999px',
+                                      padding: '4px 10px',
+                                      fontSize: '0.72rem',
+                                      cursor: 'pointer',
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                  >
+                                    {chipText}
+                                  </button>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>
@@ -6892,6 +6866,7 @@ export default function App() {
               />
               <input
                 type="file"
+                multiple
                 accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/*"
                 ref={photosInputRef}
                 style={{ display: 'none' }}
@@ -6908,34 +6883,62 @@ export default function App() {
               {/* BOTTOM DOCK: CLEAN EXECUTIVE PROMPT BAR — Hidden when viewing Dashboard for full-screen immersive experience */}
               {!showDashboard && (
                 <div className="gemini-bottom-dock">
-                {attachedMedia && (
-                  <div className="gemini-attached-chip">
-                    {attachedMedia.type === 'image' && (
-                      <img src={attachedMedia.url} alt="Attached" className="gemini-attached-thumb" />
+                {attachedMediaList.length > 0 && (
+                  <div style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '0 12px 6px'
+                  }}>
+                    {attachedMediaList.map((item) => (
+                      <div key={item.id} className="gemini-attached-chip" style={{ margin: 0 }}>
+                        {item.type === 'image' && (
+                          <img src={item.url} alt="Attached" className="gemini-attached-thumb" />
+                        )}
+                        {item.type === 'file' && <FileText size={15} color="#fbbf24" />}
+                        {item.type === 'drive' && <HardDrive size={15} color="#34d399" />}
+                        {item.type === 'map' && <MapPin size={15} color="#fb7185" />}
+                        <span
+                          className="gemini-attached-name"
+                          onClick={() => {
+                            if (item.type === 'map') {
+                              openMapApp(item.latitude, item.longitude);
+                            }
+                          }}
+                          style={{ cursor: item.type === 'map' ? 'pointer' : 'default' }}
+                          title={item.type === 'map' ? 'Click to open Map' : item.name}
+                        >
+                          {item.name}
+                        </span>
+                        <button
+                          type="button"
+                          className="gemini-attached-remove"
+                          onClick={() => setAttachedMediaList(prev => prev.filter(m => m.id !== item.id))}
+                          title="Remove attachment"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
+                    {attachedMediaList.length < 6 && (
+                      <button
+                        type="button"
+                        onClick={() => photosInputRef.current?.click()}
+                        title="Add more photos"
+                        style={{
+                          background: 'rgba(255,255,255,0.06)',
+                          border: '1px dashed rgba(255,255,255,0.22)',
+                          color: '#94a3b8',
+                          borderRadius: '16px',
+                          padding: '5px 10px',
+                          fontSize: '0.72rem',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        + Add Photo
+                      </button>
                     )}
-                    {attachedMedia.type === 'file' && <FileText size={15} color="#fbbf24" />}
-                    {attachedMedia.type === 'drive' && <HardDrive size={15} color="#34d399" />}
-                    {attachedMedia.type === 'map' && <MapPin size={15} color="#fb7185" />}
-                    <span 
-                      className="gemini-attached-name"
-                      onClick={() => {
-                        if (attachedMedia.type === 'map') {
-                          openMapApp(attachedMedia.latitude, attachedMedia.longitude);
-                        }
-                      }}
-                      style={{ cursor: attachedMedia.type === 'map' ? 'pointer' : 'default' }}
-                      title={attachedMedia.type === 'map' ? 'Click to open Map' : ''}
-                    >
-                      {attachedMedia.name}
-                    </span>
-                    <button 
-                      type="button" 
-                      className="gemini-attached-remove"
-                      onClick={() => setAttachedMedia(null)}
-                      title="Remove attachment"
-                    >
-                      <X size={12} />
-                    </button>
                   </div>
                 )}
 
@@ -6963,7 +6966,7 @@ export default function App() {
                 <form 
                   onSubmit={(e) => {
                     e.preventDefault();
-                    if (inputText.trim() || attachedMedia) {
+                    if (inputText.trim() || attachedMediaList.length > 0) {
                       handleSendPrompt(inputText);
                     }
                   }}
@@ -7098,7 +7101,7 @@ export default function App() {
                   <textarea 
                     rows={1}
                     className="gemini-input-field"
-                    placeholder={attachedMedia?.type === 'image' ? "इस फ़ोटो के बारे में सवाल पूछें..." : ROTATING_PROMPTS[promptPlaceholderIndex]}
+                    placeholder={attachedMediaList.some(m => m.type === 'image') ? "Ask a question about these photos..." : ROTATING_PROMPTS[promptPlaceholderIndex]}
                     value={inputText}
                     onChange={(e) => {
                       setInputText(e.target.value);
@@ -7108,7 +7111,7 @@ export default function App() {
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
-                        if (inputText.trim() || attachedMedia) {
+                        if (inputText.trim() || attachedMediaList.length > 0) {
                           handleSendPrompt();
                         }
                       }
@@ -7116,7 +7119,7 @@ export default function App() {
                     autoFocus
                   />
 
-                  {(inputText.trim() || attachedMedia) && !isListening ? (
+                  {(inputText.trim() || attachedMediaList.length > 0) && !isListening ? (
                     /* Send Arrow Button — shown when user has typed text or attached media */
                     <button 
                       type="submit" 
@@ -7152,7 +7155,7 @@ export default function App() {
                           ? "Listening... Tap to send" 
                           : wakeWordEnabled 
                             ? "Voice Input (Wake word 'Hey Aether' active)" 
-                            : "Voice Input (माइक शुरू करें)"
+                            : "Voice Input (Start Mic)"
                       }
                       style={{
                         position: 'relative',

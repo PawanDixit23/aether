@@ -1756,13 +1756,13 @@ Adaptive Bilingual Context: If the ongoing chat history contains Hindi or the us
     image_rules = ""
     if has_image:
         image_rules = """
-CRITICAL REAL-TIME IMAGE / CAMERA VISION & RECEIPT SCANNING RULES:
-- The user has attached or captured a real-time photo or picture from their camera/gallery.
-- You have direct multimodal visual perception of this image.
-- THOROUGHLY inspect all visual elements: objects, people, scenes, handwritten notes, printed documents, receipts, bills, invoices, payment slips, UPI screenshots, brands, colors, surroundings, and quality.
+CRITICAL REAL-TIME IMAGE / MULTI-PHOTO VISION, RECEIPT SCANNING & SCREENSHOT-TO-REMINDER RULES:
+- The user has attached or captured one or more real-time photos, screenshots, or pictures from their camera/gallery.
+- You have direct multimodal visual perception of ALL attached images. Inspect every attached image carefully and compare or combine details across them when multiple images are provided.
+- THOROUGHLY inspect all visual elements: objects, people, scenes, handwritten notes, printed documents, receipts, bills, invoices, UPI screenshots, flight/train/bus/movie tickets, doctor appointments/prescriptions, event/meeting invites, calendar screenshots, and handwritten/digital to-do lists.
 
-AUTOMATED RECEIPT & BILL SCANNING:
-- If the image contains a receipt, restaurant bill, grocery bill, supermarket invoice, fuel bill, medical bill, payment slip, or UPI payment screenshot (Paytm / GPay / PhonePe / Cred):
+1. AUTOMATED RECEIPT & BILL SCANNING:
+- If the image(s) contain a receipt, restaurant bill, grocery bill, supermarket invoice, fuel bill, medical bill, payment slip, or UPI payment screenshot (Paytm / GPay / PhonePe / Cred):
   1. Action MUST be "expense".
   2. "amount": accurately extract the final TOTAL amount payable (as a float, e.g. 450.0). Look for 'Total', 'Grand Total', 'Amount Paid', 'Net Amount', 'Paid ₹...'.
   3. "category": automatically categorize (e.g. "dining" for restaurants/cafes, "groceries" for food markets, "fuel" for petrol/diesel, "shopping" for clothes/electronics, "travel" for taxi/flights, "medical" for pharmacy/doctor, "utilities" for electricity/water/wifi, "general").
@@ -1771,11 +1771,20 @@ AUTOMATED RECEIPT & BILL SCANNING:
   6. "note": Merchant/Store name + key items (e.g. "Starbucks - Coffee & pastry" or "HP Petrol Pump - Fuel").
   7. "response": Give a clean, concise acknowledgement with merchant name and total amount.
 
-GENERAL IMAGES (NON-RECEIPTS):
-- If the image is NOT an expense bill or receipt:
+2. SMART SCREENSHOT-TO-REMINDER (TICKETS, INVITES, APPOINTMENTS & TO-DO LISTS):
+- If an image is a flight/train/bus/movie ticket, boarding pass, doctor appointment/follow-up slip, event/wedding/meeting invite, calendar screenshot, or a handwritten/digital checklist/to-do list (AND the user did not explicitly say "do not create task" or "just explain"):
+  1. Action MUST be "task".
+  2. Extract a clean, specific "title" (e.g. "Flight AI-402 Delhi to Mumbai", "Follow-up with Dr. Sharma", "Wedding Reception - Sharma Family").
+  3. Extract "reminder_time" (e.g. "06:30 AM", "04:00 PM") and "due_date" (ISO string matching the date visible in the ticket/invite/appointment) if visible.
+  4. Set "priority": "high" for flights, trains, medical appointments, or deadlines; otherwise "medium".
+  5. If a handwritten or screenshot list has multiple checklist items, populate "subtasks" (for items under one theme) or "multi_tasks" (if separate scheduled items with distinct times/dates).
+  6. In "response", clearly summarize the extracted schedule details (event, date, time, venue/PNR if relevant) and confirm the reminder was added.
+
+3. GENERAL IMAGES (NON-RECEIPT / NON-SCHEDULE):
+- If the image(s) are general photos, objects, code, study notes, comparisons, or the user is asking a general/analytical question about them:
   1. Action MUST be "query".
-  2. Provide a comprehensive, accurate, articulate explanation in "data.response" answering any question the user asked.
-  3. Strictly respect the language instruction above (e.g. respond in beautiful, fluent Hindi when language is Hindi).
+  2. Provide a comprehensive, accurate, articulate explanation in "data.response" answering any question the user asked across all uploaded images.
+  3. Strictly respect the language instruction above.
 """
 
     norm_prov = (active_provider or "gemini").lower().strip()
@@ -1926,6 +1935,7 @@ Output Format (strictly valid JSON with no markdown wrapping):
     "email_recipient": "string (for email, e.g. 'rohit@example.com' or 'Rohit')",
     "email_subject": "string (for email, e.g. 'Project Update')",
     "email_body": "string (formatted email body text)",
+    "follow_ups": ["2-3 very short natural next-step questions or actions (3-6 words each) in the user's language"] | null,
     "response": "Well-formatted text in the requested language"
   }},
   "explanation": "Brief reasoning"
@@ -1991,7 +2001,8 @@ async def _call_openai_compatible_api(
     sys_prompt: str,
     recent_chat: list,
     user_input: str,
-    image_data: str = None
+    image_data: str = None,
+    images: list = None
 ) -> tuple:
     """Returns (content, error_msg)"""
     if not api_key or not api_key.strip():
@@ -2005,13 +2016,21 @@ async def _call_openai_compatible_api(
             if m_text:
                 messages.append({"role": m_role, "content": m_text})
 
-    if image_data and image_data.strip():
+    img_urls = []
+    if images and isinstance(images, list):
+        for img in images:
+            if isinstance(img, str) and img.strip() and img.strip() not in img_urls:
+                img_urls.append(img.strip())
+    if image_data and isinstance(image_data, str) and image_data.strip() and image_data.strip() not in img_urls:
+        img_urls.insert(0, image_data.strip())
+
+    if img_urls:
+        content_parts = [{"type": "text", "text": user_input}]
+        for url in img_urls:
+            content_parts.append({"type": "image_url", "image_url": {"url": url}})
         messages.append({
             "role": "user",
-            "content": [
-                {"type": "text", "text": user_input},
-                {"type": "image_url", "image_url": {"url": image_data.strip()}}
-            ]
+            "content": content_parts
         })
     else:
         messages.append({"role": "user", "content": user_input})
@@ -2063,6 +2082,7 @@ async def parse_intent_with_llm(
     api_key: str = None, 
     user_name: str = "Operator", 
     image_data: str = None, 
+    images: list = None,
     user_email: str = None,
     openai_key: str = None,
     grok_key: str = None,
@@ -2199,7 +2219,14 @@ async def parse_intent_with_llm(
             heading = "RECENT MATCH RESULTS & SPORTS SCORES" if is_match_query else "TODAY'S VERIFIED REAL-TIME NEWS & DATA TILL NOVEMBER 2026"
             live_feed += f"[{heading}]:\n{news_items}\n\n"
 
-    has_image = bool(image_data and image_data.strip())
+    all_images = []
+    if images and isinstance(images, list):
+        for img in images:
+            if isinstance(img, str) and img.strip() and img.strip() not in all_images:
+                all_images.append(img.strip())
+    if image_data and isinstance(image_data, str) and image_data.strip() and image_data.strip() not in all_images:
+        all_images.insert(0, image_data.strip())
+    has_image = len(all_images) > 0
     
     # Determine effective primary AI Provider (gemini | openai | grok)
     eff_provider = (active_provider or "").lower().strip()
@@ -2270,7 +2297,8 @@ async def parse_intent_with_llm(
             sys_prompt,
             recent_chat,
             user_input,
-            image_data
+            image_data,
+            images=all_images
         )
         if raw_text:
             parsed = _extract_llm_action_dict(raw_text, user_input, is_cricket_query, live_cricket_matches)
@@ -2301,7 +2329,8 @@ async def parse_intent_with_llm(
             sys_prompt,
             recent_chat,
             user_input,
-            image_data
+            image_data,
+            images=all_images
         )
         if raw_text:
             parsed = _extract_llm_action_dict(raw_text, user_input, is_cricket_query, live_cricket_matches)
@@ -2342,24 +2371,25 @@ async def parse_intent_with_llm(
     if candidate_keys:
         user_parts = [{"text": user_input}]
         if has_image:
-            raw_b64 = image_data.strip()
-            mime_type = "image/jpeg"
-            if "," in raw_b64:
-                header, raw_b64 = raw_b64.split(",", 1)
-                if "image/png" in header:
-                    mime_type = "image/png"
-                elif "image/webp" in header:
-                    mime_type = "image/webp"
-                elif "image/gif" in header:
-                    mime_type = "image/gif"
-                elif "image/heic" in header:
-                    mime_type = "image/heic"
-            user_parts.append({
-                "inline_data": {
-                    "mime_type": mime_type,
-                    "data": raw_b64.strip()
-                }
-            })
+            for raw_img in all_images:
+                raw_b64 = raw_img.strip()
+                mime_type = "image/jpeg"
+                if "," in raw_b64:
+                    header, raw_b64 = raw_b64.split(",", 1)
+                    if "image/png" in header:
+                        mime_type = "image/png"
+                    elif "image/webp" in header:
+                        mime_type = "image/webp"
+                    elif "image/gif" in header:
+                        mime_type = "image/gif"
+                    elif "image/heic" in header:
+                        mime_type = "image/heic"
+                user_parts.append({
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": raw_b64.strip()
+                    }
+                })
 
         # Build multi-turn conversational contents to preserve full memory across 10-20+ prompts!
         conversation_contents = []
@@ -2495,7 +2525,7 @@ async def parse_intent_with_llm(
         # Fallback to Grok or OpenAI if Gemini had auth failure or returned no response
         if clean_grok_key and eff_provider != "grok":
             grok_models = ["grok-2-latest", "grok-beta", "grok-2-mini"]
-            raw_text = await _call_openai_compatible_api("https://api.x.ai/v1/chat/completions", clean_grok_key, grok_models, sys_prompt, recent_chat, user_input, image_data)
+            raw_text, _ = await _call_openai_compatible_api("https://api.x.ai/v1/chat/completions", clean_grok_key, grok_models, sys_prompt, recent_chat, user_input, image_data, images=all_images)
             if raw_text:
                 parsed = _extract_llm_action_dict(raw_text, user_input, is_cricket_query, live_cricket_matches)
                 if parsed:
@@ -2503,7 +2533,7 @@ async def parse_intent_with_llm(
 
         if clean_openai_key and eff_provider != "openai":
             openai_models = ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"]
-            raw_text = await _call_openai_compatible_api("https://api.openai.com/v1/chat/completions", clean_openai_key, openai_models, sys_prompt, recent_chat, user_input, image_data)
+            raw_text, _ = await _call_openai_compatible_api("https://api.openai.com/v1/chat/completions", clean_openai_key, openai_models, sys_prompt, recent_chat, user_input, image_data, images=all_images)
             if raw_text:
                 parsed = _extract_llm_action_dict(raw_text, user_input, is_cricket_query, live_cricket_matches)
                 if parsed:

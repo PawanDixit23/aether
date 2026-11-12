@@ -620,7 +620,7 @@ export const DashboardView = ({
             {onAskAether && (
               <button
                 type="button"
-                onClick={() => onAskAether(`मुझे ${cityGuide.city} के प्रमुख दर्शनीय स्थल और प्रसिद्ध खान-पान के बारे में विस्तार से बताएं।`)}
+                onClick={() => onAskAether(`Tell me in detail about top sights, landmarks, and famous local food in ${cityGuide.city}.`)}
                 style={{
                   background: 'rgba(56, 189, 248, 0.12)',
                   border: '1px solid rgba(56, 189, 248, 0.3)',
@@ -689,7 +689,7 @@ export const DashboardView = ({
                   key={idx}
                   onClick={() => {
                     if (onAskAether) {
-                      onAskAether(`मुझे ${cityGuide.city} में "${p.name}" (${p.desc}) के बारे में और जानकारी दीजिए।`);
+                      onAskAether(`Tell me more about "${p.name}" (${p.desc}) in ${cityGuide.city}.`);
                     }
                   }}
                   style={{
@@ -768,7 +768,7 @@ export const DashboardView = ({
                   key={idx}
                   onClick={() => {
                     if (onAskAether) {
-                      onAskAether(`मुझे ${cityGuide.city} में "${f.name}" (${f.desc}) के बारे में बताएं।`);
+                      onAskAether(`Tell me about "${f.name}" (${f.desc}) in ${cityGuide.city}.`);
                     }
                   }}
                   style={{
@@ -793,7 +793,7 @@ export const DashboardView = ({
                     </div>
                     {f.famous_at && (
                       <div style={{ fontSize: '0.64rem', color: '#fbbf24', marginTop: '2px', fontWeight: 500 }}>
-                        ⭐ प्रसिद्ध: {f.famous_at}
+                        ⭐ Famous at: {f.famous_at}
                       </div>
                     )}
                   </div>
@@ -832,7 +832,7 @@ export const DashboardView = ({
                   key={idx}
                   onClick={() => {
                     if (onAskAether) {
-                      onAskAether(`मुझे ${cityGuide.city} में "${t.name}" (${t.desc}) के बारे में बताएं।`);
+                      onAskAether(`Tell me about "${t.name}" (${t.desc}) in ${cityGuide.city}.`);
                     }
                   }}
                   style={{
@@ -909,7 +909,7 @@ export const DashboardView = ({
               color: '#94a3b8',
               lineHeight: 1.35
             }}>
-              <strong style={{ color: '#38bdf8' }}>💡 लोकल टिप: </strong>
+              <strong style={{ color: '#38bdf8' }}>💡 Local Tip: </strong>
               {cityGuide.local_tips[0]}
             </div>
           )}

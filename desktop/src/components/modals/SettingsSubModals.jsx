@@ -392,7 +392,7 @@ export const SettingsSubModals = ({
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                   <span style={{ fontSize: '1.2rem' }}>🤝</span>
-                  <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.95rem' }}>हिंदी मित्र मोड (Best Friend)</span>
+                  <span style={{ color: '#fff', fontWeight: 700, fontSize: '0.95rem' }}>Hindi Best Friend Mode</span>
                   {isFriendMode && (
                     <span style={{ background: 'rgba(245, 158, 11, 0.25)', color: '#fbbf24', fontSize: '0.68rem', padding: '2px 7px', borderRadius: '6px', fontWeight: 700 }}>
                       ACTIVE
@@ -400,7 +400,7 @@ export const SettingsSubModals = ({
                   )}
                 </div>
                 <div style={{ color: '#94a3b8', fontSize: '0.78rem', lineHeight: '1.4' }}>
-                  Aether आपसे एक सच्चे दोस्त की तरह बिना किसी देरी (Zero Delay) के अनौपचारिक हिंदी में बात करेगा।
+                  Aether chats warmly with you in casual conversational Hindi like a true friend, with low-latency responses.
                 </div>
               </div>
               <button
@@ -617,16 +617,16 @@ export const SettingsSubModals = ({
           <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '380px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>
-                {effectiveLang === 'en' ? 'Preferred Language' : effectiveLang === 'hinglish' ? 'Preferred Language' : 'पसंदीदा भाषा'}
+                Preferred AI Response Language
               </h3>
               <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {[
-                { code: 'auto', label: effectiveLang === 'en' ? 'Follow Phone (Auto)' : effectiveLang === 'hinglish' ? 'Follow Phone (Auto)' : 'फ़ोन के अनुसार (स्वचालित)', icon: '🌐' },
-                { code: 'hi', label: 'हिन्दी (Hindi)', icon: '🇮🇳' },
+                { code: 'auto', label: 'Follow Device (Auto)', icon: '🌐' },
+                { code: 'hi', label: 'Hindi', icon: '🇮🇳' },
                 { code: 'en', label: 'English', icon: '🇬🇧' },
-                { code: 'hinglish', label: 'Hinglish (हिंग्लिश)', icon: '🇮🇳' }
+                { code: 'hinglish', label: 'Hinglish', icon: '🇮🇳' }
               ].map(lang => (
                 <div
                   key={lang.code}
@@ -634,10 +634,7 @@ export const SettingsSubModals = ({
                     setSelectedLang(lang.code);
                     localStorage.setItem('aether_language', lang.code);
                     setActiveSubModal(null);
-                    showToast(
-                      lang.code === 'en' ? `Language set to: ${lang.label}` : lang.code === 'hinglish' ? `Language set ho gayi: ${lang.label}` : `भाषा सेट की गई: ${lang.label}`,
-                      'success'
-                    );
+                    showToast(`Language set to: ${lang.label}`, 'success');
                   }}
                   style={{
                     display: 'flex',
@@ -679,28 +676,25 @@ export const SettingsSubModals = ({
               if (newMemoryText.trim()) {
                 handleSendPrompt("Remember that: " + newMemoryText.trim());
                 setNewMemoryText('');
-                showToast(
-                  effectiveLang === 'en' ? "Fact added to memory" : effectiveLang === 'hinglish' ? "Memory me add ho gaya" : "नया तथ्य स्मृति में जोड़ा गया",
-                  'success'
-                );
+                showToast("Fact added to memory", 'success');
               }
             }} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
               <input
                 type="text"
-                placeholder={effectiveLang === 'en' ? "Add a new fact to remember..." : effectiveLang === 'hinglish' ? "Nayi memory ya fact likhein..." : "नई मेमोरी या तथ्य जोड़ें..."}
+                placeholder="Add a new fact to remember..."
                 value={newMemoryText}
                 onChange={(e) => setNewMemoryText(e.target.value)}
                 style={{ flex: 1, background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.84rem' }}
               />
               <button type="submit" style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 14px', borderRadius: '10px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}>
-                {effectiveLang === 'en' ? '+ Add' : effectiveLang === 'hinglish' ? '+ Add' : '+ जोड़ें'}
+                + Add
               </button>
             </form>
 
             <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {memories.length === 0 ? (
                 <div style={{ color: '#64748b', fontSize: '0.84rem', textAlign: 'center', padding: '30px 0' }}>
-                  {effectiveLang === 'en' ? 'No facts recorded yet.' : effectiveLang === 'hinglish' ? 'Abhi koi memory saved nahi hai.' : 'अभी कोई मेमोरी दर्ज नहीं है।'}
+                  No facts recorded yet.
                 </div>
               ) : (
                 memories.map(mem => (
@@ -729,10 +723,10 @@ export const SettingsSubModals = ({
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
           <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '380px' }}>
             <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>
-              {effectiveLang === 'en' ? 'Executive Username' : effectiveLang === 'hinglish' ? 'Executive Username' : 'एग्जीक्यूटिव यूज़रनेम'}
+              Executive Username
             </h3>
             <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '16px' }}>
-              {effectiveLang === 'en' ? 'Your unique @handle across Aether networks.' : effectiveLang === 'hinglish' ? 'Aapka unique @handle Aether ke liye.' : 'Aether पर आपकी पहचान के लिए विशिष्ट @हैंडल।'}
+              Your unique @handle across Aether networks.
             </p>
             <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '12px', padding: '0 12px', marginBottom: '18px' }}>
               <span style={{ color: 'var(--accent-cyan)', fontWeight: 700 }}>@</span>
@@ -746,7 +740,7 @@ export const SettingsSubModals = ({
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
               <button type="button" onClick={() => setActiveSubModal(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', padding: '8px 14px', cursor: 'pointer' }}>
-                {effectiveLang === 'en' ? 'Cancel' : effectiveLang === 'hinglish' ? 'Cancel' : 'रद्द करें'}
+                Cancel
               </button>
               <button 
                 type="button" 
@@ -755,14 +749,11 @@ export const SettingsSubModals = ({
                   setCustomUsername(val);
                   localStorage.setItem('aether_username', val);
                   setActiveSubModal(null);
-                  showToast(
-                    effectiveLang === 'en' ? `Username updated: @${val}` : effectiveLang === 'hinglish' ? `Username update ho gaya: @${val}` : `यूज़रनेम अपडेट हुआ: @${val}`,
-                    'success'
-                  );
+                  showToast(`Username updated: @${val}`, 'success');
                 }}
                 style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 18px', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}
               >
-                {effectiveLang === 'en' ? 'Save' : effectiveLang === 'hinglish' ? 'Save' : 'सेव करें'}
+                Save
               </button>
             </div>
           </div>
@@ -777,18 +768,10 @@ export const SettingsSubModals = ({
               <Shield size={24} color="#ef4444" />
             </div>
             <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff', marginBottom: '8px' }}>
-              {effectiveLang === 'en' 
-                ? 'Reset Account & Data?' 
-                : effectiveLang === 'hinglish' 
-                ? 'Account aur Data Reset Karein?' 
-                : 'खाता और डेटा रीसेट करें?'}
+              Reset Account & Data?
             </h3>
             <p style={{ fontSize: '0.82rem', color: '#94a3b8', lineHeight: '1.45', marginBottom: '20px' }}>
-              {effectiveLang === 'en' 
-                ? 'This will clear your local session, private keys, authentication data, and reset the app.' 
-                : effectiveLang === 'hinglish' 
-                ? 'Yeh aapka local session, private keys aur login data delete kar dega.' 
-                : 'यह आपके स्थानीय सत्र, निजी चाबियाँ और प्रमाणीकरण डेटा को हटा देगा।'}
+              This will clear your local session, private keys, authentication data, and reset the app.
             </p>
             <div style={{ display: 'flex', gap: '10px' }}>
               <button 
@@ -796,14 +779,14 @@ export const SettingsSubModals = ({
                 onClick={() => setActiveSubModal(null)} 
                 style={{ flex: 1, background: 'rgba(255, 255, 255, 0.08)', border: 'none', color: '#fff', padding: '10px', borderRadius: '12px', fontWeight: 600, cursor: 'pointer' }}
               >
-                {effectiveLang === 'en' ? 'Cancel' : effectiveLang === 'hinglish' ? 'Cancel' : 'रद्द करें'}
+                Cancel
               </button>
               <button 
                 type="button" 
                 onClick={handleConfirmAccountReset} 
                 style={{ flex: 1, background: '#ef4444', border: 'none', color: '#fff', padding: '10px', borderRadius: '12px', fontWeight: 700, cursor: 'pointer' }}
               >
-                {effectiveLang === 'en' ? 'Yes, Reset' : effectiveLang === 'hinglish' ? 'Haan, Reset Karein' : 'हां, रीसेट करें'}
+                Yes, Reset
               </button>
             </div>
           </div>

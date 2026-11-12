@@ -67,12 +67,12 @@ export const QUICK_EXPENSE_CHIPS = [
 ];
 
 export const INCOME_CATEGORIES = [
-  { id: 'salary', label: 'Salary / वेतन', icon: '💼', color: '#10b981' },
-  { id: 'investment', label: 'Investments / रिटर्न', icon: '📈', color: '#38bdf8' },
-  { id: 'freelance', label: 'Freelance / परामर्श', icon: '🤝', color: '#a855f7' },
+  { id: 'salary', label: 'Salary', icon: '💼', color: '#10b981' },
+  { id: 'investment', label: 'Investments & Returns', icon: '📈', color: '#38bdf8' },
+  { id: 'freelance', label: 'Freelance & Consulting', icon: '🤝', color: '#a855f7' },
   { id: 'cashback', label: 'Cashback & Rewards', icon: '🎁', color: '#f59e0b' },
   { id: 'business', label: 'Business / Rental', icon: '🏢', color: '#06b6d4' },
-  { id: 'other_income', label: 'Other Income / अन्य', icon: '💰', color: '#34d399' }
+  { id: 'other_income', label: 'Other Income', icon: '💰', color: '#34d399' }
 ];
 
 export const QUICK_INCOME_CHIPS = [
@@ -180,13 +180,13 @@ export const FinanceModal = ({
           setSmsInputText('');
           setSmsExpensePurpose('');
           setIsSmsParserOpen(false);
-          if (showToast) showToast(`✅ ₹${amtVal} खर्च दर्ज किया गया!`, "success");
+          if (showToast) showToast(`✅ ₹${amtVal} expense logged!`, "success");
           if (refreshAllData) refreshAllData();
         } else {
-          if (showToast) showToast("खर्च सहेजने में त्रुटि आई", "error");
+          if (showToast) showToast("Error saving expense", "error");
         }
       } catch (e) {
-        if (showToast) showToast("खर्च सहेजने में त्रुटि आई", "error");
+        if (showToast) showToast("Error saving expense", "error");
       } finally {
         setIsParsingSms(false);
       }
@@ -196,14 +196,14 @@ export const FinanceModal = ({
     if (smsInputText.trim()) {
       await handleParseSms();
     } else {
-      if (showToast) showToast("कृपया राशि या SMS दर्ज करें", "info");
+      if (showToast) showToast("Please enter an amount or SMS", "info");
     }
   };
 
   const handleParseSms = async (textToParse = smsInputText) => {
     const raw = (textToParse || '').trim();
     if (!raw && !smsAmount) {
-      if (showToast) showToast("कृपया राशि या बैंक SMS दर्ज करें", "info");
+      if (showToast) showToast("Please enter an amount or bank SMS", "info");
       return;
     }
     setIsParsingSms(true);
@@ -229,13 +229,13 @@ export const FinanceModal = ({
         setSmsInputText('');
         setSmsAmount('');
         setSmsExpensePurpose('');
-        if (showToast) showToast(`✅ ₹${rec.amount} ${rec.category || 'expense'} दर्ज किया गया! (${rec.merchant || ''})`, "success");
+        if (showToast) showToast(`✅ ₹${rec.amount} ${rec.category || 'expense'} logged! (${rec.merchant || ''})`, "success");
         if (refreshAllData) refreshAllData();
       } else {
-        if (showToast) showToast("SMS से राशि स्वतः नहीं मिली, कृपया ऊपर राशि दर्ज करके सहेजें।", "info");
+        if (showToast) showToast("Could not detect amount automatically from SMS. Please enter the amount above and save.", "info");
       }
     } catch (err) {
-      if (showToast) showToast("त्रुटि: कृपया राशि दर्ज करके सेव करें", "error");
+      if (showToast) showToast("Error: Please enter an amount and save", "error");
     } finally {
       setIsParsingSms(false);
     }
@@ -367,7 +367,7 @@ export const FinanceModal = ({
           url: absoluteDownloadUrl,
           filename: filename
         }));
-        if (showToast) showToast(`Finance CSV डाउनलोड शुरू हो गया! 📥`, "success");
+        if (showToast) showToast(`Finance CSV download started! 📥`, "success");
         return;
       } catch (err) {}
     }
@@ -897,10 +897,10 @@ export const FinanceModal = ({
               }}
             />
 
-            {/* Quick Purpose Chips (त्वरित टैग्स) */}
+            {/* Quick Purpose Chips */}
             <div style={{ marginBottom: '10px' }}>
               <div style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: 600, marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span>⚡ 1-Tap Quick Tags (त्वरित टैग्स):</span>
+                <span>⚡ 1-Tap Quick Tags:</span>
                 {smsExpensePurpose && (
                   <button
                     type="button"
@@ -972,7 +972,7 @@ export const FinanceModal = ({
 
               <div>
                 <div style={{ fontSize: '0.74rem', color: '#94a3b8', fontWeight: 600, marginBottom: '5px' }}>
-                  <span>📝 Reason / खर्च का कारण:</span>
+                  <span>📝 Reason / Note:</span>
                 </div>
                 <input
                   type="text"
@@ -1019,7 +1019,7 @@ export const FinanceModal = ({
               }}
             >
               <Sparkles size={15} />
-              <span>{isParsingSms ? 'Saving Transaction...' : '💾 Save Transaction (खर्च सहेजें)'}</span>
+              <span>{isParsingSms ? 'Saving Transaction...' : '💾 Save Transaction'}</span>
             </button>
 
             {/* Parsed Result Success Card */}
@@ -1580,7 +1580,7 @@ export const FinanceModal = ({
           const handleSaveTransactionForm = async () => {
             const amtVal = parseFloat(newExpenseForm.amount);
             if (isNaN(amtVal) || amtVal <= 0) {
-              if (showToast) showToast("कृपया एक वैध राशि दर्ज करें (e.g. 500)", "info");
+              if (showToast) showToast("Please enter a valid amount (e.g. 500)", "info");
               return;
             }
             try {
@@ -1603,13 +1603,13 @@ export const FinanceModal = ({
               if (data.status === 'success') {
                 setIsAddingExpense(false);
                 setNewExpenseForm({ type: 'expense', category: 'food', amount: '', note: '', payment_mode: 'upi' });
-                if (showToast) showToast(isIncome ? `✅ ₹${amtVal.toLocaleString('en-IN')} आय सफलतापूर्वक सहेजी गई!` : `✅ ₹${amtVal.toLocaleString('en-IN')} खर्च दर्ज किया गया!`, "success");
+                if (showToast) showToast(isIncome ? `✅ ₹${amtVal.toLocaleString('en-IN')} income saved!` : `✅ ₹${amtVal.toLocaleString('en-IN')} expense logged!`, "success");
                 if (refreshAllData) refreshAllData();
               } else {
-                if (showToast) showToast("सहेजने में त्रुटि आई", "error");
+                if (showToast) showToast("Error saving transaction", "error");
               }
             } catch (err) {
-              if (showToast) showToast("सहेजने में त्रुटि आई", "error");
+              if (showToast) showToast("Error saving transaction", "error");
             }
           };
 
@@ -1625,7 +1625,7 @@ export const FinanceModal = ({
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <span style={{ fontSize: '0.90rem', fontWeight: 800, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <span>{isIncome ? '💰' : '💸'}</span>
-                  <span>{isIncome ? 'आय दर्ज करें (Record Income)' : 'खर्च दर्ज करें (Record Expense)'}</span>
+                  <span>{isIncome ? 'Record Income' : 'Record Expense'}</span>
                 </span>
                 <button
                   type="button"
@@ -1639,7 +1639,7 @@ export const FinanceModal = ({
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
                 <div>
                   <label style={{ fontSize: '0.7rem', color: isIncome ? '#34d399' : '#f87171', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
-                    {isIncome ? '₹ Income Amount (आय राशि)' : '₹ Amount (खर्च राशि)'}
+                    {isIncome ? '₹ Income Amount' : '₹ Expense Amount'}
                   </label>
                   <input
                     type="number"
@@ -1660,7 +1660,7 @@ export const FinanceModal = ({
                   />
                 </div>
                 <div style={{ position: 'relative' }}>
-                  <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Category (श्रेणी)</label>
+                  <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Category</label>
                   <button
                     type="button"
                     onClick={() => setIsCategoryPickerOpen(!isCategoryPickerOpen)}
@@ -1682,7 +1682,7 @@ export const FinanceModal = ({
                   >
                     <span style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       <span>{currentCategories.find(c => c.id === newExpenseForm.category)?.icon || (isIncome ? '💼' : '🍔')}</span>
-                      <span style={{ fontWeight: 600 }}>{currentCategories.find(c => c.id === newExpenseForm.category)?.label || (isIncome ? 'Salary / वेतन' : 'Food & Dining')}</span>
+                      <span style={{ fontWeight: 600 }}>{currentCategories.find(c => c.id === newExpenseForm.category)?.label || (isIncome ? 'Salary' : 'Food & Dining')}</span>
                     </span>
                     <ChevronDown size={14} color="#94a3b8" />
                   </button>
@@ -1783,7 +1783,7 @@ export const FinanceModal = ({
 
               <div style={{ marginBottom: '12px' }}>
                 <label style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>
-                  {isIncome ? 'Source / Note (कहाँ से प्राप्त हुआ)' : 'Note / Description (खर्च का कारण)'}
+                  {isIncome ? 'Source / Note' : 'Note / Description'}
                 </label>
                 <input
                   type="text"
@@ -1810,7 +1810,7 @@ export const FinanceModal = ({
                   boxShadow: isIncome ? '0 4px 14px rgba(16, 185, 129, 0.4)' : '0 4px 14px rgba(244, 63, 94, 0.4)'
                 }}
               >
-                {isIncome ? '💾 Save Income (आय सहेजें)' : '💾 Save Expense (खर्च सहेजें)'}
+                {isIncome ? '💾 Save Income' : '💾 Save Expense'}
               </button>
             </div>
           );

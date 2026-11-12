@@ -119,7 +119,7 @@ export const FormattedMessage = ({ text }) => {
                       }
                     }}
                   >
-                    <span>🔗 स्रोत पढ़ें ↗</span>
+                    <span>🔗 Read source ↗</span>
                   </a>
                 );
               }

@@ -386,7 +386,7 @@ export const TasksModal = ({
     if (e && e.preventDefault) e.preventDefault();
     const titleVal = localTaskInput.trim();
     if (!titleVal) {
-      setInputError('⚠️ कार्य का नाम दर्ज करें (e.g. Drink 2L water at 3 PM)');
+      setInputError('⚠️ Enter a task title (e.g. Drink 2L water at 3 PM)');
       return;
     }
     setInputError('');

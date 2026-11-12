@@ -104,7 +104,7 @@ export const AetherParticleSphere = ({ isListening, isSpeaking, onClick }) => {
       onClick={onClick}
       className="jarvis-sphere-container"
       style={{ position: 'relative', width: '280px', height: '280px', margin: '0 auto', cursor: 'pointer' }}
-      title="Tap to speak with Aether / माइक शुरू करें"
+      title="Tap to speak with Aether"
     >
       {isListening && <div className="jarvis-listening-pulse" />}
       <canvas ref={canvasRef} style={{ width: '280px', height: '280px' }} />

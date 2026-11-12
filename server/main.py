@@ -220,6 +220,7 @@ class KeyValidationRequest(BaseModel):
 class QuickCaptureRequest(BaseModel):
     input_text: str = ""
     image_data: Optional[str] = None
+    images: Optional[list] = None
     user_email: Optional[str] = None
     session_id: Optional[str] = None
     latitude: Optional[float] = None
@@ -836,7 +837,7 @@ async def _execute_quick_capture(
     lang = req.language or "auto"
     has_conjunction = bool(re.search(r'\b(?:and then|after that|aur phir|and|aur|तथा|और)\b', user_msg, re.I))
     has_multi_intent = any(w in user_msg.lower() for w in ["spent", "kharch", "balance", "task", "remind", "weather", "youtube", "meeting"])
-    if has_conjunction and has_multi_intent and not req.image_data:
+    if has_conjunction and has_multi_intent and not (req.image_data or req.images):
         try:
             from agent import AgentOrchestrator
             orchestrator = AgentOrchestrator(db=db, user_email=eff_email or "operator@aether.local", lang=lang)
@@ -904,6 +905,7 @@ async def _execute_quick_capture(
         api_key=req.api_key,
         user_name=req.user_name or "Operator",
         image_data=req.image_data,
+        images=req.images,
         user_email=eff_email,
         openai_key=req.openai_key,
         grok_key=req.grok_key,
@@ -974,7 +976,7 @@ async def _execute_quick_capture(
         db.refresh(record)
         executed = True
         
-        is_scanned_receipt = bool(req.image_data)
+        is_scanned_receipt = bool(req.image_data or req.images)
         if is_scanned_receipt:
             clean_merchant = data.get("note") or record.category.title()
             if lang == "en":
