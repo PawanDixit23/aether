@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Check, Database, Shield, Key, ExternalLink, HelpCircle, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Check, Database, Shield, Key, ExternalLink, HelpCircle, AlertTriangle, CheckCircle2, Search, ChevronDown, User, Sliders, RotateCw, BookUser, Plus, Trash2, Edit2, Pin } from 'lucide-react';
 import { AETHER_VOICES, AI_PROVIDERS } from '../common/constants';
 
 export const SettingsSubModals = ({
@@ -58,6 +58,7 @@ export const SettingsSubModals = ({
   const [memSearch, setMemSearch] = useState('');
   const [memCategoryFilter, setMemCategoryFilter] = useState('all');
   const [newMemCategory, setNewMemCategory] = useState('personal');
+  const [showCategoryPopup, setShowCategoryPopup] = useState(false);
   const [editingMemId, setEditingMemId] = useState(null);
   const [editingMemText, setEditingMemText] = useState('');
   const [memSaving, setMemSaving] = useState(false);
@@ -689,6 +690,12 @@ export const SettingsSubModals = ({
       {/* 11. Memory Vault Dashboard Modal */}
       {activeSubModal === 'memory' && (() => {
         const categories = ['all', 'personal', 'preference', 'routine', 'contact'];
+        const categoryMeta = {
+          personal: { label: 'Personal', icon: '👤', color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.12)', border: 'rgba(56, 189, 248, 0.3)', desc: 'Home, location, family, identity context' },
+          preference: { label: 'Preference', icon: '⚙️', color: '#c084fc', bg: 'rgba(192, 132, 252, 0.12)', border: 'rgba(192, 132, 252, 0.3)', desc: 'Favorites, food, music, habits & choices' },
+          routine: { label: 'Routine', icon: '🔄', color: '#34d399', bg: 'rgba(52, 211, 153, 0.12)', border: 'rgba(52, 211, 153, 0.3)', desc: 'Daily schedules & morning habits' },
+          contact: { label: 'Contact', icon: '📇', color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.12)', border: 'rgba(251, 191, 36, 0.3)', desc: 'Important numbers, relations & contacts' }
+        };
         const q = memSearch.trim().toLowerCase();
         const filteredMemories = (memories || [])
           .filter((mem) => {
@@ -710,6 +717,75 @@ export const SettingsSubModals = ({
             try { localStorage.setItem('aether_pinned_memories', JSON.stringify(next)); } catch {}
             return next;
           });
+        };
+
+        const handleUploadDocumentToVault = async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          const ext = (file.name.slice(file.name.lastIndexOf('.')) || '').toLowerCase();
+          const isPlainText = ['.txt', '.md', '.csv', '.json', '.tsv', '.log'].includes(ext);
+
+          setMemSaving(true);
+          showToast(`Extracting & saving ${file.name} to Memory Vault...`, 'info');
+
+          try {
+            let extractedText = '';
+            if (apiBase) {
+              const formData = new FormData();
+              formData.append('file', file);
+              const parseRes = await fetch(`${apiBase}/documents/parse`, {
+                method: 'POST',
+                headers: userEmail ? { 'X-User-Email': userEmail } : {},
+                body: formData
+              });
+              if (parseRes.ok) {
+                const pData = await parseRes.json();
+                extractedText = pData.text || '';
+              }
+            }
+
+            if (!extractedText && isPlainText) {
+              extractedText = await new Promise((resolve) => {
+                const r = new FileReader();
+                r.onload = () => resolve(String(r.result || ''));
+                r.readAsText(file);
+              });
+            }
+
+            if (!extractedText) {
+              throw new Error('No readable text found in document');
+            }
+
+            const factToSave = `${file.name}: ${extractedText.slice(0, 1500)}`;
+            if (apiBase) {
+              const res = await fetch(`${apiBase}/memory`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(userEmail ? { 'X-User-Email': userEmail } : {})
+                },
+                body: JSON.stringify({
+                  fact: factToSave,
+                  category: newMemCategory || 'personal',
+                  user_email: userEmail || null
+                })
+              });
+              if (res.ok) {
+                showToast(`✅ Saved ${file.name} to Memory Vault`, 'success');
+                if (refreshAllData) refreshAllData();
+              } else {
+                showToast('Failed to save to Memory Vault', 'error');
+              }
+            } else {
+              handleSendPrompt?.(`Remember that: ${factToSave}`);
+              showToast(`✅ Saved ${file.name} to Memory Vault`, 'success');
+            }
+          } catch (err) {
+            showToast(`Error processing file: ${err.message}`, 'error');
+          } finally {
+            setMemSaving(false);
+            e.target.value = '';
+          }
         };
 
         const handleDirectAddMemory = async (e) => {
@@ -846,6 +922,30 @@ export const SettingsSubModals = ({
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <label
+                    title="Upload document (PDF, DOCX, TXT, etc.) into Memory Vault"
+                    style={{
+                      background: 'rgba(56, 189, 248, 0.12)',
+                      border: '1px solid rgba(56, 189, 248, 0.35)',
+                      color: '#38bdf8',
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      padding: '7px 11px',
+                      borderRadius: '10px',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px'
+                    }}
+                  >
+                    <span>📄 Upload File</span>
+                    <input
+                      type="file"
+                      accept=".pdf,.doc,.docx,.txt,.csv,.json,.md,.rtf,.tsv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
+                      onChange={handleUploadDocumentToVault}
+                      style={{ display: 'none' }}
+                    />
+                  </label>
                   <button
                     type="button"
                     onClick={handleExportMemories}
@@ -898,62 +998,288 @@ export const SettingsSubModals = ({
                 </button>
               </div>
 
-              {/* Add Fact Form */}
-              <form onSubmit={handleDirectAddMemory} style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', flexShrink: 0 }}>
-                <select
-                  value={newMemCategory}
-                  onChange={(e) => setNewMemCategory(e.target.value)}
-                  style={{ background: '#0e172a', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '10px', padding: '9px 10px', color: '#cbd5e1', fontSize: '0.78rem', boxSizing: 'border-box' }}
+              {/* Add Fact Form - Sleek Edge-to-Edge Single Row Container */}
+              <form 
+                onSubmit={handleDirectAddMemory} 
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  background: 'rgba(255, 255, 255, 0.04)', 
+                  border: '1px solid rgba(255, 255, 255, 0.12)', 
+                  borderRadius: '14px', 
+                  padding: '4px 6px', 
+                  gap: '6px', 
+                  flexShrink: 0 
+                }}
+              >
+                {/* Modern Category Selector Button (Triggers Latest UI Popup) */}
+                <button
+                  type="button"
+                  onClick={() => setShowCategoryPopup(true)}
+                  style={{
+                    background: categoryMeta[newMemCategory]?.bg || 'rgba(56, 189, 248, 0.12)',
+                    border: `1px solid ${categoryMeta[newMemCategory]?.border || 'rgba(56, 189, 248, 0.3)'}`,
+                    color: categoryMeta[newMemCategory]?.color || '#38bdf8',
+                    borderRadius: '10px',
+                    padding: '8px 10px',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                    transition: 'all 0.15s ease'
+                  }}
+                  title="Click to change category"
                 >
-                  <option value="personal">Personal</option>
-                  <option value="preference">Preference</option>
-                  <option value="routine">Routine</option>
-                  <option value="contact">Contact</option>
-                </select>
+                  <span>{categoryMeta[newMemCategory]?.icon || '👤'}</span>
+                  <span style={{ textTransform: 'capitalize' }}>{newMemCategory}</span>
+                  <ChevronDown size={13} />
+                </button>
+
                 <input
                   type="text"
                   placeholder="Add a new fact directly..."
                   value={newMemoryText}
                   onChange={(e) => setNewMemoryText(e.target.value)}
-                  style={{ flex: '1 1 180px', minWidth: '150px', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.12)', borderRadius: '10px', padding: '9px 12px', color: '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
+                  style={{ 
+                    flex: 1, 
+                    minWidth: 0, 
+                    background: 'transparent', 
+                    border: 'none', 
+                    outline: 'none', 
+                    color: '#ffffff', 
+                    fontSize: '0.84rem', 
+                    padding: '8px 4px' 
+                  }}
                 />
-                <button type="submit" disabled={memSaving} style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '9px 16px', borderRadius: '10px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                  {memSaving ? '...' : '+ Add'}
+
+                <button 
+                  type="submit" 
+                  disabled={memSaving || !newMemoryText.trim()} 
+                  style={{ 
+                    background: newMemoryText.trim() ? 'linear-gradient(135deg, #38bdf8, #0284c7)' : 'rgba(255, 255, 255, 0.08)', 
+                    border: 'none', 
+                    color: newMemoryText.trim() ? '#080c16' : '#64748b', 
+                    padding: '8px 14px', 
+                    borderRadius: '10px', 
+                    fontWeight: 700, 
+                    fontSize: '0.80rem', 
+                    cursor: newMemoryText.trim() ? 'pointer' : 'default', 
+                    whiteSpace: 'nowrap',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    flexShrink: 0,
+                    transition: 'all 0.15s ease',
+                    boxShadow: newMemoryText.trim() ? '0 2px 8px rgba(56, 189, 248, 0.35)' : 'none'
+                  }}
+                >
+                  <Plus size={15} />
+                  <span>{memSaving ? '...' : 'Add'}</span>
                 </button>
               </form>
 
+              {/* LATEST UI CATEGORY POPUP MODAL */}
+              {showCategoryPopup && (
+                <div
+                  style={{
+                    position: 'fixed',
+                    inset: 0,
+                    background: 'rgba(0, 0, 0, 0.78)',
+                    backdropFilter: 'blur(12px)',
+                    WebkitBackdropFilter: 'blur(12px)',
+                    zIndex: 200,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '16px'
+                  }}
+                  onClick={() => setShowCategoryPopup(false)}
+                >
+                  <div
+                    style={{
+                      background: '#0d1527',
+                      border: '1px solid rgba(56, 189, 248, 0.3)',
+                      borderRadius: '24px',
+                      padding: '20px',
+                      width: '100%',
+                      maxWidth: '380px',
+                      boxShadow: '0 24px 64px rgba(0, 0, 0, 0.9), 0 0 30px rgba(56, 189, 248, 0.15)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '14px',
+                      animation: 'fadeIn 0.2s ease'
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#f8fafc' }}>
+                          Select Memory Category
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '2px' }}>
+                          Where does this fact or context belong?
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowCategoryPopup(false)}
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.08)',
+                          border: 'none',
+                          color: '#94a3b8',
+                          borderRadius: '50%',
+                          width: '30px',
+                          height: '30px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {Object.entries(categoryMeta).map(([catKey, meta]) => {
+                        const isSelected = newMemCategory === catKey;
+                        return (
+                          <div
+                            key={catKey}
+                            onClick={() => {
+                              setNewMemCategory(catKey);
+                              setShowCategoryPopup(false);
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '12px 14px',
+                              borderRadius: '14px',
+                              background: isSelected ? 'rgba(56, 189, 248, 0.14)' : 'rgba(255, 255, 255, 0.03)',
+                              border: isSelected ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.08)',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <div style={{
+                                width: '38px',
+                                height: '38px',
+                                borderRadius: '10px',
+                                background: meta.bg,
+                                border: `1px solid ${meta.border}`,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '1.2rem',
+                                flexShrink: 0
+                              }}>
+                                {meta.icon}
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '0.88rem', fontWeight: 700, color: isSelected ? '#38bdf8' : '#f8fafc' }}>
+                                  {meta.label}
+                                </div>
+                                <div style={{ fontSize: '0.70rem', color: '#94a3b8', marginTop: '1px' }}>
+                                  {meta.desc}
+                                </div>
+                              </div>
+                            </div>
+                            <div style={{
+                              width: '20px',
+                              height: '20px',
+                              borderRadius: '50%',
+                              border: isSelected ? '2px solid #38bdf8' : '2px solid rgba(255, 255, 255, 0.25)',
+                              background: isSelected ? '#38bdf8' : 'transparent',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              flexShrink: 0
+                            }}>
+                              {isSelected && <Check size={12} color="#080c16" strokeWidth={3} />}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Search & Filter Pills */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
-                <input
-                  type="text"
-                  placeholder="Search memories..."
-                  value={memSearch}
-                  onChange={(e) => setMemSearch(e.target.value)}
-                  style={{ background: 'rgba(255, 255, 255, 0.04)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '10px', padding: '8px 12px', color: '#fff', fontSize: '0.80rem', boxSizing: 'border-box' }}
-                />
-                <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '2px', scrollbarWidth: 'none' }}>
-                  {categories.map((cat) => (
-                    <button
-                      key={cat}
-                      type="button"
-                      onClick={() => setMemCategoryFilter(cat)}
-                      style={{
-                        background: memCategoryFilter === cat ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255,255,255,0.04)',
-                        border: `1px solid ${memCategoryFilter === cat ? 'rgba(56, 189, 248, 0.55)' : 'rgba(255,255,255,0.08)'}`,
-                        color: memCategoryFilter === cat ? '#38bdf8' : '#94a3b8',
-                        fontSize: '0.72rem',
-                        fontWeight: 600,
-                        padding: '4px 12px',
-                        borderRadius: '999px',
-                        cursor: 'pointer',
-                        textTransform: 'capitalize',
-                        whiteSpace: 'nowrap',
-                        flexShrink: 0
-                      }}
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  background: 'rgba(255, 255, 255, 0.04)', 
+                  border: '1px solid rgba(255, 255, 255, 0.08)', 
+                  borderRadius: '12px', 
+                  padding: '0 12px', 
+                  gap: '8px' 
+                }}>
+                  <Search size={14} color="#64748b" />
+                  <input
+                    type="text"
+                    placeholder="Search memories..."
+                    value={memSearch}
+                    onChange={(e) => setMemSearch(e.target.value)}
+                    style={{ 
+                      flex: 1, 
+                      background: 'transparent', 
+                      border: 'none', 
+                      outline: 'none', 
+                      color: '#fff', 
+                      fontSize: '0.82rem', 
+                      padding: '9px 0' 
+                    }}
+                  />
+                  {memSearch && (
+                    <button 
+                      type="button" 
+                      onClick={() => setMemSearch('')} 
+                      style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: '2px', fontSize: '0.8rem' }}
                     >
-                      {cat}
+                      ✕
                     </button>
-                  ))}
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '2px', scrollbarWidth: 'none' }}>
+                  {categories.map((cat) => {
+                    const isSelected = memCategoryFilter === cat;
+                    const meta = categoryMeta[cat];
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setMemCategoryFilter(cat)}
+                        style={{
+                          background: isSelected ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255, 255, 255, 0.04)',
+                          border: `1px solid ${isSelected ? 'rgba(56, 189, 248, 0.55)' : 'rgba(255, 255, 255, 0.08)'}`,
+                          color: isSelected ? '#38bdf8' : '#94a3b8',
+                          fontSize: '0.72rem',
+                          fontWeight: 600,
+                          padding: '5px 13px',
+                          borderRadius: '999px',
+                          cursor: 'pointer',
+                          textTransform: 'capitalize',
+                          whiteSpace: 'nowrap',
+                          flexShrink: 0,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        {meta?.icon && <span>{meta.icon}</span>}
+                        <span>{cat}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -968,8 +1294,22 @@ export const SettingsSubModals = ({
                     const isPinned = pinnedMemoryIds.includes(mem.id);
                     const isEditing = editingMemId === mem.id;
                     const catLabel = (mem.category || 'personal').toLowerCase();
+                    const meta = categoryMeta[catLabel] || categoryMeta.personal;
                     return (
-                      <div key={mem.id} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 14px', background: isPinned ? 'rgba(56, 189, 248, 0.07)' : 'rgba(255, 255, 255, 0.03)', border: `1px solid ${isPinned ? 'rgba(56, 189, 248, 0.35)' : 'rgba(255, 255, 255, 0.07)'}`, borderRadius: '14px', transition: 'border 0.2s' }}>
+                      <div 
+                        key={mem.id} 
+                        style={{ 
+                          display: 'flex', 
+                          flexDirection: 'column', 
+                          gap: '8px', 
+                          padding: '12px 14px', 
+                          background: isPinned ? 'rgba(56, 189, 248, 0.07)' : 'rgba(255, 255, 255, 0.03)', 
+                          border: `1px solid ${isPinned ? 'rgba(56, 189, 248, 0.35)' : 'rgba(255, 255, 255, 0.07)'}`, 
+                          borderRadius: '14px', 
+                          transition: 'border 0.2s',
+                          position: 'relative'
+                        }}
+                      >
                         {isEditing ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                             <input
@@ -989,14 +1329,46 @@ export const SettingsSubModals = ({
                               {mem.fact || mem.content || mem.text}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                              <button type="button" onClick={() => togglePin(mem.id)} title={isPinned ? 'Unpin' : 'Pin'} style={{ background: isPinned ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255,255,255,0.04)', border: 'none', borderRadius: '6px', color: isPinned ? '#fbbf24' : '#64748b', cursor: 'pointer', fontSize: '0.85rem', padding: '3px 6px' }}>📌</button>
-                              <button type="button" onClick={() => { setEditingMemId(mem.id); setEditingMemText(mem.fact || mem.content || mem.text || ''); }} title="Edit fact" style={{ background: 'rgba(56, 189, 248, 0.1)', border: 'none', borderRadius: '6px', color: '#38bdf8', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, padding: '3px 8px' }}>Edit</button>
-                              <button type="button" onClick={() => handleDeleteMemory(mem.id)} title="Delete fact" style={{ background: 'rgba(239, 68, 68, 0.1)', border: 'none', borderRadius: '6px', color: '#f87171', cursor: 'pointer', fontSize: '0.85rem', padding: '3px 6px' }}>✕</button>
+                              <button 
+                                type="button" 
+                                onClick={() => togglePin(mem.id)} 
+                                title={isPinned ? 'Unpin' : 'Pin'} 
+                                style={{ background: isPinned ? 'rgba(245, 158, 11, 0.18)' : 'rgba(255,255,255,0.04)', border: 'none', borderRadius: '7px', color: isPinned ? '#fbbf24' : '#64748b', cursor: 'pointer', fontSize: '0.85rem', padding: '4px 7px' }}
+                              >
+                                📌
+                              </button>
+                              <button 
+                                type="button" 
+                                onClick={() => { setEditingMemId(mem.id); setEditingMemText(mem.fact || mem.content || mem.text || ''); }} 
+                                title="Edit fact" 
+                                style={{ background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.25)', borderRadius: '7px', color: '#38bdf8', cursor: 'pointer', fontSize: '0.74rem', fontWeight: 600, padding: '4px 9px' }}
+                              >
+                                Edit
+                              </button>
+                              <button 
+                                type="button" 
+                                onClick={() => handleDeleteMemory(mem.id)} 
+                                title="Delete fact" 
+                                style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: '7px', color: '#f87171', cursor: 'pointer', fontSize: '0.78rem', padding: '4px 7px' }}
+                              >
+                                ✕
+                              </button>
                             </div>
                           </div>
                         )}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.68rem', color: '#64748b', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '6px' }}>
-                          <span style={{ textTransform: 'uppercase', letterSpacing: '0.04em', color: '#38bdf8', fontWeight: 600 }}>{catLabel}</span>
+                          <span style={{ 
+                            textTransform: 'uppercase', 
+                            letterSpacing: '0.04em', 
+                            color: meta.color, 
+                            fontWeight: 700,
+                            background: meta.bg,
+                            border: `1px solid ${meta.border}`,
+                            padding: '1px 7px',
+                            borderRadius: '4px'
+                          }}>
+                            {catLabel}
+                          </span>
                           <span>{mem.created_at ? new Date(mem.created_at).toLocaleDateString() : 'Saved'}</span>
                         </div>
                       </div>

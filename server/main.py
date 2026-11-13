@@ -12,7 +12,9 @@ import csv
 import io
 from datetime import datetime, timedelta
 from typing import Optional, List
-from fastapi import FastAPI, Depends, HTTPException, Header, Request
+import base64
+from fastapi import FastAPI, Depends, HTTPException, Header, Request, UploadFile, File
+from document_parser import extract_text_from_file
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -300,6 +302,15 @@ class TaskCreate(BaseModel):
     recurrence: Optional[str] = None
     parent_id: Optional[int] = None
     subtasks: Optional[List[str]] = None
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    priority: Optional[str] = None
+    due_date: Optional[datetime] = None
+    reminder_time: Optional[str] = None
+    recurrence: Optional[str] = None
+    status: Optional[str] = None
 
 class TaskReschedule(BaseModel):
     due_date: Optional[datetime] = None
@@ -1397,11 +1408,12 @@ async def _execute_quick_capture(
     # Record AI Response in Chat History (resilient to schema constraints, skip for temporary chats)
     if not is_temporary:
         try:
+            effective_msg = (result_message and result_message.strip()) or (data.get("response") if isinstance(data, dict) else None) or "प्रतिक्रिया संसाधित की गई।"
             ai_chat = ChatMessage(
                 user_email=eff_email,
                 session_id=active_session_id,
                 role="assistant",
-                content=result_message or "कार्य पूरा किया गया।",
+                content=effective_msg,
                 action_type=action,
                 action_data=json.dumps(data) if data else None,
                 confidence=confidence
@@ -1413,7 +1425,7 @@ async def _execute_quick_capture(
                 audit = AuditLog(
                     user_email=eff_email,
                     action_type=f"auto_{action}",
-                    details=result_message,
+                    details=effective_msg,
                     confidence_score=confidence,
                     undo_payload=undo_payload
                 )
@@ -1423,10 +1435,11 @@ async def _execute_quick_capture(
         except Exception as chat_db_err:
             db.rollback()
             try:
+                effective_msg = (result_message and result_message.strip()) or (data.get("response") if isinstance(data, dict) else None) or "प्रतिक्रिया संसाधित की गई।"
                 ai_chat = ChatMessage(
                     user_email=eff_email,
                     role="assistant",
-                    content=result_message or "कार्य पूरा किया गया।",
+                    content=effective_msg,
                     action_type=action,
                     action_data=json.dumps(data) if data else None,
                     confidence=confidence
@@ -2055,6 +2068,42 @@ def create_task(
             if st_name:
                 db.add(Task(user_email=eff_email, title=st_name, parent_id=task.id, priority=task.priority, status="pending"))
         db.commit()
+    return serialize_task(task, db=db)
+
+@app.put("/api/tasks/{task_id}")
+def update_task(
+    task_id: int,
+    req: TaskUpdate,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    query = db.query(Task).filter(Task.id == task_id)
+    if eff_email:
+        query = query.filter(Task.user_email == eff_email)
+    else:
+        query = query.filter(Task.user_email.is_(None))
+    task = query.first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    if req.title is not None and req.title.strip():
+        task.title = req.title.strip()
+    if req.description is not None:
+        task.description = req.description.strip()
+    if req.priority is not None:
+        task.priority = req.priority
+    if req.due_date is not None:
+        task.due_date = req.due_date
+    if req.reminder_time is not None:
+        task.reminder_time = req.reminder_time.strip()
+    if req.recurrence is not None:
+        task.recurrence = req.recurrence
+    if req.status is not None:
+        task.status = req.status
+
+    db.commit()
+    db.refresh(task)
     return serialize_task(task, db=db)
 
 @app.put("/api/tasks/{task_id}/toggle")
@@ -3827,7 +3876,7 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
             db.commit()
             reply_text = f"🧾 *खर्च दर्ज किया गया!*\n\n• **राशि**: ₹{rec.amount:,.2f}\n• **श्रेणी**: {rec.category.title()}\n• **विवरण**: {rec.note}"
         else:
-            reply_text = data_inner.get("response", "कार्य पूरा किया गया।")
+            reply_text = data_inner.get("response") or "प्रतिक्रिया संसाधित की गई।"
 
         if bot_token:
             async with httpx.AsyncClient() as client:
@@ -4225,7 +4274,7 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
                 f"Enjoy the video! 🎵"
             )
         else:
-            reply_text = data_inner.get("response", "कार्य पूरा किया गया।")
+            reply_text = data_inner.get("response") or "प्रतिक्रिया संसाधित की गई।"
 
         # Record WhatsApp conversation into unified Chat History for Aether App
         try:
@@ -4446,40 +4495,133 @@ def delete_routine(
     db.commit()
     return {"status": "deleted", "id": job_id}
 
+class DocumentParseBase64Request(BaseModel):
+    filename: str
+    base64_data: str
+
+@app.post("/api/documents/parse")
+async def parse_document_file(
+    file: UploadFile = File(...),
+    user_email: Optional[str] = Depends(get_user_email)
+):
+    """
+    Accepts any uploaded document (PDF, DOCX, DOC, TXT, MD, CSV, JSON, RTF, TSV, LOG, etc.)
+    and returns extracted clean text, word count, page count, and metadata.
+    """
+    try:
+        content_bytes = await file.read()
+        res = extract_text_from_file(file.filename or "document.txt", content_bytes)
+        return {
+            "success": res.get("success", False),
+            "filename": res.get("filename"),
+            "extension": res.get("extension"),
+            "pages": res.get("pages", 1),
+            "word_count": res.get("word_count", 0),
+            "character_count": res.get("character_count", 0),
+            "text": res.get("text", ""),
+            "preview": (res.get("text") or "")[:400],
+            "error": res.get("error")
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse document: {str(e)}")
+
+@app.post("/api/documents/parse-base64")
+async def parse_document_base64(
+    req: DocumentParseBase64Request,
+    user_email: Optional[str] = Depends(get_user_email)
+):
+    try:
+        raw_b64 = req.base64_data
+        if "," in raw_b64:
+            raw_b64 = raw_b64.split(",", 1)[1]
+        content_bytes = base64.b64decode(raw_b64)
+        res = extract_text_from_file(req.filename or "document.txt", content_bytes)
+        return {
+            "success": res.get("success", False),
+            "filename": res.get("filename"),
+            "extension": res.get("extension"),
+            "pages": res.get("pages", 1),
+            "word_count": res.get("word_count", 0),
+            "character_count": res.get("character_count", 0),
+            "text": res.get("text", ""),
+            "preview": (res.get("text") or "")[:400],
+            "error": res.get("error")
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse base64 document: {str(e)}")
+
 class DocsAskRequest(BaseModel):
     question: str
     document_text: str
     api_key: Optional[str] = None
+    openai_key: Optional[str] = None
 
 @app.post("/api/docs/ask")
-def ask_personal_document(
+async def ask_personal_document(
     req: DocsAskRequest,
     user_email: Optional[str] = Depends(get_user_email)
 ):
-    """Answers questions grounded in user-supplied document/note text."""
+    """Answers questions grounded in user-supplied document/note text with multi-LLM support."""
     q = req.question.strip()
     doc = req.document_text.strip()
     if not q or not doc:
         raise HTTPException(status_code=400, detail="Both question and document_text are required")
 
-    key = (req.api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
+    key = (req.api_key or req.openai_key or os.environ.get("GEMINI_API_KEY", "") or os.environ.get("OPENROUTER_API_KEY", "")).strip()
+
+    doc_context = doc[:28000]
+    sys_instruction = (
+        "You are Aether's document intelligence specialist. Answer the user's question accurately and concisely based strictly on the provided document text. "
+        "Support both English and Hindi. If the answer cannot be found in the document, state that clearly without guessing."
+    )
+    user_prompt = f"Document Content:\n{doc_context}\n\nUser Question: {q}"
+
+    # 1. OpenRouter / OpenAI Key support
+    if key and (key.startswith("sk-") or key.startswith("sk-or-")):
+        endpoint = "https://openrouter.ai/api/v1/chat/completions" if key.startswith("sk-or-") else "https://api.openai.com/v1/chat/completions"
+        candidate_models = (
+            ["google/gemini-2.0-flash-001", "meta-llama/llama-3.3-70b-instruct", "deepseek/deepseek-chat"]
+            if key.startswith("sk-or-")
+            else ["gpt-4o-mini", "gpt-3.5-turbo"]
+        )
+        try:
+            async with httpx.AsyncClient(timeout=18.0) as client:
+                for mod in candidate_models:
+                    try:
+                        resp = await client.post(
+                            endpoint,
+                            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                            json={
+                                "model": mod,
+                                "messages": [
+                                    {"role": "system", "content": sys_instruction},
+                                    {"role": "user", "content": user_prompt}
+                                ],
+                                "temperature": 0.2
+                            }
+                        )
+                        if resp.status_code == 200:
+                            ans = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                            if ans:
+                                return {"answer": ans, "source": f"llm_{mod}"}
+                    except Exception as mod_err:
+                        print(f"[Docs Q&A LLM {mod} err] {mod_err}")
+        except Exception as e:
+            print(f"[Docs Q&A OpenRouter Fallback] {e}")
+
+    # 2. Native Gemini API key support
     if key and not key.startswith("sk-"):
         try:
             import google.generativeai as genai
             genai.configure(api_key=key)
             model = genai.GenerativeModel("gemini-1.5-flash")
-            prompt = (
-                "Answer the user's question strictly using the provided document text. "
-                "If the answer is not in the document, say so clearly.\n\n"
-                f"Document:\n{doc[:24000]}\n\nQuestion: {q}"
-            )
-            resp = model.generate_content(prompt)
+            resp = model.generate_content(f"{sys_instruction}\n\n{user_prompt}")
             if resp and getattr(resp, "text", None):
                 return {"answer": resp.text.strip(), "source": "gemini"}
         except Exception as e:
             print(f"[Docs Q&A Gemini Fallback] {e}")
 
-    # Deterministic keyword-sentence extractive fallback when offline / no key
+    # 3. Deterministic keyword-sentence extractive fallback when offline / no key
     q_words = {w.lower().strip("?.,!") for w in q.split() if len(w) > 2}
     sentences = [s.strip() for s in re.split(r'(?<=[.!?।])\s+|\n+', doc) if s.strip()]
     scored = sorted(
@@ -4487,7 +4629,7 @@ def ask_personal_document(
         key=lambda s: sum(1 for w in q_words if w in s.lower()),
         reverse=True
     )
-    top_matches = [s for s in scored[:3] if sum(1 for w in q_words if w in s.lower()) > 0]
+    top_matches = [s for s in scored[:4] if sum(1 for w in q_words if w in s.lower()) > 0]
     answer = " ".join(top_matches) if top_matches else "No matching information found in the provided document."
     return {"answer": answer, "source": "extractive"}
 

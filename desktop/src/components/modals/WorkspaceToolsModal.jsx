@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { FileText, Upload, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
 
 export const WorkspaceToolsModal = ({
   isOpen,
@@ -104,15 +105,53 @@ export const WorkspaceToolsModal = ({
     } catch {}
   };
 
-  const handleFileUpload = (e) => {
+  const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setDocText(String(reader.result || '').slice(0, 30000));
-      showToast?.(`Loaded ${file.name}`, 'success');
-    };
-    reader.readAsText(file);
+    const ext = (file.name.slice(file.name.lastIndexOf('.')) || '').toLowerCase();
+    const isPlainText = ['.txt', '.md', '.csv', '.json', '.tsv', '.log'].includes(ext);
+
+    setDocLoading(true);
+    showToast?.(`Extracting text from ${file.name}...`, 'info');
+
+    try {
+      if (apiBase) {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch(`${apiBase}/documents/parse`, {
+          method: 'POST',
+          headers: userEmail ? { 'X-User-Email': userEmail } : {},
+          body: formData
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.text) {
+            setDocText(data.text);
+            const pageInfo = data.pages > 1 ? ` (${data.pages} pages, ${data.word_count || data.text.split(/\s+/).length} words)` : ` (${data.word_count || data.text.split(/\s+/).length} words)`;
+            showToast?.(`✅ Loaded ${file.name}${pageInfo}`, 'success');
+            setDocLoading(false);
+            e.target.value = '';
+            return;
+          }
+        }
+      }
+      throw new Error('Server parse unavailable');
+    } catch (err) {
+      if (isPlainText) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const text = String(reader.result || '');
+          setDocText(text);
+          showToast?.(`✅ Loaded ${file.name} (${text.split(/\s+/).length} words)`, 'success');
+          setDocLoading(false);
+        };
+        reader.readAsText(file);
+      } else {
+        showToast?.(`Could not parse ${file.name}. Ensure backend is connected.`, 'error');
+        setDocLoading(false);
+      }
+    }
+    e.target.value = '';
   };
 
   const handleAskDocs = async (e) => {
@@ -244,16 +283,35 @@ export const WorkspaceToolsModal = ({
 
           {activeTab === 'docs' && (
             <form onSubmit={handleAskDocs} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.8rem', color: '#cbd5e1' }}>Paste notes/bill text or load a `.txt`/`.md`/`.csv` file:</span>
-                <label style={{ background: 'rgba(56,189,248,0.15)', border: '1px solid rgba(56,189,248,0.35)', color: '#7dd3fc', padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', cursor: 'pointer' }}>
-                  Upload Text File
-                  <input type="file" accept=".txt,.md,.csv,.json" onChange={handleFileUpload} style={{ display: 'none' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                <span style={{ fontSize: '0.8rem', color: '#cbd5e1' }}>Paste notes/bill text or upload any file (`.pdf`, `.docx`, `.doc`, `.txt`, `.md`, `.csv`):</span>
+                <label style={{
+                  background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.22), rgba(14, 165, 233, 0.14))',
+                  border: '1px solid rgba(56, 189, 248, 0.45)',
+                  color: '#7dd3fc',
+                  padding: '5px 12px',
+                  borderRadius: '10px',
+                  fontSize: '0.76rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  transition: 'all 0.15s ease'
+                }}>
+                  {docLoading ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <FileText size={13} />}
+                  <span>{docLoading ? 'Extracting...' : 'Upload Document'}</span>
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,.txt,.csv,.json,.md,.rtf,.tsv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
+                    onChange={handleFileUpload}
+                    style={{ display: 'none' }}
+                  />
                 </label>
               </div>
               <textarea
                 rows={6}
-                placeholder="Paste document, receipt, or notes here..."
+                placeholder="Paste document, receipt, or notes here, or upload any PDF/DOCX/TXT file above..."
                 value={docText}
                 onChange={(e) => setDocText(e.target.value)}
                 style={{ width: '100%', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '10px', padding: '10px', color: '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
@@ -266,8 +324,9 @@ export const WorkspaceToolsModal = ({
                   onChange={(e) => setDocQuestion(e.target.value)}
                   style={{ flex: 1, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', padding: '8px 10px', color: '#fff', fontSize: '0.82rem' }}
                 />
-                <button type="submit" disabled={docLoading} style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 16px', borderRadius: '8px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}>
-                  {docLoading ? 'Asking...' : 'Ask'}
+                <button type="submit" disabled={docLoading} style={{ background: '#38bdf8', border: 'none', color: '#080c16', padding: '8px 16px', borderRadius: '8px', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {docLoading && <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />}
+                  <span>{docLoading ? 'Thinking...' : 'Ask'}</span>
                 </button>
               </div>
               {docAnswer && (

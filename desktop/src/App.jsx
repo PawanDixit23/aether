@@ -70,7 +70,9 @@ import {
   LayoutDashboard,
   Phone,
   Mail,
-  Copy
+  Copy,
+  Reply,
+  Loader2
 } from 'lucide-react';
 
 const YoutubeIcon = ({ size = 20, color = "#fff" }) => (
@@ -505,8 +507,9 @@ export default function App() {
   const [gcalIcalUrl, setGcalIcalUrl] = useState(() => localStorage.getItem('aether_gcal_ical_url') || '');
   const [showGCalConnectModal, setShowGCalConnectModal] = useState(false);
   const icsFileInputRef = useRef(null);
-
+  const chatInputRef = useRef(null);
   const [inputText, setInputText] = useState('');
+  const [replyingToMessage, setReplyingToMessage] = useState(null); // { id, role, content }
   const [isProcessing, setIsProcessing] = useState(false);
   const isProcessingRef = useRef(false);
   const [isListening, setIsListening] = useState(false);
@@ -2530,17 +2533,76 @@ export default function App() {
     e.target.value = '';
   };
 
-  const handleDocumentFileChange = (e) => {
+  const handleDocumentFileChange = async (e) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setAttachedMediaList(prev => [...prev, {
-        id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        type: 'file',
-        name: file.name,
-        size: (file.size / 1024).toFixed(1) + ' KB'
-      }].slice(0, 6));
-      setShowDashboard(false);
-      showToast(`📁 File attached: ${file.name}`, 'success');
+    if (!file) return;
+
+    const fileId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const ext = (file.name.slice(file.name.lastIndexOf('.')) || '').toLowerCase();
+    const sizeStr = (file.size / 1024).toFixed(1) + ' KB';
+    const isPlainText = ['.txt', '.md', '.csv', '.json', '.tsv', '.log'].includes(ext);
+
+    // Optimistically add media chip with loading state
+    setAttachedMediaList(prev => [...prev, {
+      id: fileId,
+      type: 'file',
+      name: file.name,
+      size: sizeStr,
+      ext: ext,
+      loading: true,
+      content: ''
+    }].slice(0, 6));
+    setShowDashboard(false);
+    showToast(`📄 Reading & extracting ${file.name}...`, 'info');
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch(`${API_BASE}/documents/parse`, {
+        method: 'POST',
+        headers: userEmail ? { 'X-User-Email': userEmail } : {},
+        body: formData
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.text) {
+          setAttachedMediaList(prev => prev.map(item => item.id === fileId ? {
+            ...item,
+            loading: false,
+            content: data.text,
+            pages: data.pages,
+            word_count: data.word_count,
+            preview: data.preview
+          } : item));
+          const pageInfo = data.pages > 1 ? ` (${data.pages} pages, ${data.word_count} words)` : ` (${data.word_count} words)`;
+          showToast(`✅ ${file.name} ready${pageInfo}`, 'success');
+          e.target.value = '';
+          return;
+        }
+      }
+      throw new Error('Server parse failed');
+    } catch (err) {
+      if (isPlainText) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const text = String(reader.result || '');
+          setAttachedMediaList(prev => prev.map(item => item.id === fileId ? {
+            ...item,
+            loading: false,
+            content: text,
+            word_count: text.split(/\s+/).length
+          } : item));
+          showToast(`✅ ${file.name} attached (${text.split(/\s+/).length} words)`, 'success');
+        };
+        reader.readAsText(file);
+      } else {
+        setAttachedMediaList(prev => prev.map(item => item.id === fileId ? {
+          ...item,
+          loading: false,
+          error: 'Could not extract text'
+        } : item));
+        showToast(`⚠️ Could not parse text from ${file.name}. Ensure backend server is running.`, 'error');
+      }
     }
     e.target.value = '';
   };
@@ -3282,10 +3344,9 @@ export default function App() {
 
         // Guard against race conditions: only update if activeSessionId hasn't changed during fetch
         if (activeSessionIdRef.current === curSessionId) {
-          if (currentEmail && curSessionId) {
-            try {
-              localStorage.setItem(`aether_chat_history_${currentEmail}_${curSessionId}`, JSON.stringify(normalizedChats));
-            } catch (e) {}
+          // Never overwrite temporary chat with server history
+          if (curSessionId.startsWith('temp_') || curSessionId === 'temporary') {
+            return;
           }
 
           setChatHistory(prev => {
@@ -3295,21 +3356,37 @@ export default function App() {
             if (isProcessingRef.current) {
               return prev;
             }
-            if (normalizedChats.length === 0) {
-              return [];
-            }
-            if (prev.length === normalizedChats.length && prev[prev.length - 1]?.content === normalizedChats[normalizedChats.length - 1]?.content) {
+            // If server returned empty, but local has messages, DO NOT delete active messages!
+            if (!normalizedChats || normalizedChats.length === 0) {
               return prev;
             }
-            // Avoid wiping out active media players (like YouTube embed iframe) if the latest message matches
-            if (prev.length > 0 && normalizedChats.length > 0) {
-              const lastPrev = prev[prev.length - 1];
-              const lastNorm = normalizedChats[normalizedChats.length - 1];
-              if (lastPrev.content === lastNorm.content && lastPrev.role === lastNorm.role) {
-                return prev;
+
+            // Merge local optimistic messages that haven't reached or returned from server yet
+            const missingFromNorm = prev.filter(pMsg => {
+              if (pMsg.id && normalizedChats.some(s => s.id === pMsg.id)) {
+                return false;
               }
+              if (normalizedChats.some(s => s.role === pMsg.role && s.content === pMsg.content)) {
+                return false;
+              }
+              return true;
+            });
+
+            const merged = [...normalizedChats, ...missingFromNorm];
+
+            // If nothing changed, return prev to preserve references (e.g. video iframe playback)
+            if (prev.length === merged.length) {
+              const allMatch = prev.every((p, idx) => p.role === merged[idx]?.role && p.content === merged[idx]?.content);
+              if (allMatch) return prev;
             }
-            return normalizedChats;
+
+            if (currentEmail && curSessionId) {
+              try {
+                localStorage.setItem(`aether_chat_history_${currentEmail}_${curSessionId}`, JSON.stringify(merged));
+              } catch (e) {}
+            }
+
+            return merged;
           });
         }
       }
@@ -4134,12 +4211,46 @@ export default function App() {
     }
   };
 
+  // WhatsApp-style Re-ask handler (loads prompt into input, focuses and scrolls)
+  const handleReaskMessage = (text) => {
+    if (!text) return;
+    setInputText(text);
+    setShowConversation(true);
+    showToast("Question loaded into input bar! 🔁", 'info');
+    setTimeout(() => {
+      if (chatInputRef.current) {
+        chatInputRef.current.focus();
+        chatInputRef.current.style.height = 'auto';
+        chatInputRef.current.style.height = Math.min(chatInputRef.current.scrollHeight, 120) + 'px';
+      }
+    }, 60);
+  };
+
+  // WhatsApp-style Quote/Reply handler
+  const handleQuoteReply = (msg) => {
+    if (!msg) return;
+    setReplyingToMessage({
+      id: msg.id,
+      role: msg.role === 'user' ? 'user' : 'assistant',
+      content: msg.content
+    });
+    setShowConversation(true);
+    setTimeout(() => {
+      if (chatInputRef.current) {
+        chatInputRef.current.focus();
+      }
+    }, 60);
+  };
+
   // Send Command / Prompt
   const handleSendPrompt = async (textToSend) => {
     const rawPrompt = (textToSend || inputText).trim();
     const hasAttachments = attachedMediaList.length > 0;
     if (!rawPrompt && !hasAttachments) return;
     if (isProcessing) return;
+
+    const activeReplyContext = replyingToMessage;
+    setReplyingToMessage(null);
 
     let prompt = rawPrompt;
     // Direct voice trigger for Executive Briefing
@@ -4155,7 +4266,12 @@ export default function App() {
         if (item.type === 'image' && item.url) {
           sendingImages.push(item.url);
         } else if (item.type === 'file') {
-          contextPrefixes.push(`[Attached File: ${item.name} (${item.size || ''})]`);
+          if (item.content) {
+            const pageStr = item.pages > 1 ? `, ${item.pages} pages` : '';
+            contextPrefixes.push(`[Attached Document: "${item.name}" (${item.size || ''}${pageStr}, ${item.word_count || 0} words):\n${item.content.slice(0, 32000)}\n--- End of Document "${item.name}" ---]`);
+          } else {
+            contextPrefixes.push(`[Attached File: ${item.name} (${item.size || ''})]`);
+          }
         } else if (item.type === 'drive') {
           contextPrefixes.push(`[Google Drive: ${item.url}]`);
         } else if (item.type === 'map') {
@@ -4186,6 +4302,7 @@ export default function App() {
         content: prompt, 
         image_url: sendingImageUrl,
         images: sendingImages.length > 0 ? sendingImages : undefined,
+        reply_to: activeReplyContext ? { role: activeReplyContext.role, content: activeReplyContext.content } : undefined,
         created_at: new Date().toISOString() 
       }];
       if (!isTemporaryChat && userEmail && curSessionId) {
@@ -4220,8 +4337,12 @@ export default function App() {
     setShowConversation(true);
 
     try {
+      const fullPrompt = activeReplyContext
+        ? `[Replying to ${activeReplyContext.role === 'user' ? 'my previous question' : 'Aether'}: "${activeReplyContext.content.slice(0, 200)}"]\n\n${prompt}`
+        : prompt;
+
       const payload = {
-        input_text: prompt,
+        input_text: fullPrompt,
         image_data: sendingImageUrl || null,
         images: sendingImages.length > 0 ? sendingImages : null,
         session_id: curSessionId,
@@ -4680,6 +4801,43 @@ export default function App() {
         }
       }
     });
+  };
+
+  const handleUpdateTask = async (taskId, updates) => {
+    if (!taskId || !updates) return false;
+    const effEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+
+    // Optimistic local update
+    setTasks(prev => prev.map(t => {
+      if (String(t.id) === String(taskId)) {
+        return { ...t, ...updates };
+      }
+      return t;
+    }));
+
+    try {
+      const resp = await fetch(`${API_BASE}/tasks/${taskId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(effEmail ? { 'X-User-Email': effEmail } : {})
+        },
+        body: JSON.stringify(updates)
+      });
+      if (resp.ok) {
+        const saved = await resp.json();
+        setTasks(prev => prev.map(t => String(t.id) === String(taskId) ? { ...t, ...saved } : t));
+        showToast("Reminder updated! ⏰", 'success');
+        return true;
+      } else {
+        showToast("Failed to update reminder", 'error');
+        return false;
+      }
+    } catch (err) {
+      console.error("Task update error:", err);
+      showToast("Network error updating reminder", 'error');
+      return false;
+    }
   };
 
   const handleCreateTask = async (e, customTitle, customDateStr, customPriority) => {
@@ -6281,6 +6439,31 @@ export default function App() {
                           </div>
                         );
                       })()}
+                      {msg.reply_to && (
+                        <div style={{
+                          background: msg.role === 'user' ? 'rgba(0, 0, 0, 0.35)' : 'rgba(56, 189, 248, 0.08)',
+                          borderLeft: '3px solid #38bdf8',
+                          padding: '6px 10px',
+                          borderRadius: '8px',
+                          marginBottom: '8px',
+                          fontSize: '0.74rem',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '2px',
+                          maxWidth: '100%',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
+                          borderLeftWidth: '3px',
+                          borderLeftColor: '#38bdf8'
+                        }}>
+                          <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Reply size={11} />
+                            <span>{msg.reply_to.role === 'user' ? 'You' : 'Aether'}</span>
+                          </div>
+                          <div style={{ color: '#cbd5e1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.72rem' }}>
+                            {msg.reply_to.content}
+                          </div>
+                        </div>
+                      )}
                       <FormattedMessage text={msg.content} />
                       {(() => {
                         const actType = msg.action || msg.action_type;
@@ -6916,6 +7099,94 @@ export default function App() {
                             </div>
                           );
                         }
+                        if (actType === 'task' || (aData?.title && (aData?.reminder_time || aData?.due_date))) {
+                          const reminderTitle = aData?.title || 'Reminder Scheduled';
+                          const reminderTime = aData?.reminder_time || (aData?.due_date ? new Date(aData.due_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Scheduled');
+                          const reminderDesc = aData?.description || aData?.note || '';
+
+                          return (
+                            <div style={{
+                              marginTop: '10px',
+                              padding: '12px 14px',
+                              borderRadius: '14px',
+                              background: 'rgba(13, 148, 136, 0.08)',
+                              border: '1px solid rgba(13, 148, 136, 0.3)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '8px'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                                  <div style={{
+                                    width: '34px',
+                                    height: '34px',
+                                    borderRadius: '8px',
+                                    background: 'linear-gradient(135deg, #0d9488, #0f766e)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    flexShrink: 0,
+                                    boxShadow: '0 2px 8px rgba(13, 148, 136, 0.4)'
+                                  }}>
+                                    <Clock size={18} color="#fff" />
+                                  </div>
+                                  <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                      {reminderTitle}
+                                    </div>
+                                    <div style={{ fontSize: '0.72rem', color: '#2dd4bf', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                      <span>⏰ {reminderTime}</span>
+                                      {aData?.priority && <span style={{ textTransform: 'capitalize' }}>• {aData.priority}</span>}
+                                    </div>
+                                  </div>
+                                </div>
+                                <span style={{ fontSize: '0.68rem', padding: '2px 8px', borderRadius: '6px', background: 'rgba(13, 148, 136, 0.18)', color: '#2dd4bf', fontWeight: 700 }}>
+                                  Reminder Set
+                                </span>
+                              </div>
+
+                              {reminderDesc && (
+                                <div style={{
+                                  background: 'rgba(15, 23, 42, 0.5)',
+                                  padding: '8px 10px',
+                                  borderRadius: '8px',
+                                  fontSize: '0.76rem',
+                                  color: '#cbd5e1',
+                                  lineHeight: '1.4',
+                                  border: '1px solid rgba(255,255,255,0.06)'
+                                }}>
+                                  {reminderDesc}
+                                </div>
+                              )}
+
+                              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '2px' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveSubModal('reminders');
+                                    setRemindersViewMode('list');
+                                  }}
+                                  style={{
+                                    background: 'rgba(56, 189, 248, 0.1)',
+                                    border: '1px solid rgba(56, 189, 248, 0.3)',
+                                    color: '#38bdf8',
+                                    borderRadius: '8px',
+                                    padding: '5px 12px',
+                                    fontSize: '0.74rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px'
+                                  }}
+                                >
+                                  <Edit3 size={12} />
+                                  <span>Edit Reminder / Description</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        }
                         return null;
                       })()}
                       {msg.role !== 'user' && (
@@ -6946,6 +7217,49 @@ export default function App() {
                             >
                               {isSpeaking ? <Pause size={12} /> : <Volume2 size={12} />}
                               <span>{isSpeaking ? 'Stop' : 'Listen'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleQuoteReply(msg)}
+                              title="Quote / Reply to this response"
+                              style={{
+                                background: 'rgba(255, 255, 255, 0.06)',
+                                border: '1px solid rgba(255, 255, 255, 0.12)',
+                                color: '#38bdf8',
+                                borderRadius: '8px',
+                                padding: '3px 8px',
+                                fontSize: '0.72rem',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                            >
+                              <Reply size={12} />
+                              <span>Reply</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard?.writeText(msg.content);
+                                showToast("Copied to clipboard! 📋", 'success');
+                              }}
+                              title="Copy response text"
+                              style={{
+                                background: 'rgba(255, 255, 255, 0.06)',
+                                border: '1px solid rgba(255, 255, 255, 0.12)',
+                                color: '#94a3b8',
+                                borderRadius: '8px',
+                                padding: '3px 8px',
+                                fontSize: '0.72rem',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                            >
+                              <Copy size={12} />
+                              <span>Copy</span>
                             </button>
                           </div>
                           {idx === chatHistory.length - 1 && !isProcessing && (() => {
@@ -6991,6 +7305,72 @@ export default function App() {
                               </div>
                             );
                           })()}
+                        </div>
+                      )}
+                      {msg.role === 'user' && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px', marginTop: '6px' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleReaskMessage(msg.content)}
+                            title="Re-ask this question (पुनः पूछें)"
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.08)',
+                              border: '1px solid rgba(255, 255, 255, 0.15)',
+                              color: '#e2e8f0',
+                              borderRadius: '7px',
+                              padding: '2px 8px',
+                              fontSize: '0.68rem',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <RotateCcw size={11} />
+                            <span>Re-ask</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleQuoteReply(msg)}
+                            title="Reply / Quote (उत्तर दें)"
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.08)',
+                              border: '1px solid rgba(255, 255, 255, 0.15)',
+                              color: '#38bdf8',
+                              borderRadius: '7px',
+                              padding: '2px 8px',
+                              fontSize: '0.68rem',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <Reply size={11} />
+                            <span>Reply</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard?.writeText(msg.content);
+                              showToast("Copied to clipboard! 📋", 'success');
+                            }}
+                            title="Copy question text"
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.08)',
+                              border: '1px solid rgba(255, 255, 255, 0.15)',
+                              color: '#94a3b8',
+                              borderRadius: '7px',
+                              padding: '2px 7px',
+                              fontSize: '0.68rem',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <Copy size={11} />
+                          </button>
                         </div>
                       )}
                     </div>
@@ -7043,11 +7423,17 @@ export default function App() {
                     padding: '0 12px 6px'
                   }}>
                     {attachedMediaList.map((item) => (
-                      <div key={item.id} className="gemini-attached-chip" style={{ margin: 0 }}>
+                      <div key={item.id} className="gemini-attached-chip" style={{ margin: 0, display: 'inline-flex', alignItems: 'center' }}>
                         {item.type === 'image' && (
                           <img src={item.url} alt="Attached" className="gemini-attached-thumb" />
                         )}
-                        {item.type === 'file' && <FileText size={15} color="#fbbf24" />}
+                        {item.type === 'file' && (
+                          item.loading ? (
+                            <Loader2 size={14} color="#38bdf8" style={{ animation: 'spin 1s linear infinite' }} />
+                          ) : (
+                            <FileText size={15} color="#fbbf24" />
+                          )
+                        )}
                         {item.type === 'drive' && <HardDrive size={15} color="#34d399" />}
                         {item.type === 'map' && <MapPin size={15} color="#fb7185" />}
                         <span
@@ -7058,10 +7444,53 @@ export default function App() {
                             }
                           }}
                           style={{ cursor: item.type === 'map' ? 'pointer' : 'default' }}
-                          title={item.type === 'map' ? 'Click to open Map' : item.name}
+                          title={item.type === 'map' ? 'Click to open Map' : `${item.name} (${item.size || ''})`}
                         >
                           {item.name}
                         </span>
+                        {item.type === 'file' && item.content && (
+                          <>
+                            <span style={{ fontSize: '0.66rem', color: '#38bdf8', background: 'rgba(56,189,248,0.14)', border: '1px solid rgba(56,189,248,0.3)', padding: '1px 5px', borderRadius: '4px', marginLeft: '3px' }}>
+                              {item.pages > 1 ? `${item.pages}p` : `${item.word_count || ''}w`}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                try {
+                                  const factToSave = `${item.name}: ${item.content.slice(0, 1500)}`;
+                                  const res = await fetch(`${API_BASE}/memory`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json', ...(userEmail ? { 'X-User-Email': userEmail } : {}) },
+                                    body: JSON.stringify({ fact: factToSave, category: 'personal', user_email: userEmail || null })
+                                  });
+                                  if (res.ok) {
+                                    showToast(`✅ Saved ${item.name} to Memory Vault!`, 'success');
+                                    refreshAllData?.();
+                                  } else {
+                                    showToast('Failed to save to Memory Vault', 'error');
+                                  }
+                                } catch {
+                                  showToast('Error saving to Memory Vault', 'error');
+                                }
+                              }}
+                              style={{
+                                background: 'rgba(56, 189, 248, 0.16)',
+                                border: '1px solid rgba(56, 189, 248, 0.35)',
+                                color: '#7dd3fc',
+                                borderRadius: '6px',
+                                padding: '2px 6px',
+                                fontSize: '0.66rem',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                marginLeft: '4px'
+                              }}
+                              title="Save this document directly to Memory Vault"
+                            >
+                              💾 Vault
+                            </button>
+                          </>
+                        )}
                         <button
                           type="button"
                           className="gemini-attached-remove"
@@ -7111,6 +7540,64 @@ export default function App() {
                   }}>
                     <Clock size={13} />
                     <span>Temporary Chat Active — Messages will not be saved</span>
+                  </div>
+                )}
+
+                {replyingToMessage && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '10px',
+                    padding: '8px 12px',
+                    borderRadius: '12px',
+                    background: 'rgba(15, 23, 42, 0.95)',
+                    border: '1px solid rgba(56, 189, 248, 0.35)',
+                    borderLeftWidth: '4px',
+                    borderLeftColor: '#38bdf8',
+                    backdropFilter: 'blur(12px)',
+                    boxShadow: '0 4px 14px rgba(0,0,0,0.3)',
+                    animation: 'fadeIn 0.2s ease',
+                    width: '100%',
+                    maxWidth: '800px',
+                    margin: '0 auto 8px'
+                  }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, gap: '2px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.70rem', fontWeight: 700, color: '#38bdf8' }}>
+                        <Reply size={12} />
+                        <span>Replying to {replyingToMessage.role === 'user' ? 'your question' : 'Aether'}</span>
+                      </div>
+                      <div style={{
+                        fontSize: '0.76rem',
+                        color: '#cbd5e1',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        maxWidth: '520px'
+                      }}>
+                        {replyingToMessage.content}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReplyingToMessage(null)}
+                      style={{
+                        background: 'rgba(255,255,255,0.08)',
+                        border: 'none',
+                        color: '#94a3b8',
+                        borderRadius: '50%',
+                        width: '24px',
+                        height: '24px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        flexShrink: 0
+                      }}
+                      title="Cancel reply"
+                    >
+                      <X size={14} />
+                    </button>
                   </div>
                 )}
 
@@ -7250,6 +7737,7 @@ export default function App() {
                   )}
 
                   <textarea 
+                    ref={chatInputRef}
                     rows={1}
                     className="gemini-input-field"
                     placeholder={attachedMediaList.some(m => m.type === 'image') ? "Ask a question about these photos..." : ROTATING_PROMPTS[promptPlaceholderIndex]}
@@ -7866,6 +8354,7 @@ export default function App() {
         handleToggleTask={handleToggleTask}
         handleDeleteTask={handleDeleteTask}
         handleCreateTask={handleCreateTask}
+        handleUpdateTask={handleUpdateTask}
         newTaskInput={newTaskInput}
         setNewTaskInput={setNewTaskInput}
         handleRescheduleAllOverdue={handleRescheduleAllOverdue}

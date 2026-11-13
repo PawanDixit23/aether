@@ -1942,6 +1942,12 @@ Output Format (strictly valid JSON with no markdown wrapping):
 }}
 """
 
+def _clean_extracted_text(text: str) -> str:
+    if not text:
+        return ""
+    text = text.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t').replace('\\\\', '\\')
+    return text.strip()
+
 def _extract_llm_action_dict(raw_text: str, user_input: str, is_cricket_query: bool, live_cricket_matches: list) -> dict:
     if not raw_text or not raw_text.strip():
         return None
@@ -1984,7 +1990,20 @@ def _extract_llm_action_dict(raw_text: str, user_input: str, is_cricket_query: b
             elif fallback_dict.get("data", {}).get("response"):
                 clean_resp = fallback_dict["data"]["response"]
         except Exception:
-            clean_resp = "कार्य पूरा कर लिया गया है।"
+            resp_match = re.search(r'"response"\s*:\s*"((?:[^"\\]|\\.)*)"', clean_resp, re.DOTALL)
+            if resp_match:
+                clean_resp = _clean_extracted_text(resp_match.group(1))
+            else:
+                exp_match = re.search(r'"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"', clean_resp, re.DOTALL)
+                if exp_match:
+                    clean_resp = _clean_extracted_text(exp_match.group(1))
+                else:
+                    clean_resp = re.sub(r'^\s*\{\s*"action"\s*:\s*"[^"]+"\s*,\s*"data"\s*:\s*\{\s*"response"\s*:\s*"?', '', clean_resp, flags=re.DOTALL)
+                    clean_resp = re.sub(r'"?\s*\}\s*,\s*"explanation"\s*:.*$', '', clean_resp, flags=re.DOTALL)
+                    clean_resp = re.sub(r'"?\s*\}\s*\}\s*$', '', clean_resp, flags=re.DOTALL).strip()
+
+    if not clean_resp or not clean_resp.strip():
+        clean_resp = raw_text
 
     return {
         "action": "query",
@@ -2461,56 +2480,9 @@ async def parse_intent_with_llm(
                             if not raw_text:
                                 continue
                             
-                            json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-                            if json_match:
-                                try:
-                                    json_str = json_match.group(0)
-                                    json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
-                                    parsed = json.loads(json_str)
-                                    # Attach live cricket scorecard if cricket query
-                                    if is_cricket_query and live_cricket_matches:
-                                        if not parsed.get("data"):
-                                            parsed["data"] = {}
-                                        parsed["data"]["matches"] = live_cricket_matches
-                                        parsed["action"] = "cricket_scorecard"
-
-                                    # Ensure reminder time is captured even if LLM left it out
-                                    if parsed.get("action") == "task":
-                                        try:
-                                            r_time, r_dt = parse_reminder_time(user_input)
-                                            if r_time and not parsed.get("data", {}).get("reminder_time"):
-                                                parsed["data"]["reminder_time"] = r_time
-                                            if r_dt and not parsed.get("data", {}).get("due_date"):
-                                                parsed["data"]["due_date"] = r_dt.isoformat()
-                                        except Exception as t_err:
-                                            print(f"[Aether Engine] Reminder parse notice: {t_err}")
-                                    return parsed
-                                except Exception as parse_err:
-                                    print(f"[Aether Engine] JSON parse error: {parse_err}")
-
-                            # Never return raw JSON code blocks as a query response
-                            clean_resp = raw_text
-                            if "```json" in clean_resp or (clean_resp.startswith("{") and "action" in clean_resp):
-                                clean_resp = re.sub(r'^```(?:json)?\s*', '', clean_resp, flags=re.IGNORECASE)
-                                clean_resp = re.sub(r'\s*```$', '', clean_resp).strip()
-                                try:
-                                    fallback_dict = json.loads(clean_resp)
-                                    if fallback_dict.get("action"):
-                                        return fallback_dict
-                                    if fallback_dict.get("explanation"):
-                                        clean_resp = fallback_dict.get("explanation")
-                                    elif fallback_dict.get("data", {}).get("response"):
-                                        clean_resp = fallback_dict["data"]["response"]
-                                except Exception:
-                                    clean_resp = "कार्य पूरा कर लिया गया है।"
-
-                            return {
-                                "action": "query",
-                                "confidence": 0.98,
-                                "confidence_level": "high",
-                                "data": { "response": clean_resp },
-                                "explanation": "Processed natural response"
-                            }
+                            action_dict = _extract_llm_action_dict(raw_text, user_input, is_cricket_query, live_cricket_matches)
+                            if action_dict:
+                                return action_dict
                         else:
                             print(f"[Aether Gemini] ⚠️ {model} returned HTTP {resp.status_code}: {resp.text}")
                             if resp.status_code == 403 or "leaked" in resp.text.lower() or "permission_denied" in resp.text.lower():
@@ -3083,14 +3055,30 @@ def rule_based_fallback(text: str, context: dict = None) -> dict:
             pass
 
     # Memory detection
-    if any(w in text_lower for w in ["याद रखना", "remember", "note down", "meri preference", "yaad rakhna", "rule"]):
-        fact = re.sub(r'^(याद रखना|remember that|remember|note that)\s*[:,-]?\s*', '', text, flags=re.IGNORECASE)
+    if any(w in text_lower for w in ["याद रखना", "remember", "note down", "meri preference", "yaad rakhna", "rule", "save to memory", "save in memory", "save to vault", "save in vault", "memory vault", "मेमोरी में"]):
+        fact = re.sub(r'^(याद रखना|remember that|remember|note that|save to memory vault|save in memory vault|save to memory|save in memory|save to vault|save in vault)\s*[:,-]?\s*', '', text, flags=re.IGNORECASE)
+        # If prompt has an attached document, capture key summary for memory vault
+        doc_match = re.search(r'\[Attached Document:\s*"([^"]+)"[^\n]*\n(.*?)--- End of Document', text, re.DOTALL)
+        if doc_match:
+            doc_name = doc_match.group(1)
+            doc_body = doc_match.group(2).strip()
+            fact_summary = f"{doc_name}: {doc_body[:500]}"
+            return {
+                "action": "memory",
+                "confidence": 0.98,
+                "confidence_level": "high",
+                "data": {
+                    "fact": fact_summary,
+                    "category": "personal"
+                },
+                "explanation": f"Document {doc_name} saved to Memory Vault"
+            }
         return {
             "action": "memory",
             "confidence": 0.96,
             "confidence_level": "high",
             "data": {
-                "fact": fact.strip(),
+                "fact": fact.strip() or text.strip(),
                 "category": "preference"
             },
             "explanation": "Rule-based detection identified personal memory fact"

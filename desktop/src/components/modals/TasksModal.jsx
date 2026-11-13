@@ -18,7 +18,8 @@ import {
   Inbox,
   Sparkles,
   Layers,
-  X
+  X,
+  Edit3
 } from 'lucide-react';
 
 export const TasksModal = ({
@@ -36,6 +37,7 @@ export const TasksModal = ({
   handleToggleTask,
   handleDeleteTask,
   handleCreateTask,
+  handleUpdateTask,
   newTaskInput = '',
   setNewTaskInput,
   handleRescheduleAllOverdue,
@@ -66,6 +68,49 @@ export const TasksModal = ({
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
   const [localExpanded, setLocalExpanded] = useState({});
   const dateInputRef = useRef(null);
+
+  // Reminder / Task Editing State (Allows updating reminder description, title, time)
+  const [editingTaskId, setEditingTaskId] = useState(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editReminderTime, setEditReminderTime] = useState('');
+  const [editPriority, setEditPriority] = useState('medium');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  const handleStartEditTask = (t) => {
+    setEditingTaskId(t.id);
+    setEditTitle(t.title || '');
+    setEditDescription(t.description || '');
+    setEditReminderTime(t.reminder_time || '');
+    setEditPriority(t.priority || 'medium');
+  };
+
+  const handleCancelEditTask = () => {
+    setEditingTaskId(null);
+    setEditTitle('');
+    setEditDescription('');
+    setEditReminderTime('');
+  };
+
+  const handleSaveTaskEdit = async (taskId) => {
+    if (!editTitle.trim()) return;
+    setIsSavingEdit(true);
+    try {
+      if (handleUpdateTask) {
+        await handleUpdateTask(taskId, {
+          title: editTitle.trim(),
+          description: editDescription.trim(),
+          reminder_time: editReminderTime.trim() || null,
+          priority: editPriority
+        });
+      }
+      setEditingTaskId(null);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
 
   // Persistent date-specific completions for recurring tasks: { [taskId]: { [dateStr]: boolean } }
   const [taskDateCompletions, setTaskDateCompletions] = useState(() => {
@@ -1037,183 +1082,347 @@ export const TasksModal = ({
                     transition: 'all 0.15s ease'
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
-                    
-                    {/* Squircle Checkbox with Date-Aware Toggle */}
-                    <div
-                      onClick={() => !t.is_google_calendar && onToggleTaskInternal(t)}
-                      style={{
-                        width: '24px',
-                        height: '24px',
-                        borderRadius: '8px',
-                        border: done 
-                          ? '2px solid #10B981' 
-                          : overdue 
-                            ? '2px solid #EF4444' 
-                            : '2px solid #475569',
-                        background: done ? '#10B981' : 'transparent',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        cursor: t.is_google_calendar ? 'default' : 'pointer',
-                        flexShrink: 0,
-                        marginTop: '2px',
-                        transition: 'all 0.15s ease'
-                      }}
-                    >
-                      {done && <Check size={15} color="#FFFFFF" strokeWidth={3.2} />}
+                  {editingTaskId === t.id ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '4px 0', width: '100%' }}>
+                      <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#38bdf8' }}>
+                        ✏️ Edit Reminder
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.70rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Title</label>
+                        <input
+                          type="text"
+                          value={editTitle}
+                          onChange={(e) => setEditTitle(e.target.value)}
+                          placeholder="Reminder title..."
+                          style={{
+                            width: '100%',
+                            boxSizing: 'border-box',
+                            background: 'rgba(255, 255, 255, 0.05)',
+                            border: '1px solid rgba(56, 189, 248, 0.4)',
+                            borderRadius: '8px',
+                            padding: '8px 10px',
+                            color: '#fff',
+                            fontSize: '0.84rem'
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.70rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Description / Notes</label>
+                        <textarea
+                          rows={2}
+                          value={editDescription}
+                          onChange={(e) => setEditDescription(e.target.value)}
+                          placeholder="Add or update reminder description / details..."
+                          style={{
+                            width: '100%',
+                            boxSizing: 'border-box',
+                            background: 'rgba(255, 255, 255, 0.05)',
+                            border: '1px solid rgba(255, 255, 255, 0.15)',
+                            borderRadius: '8px',
+                            padding: '8px 10px',
+                            color: '#cbd5e1',
+                            fontSize: '0.80rem',
+                            resize: 'vertical'
+                          }}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <div style={{ flex: 1, minWidth: '120px' }}>
+                          <label style={{ fontSize: '0.70rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Reminder Time</label>
+                          <input
+                            type="text"
+                            value={editReminderTime}
+                            onChange={(e) => setEditReminderTime(e.target.value)}
+                            placeholder="e.g. 5:00 PM"
+                            style={{
+                              width: '100%',
+                              boxSizing: 'border-box',
+                              background: 'rgba(255, 255, 255, 0.05)',
+                              border: '1px solid rgba(255, 255, 255, 0.15)',
+                              borderRadius: '8px',
+                              padding: '7px 9px',
+                              color: '#fff',
+                              fontSize: '0.80rem'
+                            }}
+                          />
+                        </div>
+                        <div style={{ flex: 1, minWidth: '100px' }}>
+                          <label style={{ fontSize: '0.70rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Priority</label>
+                          <select
+                            value={editPriority}
+                            onChange={(e) => setEditPriority(e.target.value)}
+                            style={{
+                              width: '100%',
+                              boxSizing: 'border-box',
+                              background: '#0e172a',
+                              border: '1px solid rgba(255, 255, 255, 0.15)',
+                              borderRadius: '8px',
+                              padding: '7px 9px',
+                              color: '#cbd5e1',
+                              fontSize: '0.80rem'
+                            }}
+                          >
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="urgent">Urgent</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '4px' }}>
+                        <button
+                          type="button"
+                          onClick={handleCancelEditTask}
+                          style={{
+                            background: 'rgba(255, 255, 255, 0.08)',
+                            border: 'none',
+                            color: '#94a3b8',
+                            padding: '6px 14px',
+                            borderRadius: '8px',
+                            fontSize: '0.76rem',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSavingEdit || !editTitle.trim()}
+                          onClick={() => handleSaveTaskEdit(t.id)}
+                          style={{
+                            background: 'linear-gradient(135deg, #10b981, #059669)',
+                            border: 'none',
+                            color: '#fff',
+                            padding: '6px 16px',
+                            borderRadius: '8px',
+                            fontSize: '0.76rem',
+                            fontWeight: 700,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {isSavingEdit ? 'Saving...' : 'Save Changes'}
+                        </button>
+                      </div>
                     </div>
-
-                    {/* Content */}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        color: done ? '#64748B' : '#F8FAFC',
-                        fontSize: '0.92rem',
-                        fontWeight: 600,
-                        textDecoration: done ? 'line-through' : 'none',
-                        wordBreak: 'break-word',
-                        lineHeight: 1.35
-                      }}>
-                        {t.title}
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+                      
+                      {/* Squircle Checkbox with Date-Aware Toggle */}
+                      <div
+                        onClick={() => !t.is_google_calendar && onToggleTaskInternal(t)}
+                        style={{
+                          width: '24px',
+                          height: '24px',
+                          borderRadius: '8px',
+                          border: done 
+                            ? '2px solid #10B981' 
+                            : overdue 
+                              ? '2px solid #EF4444' 
+                              : '2px solid #475569',
+                          background: done ? '#10B981' : 'transparent',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: t.is_google_calendar ? 'default' : 'pointer',
+                          flexShrink: 0,
+                          marginTop: '2px',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        {done && <Check size={15} color="#FFFFFF" strokeWidth={3.2} />}
                       </div>
 
-                      {/* Metadata row */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '5px', flexWrap: 'wrap' }}>
-                        
-                        <span style={{
-                          color: done ? '#64748B' : overdue ? '#F87171' : '#94A3B8',
-                          fontSize: '0.70rem',
-                          fontWeight: 500,
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px'
+                      {/* Content */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{
+                          color: done ? '#64748B' : '#F8FAFC',
+                          fontSize: '0.92rem',
+                          fontWeight: 600,
+                          textDecoration: done ? 'line-through' : 'none',
+                          wordBreak: 'break-word',
+                          lineHeight: 1.35
                         }}>
-                          <Clock size={11} color={done ? '#64748B' : overdue ? '#F87171' : '#0D9488'} />
-                          <span>
-                            {overdue && '⚠️ '}
-                            {t.reminder_time 
-                              ? (overdue ? `Overdue - ${t.reminder_time}` : t.reminder_time)
-                              : (taskDateStr || 'Anytime')}
-                          </span>
-                        </span>
+                          {t.title}
+                        </div>
 
-                        <span style={{
-                          background: done ? 'rgba(16, 185, 129, 0.16)' : overdue ? 'rgba(239, 68, 68, 0.18)' : 'rgba(13, 148, 136, 0.16)',
-                          color: done ? '#34D399' : overdue ? '#EF4444' : '#0D9488',
-                          border: done ? '1px solid rgba(16, 185, 129, 0.3)' : overdue ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(13, 148, 136, 0.3)',
-                          borderRadius: '6px',
-                          padding: '1px 6px',
-                          fontSize: '0.64rem',
-                          fontWeight: 700
-                        }}>
-                          {done ? '✓ Completed' : overdue ? '⚠️ Overdue' : '⏳ Pending'}
-                        </span>
-
-                        {daily && (
-                          <span style={{
-                            background: 'rgba(168, 85, 247, 0.14)',
-                            color: '#C084FC',
-                            border: '1px solid rgba(168, 85, 247, 0.28)',
+                        {t.description && (
+                          <div style={{
+                            color: done ? '#64748B' : '#94A3B8',
+                            fontSize: '0.78rem',
+                            marginTop: '4px',
+                            lineHeight: 1.4,
+                            wordBreak: 'break-word',
+                            background: 'rgba(255, 255, 255, 0.02)',
+                            padding: '4px 8px',
                             borderRadius: '6px',
-                            padding: '1px 6px',
-                            fontSize: '0.64rem',
-                            fontWeight: 600,
+                            borderLeft: '2px solid rgba(13, 148, 136, 0.4)'
+                          }}>
+                            {t.description}
+                          </div>
+                        )}
+
+                        {/* Metadata row */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '5px', flexWrap: 'wrap' }}>
+                          
+                          <span style={{
+                            color: done ? '#64748B' : overdue ? '#F87171' : '#94A3B8',
+                            fontSize: '0.70rem',
+                            fontWeight: 500,
                             display: 'inline-flex',
                             alignItems: 'center',
-                            gap: '3px'
+                            gap: '4px'
                           }}>
-                            <Repeat size={10} />
-                            <span>Daily{t.reminder_time ? ` at ${t.reminder_time}` : ''}</span>
+                            <Clock size={11} color={done ? '#64748B' : overdue ? '#F87171' : '#0D9488'} />
+                            <span>
+                              {overdue && '⚠️ '}
+                              {t.reminder_time 
+                                ? (overdue ? `Overdue - ${t.reminder_time}` : t.reminder_time)
+                                : (taskDateStr || 'Anytime')}
+                            </span>
                           </span>
-                        )}
 
-                        {t.priority && (
                           <span style={{
-                            background: priorityAccent.bg,
-                            color: priorityAccent.color,
-                            border: `1px solid ${priorityAccent.color}40`,
+                            background: done ? 'rgba(16, 185, 129, 0.16)' : overdue ? 'rgba(239, 68, 68, 0.18)' : 'rgba(13, 148, 136, 0.16)',
+                            color: done ? '#34D399' : overdue ? '#EF4444' : '#0D9488',
+                            border: done ? '1px solid rgba(16, 185, 129, 0.3)' : overdue ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(13, 148, 136, 0.3)',
                             borderRadius: '6px',
                             padding: '1px 6px',
                             fontSize: '0.64rem',
-                            fontWeight: 700,
-                            textTransform: 'capitalize'
+                            fontWeight: 700
                           }}>
-                            {t.priority}
+                            {done ? '✓ Completed' : overdue ? '⚠️ Overdue' : '⏳ Pending'}
                           </span>
-                        )}
 
-                        {t.is_google_calendar && (
-                          <span style={{
-                            background: 'rgba(66, 133, 244, 0.16)',
-                            color: '#60A5FA',
-                            border: '1px solid rgba(66, 133, 244, 0.3)',
-                            borderRadius: '6px',
-                            padding: '1px 6px',
-                            fontSize: '0.64rem',
-                            fontWeight: 600
-                          }}>
-                            GCal
-                          </span>
-                        )}
+                          {daily && (
+                            <span style={{
+                              background: 'rgba(168, 85, 247, 0.14)',
+                              color: '#C084FC',
+                              border: '1px solid rgba(168, 85, 247, 0.28)',
+                              borderRadius: '6px',
+                              padding: '1px 6px',
+                              fontSize: '0.64rem',
+                              fontWeight: 600,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px'
+                            }}>
+                              <Repeat size={10} />
+                              <span>Daily{t.reminder_time ? ` at ${t.reminder_time}` : ''}</span>
+                            </span>
+                          )}
+
+                          {t.priority && (
+                            <span style={{
+                              background: priorityAccent.bg,
+                              color: priorityAccent.color,
+                              border: `1px solid ${priorityAccent.color}40`,
+                              borderRadius: '6px',
+                              padding: '1px 6px',
+                              fontSize: '0.64rem',
+                              fontWeight: 700,
+                              textTransform: 'capitalize'
+                            }}>
+                              {t.priority}
+                            </span>
+                          )}
+
+                          {t.is_google_calendar && (
+                            <span style={{
+                              background: 'rgba(66, 133, 244, 0.16)',
+                              color: '#60A5FA',
+                              border: '1px solid rgba(66, 133, 244, 0.3)',
+                              borderRadius: '6px',
+                              padding: '1px 6px',
+                              fontSize: '0.64rem',
+                              fontWeight: 600
+                            }}>
+                              GCal
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
 
-                    {/* Actions */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                      {hasSubtasks && (
-                        <button
-                          type="button"
-                          onClick={() => toggleExpand(t.id)}
-                          style={{
-                            background: 'rgba(13, 148, 136, 0.15)',
-                            border: '1px solid rgba(13, 148, 136, 0.3)',
-                            borderRadius: '8px',
-                            padding: '3px 8px',
-                            color: '#0D9488',
-                            fontSize: '0.70rem',
-                            fontWeight: 800,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '3px'
-                          }}
-                        >
-                          <span>{completedSubCount}/{subtaskCount}</span>
-                          {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                        </button>
-                      )}
-
-                      {t.is_google_calendar ? (
-                        t.htmlLink && (
+                      {/* Actions */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                        {hasSubtasks && (
                           <button
                             type="button"
-                            onClick={() => window.open(t.htmlLink, '_blank', 'noopener,noreferrer')}
-                            style={{ background: 'none', border: 'none', color: '#60A5FA', cursor: 'pointer', padding: '4px' }}
-                            title="Open in GCal"
+                            onClick={() => toggleExpand(t.id)}
+                            style={{
+                              background: 'rgba(13, 148, 136, 0.15)',
+                              border: '1px solid rgba(13, 148, 136, 0.3)',
+                              borderRadius: '8px',
+                              padding: '3px 8px',
+                              color: '#0D9488',
+                              fontSize: '0.70rem',
+                              fontWeight: 800,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '3px'
+                            }}
                           >
-                            <ExternalLink size={14} />
+                            <span>{completedSubCount}/{subtaskCount}</span>
+                            {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                           </button>
-                        )
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteTask(t.id)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#EF4444',
-                            opacity: 0.6,
-                            cursor: 'pointer',
-                            padding: '4px'
-                          }}
-                          title="Delete task"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
+                        )}
 
-                  </div>
+                        {!t.is_google_calendar && (
+                          <button
+                            type="button"
+                            onClick={() => handleStartEditTask(t)}
+                            style={{
+                              background: 'rgba(56, 189, 248, 0.1)',
+                              border: '1px solid rgba(56, 189, 248, 0.25)',
+                              color: '#38bdf8',
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              padding: '4px 7px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px',
+                              fontSize: '0.68rem',
+                              fontWeight: 600
+                            }}
+                            title="Edit reminder / description"
+                          >
+                            <Edit3 size={11} />
+                            <span>Edit</span>
+                          </button>
+                        )}
+
+                        {t.is_google_calendar ? (
+                          t.htmlLink && (
+                            <button
+                              type="button"
+                              onClick={() => window.open(t.htmlLink, '_blank', 'noopener,noreferrer')}
+                              style={{ background: 'none', border: 'none', color: '#60A5FA', cursor: 'pointer', padding: '4px' }}
+                              title="Open in GCal"
+                            >
+                              <ExternalLink size={14} />
+                            </button>
+                          )
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTask(t.id)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#EF4444',
+                              opacity: 0.6,
+                              cursor: 'pointer',
+                              padding: '4px'
+                            }}
+                            title="Delete task"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+
+                    </div>
+                  )}
 
                   {/* Inline Expanded Subtasks */}
                   {isExpanded && hasSubtasks && (
