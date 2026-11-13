@@ -105,8 +105,8 @@ const SettingsSubModals = React.lazy(() => import('./components/modals/SettingsS
 const WorkspaceToolsModal = React.lazy(() => import('./components/modals/WorkspaceToolsModal').then(m => ({ default: m.WorkspaceToolsModal })));
 const SocialMediaModal = React.lazy(() => import('./components/modals/SocialMediaModal').then(m => ({ default: m.SocialMediaModal })));
 
-const API_BASE = typeof window !== 'undefined' && window.location.port === '5173'
-  ? `http://${window.location.hostname}:8000/api`
+const API_BASE = typeof window !== 'undefined' && (window.location.protocol === 'file:' || window.location.protocol === 'capacitor:')
+  ? `http://${window.location.hostname || '127.0.0.1'}:8000/api`
   : '/api';
 
 const LANG_OPTIONS = [
@@ -4420,20 +4420,59 @@ export default function App() {
       const result = await resp.json();
       
       let assistantReply = result.message || (result.parsed?.data?.response) || "Action completed.";
-      // Clean accidental markdown JSON block formatting if present
-      if (typeof assistantReply === 'string' && (assistantReply.trim().startsWith('```json') || (assistantReply.trim().startsWith('{') && assistantReply.includes('"action"')))) {
-        try {
-          const rawClean = assistantReply.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-          const parsedInner = JSON.parse(rawClean);
-          if (parsedInner.explanation) {
-            assistantReply = parsedInner.explanation;
-          } else if (parsedInner.data?.title) {
-            assistantReply = `Reminder scheduled: "${parsedInner.data.title}" ⏰`;
-          } else if (parsedInner.data?.response) {
-            assistantReply = parsedInner.data.response;
+      // Clean accidental markdown JSON block formatting or partial JSON leak
+      if (typeof assistantReply === 'string') {
+        const trimmed = assistantReply.trim();
+        if (trimmed.startsWith('```json') || trimmed.startsWith('{') || trimmed.includes('"action":') || trimmed.includes('"data":')) {
+          let cleaned = false;
+          try {
+            const rawClean = trimmed.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+            const parsedInner = JSON.parse(rawClean);
+            if (parsedInner.data?.response) {
+              assistantReply = parsedInner.data.response;
+              cleaned = true;
+            } else if (parsedInner.explanation) {
+              assistantReply = parsedInner.explanation;
+              cleaned = true;
+            } else if (parsedInner.message) {
+              assistantReply = parsedInner.message;
+              cleaned = true;
+            } else if (parsedInner.data?.title) {
+              assistantReply = `Reminder scheduled: "${parsedInner.data.title}" ⏰`;
+              cleaned = true;
+            }
+          } catch (e) {}
+
+          if (!cleaned) {
+            const matchResp = trimmed.match(/"response"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+            if (matchResp && matchResp[1]) {
+              assistantReply = matchResp[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+            } else {
+              const matchExp = trimmed.match(/"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+              if (matchExp && matchExp[1]) {
+                assistantReply = matchExp[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+              } else {
+                let stripped = trimmed
+                  .replace(/```(?:json)?/gi, '')
+                  .replace(/```/g, '')
+                  .replace(/\{|\}/g, '')
+                  .replace(/"action"\s*:\s*"[^"]*",?/gi, '')
+                  .replace(/"data"\s*:\s*\{?/gi, '')
+                  .replace(/"confidence(?:_level)?"\s*:\s*(?:"[^"]*"|[\d.]+),?/gi, '')
+                  .replace(/"response"\s*:\s*"?/gi, '')
+                  .replace(/"explanation"\s*:\s*"?/gi, '')
+                  .replace(/^[\s,"]+|[\s,"]+$/g, '')
+                  .trim();
+                if (stripped && stripped.length > 3) {
+                  assistantReply = stripped;
+                } else {
+                  assistantReply = (result.parsed?.data?.response && !result.parsed.data.response.includes('"action"'))
+                    ? result.parsed.data.response
+                    : "कार्य पूरा कर लिया गया है।";
+                }
+              }
+            }
           }
-        } catch (e) {
-          assistantReply = assistantReply.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
         }
       }
       if (assistantReply.includes('ब्लॉक/लीक') || assistantReply.includes('Permission Denied')) {
@@ -4455,18 +4494,27 @@ export default function App() {
           try { wakeWordRecognitionRef.current.stop(); } catch (e) {}
           wakeWordRecognitionRef.current = null;
         }
-        // On desktop browser without embed URL, fallback to window.open
-        if (typeof window !== 'undefined' && !window.ReactNativeWebView && !(actionData?.embed_url || actionData?.video_id)) {
+        const directTarget = actionData.play_url || actionData.watch_url || actionData.url;
+        if (directTarget && typeof window !== 'undefined') {
           try {
-            const directTarget = actionData.play_url || actionData.watch_url || actionData.url;
-            if (directTarget) window.open(directTarget, '_blank', 'noopener,noreferrer');
+            window.open(directTarget, '_blank', 'noopener,noreferrer');
           } catch (e) {
             console.warn('YouTube popup notice:', e);
           }
         }
       }
 
-      // Call action is presented via the interactive call action card with dial buttons
+      // If Phone Call intent: auto trigger dialer on mobile devices
+      if (actionType === 'call') {
+        const directTel = actionData.tel_url || (actionData.phone_number ? `tel:${actionData.phone_number}` : null);
+        if (directTel && typeof window !== 'undefined') {
+          try {
+            window.location.href = directTel;
+          } catch (e) {
+            console.warn('Call trigger notice:', e);
+          }
+        }
+      }
 
       setChatHistory(prev => {
         const next = [...prev, {
@@ -7604,48 +7652,39 @@ export default function App() {
                     const currentThinking = getDynamicThinkingState(thinkingPhaseIndex, activePromptContextType);
                     return (
                       <div 
-                        className="gemini-msg-assistant gemini-thinking-container"
+                        className="gemini-thinking-status-clean"
                         style={{ 
-                          display: 'inline-flex', 
+                          display: 'flex', 
                           alignItems: 'center', 
-                          gap: '12px',
-                          padding: '11px 16px',
-                          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(56, 189, 248, 0.05) 100%)',
-                          border: '1px solid rgba(56, 189, 248, 0.28)',
-                          borderRadius: '20px 20px 20px 6px',
-                          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4), 0 0 16px rgba(56, 189, 248, 0.08)',
-                          maxWidth: 'fit-content'
+                          gap: '8px',
+                          padding: '6px 4px',
+                          margin: '6px 0 10px 4px',
+                          background: 'transparent',
+                          border: 'none',
+                          boxShadow: 'none',
+                          maxWidth: '100%'
                         }}
                       >
-                        {/* Dynamic Animated Emoji Badge (Claude style pulse) */}
-                        <div 
+                        {/* Dynamic Animated Emoji (clean inline without heavy card box) */}
+                        <span 
                           key={`emoji-${thinkingPhaseIndex}`}
                           style={{ 
-                            width: '30px', 
-                            height: '30px', 
-                            borderRadius: '50%', 
-                            background: 'radial-gradient(circle at 35% 35%, rgba(56, 189, 248, 0.25), rgba(14, 165, 233, 0.10))', 
-                            border: '1px solid rgba(56, 189, 248, 0.45)', 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            justifyContent: 'center', 
-                            fontSize: '1rem',
-                            flexShrink: 0,
-                            boxShadow: '0 0 10px rgba(56, 189, 248, 0.25)',
+                            fontSize: '1.15rem',
+                            display: 'inline-block',
                             animation: 'aetherPulse 1.8s ease-in-out infinite'
                           }}
                         >
-                          <span>{currentThinking.emoji}</span>
-                        </div>
+                          {currentThinking.emoji}
+                        </span>
 
                         {/* Dynamic Animated Status Text with Claude Smooth Fade */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <span 
                             key={`text-${thinkingPhaseIndex}`}
                             style={{ 
                               fontSize: '0.86rem', 
-                              color: '#f1f5f9', 
-                              fontWeight: 600,
+                              color: '#cbd5e1', 
+                              fontWeight: 500,
                               letterSpacing: '0.01em',
                               animation: 'fadeInThinking 0.25s ease'
                             }}
@@ -7660,7 +7699,7 @@ export default function App() {
                         </div>
 
                         {/* Modern Waveform Pulse Bars */}
-                        <div className="gemini-waveform-icon" style={{ marginLeft: '4px' }}>
+                        <div className="gemini-waveform-icon" style={{ marginLeft: '4px', opacity: 0.85 }}>
                           <span style={{ background: '#38bdf8' }} /><span style={{ background: '#38bdf8' }} /><span style={{ background: '#38bdf8' }} />
                         </div>
 
@@ -7673,15 +7712,15 @@ export default function App() {
                             display: 'inline-flex',
                             alignItems: 'center',
                             gap: '4px',
-                            background: 'rgba(239, 68, 68, 0.16)',
-                            border: '1px solid rgba(239, 68, 68, 0.42)',
-                            color: '#fca5a5',
-                            borderRadius: '12px',
-                            padding: '3px 8px',
+                            background: 'rgba(239, 68, 68, 0.12)',
+                            border: '1px solid rgba(239, 68, 68, 0.35)',
+                            color: '#f87171',
+                            borderRadius: '8px',
+                            padding: '2px 8px',
                             fontSize: '0.68rem',
                             fontWeight: 600,
                             cursor: 'pointer',
-                            marginLeft: '6px',
+                            marginLeft: '8px',
                             transition: 'all 0.15s ease'
                           }}
                         >
@@ -8074,62 +8113,63 @@ export default function App() {
                   />
 
                   {isProcessing ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                       {/* Stop Generation Button */}
                       <button
                         type="button"
-                        className="gemini-prompt-btn"
                         onClick={handleStopGeneration}
                         title="Stop Generation (Esc / रोकें)"
                         style={{
                           background: 'rgba(239, 68, 68, 0.22)',
                           border: '1px solid rgba(239, 68, 68, 0.55)',
                           color: '#f87171',
-                          boxShadow: '0 0 14px rgba(239, 68, 68, 0.35)',
+                          boxShadow: '0 0 10px rgba(239, 68, 68, 0.3)',
                           borderRadius: '50%',
-                          width: '40px',
-                          height: '40px',
+                          width: '34px',
+                          height: '34px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
                           cursor: 'pointer',
                           flexShrink: 0,
-                          transition: 'all 0.15s ease'
+                          padding: 0
                         }}
                       >
-                        <Square size={15} fill="currentColor" />
+                        <Square size={13} fill="currentColor" />
                       </button>
 
                       {/* Queue Button — shown when user has typed text or attached files while processing */}
                       {(inputText.trim() || attachedMediaList.length > 0) && (
                         <button
                           type="button"
-                          className="gemini-prompt-btn"
                           onClick={() => handleSendPrompt()}
-                          title={`Queue message (${queuedCount} in queue)`}
+                          title={`Add to Queue (${queuedCount} currently waiting)`}
                           style={{
                             background: 'linear-gradient(135deg, #eab308 0%, #ca8a04 100%)',
                             color: '#0f172a',
                             border: 'none',
                             fontWeight: 700,
-                            display: 'flex',
+                            display: 'inline-flex',
                             alignItems: 'center',
-                            gap: '5px',
-                            padding: '0 12px',
-                            borderRadius: '20px',
-                            fontSize: '0.78rem',
-                            height: '38px',
+                            justifyContent: 'center',
+                            gap: '4px',
+                            padding: '0 10px',
+                            borderRadius: '17px',
+                            fontSize: '0.74rem',
+                            height: '34px',
                             cursor: 'pointer',
                             boxShadow: '0 2px 10px rgba(234, 179, 8, 0.35)',
-                            flexShrink: 0
+                            flexShrink: 0,
+                            whiteSpace: 'nowrap'
                           }}
                         >
                           <span>Queue</span>
                           <span style={{
-                            background: 'rgba(0,0,0,0.22)',
-                            padding: '1px 6px',
+                            background: 'rgba(0,0,0,0.25)',
+                            padding: '1px 5px',
                             borderRadius: '10px',
-                            fontSize: '0.72rem'
+                            fontSize: '0.68rem',
+                            fontWeight: 800
                           }}>+{queuedCount + 1}</span>
                         </button>
                       )}

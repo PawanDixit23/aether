@@ -2005,6 +2005,16 @@ def _extract_llm_action_dict(raw_text: str, user_input: str, is_cricket_query: b
     if not clean_resp or not clean_resp.strip():
         clean_resp = raw_text
 
+    # Comprehensive safety guard against partial/unclosed JSON leakage
+    if clean_resp and (clean_resp.strip().startswith('{') or '"action"' in clean_resp):
+        stripped = re.sub(r'\{|\}|"action"\s*:\s*"[^"]*",?|"data"\s*:\s*\{?|"confidence(?:_level)?"\s*:\s*(?:"[^"]*"|[\d.]+),?|"response"\s*:\s*"?|"explanation"\s*:\s*"?', '', clean_resp)
+        stripped = re.sub(r'^[\s,"]+|[\s,"]+$', '', stripped).strip()
+        if stripped and len(stripped) > 3:
+            clean_resp = stripped
+        else:
+            is_hi = any('\u0900' <= ch <= '\u097f' for ch in user_input)
+            clean_resp = f"नमस्ते! मैं '{user_input}' के बारे में जानकारी प्रोसेस कर रहा हूँ।" if is_hi else f"Here is the latest insight regarding {user_input}."
+
     return {
         "action": "query",
         "confidence": 0.98,
