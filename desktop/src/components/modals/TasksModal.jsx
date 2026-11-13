@@ -75,7 +75,15 @@ export const TasksModal = ({
   const [editDescription, setEditDescription] = useState('');
   const [editReminderTime, setEditReminderTime] = useState('');
   const [editPriority, setEditPriority] = useState('medium');
+  const [showPriorityPopup, setShowPriorityPopup] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  const priorityMeta = {
+    low: { label: 'Low', color: '#34d399', bg: 'rgba(52, 211, 153, 0.15)', border: 'rgba(52, 211, 153, 0.35)', dot: '🟢', desc: 'Flexible / casual reminder' },
+    medium: { label: 'Medium', color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.15)', border: 'rgba(251, 191, 36, 0.35)', dot: '🟡', desc: 'Standard priority' },
+    high: { label: 'High', color: '#fb923c', bg: 'rgba(251, 146, 60, 0.15)', border: 'rgba(251, 146, 60, 0.35)', dot: '🟠', desc: 'Needs attention today' },
+    urgent: { label: 'Urgent', color: '#f87171', bg: 'rgba(248, 113, 113, 0.18)', border: 'rgba(248, 113, 113, 0.45)', dot: '🔴', desc: 'Critical / Immediate action' }
+  };
 
   const handleStartEditTask = (t) => {
     setEditingTaskId(t.id);
@@ -1148,27 +1156,150 @@ export const TasksModal = ({
                         </div>
                         <div style={{ flex: 1, minWidth: '100px' }}>
                           <label style={{ fontSize: '0.70rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Priority</label>
-                          <select
-                            value={editPriority}
-                            onChange={(e) => setEditPriority(e.target.value)}
+                          <button
+                            type="button"
+                            onClick={() => setShowPriorityPopup(true)}
                             style={{
                               width: '100%',
                               boxSizing: 'border-box',
-                              background: '#0e172a',
-                              border: '1px solid rgba(255, 255, 255, 0.15)',
+                              background: priorityMeta[editPriority]?.bg || 'rgba(251, 191, 36, 0.15)',
+                              border: `1px solid ${priorityMeta[editPriority]?.border || 'rgba(251, 191, 36, 0.35)'}`,
                               borderRadius: '8px',
                               padding: '7px 9px',
-                              color: '#cbd5e1',
-                              fontSize: '0.80rem'
+                              color: priorityMeta[editPriority]?.color || '#fbbf24',
+                              fontSize: '0.80rem',
+                              fontWeight: 700,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease'
                             }}
+                            title="Click to change priority"
                           >
-                            <option value="low">Low</option>
-                            <option value="medium">Medium</option>
-                            <option value="high">High</option>
-                            <option value="urgent">Urgent</option>
-                          </select>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                              <span>{priorityMeta[editPriority]?.dot || '🟡'}</span>
+                              <span>{priorityMeta[editPriority]?.label || 'Medium'}</span>
+                            </span>
+                            <ChevronDown size={13} />
+                          </button>
                         </div>
                       </div>
+
+                      {/* LATEST UI TASK PRIORITY POPUP MODAL */}
+                      {showPriorityPopup && (
+                        <div
+                          style={{
+                            position: 'fixed',
+                            inset: 0,
+                            background: 'rgba(0, 0, 0, 0.82)',
+                            backdropFilter: 'blur(14px)',
+                            WebkitBackdropFilter: 'blur(14px)',
+                            zIndex: 260,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: '16px'
+                          }}
+                          onClick={() => setShowPriorityPopup(false)}
+                        >
+                          <div
+                            style={{
+                              background: '#0d1527',
+                              border: '1px solid rgba(56, 189, 248, 0.3)',
+                              borderRadius: '24px',
+                              padding: '22px',
+                              width: '100%',
+                              maxWidth: '360px',
+                              boxShadow: '0 24px 64px rgba(0, 0, 0, 0.9), 0 0 35px rgba(56, 189, 248, 0.15)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '14px',
+                              animation: 'fadeIn 0.18s ease'
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div>
+                                <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#f8fafc' }}>
+                                  Select Priority
+                                </div>
+                                <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '2px' }}>
+                                  Set urgency level for this reminder
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setShowPriorityPopup(false)}
+                                style={{
+                                  background: 'rgba(255, 255, 255, 0.08)',
+                                  border: 'none',
+                                  color: '#94a3b8',
+                                  borderRadius: '50%',
+                                  width: '30px',
+                                  height: '30px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {Object.entries(priorityMeta).map(([pKey, pInfo]) => {
+                                const isSelected = editPriority === pKey;
+                                return (
+                                  <div
+                                    key={pKey}
+                                    onClick={() => {
+                                      setEditPriority(pKey);
+                                      setShowPriorityPopup(false);
+                                    }}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'space-between',
+                                      padding: '12px 14px',
+                                      borderRadius: '14px',
+                                      background: isSelected ? pInfo.bg : 'rgba(255, 255, 255, 0.03)',
+                                      border: `1px solid ${isSelected ? pInfo.border : 'rgba(255, 255, 255, 0.06)'}`,
+                                      cursor: 'pointer',
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                      <span style={{ fontSize: '1.2rem' }}>{pInfo.dot}</span>
+                                      <div>
+                                        <div style={{ fontSize: '0.88rem', fontWeight: 700, color: isSelected ? pInfo.color : '#f1f5f9' }}>
+                                          {pInfo.label}
+                                        </div>
+                                        <div style={{ fontSize: '0.70rem', color: '#64748b' }}>
+                                          {pInfo.desc}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div style={{
+                                      width: '20px',
+                                      height: '20px',
+                                      borderRadius: '50%',
+                                      border: `2px solid ${isSelected ? pInfo.color : 'rgba(255, 255, 255, 0.25)'}`,
+                                      background: isSelected ? pInfo.color : 'transparent',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center'
+                                    }}>
+                                      {isSelected && <Check size={12} color="#080c16" strokeWidth={3} />}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '4px' }}>
                         <button
                           type="button"

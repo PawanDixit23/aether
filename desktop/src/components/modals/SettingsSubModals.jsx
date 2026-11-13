@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Check, Database, Shield, Key, ExternalLink, HelpCircle, AlertTriangle, CheckCircle2, Search, ChevronDown, User, Sliders, RotateCw, BookUser, Plus, Trash2, Edit2, Pin } from 'lucide-react';
+import { Check, Database, Shield, Key, ExternalLink, HelpCircle, AlertTriangle, CheckCircle2, Search, ChevronDown, User, Sliders, RotateCw, BookUser, Plus, Trash2, Edit2, Edit3, Pin, Upload, Download } from 'lucide-react';
 import { AETHER_VOICES, AI_PROVIDERS } from '../common/constants';
 
 export const SettingsSubModals = ({
@@ -921,24 +921,27 @@ export const SettingsSubModals = ({
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
                   <label
-                    title="Upload document (PDF, DOCX, TXT, etc.) into Memory Vault"
+                    title="Upload document (PDF, DOCX, TXT) into Memory Vault"
                     style={{
                       background: 'rgba(56, 189, 248, 0.12)',
-                      border: '1px solid rgba(56, 189, 248, 0.35)',
+                      border: '1px solid rgba(56, 189, 248, 0.3)',
                       color: '#38bdf8',
                       fontSize: '0.72rem',
                       fontWeight: 600,
-                      padding: '7px 11px',
-                      borderRadius: '10px',
+                      padding: '5px 10px',
+                      borderRadius: '20px',
                       cursor: 'pointer',
                       display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '5px'
+                      gap: '4px',
+                      whiteSpace: 'nowrap',
+                      lineHeight: 1
                     }}
                   >
-                    <span>📄 Upload File</span>
+                    <Upload size={12} />
+                    <span>Upload</span>
                     <input
                       type="file"
                       accept=".pdf,.doc,.docx,.txt,.csv,.json,.md,.rtf,.tsv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
@@ -949,15 +952,44 @@ export const SettingsSubModals = ({
                   <button
                     type="button"
                     onClick={handleExportMemories}
-                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#cbd5e1', fontSize: '0.72rem', fontWeight: 600, padding: '7px 11px', borderRadius: '10px', cursor: 'pointer', transition: 'all 0.15s' }}
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.06)',
+                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      color: '#cbd5e1',
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      padding: '5px 10px',
+                      borderRadius: '20px',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      whiteSpace: 'nowrap',
+                      lineHeight: 1,
+                      transition: 'all 0.15s'
+                    }}
                     title="Export memories as JSON"
                   >
-                    Export JSON
+                    <Download size={12} />
+                    <span>Export</span>
                   </button>
                   <button 
                     type="button" 
                     onClick={() => setActiveSubModal(null)} 
-                    style={{ background: 'rgba(255, 255, 255, 0.08)', border: 'none', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '1.1rem', cursor: 'pointer', flexShrink: 0 }}
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.08)',
+                      border: 'none',
+                      borderRadius: '50%',
+                      width: '32px',
+                      height: '32px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#94a3b8',
+                      fontSize: '1.05rem',
+                      cursor: 'pointer',
+                      flexShrink: 0
+                    }}
                     title="Close"
                   >
                     ✕
@@ -1301,22 +1333,120 @@ export const SettingsSubModals = ({
                         style={{ 
                           display: 'flex', 
                           flexDirection: 'column', 
-                          gap: '8px', 
-                          padding: '12px 14px', 
-                          background: isPinned ? 'rgba(56, 189, 248, 0.07)' : 'rgba(255, 255, 255, 0.03)', 
-                          border: `1px solid ${isPinned ? 'rgba(56, 189, 248, 0.35)' : 'rgba(255, 255, 255, 0.07)'}`, 
-                          borderRadius: '14px', 
-                          transition: 'border 0.2s',
-                          position: 'relative'
+                          gap: '10px', 
+                          padding: '14px 16px', 
+                          background: isPinned ? 'rgba(56, 189, 248, 0.08)' : 'rgba(255, 255, 255, 0.035)', 
+                          border: `1px solid ${isPinned ? 'rgba(56, 189, 248, 0.4)' : 'rgba(255, 255, 255, 0.08)'}`, 
+                          borderRadius: '16px', 
+                          transition: 'all 0.2s ease',
+                          position: 'relative',
+                          boxShadow: isPinned ? '0 4px 18px rgba(56, 189, 248, 0.12)' : 'none'
                         }}
                       >
+                        {/* Card Top Toolbar: Category + Date on Left, Action Buttons on Right */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ 
+                              textTransform: 'capitalize', 
+                              fontSize: '0.72rem', 
+                              color: meta.color, 
+                              fontWeight: 700,
+                              background: meta.bg,
+                              border: `1px solid ${meta.border}`,
+                              padding: '2px 8px',
+                              borderRadius: '8px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}>
+                              <span>{meta.icon}</span>
+                              <span>{catLabel}</span>
+                            </span>
+                            <span style={{ fontSize: '0.70rem', color: '#64748b' }}>
+                              {mem.created_at ? new Date(mem.created_at).toLocaleDateString() : 'Saved'}
+                            </span>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <button 
+                              type="button" 
+                              onClick={() => togglePin(mem.id)} 
+                              title={isPinned ? 'Unpin' : 'Pin to top'} 
+                              style={{ 
+                                background: isPinned ? 'rgba(245, 158, 11, 0.22)' : 'rgba(255,255,255,0.05)', 
+                                border: `1px solid ${isPinned ? 'rgba(245, 158, 11, 0.4)' : 'rgba(255,255,255,0.08)'}`, 
+                                borderRadius: '8px', 
+                                color: isPinned ? '#fbbf24' : '#64748b', 
+                                cursor: 'pointer', 
+                                fontSize: '0.80rem', 
+                                padding: '4px 8px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                transition: 'all 0.15s ease'
+                              }}
+                            >
+                              📌
+                            </button>
+                            <button 
+                              type="button" 
+                              onClick={() => { setEditingMemId(mem.id); setEditingMemText(mem.fact || mem.content || mem.text || ''); }} 
+                              title="Edit memory" 
+                              style={{ 
+                                background: 'rgba(56, 189, 248, 0.12)', 
+                                border: '1px solid rgba(56, 189, 248, 0.3)', 
+                                borderRadius: '8px', 
+                                color: '#38bdf8', 
+                                cursor: 'pointer', 
+                                fontSize: '0.72rem', 
+                                fontWeight: 600, 
+                                padding: '4px 9px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                            >
+                              <Edit3 size={11} />
+                              <span>Edit</span>
+                            </button>
+                            <button 
+                              type="button" 
+                              onClick={() => handleDeleteMemory(mem.id)} 
+                              title="Delete memory" 
+                              style={{ 
+                                background: 'rgba(239, 68, 68, 0.1)', 
+                                border: '1px solid rgba(239, 68, 68, 0.25)', 
+                                borderRadius: '8px', 
+                                color: '#f87171', 
+                                cursor: 'pointer', 
+                                fontSize: '0.76rem', 
+                                padding: '4px 8px',
+                                display: 'flex',
+                                alignItems: 'center'
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Card Content: Full-width uncompressed readable text */}
                         {isEditing ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <input
-                              type="text"
+                            <textarea
+                              rows={3}
                               value={editingMemText}
                               onChange={(e) => setEditingMemText(e.target.value)}
-                              style={{ width: '100%', boxSizing: 'border-box', background: '#050a14', border: '1px solid rgba(56,189,248,0.5)', borderRadius: '8px', padding: '8px 10px', color: '#fff', fontSize: '0.84rem' }}
+                              style={{ 
+                                width: '100%', 
+                                boxSizing: 'border-box', 
+                                background: '#050a14', 
+                                border: '1px solid rgba(56,189,248,0.5)', 
+                                borderRadius: '10px', 
+                                padding: '10px', 
+                                color: '#fff', 
+                                fontSize: '0.86rem',
+                                lineHeight: '1.5'
+                              }}
                             />
                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', flexShrink: 0 }}>
                               <button type="button" onClick={() => setEditingMemId(null)} style={{ background: 'rgba(255,255,255,0.08)', border: 'none', color: '#cbd5e1', padding: '6px 14px', borderRadius: '8px', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
@@ -1324,53 +1454,16 @@ export const SettingsSubModals = ({
                             </div>
                           </div>
                         ) : (
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
-                            <div style={{ color: '#f1f5f9', fontSize: '0.86rem', flex: 1, lineHeight: '1.45', wordBreak: 'break-word' }}>
-                              {mem.fact || mem.content || mem.text}
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                              <button 
-                                type="button" 
-                                onClick={() => togglePin(mem.id)} 
-                                title={isPinned ? 'Unpin' : 'Pin'} 
-                                style={{ background: isPinned ? 'rgba(245, 158, 11, 0.18)' : 'rgba(255,255,255,0.04)', border: 'none', borderRadius: '7px', color: isPinned ? '#fbbf24' : '#64748b', cursor: 'pointer', fontSize: '0.85rem', padding: '4px 7px' }}
-                              >
-                                📌
-                              </button>
-                              <button 
-                                type="button" 
-                                onClick={() => { setEditingMemId(mem.id); setEditingMemText(mem.fact || mem.content || mem.text || ''); }} 
-                                title="Edit fact" 
-                                style={{ background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.25)', borderRadius: '7px', color: '#38bdf8', cursor: 'pointer', fontSize: '0.74rem', fontWeight: 600, padding: '4px 9px' }}
-                              >
-                                Edit
-                              </button>
-                              <button 
-                                type="button" 
-                                onClick={() => handleDeleteMemory(mem.id)} 
-                                title="Delete fact" 
-                                style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: '7px', color: '#f87171', cursor: 'pointer', fontSize: '0.78rem', padding: '4px 7px' }}
-                              >
-                                ✕
-                              </button>
-                            </div>
+                          <div style={{ 
+                            color: '#f1f5f9', 
+                            fontSize: '0.88rem', 
+                            lineHeight: '1.55', 
+                            wordBreak: 'break-word',
+                            letterSpacing: '0.01em'
+                          }}>
+                            {mem.fact || mem.content || mem.text}
                           </div>
                         )}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.68rem', color: '#64748b', borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '6px' }}>
-                          <span style={{ 
-                            textTransform: 'uppercase', 
-                            letterSpacing: '0.04em', 
-                            color: meta.color, 
-                            fontWeight: 700,
-                            background: meta.bg,
-                            border: `1px solid ${meta.border}`,
-                            padding: '1px 7px',
-                            borderRadius: '4px'
-                          }}>
-                            {catLabel}
-                          </span>
-                          <span>{mem.created_at ? new Date(mem.created_at).toLocaleDateString() : 'Saved'}</span>
-                        </div>
                       </div>
                     );
                   })

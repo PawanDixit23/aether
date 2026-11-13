@@ -72,7 +72,8 @@ import {
   Mail,
   Copy,
   Reply,
-  Loader2
+  Loader2,
+  Square
 } from 'lucide-react';
 
 const YoutubeIcon = ({ size = 20, color = "#fff" }) => (
@@ -512,6 +513,12 @@ export default function App() {
   const [replyingToMessage, setReplyingToMessage] = useState(null); // { id, role, content }
   const [isProcessing, setIsProcessing] = useState(false);
   const isProcessingRef = useRef(false);
+  const messageQueueRef = useRef([]);
+  const activeAbortControllerRef = useRef(null);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const [thinkingPhaseIndex, setThinkingPhaseIndex] = useState(0);
+  const [thinkingElapsed, setThinkingElapsed] = useState(0);
+  const [activePromptContextType, setActivePromptContextType] = useState('general');
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [selectedLang, setSelectedLang] = useState(() => localStorage.getItem('aether_language') || 'auto');
@@ -550,6 +557,7 @@ export default function App() {
   const [calAgendaFilter, setCalAgendaFilter] = useState('all'); // 'all' | 'pending' | 'completed'
   const langDropdownRef = useRef(null);
   const geminiChatFeedRef = useRef(null);
+  const messagesEndRef = useRef(null);
 
   // Close language dropdown on outside click
   useEffect(() => {
@@ -803,12 +811,102 @@ export default function App() {
     }
   };
 
-  // Auto-scroll chat feed on new messages
-  useEffect(() => {
+  // Reliable Scroll to Bottom for Chat Feed (Ensures chat always opens at the bottom)
+  const scrollToBottom = (behavior = 'auto') => {
     if (geminiChatFeedRef.current) {
       geminiChatFeedRef.current.scrollTop = geminiChatFeedRef.current.scrollHeight;
     }
-  }, [chatHistory, isProcessing]);
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior, block: 'end' });
+    }
+  };
+
+  // Auto-scroll chat feed to bottom on new messages, opening chat, switching sessions or stop processing
+  useEffect(() => {
+    if (!showDashboard && chatHistory.length > 0) {
+      scrollToBottom('auto');
+      // Multiple delayed passes to guarantee landing at bottom after layout, images & markdown calculation
+      const t1 = setTimeout(() => scrollToBottom('auto'), 40);
+      const t2 = setTimeout(() => scrollToBottom('auto'), 160);
+      const t3 = setTimeout(() => scrollToBottom('auto'), 400);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
+    }
+  }, [showDashboard, activeSessionId, chatHistory.length, isProcessing]);
+
+  // Dynamic Claude-style Thinking & Research state (changes emoji & text smoothly)
+  useEffect(() => {
+    if (!isProcessing) {
+      setThinkingPhaseIndex(0);
+      setThinkingElapsed(0);
+      return;
+    }
+
+    const startTime = Date.now();
+    setThinkingPhaseIndex(0);
+    setThinkingElapsed(0);
+
+    const elapsedTimer = setInterval(() => {
+      setThinkingElapsed(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+
+    const phaseTimer = setInterval(() => {
+      setThinkingPhaseIndex(prev => prev + 1);
+    }, 2100);
+
+    return () => {
+      clearInterval(elapsedTimer);
+      clearInterval(phaseTimer);
+    };
+  }, [isProcessing]);
+
+  const getDynamicThinkingState = (phaseIndex, contextType = 'general') => {
+    let phases = [
+      { emoji: '🧠', text: 'Thinking through your request...' },
+      { emoji: '🔍', text: 'Searching knowledge & memory...' },
+      { emoji: '⚡', text: 'Synthesizing key insights...' },
+      { emoji: '📊', text: 'Analyzing context & details...' },
+      { emoji: '✍️', text: 'Composing response...' },
+      { emoji: '🌐', text: 'Verifying accuracy...' },
+      { emoji: '✨', text: 'Polishing final answer...' },
+      { emoji: '💡', text: 'Almost ready...' }
+    ];
+
+    if (contextType === 'document') {
+      phases = [
+        { emoji: '📄', text: 'Reading attached document...' },
+        { emoji: '🔍', text: 'Scanning text & table data...' },
+        { emoji: '🧠', text: 'Extracting key facts & figures...' },
+        { emoji: '⚡', text: 'Synthesizing document insights...' },
+        { emoji: '📊', text: 'Formulating structured answer...' },
+        { emoji: '✍️', text: 'Writing comprehensive response...' },
+        { emoji: '✨', text: 'Polishing document summary...' }
+      ];
+    } else if (contextType === 'image') {
+      phases = [
+        { emoji: '👁️', text: 'Examining visual details...' },
+        { emoji: '🔍', text: 'Scanning image for text & data...' },
+        { emoji: '🧠', text: 'Interpreting visual elements...' },
+        { emoji: '⚡', text: 'Synthesizing image insights...' },
+        { emoji: '✍️', text: 'Drafting visual analysis...' },
+        { emoji: '✨', text: 'Finalizing response...' }
+      ];
+    } else if (contextType === 'research') {
+      phases = [
+        { emoji: '🔬', text: 'Initiating deep research...' },
+        { emoji: '🌐', text: 'Gathering live web data...' },
+        { emoji: '🧠', text: 'Cross-referencing sources...' },
+        { emoji: '📊', text: 'Structuring research findings...' },
+        { emoji: '✍️', text: 'Synthesizing clear report...' },
+        { emoji: '💡', text: 'Validating conclusions...' }
+      ];
+    }
+
+    return phases[phaseIndex % phases.length];
+  };
 
   // Ensure browser voices are loaded early
   useEffect(() => {
@@ -4242,99 +4340,47 @@ export default function App() {
     }, 60);
   };
 
-  // Send Command / Prompt
-  const handleSendPrompt = async (textToSend) => {
-    const rawPrompt = (textToSend || inputText).trim();
-    const hasAttachments = attachedMediaList.length > 0;
-    if (!rawPrompt && !hasAttachments) return;
-    if (isProcessing) return;
-
-    const activeReplyContext = replyingToMessage;
-    setReplyingToMessage(null);
-
-    let prompt = rawPrompt;
-    // Direct voice trigger for Executive Briefing
-    if (!hasAttachments && /\b(morning briefing|executive briefing|daily briefing|ब्रीफिंग सुनाओ|आज का ब्रीफिंग|दिन का हाल)\b/i.test(prompt)) {
-      handlePlayExecutiveBriefing(false);
-      setInputText('');
-      return;
+  // Abort / Stop Generation immediately
+  const handleStopGeneration = () => {
+    if (activeAbortControllerRef.current) {
+      try {
+        activeAbortControllerRef.current.abort();
+      } catch (e) {}
+      activeAbortControllerRef.current = null;
     }
-    const sendingImages = [];
-    const contextPrefixes = [];
-    if (hasAttachments) {
-      attachedMediaList.forEach((item) => {
-        if (item.type === 'image' && item.url) {
-          sendingImages.push(item.url);
-        } else if (item.type === 'file') {
-          if (item.content) {
-            const pageStr = item.pages > 1 ? `, ${item.pages} pages` : '';
-            contextPrefixes.push(`[Attached Document: "${item.name}" (${item.size || ''}${pageStr}, ${item.word_count || 0} words):\n${item.content.slice(0, 32000)}\n--- End of Document "${item.name}" ---]`);
-          } else {
-            contextPrefixes.push(`[Attached File: ${item.name} (${item.size || ''})]`);
-          }
-        } else if (item.type === 'drive') {
-          contextPrefixes.push(`[Google Drive: ${item.url}]`);
-        } else if (item.type === 'map') {
-          contextPrefixes.push(`[Current Location: ${item.url}]`);
-        }
-      });
-      if (contextPrefixes.length > 0) {
-        prompt = `${contextPrefixes.join(' ')} ${rawPrompt || 'Review and analyze these attachments.'}`;
-      } else if (sendingImages.length > 0) {
-        prompt = rawPrompt || (sendingImages.length > 1
-          ? `Analyze all ${sendingImages.length} attached images in detail, extract any bills, schedules, or tasks if present, and summarize the key information.`
-          : 'Analyze this image in detail, extract any bills, schedules, or tasks if present, and summarize the key information.');
-      }
-      setAttachedMediaList([]);
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
     }
-    const sendingImageUrl = sendingImages[0] || null;
-
-    const curSessionId = isTemporaryChat 
-      ? (`temp_${activeSessionIdRef.current || Date.now()}`) 
-      : (activeSessionIdRef.current || 'default');
-    userScrolledUpRef.current = false;
-    setShowDashboard(false);
-
-    // Optimistically update active chat history
-    setChatHistory(prev => {
-      const next = [...prev, { 
-        role: 'user', 
-        content: prompt, 
-        image_url: sendingImageUrl,
-        images: sendingImages.length > 0 ? sendingImages : undefined,
-        reply_to: activeReplyContext ? { role: activeReplyContext.role, content: activeReplyContext.content } : undefined,
-        created_at: new Date().toISOString() 
-      }];
-      if (!isTemporaryChat && userEmail && curSessionId) {
-        try {
-          localStorage.setItem(`aether_chat_history_${userEmail}_${curSessionId}`, JSON.stringify(next));
-        } catch (e) {}
-      }
-      return next;
-    });
-
-    // Optimistically update sessions list so drawer immediately displays new conversation with 0ms delay!
-    // (Only if not a temporary chat)
-    if (!isTemporaryChat) {
-      const smartTitle = prompt.length > 36 ? prompt.slice(0, 36) + '...' : prompt;
-      setChatSessions(prev => {
-        const exists = prev.some(s => s.id === curSessionId);
-        const updated = exists
-          ? prev.map(s => s.id === curSessionId ? { ...s, updated_at: new Date().toISOString() } : s)
-          : [{ id: curSessionId, title: smartTitle, updated_at: new Date().toISOString(), user_email: userEmail }, ...prev];
-        if (userEmail) {
-          try {
-            localStorage.setItem(`aether_chat_sessions_${userEmail}`, JSON.stringify(updated));
-          } catch (e) {}
-        }
-        return updated;
-      });
+    showToast("Generation stopped ⏹️", 'info');
+    
+    // Auto process next item in queue if available
+    if (messageQueueRef.current.length > 0) {
+      const nextItem = messageQueueRef.current.shift();
+      setQueuedCount(messageQueueRef.current.length);
+      setChatHistory(prev => prev.map(m => {
+        if (m.id === nextItem.id) return { ...m, isQueued: false };
+        const remPos = messageQueueRef.current.findIndex(q => q.id === m.id);
+        if (remPos !== -1) return { ...m, queuePosition: remPos + 1 };
+        return m;
+      }));
+      setTimeout(() => {
+        executeDispatchPrompt(nextItem);
+      }, 150);
+    } else {
+      isProcessingRef.current = false;
+      setIsProcessing(false);
+      setQueuedCount(0);
     }
+  };
 
-    setInputText('');
+  // Dispatch single prompt execution
+  const executeDispatchPrompt = async ({ id: dispatchMsgId, prompt, sendingImageUrl, sendingImages = [], activeReplyContext, curSessionId }) => {
     isProcessingRef.current = true;
     setIsProcessing(true);
     setShowConversation(true);
+
+    const controller = new AbortController();
+    activeAbortControllerRef.current = controller;
 
     try {
       const fullPrompt = activeReplyContext
@@ -4368,7 +4414,8 @@ export default function App() {
           'Content-Type': 'application/json',
           ...(userEmail ? { 'X-User-Email': userEmail } : {})
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: controller.signal
       });
       const result = await resp.json();
       
@@ -4462,16 +4509,170 @@ export default function App() {
       // Refresh tasks and finances quietly in the background without rewriting chatHistory
       refreshAllData({ skipChatHistory: true });
     } catch (err) {
-      setChatHistory(prev => [...prev, {
-        role: 'assistant',
-        content: "Could not reach Aether Core. Please check your internet connection or server status.",
-        created_at: new Date().toISOString()
-      }]);
-      showToast("Could not reach Aether Core", 'error');
+      if (err.name === 'AbortError' || controller.signal.aborted) {
+        setChatHistory(prev => [...prev, {
+          id: `stopped-${Date.now()}`,
+          role: 'assistant',
+          content: "Stopped by user ⏹️",
+          created_at: new Date().toISOString()
+        }]);
+      } else {
+        setChatHistory(prev => [...prev, {
+          role: 'assistant',
+          content: "Could not reach Aether Core. Please check your internet connection or server status.",
+          created_at: new Date().toISOString()
+        }]);
+        showToast("Could not reach Aether Core", 'error');
+      }
     } finally {
-      isProcessingRef.current = false;
-      setIsProcessing(false);
+      activeAbortControllerRef.current = null;
+      if (messageQueueRef.current.length > 0) {
+        const nextItem = messageQueueRef.current.shift();
+        setQueuedCount(messageQueueRef.current.length);
+        setChatHistory(prev => prev.map(m => {
+          if (m.id === nextItem.id) return { ...m, isQueued: false };
+          const remPos = messageQueueRef.current.findIndex(q => q.id === m.id);
+          if (remPos !== -1) return { ...m, queuePosition: remPos + 1 };
+          return m;
+        }));
+        setTimeout(() => {
+          executeDispatchPrompt(nextItem);
+        }, 150);
+      } else {
+        isProcessingRef.current = false;
+        setIsProcessing(false);
+        setQueuedCount(0);
+      }
     }
+  };
+
+  // Send Command / Prompt
+  const handleSendPrompt = async (textToSend) => {
+    const rawPrompt = (textToSend || inputText).trim();
+    const hasAttachments = attachedMediaList.length > 0;
+    if (!rawPrompt && !hasAttachments) return;
+
+    const activeReplyContext = replyingToMessage;
+    setReplyingToMessage(null);
+
+    let prompt = rawPrompt;
+    // Direct voice trigger for Executive Briefing
+    if (!hasAttachments && /\b(morning briefing|executive briefing|daily briefing|ब्रीफिंग सुनाओ|आज का ब्रीफिंग|दिन का हाल)\b/i.test(prompt)) {
+      handlePlayExecutiveBriefing(false);
+      setInputText('');
+      return;
+    }
+    const sendingImages = [];
+    const contextPrefixes = [];
+    if (hasAttachments) {
+      attachedMediaList.forEach((item) => {
+        if (item.type === 'image' && item.url) {
+          sendingImages.push(item.url);
+        } else if (item.type === 'file') {
+          if (item.content) {
+            const pageStr = item.pages > 1 ? `, ${item.pages} pages` : '';
+            contextPrefixes.push(`[Attached Document: "${item.name}" (${item.size || ''}${pageStr}, ${item.word_count || 0} words):\n${item.content.slice(0, 32000)}\n--- End of Document "${item.name}" ---]`);
+          } else {
+            contextPrefixes.push(`[Attached File: ${item.name} (${item.size || ''})]`);
+          }
+        } else if (item.type === 'drive') {
+          contextPrefixes.push(`[Google Drive: ${item.url}]`);
+        } else if (item.type === 'map') {
+          contextPrefixes.push(`[Current Location: ${item.url}]`);
+        }
+      });
+      if (contextPrefixes.length > 0) {
+        prompt = `${contextPrefixes.join(' ')} ${rawPrompt || 'Review and analyze these attachments.'}`;
+      } else if (sendingImages.length > 0) {
+        prompt = rawPrompt || (sendingImages.length > 1
+          ? `Analyze all ${sendingImages.length} attached images in detail, extract any bills, schedules, or tasks if present, and summarize the key information.`
+          : 'Analyze this image in detail, extract any bills, schedules, or tasks if present, and summarize the key information.');
+      }
+      if (sendingImages.length > 0) {
+        setActivePromptContextType('image');
+      } else if (attachedMediaList.some(item => item.type === 'file')) {
+        setActivePromptContextType('document');
+      } else if (/\b(research|search|latest|news|score|weather|who is|what is|analyze|compare|explain|summary|summarize|डिटेल|विस्तार|खोज|पता करो)\b/i.test(prompt)) {
+        setActivePromptContextType('research');
+      } else {
+        setActivePromptContextType('general');
+      }
+      setAttachedMediaList([]);
+    } else {
+      if (/\b(research|search|latest|news|score|weather|who is|what is|analyze|compare|explain|summary|summarize|डिटेल|विस्तार|खोज|पता करो)\b/i.test(prompt)) {
+        setActivePromptContextType('research');
+      } else {
+        setActivePromptContextType('general');
+      }
+    }
+    const sendingImageUrl = sendingImages[0] || null;
+
+    const curSessionId = isTemporaryChat 
+      ? (`temp_${activeSessionIdRef.current || Date.now()}`) 
+      : (activeSessionIdRef.current || 'default');
+    userScrolledUpRef.current = false;
+    setShowDashboard(false);
+    setInputText('');
+
+    const promptMessageId = `user-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const isCurrentlyBusy = isProcessingRef.current;
+
+    // Optimistically update active chat history
+    setChatHistory(prev => {
+      const next = [...prev, { 
+        id: promptMessageId,
+        role: 'user', 
+        content: prompt, 
+        image_url: sendingImageUrl,
+        images: sendingImages.length > 0 ? sendingImages : undefined,
+        reply_to: activeReplyContext ? { role: activeReplyContext.role, content: activeReplyContext.content } : undefined,
+        created_at: new Date().toISOString(),
+        isQueued: isCurrentlyBusy,
+        queuePosition: isCurrentlyBusy ? messageQueueRef.current.length + 1 : undefined
+      }];
+      if (!isTemporaryChat && userEmail && curSessionId) {
+        try {
+          localStorage.setItem(`aether_chat_history_${userEmail}_${curSessionId}`, JSON.stringify(next));
+        } catch (e) {}
+      }
+      return next;
+    });
+
+    // Optimistically update sessions list so drawer immediately displays new conversation with 0ms delay!
+    // (Only if not a temporary chat)
+    if (!isTemporaryChat) {
+      const smartTitle = prompt.length > 36 ? prompt.slice(0, 36) + '...' : prompt;
+      setChatSessions(prev => {
+        const exists = prev.some(s => s.id === curSessionId);
+        const updated = exists
+          ? prev.map(s => s.id === curSessionId ? { ...s, updated_at: new Date().toISOString() } : s)
+          : [{ id: curSessionId, title: smartTitle, updated_at: new Date().toISOString(), user_email: userEmail }, ...prev];
+        if (userEmail) {
+          try {
+            localStorage.setItem(`aether_chat_sessions_${userEmail}`, JSON.stringify(updated));
+          } catch (e) {}
+        }
+        return updated;
+      });
+    }
+
+    const promptItem = {
+      id: promptMessageId,
+      prompt,
+      sendingImageUrl,
+      sendingImages,
+      activeReplyContext,
+      curSessionId
+    };
+
+    if (isCurrentlyBusy) {
+      messageQueueRef.current.push(promptItem);
+      setQueuedCount(messageQueueRef.current.length);
+      showToast(`Prompt queued (${messageQueueRef.current.length}) ⏳`, 'info');
+      return;
+    }
+
+    await executeDispatchPrompt(promptItem);
   };
 
   // Start a New Chat (Switches to fresh session, preserves existing chats)
@@ -4544,6 +4745,8 @@ export default function App() {
         const cached = localStorage.getItem(`aether_chat_history_${currentEmail}_${sessionId}`);
         if (cached) {
           setChatHistory(JSON.parse(cached));
+          setTimeout(() => scrollToBottom('auto'), 30);
+          setTimeout(() => scrollToBottom('auto'), 150);
         } else {
           setChatHistory([]);
         }
@@ -4561,6 +4764,8 @@ export default function App() {
             role: c.role === 'aether' ? 'assistant' : c.role
           })) : [];
           setChatHistory(normalizedChats);
+          setTimeout(() => scrollToBottom('auto'), 40);
+          setTimeout(() => scrollToBottom('auto'), 200);
           if (currentEmail) {
             try {
               localStorage.setItem(`aether_chat_history_${currentEmail}_${sessionId}`, JSON.stringify(normalizedChats));
@@ -6425,6 +6630,7 @@ export default function App() {
                                 key={imgIdx}
                                 src={imgSrc}
                                 alt={`Attached ${imgIdx + 1}`}
+                                onLoad={() => scrollToBottom('auto')}
                                 style={{
                                   maxWidth: msgImages.length > 1 ? '140px' : '100%',
                                   maxHeight: msgImages.length > 1 ? '140px' : '220px',
@@ -6462,6 +6668,25 @@ export default function App() {
                           <div style={{ color: '#cbd5e1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.72rem' }}>
                             {msg.reply_to.content}
                           </div>
+                        </div>
+                      )}
+                      {msg.role === 'user' && msg.isQueued && (
+                        <div style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '3px 10px',
+                          borderRadius: '12px',
+                          background: 'rgba(234, 179, 8, 0.15)',
+                          border: '1px solid rgba(234, 179, 8, 0.38)',
+                          color: '#facc15',
+                          fontSize: '0.72rem',
+                          fontWeight: 600,
+                          marginBottom: '8px',
+                          letterSpacing: '0.2px'
+                        }}>
+                          <span>⏳</span>
+                          <span>Queued ({msg.queuePosition || 1}) • Next in line</span>
                         </div>
                       )}
                       <FormattedMessage text={msg.content} />
@@ -7375,14 +7600,99 @@ export default function App() {
                       )}
                     </div>
                   ))}
-                  {isProcessing && (
-                    <div className="gemini-msg-assistant" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <div className="gemini-waveform-icon">
-                        <span /><span /><span />
+                  {isProcessing && (() => {
+                    const currentThinking = getDynamicThinkingState(thinkingPhaseIndex, activePromptContextType);
+                    return (
+                      <div 
+                        className="gemini-msg-assistant gemini-thinking-container"
+                        style={{ 
+                          display: 'inline-flex', 
+                          alignItems: 'center', 
+                          gap: '12px',
+                          padding: '11px 16px',
+                          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(56, 189, 248, 0.05) 100%)',
+                          border: '1px solid rgba(56, 189, 248, 0.28)',
+                          borderRadius: '20px 20px 20px 6px',
+                          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4), 0 0 16px rgba(56, 189, 248, 0.08)',
+                          maxWidth: 'fit-content'
+                        }}
+                      >
+                        {/* Dynamic Animated Emoji Badge (Claude style pulse) */}
+                        <div 
+                          key={`emoji-${thinkingPhaseIndex}`}
+                          style={{ 
+                            width: '30px', 
+                            height: '30px', 
+                            borderRadius: '50%', 
+                            background: 'radial-gradient(circle at 35% 35%, rgba(56, 189, 248, 0.25), rgba(14, 165, 233, 0.10))', 
+                            border: '1px solid rgba(56, 189, 248, 0.45)', 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'center', 
+                            fontSize: '1rem',
+                            flexShrink: 0,
+                            boxShadow: '0 0 10px rgba(56, 189, 248, 0.25)',
+                            animation: 'aetherPulse 1.8s ease-in-out infinite'
+                          }}
+                        >
+                          <span>{currentThinking.emoji}</span>
+                        </div>
+
+                        {/* Dynamic Animated Status Text with Claude Smooth Fade */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span 
+                            key={`text-${thinkingPhaseIndex}`}
+                            style={{ 
+                              fontSize: '0.86rem', 
+                              color: '#f1f5f9', 
+                              fontWeight: 600,
+                              letterSpacing: '0.01em',
+                              animation: 'fadeInThinking 0.25s ease'
+                            }}
+                          >
+                            {currentThinking.text}
+                          </span>
+                          {thinkingElapsed > 0 && (
+                            <span style={{ fontSize: '0.70rem', color: '#64748b', fontWeight: 500 }}>
+                              {thinkingElapsed}s
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Modern Waveform Pulse Bars */}
+                        <div className="gemini-waveform-icon" style={{ marginLeft: '4px' }}>
+                          <span style={{ background: '#38bdf8' }} /><span style={{ background: '#38bdf8' }} /><span style={{ background: '#38bdf8' }} />
+                        </div>
+
+                        {/* Quick Stop Generation Button */}
+                        <button
+                          type="button"
+                          onClick={handleStopGeneration}
+                          title="Stop generation (रोकें)"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            background: 'rgba(239, 68, 68, 0.16)',
+                            border: '1px solid rgba(239, 68, 68, 0.42)',
+                            color: '#fca5a5',
+                            borderRadius: '12px',
+                            padding: '3px 8px',
+                            fontSize: '0.68rem',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            marginLeft: '6px',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <Square size={9} fill="currentColor" />
+                          <span>Stop</span>
+                        </button>
                       </div>
-                      <span style={{ fontSize: '0.86rem', color: '#94a3b8' }}>Thinking & calculating...</span>
-                    </div>
-                  )}
+                    );
+                  })()}
+                  {/* Invisible anchor pinned to absolute bottom of chat */}
+                  <div ref={messagesEndRef} style={{ float: 'left', clear: 'both', height: '1px', width: '100%', opacity: 0, pointerEvents: 'none' }} />
                 </div>
               )}
 
@@ -7748,6 +8058,11 @@ export default function App() {
                       e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
                     }}
                     onKeyDown={(e) => {
+                      if (e.key === 'Escape' && isProcessing) {
+                        e.preventDefault();
+                        handleStopGeneration();
+                        return;
+                      }
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         if (inputText.trim() || attachedMediaList.length > 0) {
@@ -7758,7 +8073,68 @@ export default function App() {
                     autoFocus
                   />
 
-                  {(inputText.trim() || attachedMediaList.length > 0) && !isListening ? (
+                  {isProcessing ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {/* Stop Generation Button */}
+                      <button
+                        type="button"
+                        className="gemini-prompt-btn"
+                        onClick={handleStopGeneration}
+                        title="Stop Generation (Esc / रोकें)"
+                        style={{
+                          background: 'rgba(239, 68, 68, 0.22)',
+                          border: '1px solid rgba(239, 68, 68, 0.55)',
+                          color: '#f87171',
+                          boxShadow: '0 0 14px rgba(239, 68, 68, 0.35)',
+                          borderRadius: '50%',
+                          width: '40px',
+                          height: '40px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          flexShrink: 0,
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        <Square size={15} fill="currentColor" />
+                      </button>
+
+                      {/* Queue Button — shown when user has typed text or attached files while processing */}
+                      {(inputText.trim() || attachedMediaList.length > 0) && (
+                        <button
+                          type="button"
+                          className="gemini-prompt-btn"
+                          onClick={() => handleSendPrompt()}
+                          title={`Queue message (${queuedCount} in queue)`}
+                          style={{
+                            background: 'linear-gradient(135deg, #eab308 0%, #ca8a04 100%)',
+                            color: '#0f172a',
+                            border: 'none',
+                            fontWeight: 700,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            padding: '0 12px',
+                            borderRadius: '20px',
+                            fontSize: '0.78rem',
+                            height: '38px',
+                            cursor: 'pointer',
+                            boxShadow: '0 2px 10px rgba(234, 179, 8, 0.35)',
+                            flexShrink: 0
+                          }}
+                        >
+                          <span>Queue</span>
+                          <span style={{
+                            background: 'rgba(0,0,0,0.22)',
+                            padding: '1px 6px',
+                            borderRadius: '10px',
+                            fontSize: '0.72rem'
+                          }}>+{queuedCount + 1}</span>
+                        </button>
+                      )}
+                    </div>
+                  ) : (inputText.trim() || attachedMediaList.length > 0) && !isListening ? (
                     /* Send Arrow Button — shown when user has typed text or attached media */
                     <button 
                       type="submit" 
