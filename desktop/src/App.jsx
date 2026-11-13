@@ -3459,6 +3459,11 @@ export default function App() {
               return prev;
             }
 
+            // Never downgrade or truncate local chat if local already has more or newer messages!
+            if (prev.length > normalizedChats.length) {
+              return prev;
+            }
+
             // Merge local optimistic messages that haven't reached or returned from server yet
             const missingFromNorm = prev.filter(pMsg => {
               if (pMsg.id && normalizedChats.some(s => s.id === pMsg.id)) {
@@ -3764,8 +3769,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    refreshAllData();
-    const interval = setInterval(refreshAllData, serverOnline ? 15000 : 3500);
+    refreshAllData({ skipChatHistory: true });
+    const interval = setInterval(() => refreshAllData({ skipChatHistory: true }), serverOnline ? 15000 : 3500);
     return () => clearInterval(interval);
   }, [serverOnline]);
 
@@ -4463,16 +4468,24 @@ export default function App() {
                   .replace(/"explanation"\s*:\s*"?/gi, '')
                   .replace(/^[\s,"]+|[\s,"]+$/g, '')
                   .trim();
-                if (stripped && stripped.length > 3) {
+                if (stripped && stripped.length > 3 && stripped.toLowerCase() !== 'json:' && stripped.toLowerCase() !== 'json') {
                   assistantReply = stripped;
                 } else {
-                  assistantReply = (result.parsed?.data?.response && !result.parsed.data.response.includes('"action"'))
+                  assistantReply = (result.parsed?.data?.response && !result.parsed.data.response.includes('"action"') && result.parsed.data.response.trim().toLowerCase() !== 'json:')
                     ? result.parsed.data.response
                     : "कार्य पूरा कर लिया गया है।";
                 }
               }
             }
           }
+        }
+      }
+      if (typeof assistantReply === 'string') {
+        const cleanLower = assistantReply.trim().toLowerCase();
+        if (cleanLower === 'json:' || cleanLower === 'json' || cleanLower === '{' || cleanLower === '}' || cleanLower.startsWith('json:\n')) {
+          assistantReply = (result.parsed?.data?.response && !result.parsed.data.response.includes('"action"') && result.parsed.data.response.trim().toLowerCase() !== 'json:')
+            ? result.parsed.data.response
+            : (result.data?.response || "कार्य पूरा कर लिया गया है।");
         }
       }
       if (assistantReply.includes('ब्लॉक/लीक') || assistantReply.includes('Permission Denied')) {
@@ -7702,31 +7715,6 @@ export default function App() {
                         <div className="gemini-waveform-icon" style={{ marginLeft: '4px', opacity: 0.85 }}>
                           <span style={{ background: '#38bdf8' }} /><span style={{ background: '#38bdf8' }} /><span style={{ background: '#38bdf8' }} />
                         </div>
-
-                        {/* Quick Stop Generation Button */}
-                        <button
-                          type="button"
-                          onClick={handleStopGeneration}
-                          title="Stop generation (रोकें)"
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            background: 'rgba(239, 68, 68, 0.12)',
-                            border: '1px solid rgba(239, 68, 68, 0.35)',
-                            color: '#f87171',
-                            borderRadius: '8px',
-                            padding: '2px 8px',
-                            fontSize: '0.68rem',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            marginLeft: '8px',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          <Square size={9} fill="currentColor" />
-                          <span>Stop</span>
-                        </button>
                       </div>
                     );
                   })()}
@@ -8112,68 +8100,40 @@ export default function App() {
                     autoFocus
                   />
 
-                  {isProcessing ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                      {/* Stop Generation Button */}
-                      <button
-                        type="button"
-                        onClick={handleStopGeneration}
-                        title="Stop Generation (Esc / रोकें)"
-                        style={{
-                          background: 'rgba(239, 68, 68, 0.22)',
-                          border: '1px solid rgba(239, 68, 68, 0.55)',
-                          color: '#f87171',
-                          boxShadow: '0 0 10px rgba(239, 68, 68, 0.3)',
-                          borderRadius: '50%',
-                          width: '34px',
-                          height: '34px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          cursor: 'pointer',
-                          flexShrink: 0,
-                          padding: 0
-                        }}
-                      >
-                        <Square size={13} fill="currentColor" />
-                      </button>
-
-                      {/* Queue Button — shown when user has typed text or attached files while processing */}
-                      {(inputText.trim() || attachedMediaList.length > 0) && (
-                        <button
-                          type="button"
-                          onClick={() => handleSendPrompt()}
-                          title={`Add to Queue (${queuedCount} currently waiting)`}
-                          style={{
-                            background: 'linear-gradient(135deg, #eab308 0%, #ca8a04 100%)',
-                            color: '#0f172a',
-                            border: 'none',
-                            fontWeight: 700,
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '4px',
-                            padding: '0 10px',
-                            borderRadius: '17px',
-                            fontSize: '0.74rem',
-                            height: '34px',
-                            cursor: 'pointer',
-                            boxShadow: '0 2px 10px rgba(234, 179, 8, 0.35)',
-                            flexShrink: 0,
-                            whiteSpace: 'nowrap'
-                          }}
-                        >
-                          <span>Queue</span>
-                          <span style={{
-                            background: 'rgba(0,0,0,0.25)',
-                            padding: '1px 5px',
-                            borderRadius: '10px',
-                            fontSize: '0.68rem',
-                            fontWeight: 800
-                          }}>+{queuedCount + 1}</span>
-                        </button>
-                      )}
-                    </div>
+                  {isProcessing && (inputText.trim() || attachedMediaList.length > 0) ? (
+                    /* Queue Button — shown when user has typed text or attached files while processing */
+                    <button
+                      type="button"
+                      onClick={() => handleSendPrompt()}
+                      title={`Add to Queue (${queuedCount} currently waiting)`}
+                      style={{
+                        background: 'linear-gradient(135deg, #eab308 0%, #ca8a04 100%)',
+                        color: '#0f172a',
+                        border: 'none',
+                        fontWeight: 700,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px',
+                        padding: '0 10px',
+                        borderRadius: '17px',
+                        fontSize: '0.74rem',
+                        height: '34px',
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 10px rgba(234, 179, 8, 0.35)',
+                        flexShrink: 0,
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      <span>Queue</span>
+                      <span style={{
+                        background: 'rgba(0,0,0,0.25)',
+                        padding: '1px 5px',
+                        borderRadius: '10px',
+                        fontSize: '0.68rem',
+                        fontWeight: 800
+                      }}>+{queuedCount + 1}</span>
+                    </button>
                   ) : (inputText.trim() || attachedMediaList.length > 0) && !isListening ? (
                     /* Send Arrow Button — shown when user has typed text or attached media */
                     <button 

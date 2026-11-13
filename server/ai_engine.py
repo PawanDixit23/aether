@@ -1952,7 +1952,12 @@ def _extract_llm_action_dict(raw_text: str, user_input: str, is_cricket_query: b
     if not raw_text or not raw_text.strip():
         return None
     raw_text = raw_text.strip()
-    json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+
+    # Strip any leading markdown wrapper or "JSON:" label that models like Gemini occasionally emit
+    clean_raw = re.sub(r'(?i)^\s*(?:json\s*:?|```(?:json)?)\s*', '', raw_text).strip()
+    clean_raw = re.sub(r'\s*```\s*$', '', clean_raw).strip()
+
+    json_match = re.search(r'\{.*\}', clean_raw, re.DOTALL)
     if json_match:
         try:
             json_str = json_match.group(0)
@@ -1977,43 +1982,35 @@ def _extract_llm_action_dict(raw_text: str, user_input: str, is_cricket_query: b
         except Exception as parse_err:
             print(f"[Aether Engine] JSON parse error: {parse_err}")
 
-    clean_resp = raw_text
-    if "```json" in clean_resp or (clean_resp.startswith("{") and "action" in clean_resp):
-        clean_resp = re.sub(r'^```(?:json)?\s*', '', clean_resp, flags=re.IGNORECASE)
-        clean_resp = re.sub(r'\s*```$', '', clean_resp).strip()
-        try:
-            fallback_dict = json.loads(clean_resp)
-            if fallback_dict.get("action"):
-                return fallback_dict
-            if fallback_dict.get("explanation"):
-                clean_resp = fallback_dict.get("explanation")
-            elif fallback_dict.get("data", {}).get("response"):
-                clean_resp = fallback_dict["data"]["response"]
-        except Exception:
-            resp_match = re.search(r'"response"\s*:\s*"((?:[^"\\]|\\.)*)"', clean_resp, re.DOTALL)
-            if resp_match:
-                clean_resp = _clean_extracted_text(resp_match.group(1))
-            else:
-                exp_match = re.search(r'"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"', clean_resp, re.DOTALL)
-                if exp_match:
-                    clean_resp = _clean_extracted_text(exp_match.group(1))
-                else:
-                    clean_resp = re.sub(r'^\s*\{\s*"action"\s*:\s*"[^"]+"\s*,\s*"data"\s*:\s*\{\s*"response"\s*:\s*"?', '', clean_resp, flags=re.DOTALL)
-                    clean_resp = re.sub(r'"?\s*\}\s*,\s*"explanation"\s*:.*$', '', clean_resp, flags=re.DOTALL)
-                    clean_resp = re.sub(r'"?\s*\}\s*\}\s*$', '', clean_resp, flags=re.DOTALL).strip()
+    # Fallback response extraction if json.loads failed (e.g. unescaped quotes or newlines in Hindi text)
+    clean_resp = clean_raw
 
-    if not clean_resp or not clean_resp.strip():
-        clean_resp = raw_text
+    # 1. Try regex extraction of "response": "..."
+    resp_match = re.search(r'"response"\s*:\s*"(.*)', clean_resp, re.DOTALL)
+    if resp_match:
+        cand = resp_match.group(1)
+        # Strip trailing JSON closing quotes/braces
+        cand = re.sub(r'"\s*(?:,\s*"explanation"\s*:\s*"[^"]*"|\s*\}\s*\}\s*|\s*\}\s*)$', '', cand, flags=re.DOTALL)
+        cand = re.sub(r'"\s*\}\s*$', '', cand, flags=re.DOTALL).strip()
+        if cand and len(cand) > 5 and not cand.lower().startswith(('json:', '{', '}')):
+            clean_resp = cand
+    else:
+        exp_match = re.search(r'"explanation"\s*:\s*"(.*)', clean_resp, re.DOTALL)
+        if exp_match:
+            cand = exp_match.group(1)
+            cand = re.sub(r'"\s*\}\s*$', '', cand, flags=re.DOTALL).strip()
+            if cand and len(cand) > 5:
+                clean_resp = cand
 
-    # Comprehensive safety guard against partial/unclosed JSON leakage
-    if clean_resp and (clean_resp.strip().startswith('{') or '"action"' in clean_resp):
-        stripped = re.sub(r'\{|\}|"action"\s*:\s*"[^"]*",?|"data"\s*:\s*\{?|"confidence(?:_level)?"\s*:\s*(?:"[^"]*"|[\d.]+),?|"response"\s*:\s*"?|"explanation"\s*:\s*"?', '', clean_resp)
-        stripped = re.sub(r'^[\s,"]+|[\s,"]+$', '', stripped).strip()
-        if stripped and len(stripped) > 3:
-            clean_resp = stripped
-        else:
-            is_hi = any('\u0900' <= ch <= '\u097f' for ch in user_input)
-            clean_resp = f"नमस्ते! मैं '{user_input}' के बारे में जानकारी प्रोसेस कर रहा हूँ।" if is_hi else f"Here is the latest insight regarding {user_input}."
+    # Strip any lingering JSON boilerplate, labels, or brackets
+    clean_resp = re.sub(r'(?i)^\s*json\s*:?\s*', '', clean_resp).strip()
+    clean_resp = re.sub(r'\{|\}|"action"\s*:\s*"[^"]*",?|"data"\s*:\s*\{?|"confidence(?:_level)?"\s*:\s*(?:"[^"]*"|[\d.]+),?|"response"\s*:\s*"?|"explanation"\s*:\s*"?', '', clean_resp)
+    clean_resp = re.sub(r'^[\s,:"\']+|[\s,:"\']+$', '', clean_resp).strip()
+
+    # If clean_resp is still empty, or equal to "JSON:", provide genuine natural response
+    if not clean_resp or clean_resp.lower() in ["json:", "json", "query", "{", "}"] or len(clean_resp) < 4:
+        is_hi = any('\u0900' <= ch <= '\u097f' for ch in user_input) or any(w in user_input.lower() for w in ["hindi", "samachar", "khabar", "news"])
+        clean_resp = f"नमस्ते! मैं '{user_input}' के बारे में जानकारी प्रोसेस कर रहा हूँ। कृपया पुनः पूछें।" if is_hi else f"I am ready with details for {user_input}."
 
     return {
         "action": "query",
