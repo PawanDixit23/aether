@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Check, Database, Shield, Key, ExternalLink, HelpCircle, AlertTriangle, CheckCircle2, Search, ChevronDown, User, Sliders, RotateCw, BookUser, Plus, Trash2, Edit2, Edit3, Pin, Upload, Download } from 'lucide-react';
 import { AETHER_VOICES, AI_PROVIDERS } from '../common/constants';
 
