@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Mic, Bell, MapPin, Volume2, Sparkles, Radio, RefreshCw, Edit2, Check } from 'lucide-react';
+import { ShieldCheck, Mic, Bell, MapPin, BookUser, Volume2, Sparkles, Radio, RefreshCw, Edit2, Check } from 'lucide-react';
 
 export const PermissionsModal = ({
   isOpen,
@@ -16,6 +16,8 @@ export const PermissionsModal = ({
   userLocationName,
   handleDetectLocation,
   handleSetCustomCity,
+  contactsEnabled,
+  handleToggleContacts,
   voiceOutputEnabled,
   setVoiceOutputEnabled,
   wakeWordEnabled,
@@ -215,7 +217,50 @@ export const PermissionsModal = ({
             </div>
           </div>
 
-          {/* 4: Audio Playback */}
+          {/* 4: Contacts & Phonebook */}
+          <div style={{ background: 'rgba(16,185,129,0.06)', border: contactsEnabled ? '1.5px solid rgba(16,185,129,0.35)' : '1.5px solid rgba(255,255,255,0.06)', borderRadius: '20px', padding: '20px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', transition: 'border 0.2s' }}>
+            <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: 1, minWidth: 0 }}>
+              <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: contactsEnabled ? 'rgba(16,185,129,0.2)' : 'rgba(255,255,255,0.06)', border: contactsEnabled ? '1px solid rgba(16,185,129,0.4)' : '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: contactsEnabled ? '#34d399' : '#64748b', flexShrink: 0, transition: 'all 0.2s' }}>
+                <BookUser size={22} />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ color: '#fff', fontSize: '0.95rem', fontWeight: 700, marginBottom: '4px' }}>Contacts & Phonebook</div>
+                <div style={{ color: '#64748b', fontSize: '0.76rem', lineHeight: '1.4' }}>
+                  {contactsEnabled
+                    ? 'Device phonebook access granted • Ready to sync contacts in Memory Vault & enable voice calling'
+                    : 'Access disabled • Syncing contacts in Memory Vault is blocked'}
+                </div>
+                {contactsEnabled ? (
+                  <div style={{ color: '#34d399', fontSize: '0.70rem', marginTop: '3px', fontWeight: 600 }}>
+                    ● Memory Vault Sync Allowed
+                  </div>
+                ) : (
+                  <div style={{ color: '#94a3b8', fontSize: '0.70rem', marginTop: '3px', fontWeight: 500 }}>
+                    🔒 Contacts permission is turned off
+                  </div>
+                )}
+                {typeof window !== 'undefined' && window.ReactNativeWebView && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      try {
+                        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'OPEN_APP_SETTINGS' }));
+                      } catch (err) {}
+                    }}
+                    style={{ marginTop: '8px', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', color: '#34d399', padding: '4px 12px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    ⚙️ Phone App Settings
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className={`permission-toggle-switch ${contactsEnabled ? 'active' : ''}`} onClick={handleToggleContacts} role="button" tabIndex={0}>
+              <div className="permission-toggle-thumb" />
+            </div>
+          </div>
+
+          {/* 5: Audio Playback */}
           <div style={{ background: 'rgba(168,85,247,0.06)', border: voiceOutputEnabled ? '1.5px solid rgba(168,85,247,0.35)' : '1.5px solid rgba(255,255,255,0.06)', borderRadius: '20px', padding: '20px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', transition: 'border 0.2s' }}>
             <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flex: 1, minWidth: 0 }}>
               <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: voiceOutputEnabled ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.06)', border: voiceOutputEnabled ? '1px solid rgba(168,85,247,0.4)' : '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: voiceOutputEnabled ? '#c084fc' : '#64748b', flexShrink: 0, transition: 'all 0.2s' }}>

@@ -51,7 +51,9 @@ export const SettingsSubModals = ({
   auditLogs,
   refreshAllData,
   isFriendMode,
-  handleToggleFriendMode
+  handleToggleFriendMode,
+  contactsEnabled,
+  handleToggleContacts
 }) => {
   const [modalProviderTab, setModalProviderTab] = useState(() => activeProvider || 'gemini');
   const [showSettingsKeyGuide, setShowSettingsKeyGuide] = useState(false);
@@ -88,6 +90,13 @@ export const SettingsSubModals = ({
   const syncTimeoutRef = useRef(null);
 
   const handleSyncPhoneContacts = async () => {
+    const isAllowed = contactsEnabled ?? (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_contacts_permission') === 'true' : false);
+    if (!isAllowed) {
+      showToast("⚠️ Contacts permission is disabled. Please enable 'Contacts & Phonebook' in Settings > App Permissions.", "error");
+      if (setActiveSubModal) setActiveSubModal('permissions');
+      return;
+    }
+
     setIsSyncingContacts(true);
     showToast("Reading phone contacts... 📱", "info");
 
@@ -1128,11 +1137,18 @@ export const SettingsSubModals = ({
                     📲
                   </div>
                   <div>
-                    <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#f8fafc' }}>
-                      Sync Phone Contacts
+                    <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span>Sync Phone Contacts</span>
+                      {contactsEnabled ? (
+                        <span style={{ fontSize: '0.62rem', background: 'rgba(16,185,129,0.18)', color: '#34d399', border: '1px solid rgba(16,185,129,0.3)', padding: '1px 6px', borderRadius: '6px', fontWeight: 600 }}>● Allowed</span>
+                      ) : (
+                        <span style={{ fontSize: '0.62rem', background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '1px 6px', borderRadius: '6px', fontWeight: 600 }}>🔒 Disabled</span>
+                      )}
                     </div>
                     <div style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
-                      1-click import device phonebook to Memory Vault for instant voice dialing
+                      {contactsEnabled
+                        ? '1-click import device phonebook to Memory Vault for instant voice dialing'
+                        : 'Enable "Contacts & Phonebook" in App Permissions to sync'}
                     </div>
                   </div>
                 </div>
@@ -1141,20 +1157,20 @@ export const SettingsSubModals = ({
                   onClick={handleSyncPhoneContacts}
                   disabled={isSyncingContacts}
                   style={{
-                    background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
-                    border: '1px solid rgba(56, 189, 248, 0.55)',
-                    color: '#ffffff',
+                    background: contactsEnabled ? 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)' : 'rgba(255, 255, 255, 0.08)',
+                    border: contactsEnabled ? '1px solid rgba(56, 189, 248, 0.55)' : '1px solid rgba(255, 255, 255, 0.15)',
+                    color: contactsEnabled ? '#ffffff' : '#94a3b8',
                     fontSize: '0.74rem',
                     fontWeight: 700,
                     padding: '6px 14px',
                     borderRadius: '999px',
                     cursor: isSyncingContacts ? 'wait' : 'pointer',
-                    boxShadow: '0 2px 10px rgba(2, 132, 199, 0.3)',
+                    boxShadow: contactsEnabled ? '0 2px 10px rgba(2, 132, 199, 0.3)' : 'none',
                     whiteSpace: 'nowrap',
                     opacity: isSyncingContacts ? 0.7 : 1
                   }}
                 >
-                  {isSyncingContacts ? 'Syncing...' : 'Sync Now'}
+                  {isSyncingContacts ? 'Syncing...' : contactsEnabled ? 'Sync Now' : 'Enable Permission'}
                 </button>
               </div>
 

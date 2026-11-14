@@ -369,6 +369,9 @@ export default function App() {
   const [locationEnabled, setLocationEnabled] = useState(() => {
     return localStorage.getItem('aether_location_enabled') === 'true';
   });
+  const [contactsEnabled, setContactsEnabled] = useState(() => {
+    return localStorage.getItem('aether_contacts_permission') === 'true';
+  });
   const [userLocationName, setUserLocationName] = useState(() => {
     const saved = localStorage.getItem('aether_user_city') || '';
     return saved.toLowerCase().includes('singapore') ? '' : saved;
@@ -1035,6 +1038,11 @@ export default function App() {
 
   // 1-Click Phone Contacts Sync (Mobile Bridge + Web Contacts API)
   const handleSyncContacts = async () => {
+    if (!contactsEnabled) {
+      showToast("⚠️ Contacts permission is disabled. Please enable 'Contacts & Phonebook' in Settings > App Permissions.", "error");
+      setActiveSubModal('permissions');
+      return;
+    }
     setIsSyncingContacts(true);
     showToast("Syncing device contacts... 📱", "info");
 
@@ -2634,6 +2642,41 @@ export default function App() {
       }
     }
   };
+
+  const handleToggleContacts = async () => {
+    const nextVal = !contactsEnabled;
+    if (nextVal) {
+      if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+        try {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_CONTACTS_PERMISSION' }));
+        } catch (e) {}
+      }
+      setContactsEnabled(true);
+      localStorage.setItem('aether_contacts_permission', 'true');
+      showToast('📱 Contacts & Phonebook permission enabled', 'success');
+    } else {
+      setContactsEnabled(false);
+      localStorage.setItem('aether_contacts_permission', 'false');
+      showToast('🔒 Contacts permission disabled. Memory Vault sync blocked.', 'info');
+    }
+  };
+
+  useEffect(() => {
+    window.__onContactsPermissionResult = (granted) => {
+      if (granted) {
+        setContactsEnabled(true);
+        localStorage.setItem('aether_contacts_permission', 'true');
+        showToast('📱 Contacts permission granted on device', 'success');
+      } else {
+        setContactsEnabled(false);
+        localStorage.setItem('aether_contacts_permission', 'false');
+        showToast('⚠️ Contacts permission denied on device. Please allow in Phone Settings.', 'error');
+      }
+    };
+    return () => {
+      delete window.__onContactsPermissionResult;
+    };
+  }, []);
 
   // Auto-refresh location if previously enabled or if stuck on old default
   useEffect(() => {
@@ -9163,9 +9206,9 @@ export default function App() {
                   onClick={handleSyncContacts}
                   disabled={isSyncingContacts}
                   style={{
-                    background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
-                    border: '1px solid rgba(56, 189, 248, 0.5)',
-                    color: '#ffffff',
+                    background: contactsEnabled ? 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)' : 'rgba(255, 255, 255, 0.08)',
+                    border: contactsEnabled ? '1px solid rgba(56, 189, 248, 0.5)' : '1px solid rgba(255, 255, 255, 0.15)',
+                    color: contactsEnabled ? '#ffffff' : '#94a3b8',
                     borderRadius: '12px',
                     padding: '8px 14px',
                     fontSize: '0.8rem',
@@ -9174,12 +9217,12 @@ export default function App() {
                     alignItems: 'center',
                     gap: '6px',
                     cursor: isSyncingContacts ? 'wait' : 'pointer',
-                    boxShadow: '0 2px 10px rgba(2, 132, 199, 0.35)',
+                    boxShadow: contactsEnabled ? '0 2px 10px rgba(2, 132, 199, 0.35)' : 'none',
                     opacity: isSyncingContacts ? 0.7 : 1
                   }}
                 >
-                  <span>📲</span>
-                  <span>{isSyncingContacts ? "Syncing..." : "Sync Phone Contacts"}</span>
+                  <span>{contactsEnabled ? '📲' : '🔒'}</span>
+                  <span>{isSyncingContacts ? "Syncing..." : contactsEnabled ? "Sync Phone Contacts" : "Enable Contacts Permission"}</span>
                 </button>
               </div>
 
@@ -9517,6 +9560,8 @@ export default function App() {
         refreshAllData={refreshAllData}
         isFriendMode={isFriendMode}
         handleToggleFriendMode={handleToggleFriendMode}
+        contactsEnabled={contactsEnabled}
+        handleToggleContacts={handleToggleContacts}
       />
 
       {/* 8. App Permissions & Access Modal */}
@@ -9538,6 +9583,8 @@ export default function App() {
           handleSetCustomCity(city);
           refreshAllData({ force: true });
         }}
+        contactsEnabled={contactsEnabled}
+        handleToggleContacts={handleToggleContacts}
         voiceOutputEnabled={voiceOutputEnabled}
         setVoiceOutputEnabled={setVoiceOutputEnabled}
         wakeWordEnabled={wakeWordEnabled}

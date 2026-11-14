@@ -466,6 +466,26 @@ export default function App() {
                 } else {
                   Linking.openURL('tel:').catch(() => {});
                 }
+              } else if (data.type === 'REQUEST_CONTACTS_PERMISSION') {
+                try {
+                  const { status } = await Contacts.requestPermissionsAsync();
+                  const granted = status === 'granted';
+                  webViewRef.current?.injectJavaScript(`
+                    if (window.__onContactsPermissionResult) {
+                      window.__onContactsPermissionResult(${granted});
+                    }
+                    true;
+                  `);
+                } catch (cErr: any) {
+                  webViewRef.current?.injectJavaScript(`
+                    if (window.__onContactsPermissionResult) {
+                      window.__onContactsPermissionResult(false);
+                    }
+                    true;
+                  `);
+                }
+              } else if (data.type === 'OPEN_APP_SETTINGS') {
+                Linking.openSettings().catch(() => {});
               } else if (data.type === 'REQUEST_CONTACTS_SYNC') {
                 try {
                   const { status } = await Contacts.requestPermissionsAsync();
@@ -486,6 +506,9 @@ export default function App() {
                         if (window.__onContactsBatchSynced) {
                           window.__onContactsBatchSynced(parsed);
                         }
+                        if (window.__onContactsPermissionResult) {
+                          window.__onContactsPermissionResult(true);
+                        }
                       } catch (err) {
                         if (window.__onContactsSyncFailed) {
                           window.__onContactsSyncFailed("Sync decode error: " + err.message);
@@ -497,6 +520,9 @@ export default function App() {
                     webViewRef.current?.injectJavaScript(`
                       if (window.__onContactsSyncFailed) {
                         window.__onContactsSyncFailed('Contacts permission was not granted on device. Please allow Contacts in Phone Settings.');
+                      }
+                      if (window.__onContactsPermissionResult) {
+                        window.__onContactsPermissionResult(false);
                       }
                       true;
                     `);
