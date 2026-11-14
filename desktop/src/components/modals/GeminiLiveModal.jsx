@@ -536,16 +536,6 @@ export default function GeminiLiveModal({
           <span style={{ fontWeight: 800, fontSize: '0.84rem', letterSpacing: '0.04em', color: '#f8fafc' }}>
             AETHER LIVE
           </span>
-          <span style={{
-            fontSize: '0.62rem',
-            padding: '2px 6px',
-            borderRadius: '6px',
-            background: 'rgba(255, 255, 255, 0.12)',
-            color: '#94a3b8',
-            fontWeight: 700
-          }}>
-            DUPLEX
-          </span>
         </div>
 
         {/* Right: Close (✕) Button */}
