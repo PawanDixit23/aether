@@ -244,6 +244,10 @@ export default function GeminiLiveModal({
       const chatEndpoint = cleanBase.endsWith('/api') ? `${cleanBase}/chat` : (cleanBase ? `${cleanBase}/api/chat` : '/api/chat');
       const fallbackEndpoint = cleanBase.endsWith('/api') ? `${cleanBase}/action/quick-capture` : (cleanBase ? `${cleanBase}/api/action/quick-capture` : '/api/action/quick-capture');
 
+      // Automatic Language Detection (Hindi, English, or Hinglish based on user's query)
+      const isDevanagari = /[\u0900-\u097F]/.test(cleanPrompt);
+      const autoLang = isDevanagari ? 'hi' : 'auto';
+
       let data = null;
       try {
         const resp = await fetch(chatEndpoint, {
@@ -255,7 +259,7 @@ export default function GeminiLiveModal({
           body: JSON.stringify({
             prompt: cleanPrompt,
             user_email: userEmail,
-            lang: activeLang,
+            lang: autoLang,
             live_voice: true
           })
         });
@@ -276,7 +280,7 @@ export default function GeminiLiveModal({
           body: JSON.stringify({
             input_text: cleanPrompt,
             user_email: userEmail,
-            language: activeLang
+            language: autoLang
           })
         });
         if (respFallback.ok) {
@@ -309,7 +313,7 @@ export default function GeminiLiveModal({
         });
       }
 
-      // Speak AI Audio Response
+      // Speak AI Audio Response with matching language voice
       speakLiveResponse(aiText);
     } catch (err) {
       console.error('[Gemini Live Dispatch Error]', err);
@@ -337,9 +341,13 @@ export default function GeminiLiveModal({
       .replace(/\(http.*?\)/g, '')
       .trim();
 
+    // Natural Voice selection: Hindi for Devanagari text, English/natural otherwise
+    const isDevanagari = /[\u0900-\u097F]/.test(cleanSpeech);
+    const speechLang = isDevanagari ? 'hi' : 'en';
+
     const cleanBase = (apiBase || '').replace(/\/+$/, '');
     const ttsEndpoint = cleanBase.endsWith('/api') ? `${cleanBase}/tts` : (cleanBase ? `${cleanBase}/api/tts` : '/api/tts');
-    const ttsUrl = `${ttsEndpoint}?text=${encodeURIComponent(cleanSpeech.slice(0, 1500))}&voice=${selectedVoice}&lang=${activeLang}`;
+    const ttsUrl = `${ttsEndpoint}?text=${encodeURIComponent(cleanSpeech.slice(0, 1500))}&voice=${selectedVoice}&lang=${speechLang}`;
 
     const onAudioPlaybackDone = () => {
       isSpeakingRef.current = false;
@@ -425,37 +433,33 @@ export default function GeminiLiveModal({
 
   if (!isOpen) return null;
 
-  // Dynamic Theme Colors based on Live Session State (100% Opaque & Immersive)
+  // Dynamic Theme Colors based on Live Session State (Stable & Non-flickering)
   const themeGradients = {
     listening: {
       primary: '#38bdf8',
-      glow: 'rgba(56, 189, 248, 0.55)',
+      glow: 'rgba(56, 189, 248, 0.45)',
       ring: 'rgba(56, 189, 248, 0.28)',
-      mesh: 'radial-gradient(circle at 50% 36%, #0c233c 0%, #061527 50%, #020712 100%)',
       statusText: 'Listening... Speak freely',
       statusColor: '#38bdf8'
     },
     thinking: {
       primary: '#f59e0b',
-      glow: 'rgba(245, 158, 11, 0.55)',
+      glow: 'rgba(245, 158, 11, 0.45)',
       ring: 'rgba(245, 158, 11, 0.28)',
-      mesh: 'radial-gradient(circle at 50% 36%, #281a06 0%, #180f03 50%, #020712 100%)',
       statusText: 'Thinking...',
       statusColor: '#fbbf24'
     },
     speaking: {
       primary: '#34d399',
-      glow: 'rgba(52, 211, 153, 0.6)',
+      glow: 'rgba(52, 211, 153, 0.5)',
       ring: 'rgba(52, 211, 153, 0.28)',
-      mesh: 'radial-gradient(circle at 50% 36%, #072a1e 0%, #041912 50%, #020712 100%)',
       statusText: 'Speaking • Tap orb to interrupt',
       statusColor: '#34d399'
     },
     connecting: {
       primary: '#94a3b8',
-      glow: 'rgba(148, 163, 184, 0.35)',
+      glow: 'rgba(148, 163, 184, 0.25)',
       ring: 'rgba(148, 163, 184, 0.18)',
-      mesh: 'radial-gradient(circle at 50% 36%, #111a28 0%, #0b111b 50%, #020712 100%)',
       statusText: 'Connecting microphone...',
       statusColor: '#94a3b8'
     }
@@ -468,8 +472,7 @@ export default function GeminiLiveModal({
       position: 'fixed',
       inset: 0,
       zIndex: 999999,
-      backgroundColor: '#020712',
-      backgroundImage: currentTheme.mesh,
+      backgroundColor: '#030712',
       display: 'flex',
       flexDirection: 'column',
       justifyContent: 'space-between',
@@ -478,9 +481,23 @@ export default function GeminiLiveModal({
       padding: '0 20px 28px 20px',
       paddingTop: 'max(env(safe-area-inset-top, 48px), 48px)',
       boxSizing: 'border-box',
-      overflow: 'hidden',
-      transition: 'background 0.5s ease'
+      overflow: 'hidden'
     }}>
+      {/* Smooth Ambient Aura behind Orb (Zero screen flickering) */}
+      <div style={{
+        position: 'absolute',
+        top: '38%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        width: '440px',
+        height: '440px',
+        borderRadius: '50%',
+        background: `radial-gradient(circle, ${currentTheme.glow} 0%, rgba(3, 7, 18, 0) 70%)`,
+        pointerEvents: 'none',
+        transition: 'background 0.4s ease',
+        zIndex: 1
+      }} />
+
       {/* ── Top Header Bar ── */}
       <div style={{
         display: 'flex',
@@ -494,16 +511,20 @@ export default function GeminiLiveModal({
         position: 'relative',
         zIndex: 10
       }}>
-        {/* Left: Mode Title Pill */}
+        {/* Left: Spacer to center Title */}
+        <div style={{ width: '40px', height: '40px' }} />
+
+        {/* Center: AETHER LIVE Title Pill */}
         <div style={{
           display: 'inline-flex',
           alignItems: 'center',
           gap: '8px',
-          padding: '6px 14px',
+          padding: '6px 16px',
           borderRadius: '999px',
           background: 'rgba(255, 255, 255, 0.08)',
           border: '1px solid rgba(255, 255, 255, 0.15)',
-          backdropFilter: 'blur(12px)'
+          backdropFilter: 'blur(12px)',
+          boxShadow: '0 2px 10px rgba(0,0,0,0.3)'
         }}>
           <span style={{
             width: '8px',
@@ -513,55 +534,19 @@ export default function GeminiLiveModal({
             boxShadow: `0 0 10px ${currentTheme.primary}`,
             transition: 'background 0.3s ease'
           }} />
-          <span style={{ fontWeight: 700, fontSize: '0.82rem', letterSpacing: '0.04em', color: '#f8fafc' }}>
-            AETHER TALK
+          <span style={{ fontWeight: 800, fontSize: '0.84rem', letterSpacing: '0.04em', color: '#f8fafc' }}>
+            AETHER LIVE
           </span>
           <span style={{
             fontSize: '0.62rem',
             padding: '2px 6px',
             borderRadius: '6px',
-            background: 'rgba(255, 255, 255, 0.1)',
+            background: 'rgba(255, 255, 255, 0.12)',
             color: '#94a3b8',
             fontWeight: 700
           }}>
-            LIVE
+            DUPLEX
           </span>
-        </div>
-
-        {/* Center: Language Segmented Switcher */}
-        <div style={{
-          display: 'flex',
-          gap: '4px',
-          background: 'rgba(255, 255, 255, 0.08)',
-          padding: '3px',
-          borderRadius: '999px',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
-          backdropFilter: 'blur(12px)'
-        }}>
-          {[
-            { id: 'hi', label: 'हिन्दी' },
-            { id: 'hinglish', label: 'Hinglish' },
-            { id: 'en', label: 'English' }
-          ].map(l => (
-            <button
-              key={l.id}
-              type="button"
-              onClick={() => setActiveLang(l.id)}
-              style={{
-                background: activeLang === l.id ? 'rgba(56, 189, 248, 0.35)' : 'transparent',
-                border: activeLang === l.id ? '1px solid rgba(56, 189, 248, 0.55)' : 'none',
-                color: activeLang === l.id ? '#38bdf8' : '#94a3b8',
-                borderRadius: '999px',
-                padding: '4px 10px',
-                fontSize: '0.72rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              {l.label}
-            </button>
-          ))}
         </div>
 
         {/* Right: Close (✕) Button */}
@@ -569,8 +554,8 @@ export default function GeminiLiveModal({
           type="button"
           onClick={onClose}
           style={{
-            width: '38px',
-            height: '38px',
+            width: '40px',
+            height: '40px',
             borderRadius: '50%',
             background: 'rgba(255, 255, 255, 0.08)',
             border: '1px solid rgba(255, 255, 255, 0.14)',
@@ -582,7 +567,7 @@ export default function GeminiLiveModal({
             backdropFilter: 'blur(10px)',
             transition: 'all 0.15s ease'
           }}
-          title="Close Talk"
+          title="Close Live"
         >
           <X size={18} />
         </button>
