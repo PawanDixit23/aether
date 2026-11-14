@@ -1555,6 +1555,48 @@ async def _execute_quick_capture(
         "can_undo": undo_payload is not None
     }
 
+# ----------------- Direct Chat Endpoint (Gemini Live & Third-Party) -----------------
+class DirectChatRequest(BaseModel):
+    prompt: Optional[str] = None
+    input_text: Optional[str] = None
+    user_email: Optional[str] = None
+    lang: Optional[str] = "hi"
+    language: Optional[str] = None
+    live_voice: Optional[bool] = False
+
+@app.post("/api/chat")
+@app.post("/chat")
+async def direct_chat_endpoint(
+    req: DirectChatRequest,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(req.user_email or user_email)
+    text = (req.prompt or req.input_text or "").strip()
+    if not text:
+        return {"response": "नमस्ते! मैं सुन रहा हूँ, कृपया बोलें।", "content": "नमस्ते! मैं सुन रहा हूँ।"}
+    
+    qc_req = QuickCaptureRequest(
+        input_text=text,
+        language=req.language or req.lang or "hi",
+        user_email=eff_email
+    )
+    result = await quick_capture(qc_req, user_email=eff_email, db=db)
+    
+    reply = result.get("message") or ""
+    if not reply and result.get("parsed"):
+        reply = result.get("parsed", {}).get("data", {}).get("response", "")
+    if not reply:
+        reply = "समझ गया।"
+        
+    return {
+        "status": "ok",
+        "response": reply,
+        "content": reply,
+        "action": result.get("action"),
+        "data": result.get("parsed", {}).get("data")
+    }
+
 # ----------------- Translation Endpoint -----------------
 @app.post("/api/translate")
 async def translate_text(req: TranslateRequest):

@@ -84,6 +84,90 @@ export const SettingsSubModals = ({
   const currentSettingsProv = AI_PROVIDERS.find(p => p.id === modalProviderTab) || AI_PROVIDERS[0];
   const currentKeyVal = modalProviderTab === 'openai' ? (openaiKey || '') : modalProviderTab === 'grok' ? (grokKey || '') : (apiKey || '');
 
+  const [isSyncingContacts, setIsSyncingContacts] = useState(false);
+
+  const handleSyncPhoneContacts = async () => {
+    setIsSyncingContacts(true);
+    showToast("Reading phone contacts... 📱", "info");
+
+    // 1. Mobile App React Native WebView bridge
+    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_CONTACTS_SYNC' }));
+        return;
+      } catch (e) {}
+    }
+
+    // 2. Modern Web Contacts API fallback (Android Chrome)
+    if (typeof navigator !== 'undefined' && 'contacts' in navigator && 'ContactsManager' in window) {
+      try {
+        const props = ['name', 'tel', 'email'];
+        const opts = { multiple: true };
+        const contacts = await navigator.contacts.select(props, opts);
+        if (contacts && contacts.length > 0) {
+          const formatted = contacts.map(c => ({
+            name: c.name && c.name[0] ? c.name[0] : 'Contact',
+            phone: c.tel && c.tel[0] ? c.tel[0] : '',
+            email: c.email && c.email[0] ? c.email[0] : ''
+          })).filter(c => c.name && c.phone);
+          await saveBulkContactsToVault(formatted);
+          return;
+        }
+      } catch (err) {
+        console.warn('Web Contacts API cancelled or failed:', err);
+      }
+    }
+
+    setIsSyncingContacts(false);
+    showToast("Please open inside Aether Mobile App to sync phone contacts directly! 📲", "info");
+  };
+
+  const saveBulkContactsToVault = async (contactsList) => {
+    if (!contactsList || contactsList.length === 0) {
+      setIsSyncingContacts(false);
+      return;
+    }
+    try {
+      showToast(`Saving ${contactsList.length} contacts to Memory Vault... ⚡`, "info");
+      const resp = await fetch(`${apiBase || '/api'}/memory/bulk-contacts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(userEmail ? { 'X-User-Email': userEmail } : {})
+        },
+        body: JSON.stringify({
+          contacts: contactsList,
+          user_email: userEmail
+        })
+      });
+      const data = await resp.json();
+      if (data.status === 'ok') {
+        showToast(`✅ ${data.message || 'Contacts saved!'}`, "success");
+        if (refreshAllData) refreshAllData();
+      } else {
+        showToast("Contacts sync error", "error");
+      }
+    } catch (e) {
+      showToast("Could not reach server to sync contacts", "error");
+    } finally {
+      setIsSyncingContacts(false);
+    }
+  };
+
+  useEffect(() => {
+    window.__onContactsBatchSynced = (contactsList) => {
+      saveBulkContactsToVault(contactsList);
+    };
+    window.__onContactsSyncFailed = (err) => {
+      setIsSyncingContacts(false);
+      showToast(err || "Contacts access not granted", "error");
+    };
+    return () => {
+      delete window.__onContactsBatchSynced;
+      delete window.__onContactsSyncFailed;
+    };
+  }, [userEmail, apiBase]);
+
   if (!activeSubModal) return null;
 
   return (
@@ -721,90 +805,6 @@ export const SettingsSubModals = ({
             return next;
           });
         };
-
-        const [isSyncingContacts, setIsSyncingContacts] = useState(false);
-
-        const handleSyncPhoneContacts = async () => {
-          setIsSyncingContacts(true);
-          showToast("Reading phone contacts... 📱", "info");
-
-          // 1. Mobile App React Native WebView bridge
-          if (typeof window !== 'undefined' && window.ReactNativeWebView) {
-            try {
-              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_CONTACTS_SYNC' }));
-              return;
-            } catch (e) {}
-          }
-
-          // 2. Modern Web Contacts API fallback (Android Chrome)
-          if (typeof navigator !== 'undefined' && 'contacts' in navigator && 'ContactsManager' in window) {
-            try {
-              const props = ['name', 'tel', 'email'];
-              const opts = { multiple: true };
-              const contacts = await navigator.contacts.select(props, opts);
-              if (contacts && contacts.length > 0) {
-                const formatted = contacts.map(c => ({
-                  name: c.name && c.name[0] ? c.name[0] : 'Contact',
-                  phone: c.tel && c.tel[0] ? c.tel[0] : '',
-                  email: c.email && c.email[0] ? c.email[0] : ''
-                })).filter(c => c.name && c.phone);
-                await saveBulkContactsToVault(formatted);
-                return;
-              }
-            } catch (err) {
-              console.warn('Web Contacts API cancelled or failed:', err);
-            }
-          }
-
-          setIsSyncingContacts(false);
-          showToast("Please open inside Aether Mobile App to sync phone contacts directly! 📲", "info");
-        };
-
-        const saveBulkContactsToVault = async (contactsList) => {
-          if (!contactsList || contactsList.length === 0) {
-            setIsSyncingContacts(false);
-            return;
-          }
-          try {
-            showToast(`Saving ${contactsList.length} contacts to Memory Vault... ⚡`, "info");
-            const resp = await fetch(`${apiBase || '/api'}/memory/bulk-contacts`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(userEmail ? { 'X-User-Email': userEmail } : {})
-              },
-              body: JSON.stringify({
-                contacts: contactsList,
-                user_email: userEmail
-              })
-            });
-            const data = await resp.json();
-            if (data.status === 'ok') {
-              showToast(`✅ ${data.message || 'Contacts saved!'}`, "success");
-              if (refreshAllData) refreshAllData();
-            } else {
-              showToast("Contacts sync error", "error");
-            }
-          } catch (e) {
-            showToast("Could not reach server to sync contacts", "error");
-          } finally {
-            setIsSyncingContacts(false);
-          }
-        };
-
-        useEffect(() => {
-          window.__onContactsBatchSynced = (contactsList) => {
-            saveBulkContactsToVault(contactsList);
-          };
-          window.__onContactsSyncFailed = (err) => {
-            setIsSyncingContacts(false);
-            showToast(err || "Contacts access not granted", "error");
-          };
-          return () => {
-            delete window.__onContactsBatchSynced;
-            delete window.__onContactsSyncFailed;
-          };
-        }, [userEmail, apiBase]);
 
         const handleUploadDocumentToVault = async (e) => {
           const file = e.target.files?.[0];

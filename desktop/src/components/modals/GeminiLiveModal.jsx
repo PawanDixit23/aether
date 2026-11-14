@@ -26,6 +26,8 @@ export default function GeminiLiveModal({
   const isSpeakingRef = useRef(false);
   const isListeningRef = useRef(false);
   const isSessionActiveRef = useRef(false);
+  const latestSpokenRef = useRef('');
+  const isDispatchingRef = useRef(false);
 
   // Stop any active audio playback
   const stopAudioPlayback = () => {
@@ -89,6 +91,8 @@ export default function GeminiLiveModal({
     isSessionActiveRef.current = false;
     isSpeakingRef.current = false;
     isListeningRef.current = false;
+    isDispatchingRef.current = false;
+    latestSpokenRef.current = '';
     clearTimeout(silenceTimerRef.current);
 
     if (recognitionRef.current) {
@@ -145,7 +149,7 @@ export default function GeminiLiveModal({
 
       // Loop proven in App.jsx across all Android WebViews
       rec.onresult = (event) => {
-        if (!isSessionActiveRef.current) return;
+        if (!isSessionActiveRef.current || isDispatchingRef.current) return;
 
         let currentText = '';
         for (let i = 0; i < event.results.length; i++) {
@@ -157,6 +161,7 @@ export default function GeminiLiveModal({
 
         if (currentText) {
           setInterimTranscript(currentText);
+          latestSpokenRef.current = currentText;
 
           // Barge-in check: If AI is talking and user speaks, stop AI immediately
           if (isSpeakingRef.current) {
@@ -168,11 +173,13 @@ export default function GeminiLiveModal({
           clearTimeout(silenceTimerRef.current);
           const lastRes = event.results[event.results.length - 1];
           const isFinal = Boolean(lastRes && lastRes.isFinal);
-          const debounceDelay = isFinal ? 900 : 1400;
+          const debounceDelay = isFinal ? 800 : 1300;
 
           silenceTimerRef.current = setTimeout(() => {
-            if (isSessionActiveRef.current && currentText.trim()) {
-              sendLivePrompt(currentText.trim());
+            if (isSessionActiveRef.current && latestSpokenRef.current.trim() && !isDispatchingRef.current) {
+              const textToSend = latestSpokenRef.current.trim();
+              latestSpokenRef.current = '';
+              sendLivePrompt(textToSend);
             }
           }, debounceDelay);
         }
@@ -188,7 +195,7 @@ export default function GeminiLiveModal({
         } else {
           // Transient error: auto restart after slight delay
           setTimeout(() => {
-            if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted) {
+            if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted && !isDispatchingRef.current) {
               try { rec.start(); } catch (e) {}
             }
           }, 400);
@@ -197,10 +204,20 @@ export default function GeminiLiveModal({
 
       rec.onend = () => {
         isListeningRef.current = false;
+        clearTimeout(silenceTimerRef.current);
+
+        // If user finished speaking and speech was recognized before onend fired
+        if (isSessionActiveRef.current && latestSpokenRef.current.trim() && !isDispatchingRef.current) {
+          const textToSend = latestSpokenRef.current.trim();
+          latestSpokenRef.current = '';
+          sendLivePrompt(textToSend);
+          return;
+        }
+
         // Keep hands-free listening alive unless AI is currently speaking or user muted
-        if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted) {
+        if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted && !isDispatchingRef.current) {
           setTimeout(() => {
-            if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted) {
+            if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted && !isDispatchingRef.current) {
               try { rec.start(); } catch (e) {}
             }
           }, 250);
@@ -215,8 +232,9 @@ export default function GeminiLiveModal({
 
   // Dispatch prompt to Aether Core with low-latency Voice Mode
   const sendLivePrompt = async (text) => {
-    if (!text || !text.trim() || !isSessionActiveRef.current) return;
+    if (!text || !text.trim() || !isSessionActiveRef.current || isDispatchingRef.current) return;
 
+    isDispatchingRef.current = true;
     clearTimeout(silenceTimerRef.current);
     const cleanPrompt = text.trim();
     setTranscript(cleanPrompt);
@@ -229,24 +247,52 @@ export default function GeminiLiveModal({
     }
 
     try {
-      const resp = await fetch(`${apiBase || '/api'}/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(userEmail ? { 'X-User-Email': userEmail } : {})
-        },
-        body: JSON.stringify({
-          prompt: cleanPrompt,
-          user_email: userEmail,
-          lang: activeLang,
-          live_voice: true
-        })
-      });
+      let data = null;
+      try {
+        const resp = await fetch(`${apiBase || '/api'}/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(userEmail ? { 'X-User-Email': userEmail } : {})
+          },
+          body: JSON.stringify({
+            prompt: cleanPrompt,
+            user_email: userEmail,
+            lang: activeLang,
+            live_voice: true
+          })
+        });
+        if (resp.ok) {
+          data = await resp.json();
+        }
+      } catch (e) {
+        console.warn('Live chat primary endpoint error, trying fallback', e);
+      }
 
-      const data = await resp.json();
-      if (!isSessionActiveRef.current) return;
+      if (!data) {
+        const respFallback = await fetch(`${apiBase || '/api'}/action/quick-capture`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(userEmail ? { 'X-User-Email': userEmail } : {})
+          },
+          body: JSON.stringify({
+            input_text: cleanPrompt,
+            user_email: userEmail,
+            language: activeLang
+          })
+        });
+        if (respFallback.ok) {
+          data = await respFallback.json();
+        }
+      }
 
-      const aiText = data.response || data.content || "समझ गया।";
+      if (!isSessionActiveRef.current) {
+        isDispatchingRef.current = false;
+        return;
+      }
+
+      const aiText = data?.response || data?.message || data?.content || "समझ गया।";
       setAiResponse(aiText);
 
       if (onNewMessage) {
@@ -260,8 +306,8 @@ export default function GeminiLiveModal({
           id: `live-ai-${Date.now()}`,
           role: 'assistant',
           content: aiText,
-          action: data.action,
-          actionData: data.data,
+          action: data?.action,
+          actionData: data?.data,
           created_at: new Date().toISOString()
         });
       }
@@ -270,6 +316,8 @@ export default function GeminiLiveModal({
       speakLiveResponse(aiText);
     } catch (err) {
       console.error('[Gemini Live Dispatch Error]', err);
+      isDispatchingRef.current = false;
+      latestSpokenRef.current = '';
       setSessionState('listening');
       startLiveListening();
     }
@@ -277,7 +325,10 @@ export default function GeminiLiveModal({
 
   // Speak AI response via streaming TTS and auto-resume listening when done
   const speakLiveResponse = (text) => {
-    if (!isSessionActiveRef.current) return;
+    if (!isSessionActiveRef.current) {
+      isDispatchingRef.current = false;
+      return;
+    }
 
     setSessionState('speaking');
     isSpeakingRef.current = true;
@@ -293,8 +344,10 @@ export default function GeminiLiveModal({
     const audio = new Audio(ttsUrl);
     audioPlayerRef.current = audio;
 
-    audio.onended = () => {
+    const onAudioPlaybackDone = () => {
       isSpeakingRef.current = false;
+      isDispatchingRef.current = false;
+      latestSpokenRef.current = '';
       audioPlayerRef.current = null;
       if (isSessionActiveRef.current && !isMuted) {
         setSessionState('listening');
@@ -302,33 +355,41 @@ export default function GeminiLiveModal({
       }
     };
 
+    audio.onended = onAudioPlaybackDone;
+
     audio.onerror = () => {
       // Fallback to browser SpeechSynthesis
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         const u = new SpeechSynthesisUtterance(cleanSpeech.slice(0, 500));
         u.lang = activeLang === 'hi' ? 'hi-IN' : 'en-IN';
-        u.onend = () => {
-          isSpeakingRef.current = false;
-          if (isSessionActiveRef.current && !isMuted) {
-            setSessionState('listening');
-            startLiveListening();
-          }
-        };
-        try { window.speechSynthesis.speak(u); } catch (e) {
-          isSpeakingRef.current = false;
-          startLiveListening();
+        u.onend = onAudioPlaybackDone;
+        u.onerror = onAudioPlaybackDone;
+        try {
+          window.speechSynthesis.speak(u);
+        } catch (e) {
+          onAudioPlaybackDone();
         }
       } else {
-        isSpeakingRef.current = false;
-        startLiveListening();
+        onAudioPlaybackDone();
       }
     };
 
     const playProm = audio.play();
     if (playProm !== undefined) {
       playProm.catch(() => {
-        isSpeakingRef.current = false;
-        startLiveListening();
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          const u = new SpeechSynthesisUtterance(cleanSpeech.slice(0, 500));
+          u.lang = activeLang === 'hi' ? 'hi-IN' : 'en-IN';
+          u.onend = onAudioPlaybackDone;
+          u.onerror = onAudioPlaybackDone;
+          try {
+            window.speechSynthesis.speak(u);
+          } catch (e) {
+            onAudioPlaybackDone();
+          }
+        } else {
+          onAudioPlaybackDone();
+        }
       });
     }
   };
@@ -623,31 +684,6 @@ export default function GeminiLiveModal({
                       ? `"${transcript}"`
                       : "उदाहरण: 'आज के एजेंडा में क्या है?' या 'रोहित को ₹500 भेजो'"))}
           </div>
-
-          {interimTranscript && (
-            <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'center' }}>
-              <button
-                type="button"
-                onClick={() => sendLivePrompt(interimTranscript)}
-                style={{
-                  background: 'rgba(56, 189, 248, 0.2)',
-                  border: '1px solid rgba(56, 189, 248, 0.5)',
-                  color: '#38bdf8',
-                  borderRadius: '20px',
-                  padding: '4px 12px',
-                  fontSize: '0.72rem',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}
-              >
-                <span>Send Now</span>
-                <Send size={11} />
-              </button>
-            </div>
-          )}
         </div>
 
         {errorMsg && (
