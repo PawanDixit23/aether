@@ -7925,36 +7925,6 @@ export default function App() {
                         <div className="gemini-waveform-icon" style={{ marginLeft: '4px', opacity: 0.85 }}>
                           <span style={{ background: '#38bdf8' }} /><span style={{ background: '#38bdf8' }} /><span style={{ background: '#38bdf8' }} />
                         </div>
-
-                        {/* Direct Mobile & Desktop Stop Button */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleStopGeneration();
-                          }}
-                          className="gemini-thinking-stop-btn"
-                          title="Stop response"
-                          style={{
-                            marginLeft: '8px',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '5px',
-                            padding: '3px 10px',
-                            borderRadius: '9999px',
-                            background: 'rgba(239, 68, 68, 0.16)',
-                            border: '1px solid rgba(239, 68, 68, 0.45)',
-                            color: '#f87171',
-                            fontSize: '0.72rem',
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                            userSelect: 'none',
-                            transition: 'all 0.18s ease'
-                          }}
-                        >
-                          <span style={{ width: '7px', height: '7px', background: '#ef4444', borderRadius: '1.5px', display: 'inline-block' }} />
-                          Stop
-                        </button>
                       </div>
                     );
                   })()}
