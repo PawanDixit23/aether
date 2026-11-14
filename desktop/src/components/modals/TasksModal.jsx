@@ -60,12 +60,37 @@ export const TasksModal = ({
     return false;
   });
 
+  // Track exact mobile visual viewport height (handles virtual soft keyboard correctly)
+  const [viewportHeight, setViewportHeight] = useState(() => {
+    if (typeof window !== 'undefined' && window.visualViewport) {
+      return window.visualViewport.height;
+    }
+    return null;
+  });
+
   useEffect(() => {
     const handleResize = () => {
       setIsMobile(window.innerWidth <= 768 || !!window.ReactNativeWebView || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent));
     };
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+
+    const handleViewportChange = () => {
+      if (window.visualViewport) {
+        setViewportHeight(window.visualViewport.height);
+      }
+    };
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleViewportChange);
+      window.visualViewport.addEventListener('scroll', handleViewportChange);
+    }
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleViewportChange);
+        window.visualViewport.removeEventListener('scroll', handleViewportChange);
+      }
+    };
   }, []);
 
   // Local state for UI filters & inputs
@@ -108,25 +133,27 @@ export const TasksModal = ({
   const [subtaskPriority, setSubtaskPriority] = useState('medium');
   const [subtaskTime, setSubtaskTime] = useState('');
   const [isSubmittingSubtask, setIsSubmittingSubtask] = useState(false);
+  const subtaskInputRef = useRef(null);
 
-  const handleAddSubtaskSubmit = async (parentId) => {
+  const handleAddSubtaskSubmit = (parentId) => {
     if (!subtaskTitle.trim()) return;
-    setIsSubmittingSubtask(true);
-    try {
-      if (handleCreateSubtask) {
-        await handleCreateSubtask(parentId, {
-          title: subtaskTitle.trim(),
-          priority: subtaskPriority,
-          reminder_time: subtaskTime.trim() || null
-        });
-      }
-      setSubtaskTitle('');
-      setSubtaskTime('');
-      setSubtaskPriority('medium');
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsSubmittingSubtask(false);
+    const cleanTitle = subtaskTitle.trim();
+    const cleanPriority = subtaskPriority || 'medium';
+    const cleanTime = subtaskTime.trim() || null;
+
+    // Reset & close immediately for 0ms instantaneous feedback
+    setSubtaskTitle('');
+    setSubtaskTime('');
+    setSubtaskPriority('medium');
+    setAddingSubtaskParentId(null);
+    setLocalExpanded(prev => ({ ...prev, [parentId]: true }));
+
+    if (handleCreateSubtask) {
+      handleCreateSubtask(parentId, {
+        title: cleanTitle,
+        priority: cleanPriority,
+        reminder_time: cleanTime
+      });
     }
   };
 
@@ -651,8 +678,8 @@ export const TasksModal = ({
         borderRadius: isMobile ? 0 : '24px',
         width: '100%',
         maxWidth: isMobile ? '100%' : '560px',
-        height: isMobile ? '100dvh' : 'auto',
-        maxHeight: isMobile ? '100dvh' : '92vh',
+        height: isMobile ? (viewportHeight ? `${viewportHeight}px` : '100dvh') : 'auto',
+        maxHeight: isMobile ? (viewportHeight ? `${viewportHeight}px` : '100dvh') : '92vh',
         display: 'flex',
         flexDirection: 'column',
         boxSizing: 'border-box',
@@ -1776,10 +1803,7 @@ export const TasksModal = ({
                         }}>
                           <Clock size={11} color={done ? '#64748B' : overdue ? '#F87171' : '#0D9488'} />
                           <span>
-                            {overdue && '⚠️ '}
-                            {t.reminder_time 
-                              ? (overdue ? `Overdue - ${t.reminder_time}` : t.reminder_time)
-                              : (taskDateStr || 'Anytime')}
+                            {t.reminder_time ? t.reminder_time : (taskDateStr || 'Anytime')}
                           </span>
                         </span>
 
@@ -1811,7 +1835,7 @@ export const TasksModal = ({
                             whiteSpace: 'nowrap'
                           }}>
                             <Repeat size={10} />
-                            <span>Daily{t.reminder_time ? ` at ${t.reminder_time}` : ''}</span>
+                            <span>Daily</span>
                           </span>
                         )}
 
@@ -2103,10 +2127,7 @@ export const TasksModal = ({
                           }}>
                             <Clock size={11} color={done ? '#64748B' : overdue ? '#F87171' : '#0D9488'} />
                             <span>
-                              {overdue && '⚠️ '}
-                              {t.reminder_time 
-                                ? (overdue ? `Overdue - ${t.reminder_time}` : t.reminder_time)
-                                : (taskDateStr || 'Anytime')}
+                              {t.reminder_time ? t.reminder_time : (taskDateStr || 'Anytime')}
                             </span>
                           </span>
 
@@ -2138,7 +2159,7 @@ export const TasksModal = ({
                               whiteSpace: 'nowrap'
                             }}>
                               <Repeat size={10} />
-                              <span>Daily{t.reminder_time ? ` at ${t.reminder_time}` : ''}</span>
+                              <span>Daily</span>
                             </span>
                           )}
 
@@ -2949,8 +2970,8 @@ export const TasksModal = ({
                         );
                       })}
 
-                      {/* Todoist-Style Inline Add Subtask Row / Form */}
-                      {addingSubtaskParentId === t.id ? (
+                      {/* Todoist-Style Inline Add Subtask Row / Form (For Desktop, Mobile uses dedicated Bottom Sheet above Keyboard) */}
+                      {!isMobile && addingSubtaskParentId === t.id ? (
                         <div style={{
                           background: 'rgba(15, 23, 42, 0.95)',
                           border: '1px solid rgba(56, 189, 248, 0.35)',
@@ -3106,6 +3127,189 @@ export const TasksModal = ({
             })
           )}
         </div>
+
+      {/* ── MOBILE DEDICATED QUICK ADD SUBTASK SHEET (Always floats above Keyboard) ── */}
+      {isMobile && addingSubtaskParentId && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.65)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            zIndex: 320,
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'flex-end'
+          }}
+          onClick={() => setAddingSubtaskParentId(null)}
+        >
+          <div
+            style={{
+              background: '#0d1527',
+              borderTop: '2px solid #38bdf8',
+              borderRadius: '24px 24px 0 0',
+              padding: '16px 16px max(24px, env(safe-area-inset-bottom, 20px))',
+              boxShadow: '0 -20px 50px rgba(0, 0, 0, 0.95)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+              animation: 'fadeIn 0.18s ease'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                <span style={{ fontSize: '1rem' }}>📁</span>
+                <span style={{ fontSize: '0.86rem', fontWeight: 700, color: '#38bdf8' }}>
+                  + New Subtask
+                </span>
+                {(() => {
+                  const pTask = combinedTasks.find(t => String(t.id) === String(addingSubtaskParentId));
+                  return pTask ? (
+                    <span style={{ color: '#94a3b8', fontSize: '0.74rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '180px' }}>
+                      for "{pTask.title}"
+                    </span>
+                  ) : null;
+                })()}
+              </div>
+              <button
+                type="button"
+                onClick={() => setAddingSubtaskParentId(null)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: 'none',
+                  color: '#94a3b8',
+                  borderRadius: '50%',
+                  width: '28px',
+                  height: '28px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '0.9rem'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Input */}
+            <input
+              ref={subtaskInputRef}
+              type="text"
+              value={subtaskTitle}
+              onChange={(e) => setSubtaskTitle(e.target.value)}
+              placeholder="Subtask name (e.g. Buy milk, Call vendor)..."
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: '1px solid rgba(56, 189, 248, 0.4)',
+                borderRadius: '12px',
+                padding: '11px 14px',
+                color: '#fff',
+                fontSize: '0.92rem',
+                outline: 'none'
+              }}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleAddSubtaskSubmit(addingSubtaskParentId);
+                if (e.key === 'Escape') setAddingSubtaskParentId(null);
+              }}
+            />
+
+            {/* Time & Priority Row */}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '8px', padding: '6px 10px', border: '1px solid rgba(255, 255, 255, 0.12)' }}>
+                <Clock size={13} color="#38bdf8" />
+                <input
+                  type="text"
+                  value={subtaskTime}
+                  onChange={(e) => setSubtaskTime(e.target.value)}
+                  placeholder="Time (e.g. 5:00 PM)"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#fff',
+                    fontSize: '0.78rem',
+                    width: '110px',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '4px', flex: 1, minWidth: '160px' }}>
+                {['low', 'medium', 'high', 'urgent'].map(pKey => (
+                  <button
+                    key={pKey}
+                    type="button"
+                    onClick={() => setSubtaskPriority(pKey)}
+                    style={{
+                      background: subtaskPriority === pKey ? priorityMeta[pKey].bg : 'rgba(255, 255, 255, 0.04)',
+                      border: `1px solid ${subtaskPriority === pKey ? priorityMeta[pKey].border : 'rgba(255, 255, 255, 0.08)'}`,
+                      color: subtaskPriority === pKey ? priorityMeta[pKey].color : '#94a3b8',
+                      borderRadius: '8px',
+                      padding: '6px 6px',
+                      fontSize: '0.68rem',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      whiteSpace: 'nowrap',
+                      flex: 1,
+                      textAlign: 'center'
+                    }}
+                  >
+                    <span>{priorityMeta[pKey].dot}</span> {priorityMeta[pKey].label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '2px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setAddingSubtaskParentId(null);
+                  setSubtaskTitle('');
+                  setSubtaskTime('');
+                }}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: 'none',
+                  color: '#94a3b8',
+                  padding: '9px 16px',
+                  borderRadius: '10px',
+                  fontSize: '0.82rem',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!subtaskTitle.trim()}
+                onClick={() => handleAddSubtaskSubmit(addingSubtaskParentId)}
+                style={{
+                  background: 'linear-gradient(135deg, #0284c7, #0369a1)',
+                  border: 'none',
+                  color: '#fff',
+                  padding: '9px 20px',
+                  borderRadius: '10px',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 14px rgba(2, 132, 199, 0.4)'
+                }}
+              >
+                Add Subtask ⚡
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Task Completion Note & Attachment Sheet / Dialog */}
       {completionPromptTask && (

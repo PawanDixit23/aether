@@ -3554,7 +3554,21 @@ export default function App() {
           if (cleanTasks.length === 0 && prev.length > 0) {
             return prev;
           }
-          return cleanTasks;
+          // Preserve any optimistic subtasks that are still being written to the backend
+          return cleanTasks.map(serverT => {
+            const localMatch = prev.find(p => String(p.id) === String(serverT.id));
+            if (!localMatch || !localMatch.subtasks) return serverT;
+            const pendingOptimistic = localMatch.subtasks.filter(s => String(s.id).startsWith('local_sub_'));
+            if (pendingOptimistic.length === 0) return serverT;
+            // Only keep optimistic subtasks that haven't landed in serverT.subtasks yet
+            const serverTitles = new Set((serverT.subtasks || []).map(st => (st.title || '').trim().toLowerCase()));
+            const unmerged = pendingOptimistic.filter(opt => !serverTitles.has((opt.title || '').trim().toLowerCase()));
+            if (unmerged.length === 0) return serverT;
+            return {
+              ...serverT,
+              subtasks: [...(serverT.subtasks || []), ...unmerged]
+            };
+          });
         });
 
         if (cleanTasks.length > 0) {
@@ -5175,15 +5189,21 @@ export default function App() {
       created_at: new Date().toISOString()
     };
 
-    setTasks(prev => prev.map(t => {
-      if (String(t.id) === String(parentId)) {
-        return {
-          ...t,
-          subtasks: [...(t.subtasks || []), optimisticSub]
-        };
-      }
-      return t;
-    }));
+    setTasks(prev => {
+      const nextTasks = prev.map(t => {
+        if (String(t.id) === String(parentId)) {
+          return {
+            ...t,
+            subtasks: [...(t.subtasks || []), optimisticSub]
+          };
+        }
+        return t;
+      });
+      try {
+        localStorage.setItem('aether_cached_tasks', JSON.stringify(nextTasks));
+      } catch (e) {}
+      return nextTasks;
+    });
 
     try {
       const resp = await fetch(`${API_BASE}/tasks`, {
@@ -5206,15 +5226,21 @@ export default function App() {
 
       if (resp.ok) {
         const serverSub = await resp.json();
-        setTasks(prev => prev.map(t => {
-          if (String(t.id) === String(parentId)) {
-            return {
-              ...t,
-              subtasks: (t.subtasks || []).map(s => s.id === tempId ? serverSub : s)
-            };
-          }
-          return t;
-        }));
+        setTasks(prev => {
+          const nextTasks = prev.map(t => {
+            if (String(t.id) === String(parentId)) {
+              return {
+                ...t,
+                subtasks: (t.subtasks || []).map(s => s.id === tempId ? serverSub : s)
+              };
+            }
+            return t;
+          });
+          try {
+            localStorage.setItem('aether_cached_tasks', JSON.stringify(nextTasks));
+          } catch (e) {}
+          return nextTasks;
+        });
         showToast("Subtask added! 🎯", 'success');
         return serverSub;
       }
