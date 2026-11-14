@@ -3274,13 +3274,35 @@ def list_audit_logs(
     if date and date.strip():
         try:
             target_date = datetime.strptime(date.strip(), "%Y-%m-%d").date()
-            start_dt = datetime.combine(target_date, datetime.min.time())
-            end_dt = datetime.combine(target_date, datetime.max.time())
+            # Expand UTC window by 1 day before & after to account for timezone shifts (e.g. IST +05:30)
+            start_dt = datetime.combine(target_date - timedelta(days=1), datetime.min.time())
+            end_dt = datetime.combine(target_date + timedelta(days=1), datetime.max.time())
             query = query.filter(AuditLog.executed_at >= start_dt, AuditLog.executed_at <= end_dt)
-            return query.order_by(AuditLog.executed_at.desc()).all()
+            logs = query.order_by(AuditLog.executed_at.desc()).all()
         except Exception as e:
             print(f"[Audit Log Date Filter Error] {e}")
-    return query.order_by(AuditLog.executed_at.desc()).limit(limit).all()
+            logs = query.order_by(AuditLog.executed_at.desc()).limit(limit).all()
+    else:
+        logs = query.order_by(AuditLog.executed_at.desc()).limit(limit).all()
+
+    # Always ensure executed_at string carries ISO 8601 UTC indicator 'Z' so browser parses in local time
+    results = []
+    for log in logs:
+        iso_str = None
+        if log.executed_at:
+            s = log.executed_at.isoformat()
+            iso_str = s if s.endswith("Z") else f"{s}Z"
+        results.append({
+            "id": log.id,
+            "user_email": log.user_email,
+            "action_type": log.action_type,
+            "details": log.details,
+            "confidence_score": log.confidence_score,
+            "executed_at": iso_str,
+            "undo_payload": log.undo_payload,
+            "is_undone": log.is_undone
+        })
+    return results
 
 @app.post("/api/audit-logs/{log_id}/undo")
 def undo_action(

@@ -1,10 +1,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Shield, Calendar, X, RefreshCw } from 'lucide-react';
 
+function parseUtcDateTime(dtStr) {
+  if (!dtStr) return null;
+  const str = String(dtStr).trim();
+  const hasTz = str.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(str);
+  const normalized = hasTz ? str : `${str}Z`;
+  const d = new Date(normalized);
+  return isNaN(d.getTime()) ? new Date(str) : d;
+}
+
 function formatAuditDateTime(dtStr) {
   if (!dtStr) return '';
-  const d = new Date(dtStr);
-  if (isNaN(d.getTime())) return dtStr;
+  const d = parseUtcDateTime(dtStr);
+  if (!d || isNaN(d.getTime())) return dtStr;
   const now = new Date();
   const isToday = d.toDateString() === now.toDateString();
   const yesterday = new Date(now);
@@ -18,6 +27,7 @@ function formatAuditDateTime(dtStr) {
 }
 
 const getLocalDateYMD = (d = new Date()) => {
+  if (!d || isNaN(d.getTime())) return '';
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
@@ -86,13 +96,22 @@ export const AuditModal = ({
   // Display logs: If dateSpecificLogs is available use it, otherwise filter auditLogs in-memory
   const displayLogs = useMemo(() => {
     if (dateFilter === 'all') return auditLogs;
-    if (dateSpecificLogs !== null) return dateSpecificLogs;
+    if (dateSpecificLogs !== null) {
+      if (activeDateYMD) {
+        return dateSpecificLogs.filter(log => {
+          if (!log.executed_at) return false;
+          const logDate = getLocalDateYMD(parseUtcDateTime(log.executed_at));
+          return logDate === activeDateYMD;
+        });
+      }
+      return dateSpecificLogs;
+    }
     if (!activeDateYMD) return auditLogs;
 
     // Fallback: in-memory filter
     return auditLogs.filter(log => {
       if (!log.executed_at) return false;
-      const logDate = getLocalDateYMD(new Date(log.executed_at));
+      const logDate = getLocalDateYMD(parseUtcDateTime(log.executed_at));
       return logDate === activeDateYMD;
     });
   }, [dateFilter, activeDateYMD, dateSpecificLogs, auditLogs]);
