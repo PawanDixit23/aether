@@ -27,6 +27,7 @@ export default function GeminiLiveModal({
   const isSessionActiveRef = useRef(false);
   const latestSpokenRef = useRef('');
   const isDispatchingRef = useRef(false);
+  const isMutedRef = useRef(false);
 
   // Stop any active audio playback and immediately release dispatch lock
   const stopAudioPlayback = () => {
@@ -53,6 +54,8 @@ export default function GeminiLiveModal({
     }
 
     isSessionActiveRef.current = true;
+    isMutedRef.current = false;
+    setIsMuted(false);
     setSessionState('connecting');
     setTranscript('');
     setInterimTranscript('');
@@ -86,7 +89,7 @@ export default function GeminiLiveModal({
       console.warn('[Gemini Live getUserMedia notice]:', streamErr);
     }
 
-    if (isSessionActiveRef.current && !isMuted) {
+    if (isSessionActiveRef.current && !isMutedRef.current) {
       setTimeout(() => {
         startLiveListening();
       }, 150);
@@ -98,6 +101,8 @@ export default function GeminiLiveModal({
     isSpeakingRef.current = false;
     isListeningRef.current = false;
     isDispatchingRef.current = false;
+    isMutedRef.current = false;
+    setIsMuted(false);
     latestSpokenRef.current = '';
     clearTimeout(silenceTimerRef.current);
 
@@ -116,7 +121,7 @@ export default function GeminiLiveModal({
 
   // Start continuous listening with mobile-safe SpeechRecognition loop
   const startLiveListening = () => {
-    if (!isSessionActiveRef.current || isMuted) return;
+    if (!isSessionActiveRef.current || isMutedRef.current) return;
 
     stopAudioPlayback();
 
@@ -198,7 +203,7 @@ export default function GeminiLiveModal({
         } else {
           // Transient error: auto restart after slight delay
           setTimeout(() => {
-            if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted && !isDispatchingRef.current) {
+            if (isSessionActiveRef.current && !isSpeakingRef.current && !isMutedRef.current && !isDispatchingRef.current) {
               try { rec.start(); } catch (e) {}
             }
           }, 350);
@@ -210,7 +215,7 @@ export default function GeminiLiveModal({
         clearTimeout(silenceTimerRef.current);
 
         // If user finished speaking and speech was recognized before onend fired
-        if (isSessionActiveRef.current && latestSpokenRef.current.trim() && !isDispatchingRef.current) {
+        if (isSessionActiveRef.current && latestSpokenRef.current.trim() && !isDispatchingRef.current && !isMutedRef.current) {
           const textToSend = latestSpokenRef.current.trim();
           latestSpokenRef.current = '';
           sendLivePrompt(textToSend);
@@ -218,9 +223,9 @@ export default function GeminiLiveModal({
         }
 
         // Keep hands-free listening alive unless AI is currently speaking, user muted, or dispatching
-        if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted && !isDispatchingRef.current) {
+        if (isSessionActiveRef.current && !isSpeakingRef.current && !isMutedRef.current && !isDispatchingRef.current) {
           setTimeout(() => {
-            if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted && !isDispatchingRef.current) {
+            if (isSessionActiveRef.current && !isSpeakingRef.current && !isMutedRef.current && !isDispatchingRef.current) {
               try { rec.start(); } catch (e) {}
             }
           }, 200);
@@ -229,7 +234,7 @@ export default function GeminiLiveModal({
 
       // Slight safety delay before starting recognition so browser audio pipelines detach cleanly
       setTimeout(() => {
-        if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted) {
+        if (isSessionActiveRef.current && !isSpeakingRef.current && !isMutedRef.current) {
           try {
             rec.start();
           } catch (err) {
@@ -373,7 +378,7 @@ export default function GeminiLiveModal({
       isDispatchingRef.current = false;
       latestSpokenRef.current = '';
       audioPlayerRef.current = null;
-      if (isSessionActiveRef.current && !isMuted) {
+      if (isSessionActiveRef.current && !isMutedRef.current) {
         setSessionState('listening');
         startLiveListening();
       }
@@ -427,6 +432,10 @@ export default function GeminiLiveModal({
 
   // Handle User Interrupt / Tap Orb to Barge-In or Send Now
   const handleOrbTap = () => {
+    if (isMutedRef.current || isMuted || sessionState === 'muted') {
+      toggleMute();
+      return;
+    }
     if (sessionState === 'speaking' || isSpeakingRef.current) {
       stopAudioPlayback();
       clearTimeout(silenceTimerRef.current);
@@ -453,13 +462,26 @@ export default function GeminiLiveModal({
   };
 
   const toggleMute = () => {
-    const nextMuted = !isMuted;
+    const nextMuted = !isMutedRef.current;
+    isMutedRef.current = nextMuted;
     setIsMuted(nextMuted);
+
     if (nextMuted) {
-      cleanupLiveSession();
-      setSessionState('connecting');
+      clearTimeout(silenceTimerRef.current);
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.onresult = null;
+          recognitionRef.current.onerror = null;
+          recognitionRef.current.onend = null;
+          recognitionRef.current.abort();
+        } catch (e) {}
+        recognitionRef.current = null;
+      }
+      stopAudioPlayback();
+      setSessionState('muted');
     } else {
       isSessionActiveRef.current = true;
+      setSessionState('listening');
       startLiveListening();
     }
   };
@@ -489,6 +511,13 @@ export default function GeminiLiveModal({
       statusText: 'Speaking • Tap orb to interrupt',
       statusColor: '#34d399'
     },
+    muted: {
+      primary: '#ef4444',
+      glow: 'rgba(239, 68, 68, 0.45)',
+      ring: 'rgba(239, 68, 68, 0.25)',
+      statusText: 'Microphone Muted • Tap to unmute',
+      statusColor: '#f87171'
+    },
     connecting: {
       primary: '#94a3b8',
       glow: 'rgba(148, 163, 184, 0.25)',
@@ -498,7 +527,9 @@ export default function GeminiLiveModal({
     }
   };
 
-  const currentTheme = themeGradients[sessionState] || themeGradients.listening;
+  const currentTheme = (isMuted || sessionState === 'muted')
+    ? themeGradients.muted
+    : (themeGradients[sessionState] || themeGradients.listening);
 
   return (
     <div style={{
@@ -612,7 +643,7 @@ export default function GeminiLiveModal({
         {/* Living Multi-layered Orb */}
         <div
           onClick={handleOrbTap}
-          title={sessionState === 'speaking' ? "Tap to interrupt" : "Tap to send immediately"}
+          title={isMuted ? "Tap to unmute" : (sessionState === 'speaking' ? "Tap to interrupt" : "Tap to send immediately")}
           style={{
             position: 'relative',
             width: '210px',
@@ -651,13 +682,15 @@ export default function GeminiLiveModal({
             width: '160px',
             height: '160px',
             borderRadius: '50%',
-            background: sessionState === 'listening'
-              ? 'radial-gradient(circle at 35% 30%, #38bdf8 0%, #0284c7 45%, #075985 85%, #032b44 100%)'
-              : (sessionState === 'speaking'
-                ? 'radial-gradient(circle at 35% 30%, #34d399 0%, #10b981 45%, #047857 85%, #023828 100%)'
-                : (sessionState === 'thinking'
-                  ? 'radial-gradient(circle at 35% 30%, #fbbf24 0%, #f59e0b 45%, #b45309 85%, #451a03 100%)'
-                  : 'radial-gradient(circle at 35% 30%, #94a3b8 0%, #64748b 50%, #334155 100%)')),
+            background: isMuted
+              ? 'radial-gradient(circle at 35% 30%, #ef4444 0%, #b91c1c 45%, #7f1d1d 85%, #450a0a 100%)'
+              : (sessionState === 'listening'
+                ? 'radial-gradient(circle at 35% 30%, #38bdf8 0%, #0284c7 45%, #075985 85%, #032b44 100%)'
+                : (sessionState === 'speaking'
+                  ? 'radial-gradient(circle at 35% 30%, #34d399 0%, #10b981 45%, #047857 85%, #023828 100%)'
+                  : (sessionState === 'thinking'
+                    ? 'radial-gradient(circle at 35% 30%, #fbbf24 0%, #f59e0b 45%, #b45309 85%, #451a03 100%)'
+                    : 'radial-gradient(circle at 35% 30%, #94a3b8 0%, #64748b 50%, #334155 100%)'))),
             boxShadow: `0 0 60px ${currentTheme.glow}, inset 0 0 35px rgba(255, 255, 255, 0.4)`,
             display: 'flex',
             alignItems: 'center',
@@ -681,21 +714,20 @@ export default function GeminiLiveModal({
             }} />
 
             {/* Inner Graphic State */}
-            {sessionState === 'listening' && (
+            {isMuted ? (
+              <MicOff size={44} color="#ffffff" />
+            ) : sessionState === 'listening' ? (
               <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                 <span style={{ width: '4px', height: '18px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.9s infinite ease-in-out 0.1s' }} />
                 <span style={{ width: '4px', height: '36px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.9s infinite ease-in-out 0.25s' }} />
                 <span style={{ width: '4px', height: '48px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.9s infinite ease-in-out 0.4s' }} />
                 <span style={{ width: '4px', height: '28px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.9s infinite ease-in-out 0.15s' }} />
               </div>
-            )}
-            {sessionState === 'speaking' && (
+            ) : sessionState === 'speaking' ? (
               <Volume2 size={46} color="#ffffff" style={{ animation: 'livePulse 1.2s infinite' }} />
-            )}
-            {sessionState === 'thinking' && (
+            ) : sessionState === 'thinking' ? (
               <RefreshCw size={42} color="#ffffff" style={{ animation: 'liveSpin 1.1s linear infinite' }} />
-            )}
-            {sessionState === 'connecting' && (
+            ) : (
               <Mic size={42} color="#ffffff" />
             )}
           </div>
