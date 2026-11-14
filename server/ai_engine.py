@@ -1948,10 +1948,94 @@ def _clean_extracted_text(text: str) -> str:
     text = text.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t').replace('\\\\', '\\')
     return text.strip()
 
+def generate_contextual_follow_ups(user_input: str, is_hi: bool = False, action: str = "query") -> list:
+    """Generate meaningful, contextual 3-follow-up chips tailored to the exact topic and language."""
+    u = (user_input or "").lower().strip()
+
+    # 1. Weather
+    if any(w in u for w in ["weather", "mausam", "rain", "temperature", "forecast", "मौसम", "बारिश", "तापमान", "धूप", "thand", "garmi"]):
+        return [
+            "कल का मौसम कैसा रहेगा?" if is_hi else "Tomorrow's weather forecast",
+            "साप्ताहिक मौसम पूर्वानुमान" if is_hi else "7-day weather forecast",
+            "आज बारिश के आसार हैं क्या?" if is_hi else "Any chance of rain today?"
+        ]
+
+    # 2. News & Headlines
+    if any(w in u for w in ["news", "samachar", "breaking", "headline", "समाचार", "खबर", "अपडेट"]):
+        return [
+            "आज की मुख्य खेल समाचार" if is_hi else "Top sports headlines",
+            "शेयर बाजार और बिजनेस अपडेट" if is_hi else "Business and markets news",
+            "राष्ट्रीय व राजनीतिक खबरें" if is_hi else "National & political news"
+        ]
+
+    # 3. Cricket & Sports
+    if action == "cricket_scorecard" or any(w in u for w in ["cricket", "score", "match", "मैच", "ipl", "cricinfo", "scorecard", "football"]):
+        return [
+            "विस्तृत स्कोरकार्ड दिखाओ" if is_hi else "Detailed match scorecard",
+            "अगला मैच कब है?" if is_hi else "When is the next match?",
+            "पॉइंट्स टेबल स्थिति" if is_hi else "Points table standings"
+        ]
+
+    # 4. Finance & Expenses
+    if action in ["expense", "income"] or any(w in u for w in ["spent", "expense", "kharch", "खर्च", "balance", "rupee", "salary", "बजट"]):
+        return [
+            "खर्चों का पूरा ऑडिट दिखाओ" if is_hi else "Audit my recent expenses",
+            "इस महीने का बजट स्टेटस" if is_hi else "Monthly budget status",
+            "पैसे बचाने के 3 मुख्य टिप्स" if is_hi else "Top 3 savings tips"
+        ]
+
+    # 5. Tasks & Reminders
+    if action == "task" or any(w in u for w in ["task", "remind", "reminder", "रिमाइंडर", "काम", "schedule", "agenda"]):
+        return [
+            "आज के बाकी पेंडिंग टास्क दिखाओ" if is_hi else "Show my pending tasks",
+            "आज का एजेंडा ऑप्टिमाइज़ करें" if is_hi else "Optimize today agenda",
+            "15 मिनट पहले याद दिलाना" if is_hi else "Remind me 15 mins before"
+        ]
+
+    # 6. YouTube & Music
+    if action == "youtube" or any(w in u for w in ["youtube", "song", "music", "video", "गाना", "भजन"]):
+        return [
+            "अगला लोकप्रिय गाना चलाओ" if is_hi else "Play next trending song",
+            "यह गाना रिपीट पर चलाओ" if is_hi else "Play on repeat",
+            "इसी तरह के और गाने खोजें" if is_hi else "Similar recommended songs"
+        ]
+
+    # 7. Food & Cooking
+    if any(w in u for w in ["recipe", "cook", "food", "खाना", "रेसिपी", "dish"]):
+        return [
+            "बनाने की स्टेप-बाय-स्टेप विधि" if is_hi else "Step-by-step cooking steps",
+            "मुख्य सामग्री की लिस्ट" if is_hi else "Key ingredients list",
+            "कम कैलोरी वाला हेल्दी विकल्प" if is_hi else "Healthy low-calorie variant"
+        ]
+
+    # 8. Technology & Coding
+    if any(w in u for w in ["code", "python", "react", "javascript", "bug", "error", "api", "tech"]):
+        return [
+            "Show practical code example",
+            "Explain step-by-step logic",
+            "How to test and handle errors?"
+        ]
+
+    # 9. Knowledge & Definitions
+    if any(w in u for w in ["who is", "what is", "why", "how", "explain", "means", "meaning", "क्या है", "कौन है", "समझाओ"]):
+        return [
+            "सरल शब्दों में उदाहरण देकर समझाओ" if is_hi else "Explain with an example",
+            "इसके मुख्य कारण और प्रभाव" if is_hi else "Key causes and effects",
+            "इसके बारे में 3 रोचक तथ्य" if is_hi else "3 interesting facts"
+        ]
+
+    # 10. General Natural Default
+    return [
+        "इसके बारे में और विस्तार से बताएं" if is_hi else "Tell me more details",
+        "सरल उदाहरण के साथ समझाएं" if is_hi else "Explain with an example",
+        "संक्षेप में 3 मुख्य बिंदु बताएं" if is_hi else "Key takeaways in 3 points"
+    ]
+
 def _extract_llm_action_dict(raw_text: str, user_input: str, is_cricket_query: bool, live_cricket_matches: list) -> dict:
     if not raw_text or not raw_text.strip():
         return None
     raw_text = raw_text.strip()
+    is_hi = any('\u0900' <= ch <= '\u097f' for ch in user_input) or any(w in user_input.lower() for w in ["hindi", "samachar", "khabar", "news", "karo", "batao"])
 
     # Strip any leading markdown wrapper or "JSON:" label that models like Gemini occasionally emit
     clean_raw = re.sub(r'(?i)^\s*(?:json\s*:?|```(?:json)?)\s*', '', raw_text).strip()
@@ -1978,6 +2062,12 @@ def _extract_llm_action_dict(raw_text: str, user_input: str, is_cricket_query: b
                         parsed["data"]["due_date"] = r_dt.isoformat()
                 except Exception as t_err:
                     print(f"[Aether Engine] Reminder parse notice: {t_err}")
+
+            if not parsed.get("data"):
+                parsed["data"] = {}
+            if not parsed["data"].get("follow_ups") or not isinstance(parsed["data"]["follow_ups"], list) or len(parsed["data"]["follow_ups"]) == 0:
+                parsed["data"]["follow_ups"] = generate_contextual_follow_ups(user_input, is_hi=is_hi, action=parsed.get("action", "query"))
+
             return parsed
         except Exception as parse_err:
             print(f"[Aether Engine] JSON parse error: {parse_err}")
@@ -2009,14 +2099,16 @@ def _extract_llm_action_dict(raw_text: str, user_input: str, is_cricket_query: b
 
     # If clean_resp is still empty, or equal to "JSON:", provide genuine natural response
     if not clean_resp or clean_resp.lower() in ["json:", "json", "query", "{", "}"] or len(clean_resp) < 4:
-        is_hi = any('\u0900' <= ch <= '\u097f' for ch in user_input) or any(w in user_input.lower() for w in ["hindi", "samachar", "khabar", "news"])
         clean_resp = f"नमस्ते! मैं '{user_input}' के बारे में जानकारी प्रोसेस कर रहा हूँ। कृपया पुनः पूछें।" if is_hi else f"I am ready with details for {user_input}."
 
     return {
         "action": "query",
         "confidence": 0.98,
         "confidence_level": "high",
-        "data": { "response": clean_resp },
+        "data": { 
+            "response": clean_resp,
+            "follow_ups": generate_contextual_follow_ups(user_input, is_hi=is_hi, action="query")
+        },
         "explanation": "Processed natural response"
     }
 
@@ -2539,12 +2631,16 @@ async def parse_intent_with_llm(
         }
 
     # Fallback to direct weather/news if LLM call failed
+    is_hi_query = (effective_lang in ["hi", "hi_friend"]) or has_devanagari
     if is_weather_query:
         return {
             "action": "query",
             "confidence": 0.99,
             "confidence_level": "high",
-            "data": { "response": fetch_live_weather(user_query=user_input, lat=user_lat, lon=user_lon) },
+            "data": { 
+                "response": fetch_live_weather(user_query=user_input, lat=user_lat, lon=user_lon),
+                "follow_ups": generate_contextual_follow_ups(user_input, is_hi=is_hi_query, action="query")
+            },
             "explanation": "Direct accurate weather feed"
         }
 
@@ -2570,11 +2666,20 @@ async def parse_intent_with_llm(
                 "action": "query",
                 "confidence": 0.99,
                 "confidence_level": "high",
-                "data": { "response": header + "\n\n".join(lines) },
+                "data": { 
+                    "response": header + "\n\n".join(lines),
+                    "follow_ups": generate_contextual_follow_ups(user_input, is_hi=is_hi_query, action="query")
+                },
                 "explanation": "Direct live sports/news feed fallback"
             }
 
-    return rule_based_fallback(user_input, context)
+    fallback_res = rule_based_fallback(user_input, context)
+    if isinstance(fallback_res, dict):
+        if not isinstance(fallback_res.get("data"), dict):
+            fallback_res["data"] = {}
+        if not fallback_res["data"].get("follow_ups"):
+            fallback_res["data"]["follow_ups"] = generate_contextual_follow_ups(user_input, is_hi=is_hi_query, action=fallback_res.get("action", "query"))
+    return fallback_res
 
 def resolve_youtube_playback(query: str) -> dict:
     """Finds top YouTube video so it plays directly instead of just opening search."""

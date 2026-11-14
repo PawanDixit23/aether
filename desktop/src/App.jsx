@@ -7478,32 +7478,34 @@ export default function App() {
                       {msg.role !== 'user' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (isSpeaking) {
-                                  stopBriefingAudio();
-                                } else {
-                                  speakText(msg.content);
-                                }
-                              }}
-                              title={isSpeaking ? "Stop speaking" : "Listen aloud"}
-                              style={{
-                                background: isSpeaking ? 'rgba(239, 68, 68, 0.12)' : 'rgba(255, 255, 255, 0.06)',
-                                border: `1px solid ${isSpeaking ? 'rgba(239, 68, 68, 0.35)' : 'rgba(255, 255, 255, 0.12)'}`,
-                                color: isSpeaking ? '#f87171' : '#38bdf8',
-                                borderRadius: '8px',
-                                padding: '3px 8px',
-                                fontSize: '0.72rem',
-                                cursor: 'pointer',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px'
-                              }}
-                            >
-                              {isSpeaking ? <Pause size={12} /> : <Volume2 size={12} />}
-                              <span>{isSpeaking ? 'Stop' : 'Listen'}</span>
-                            </button>
+                            {voiceOutputEnabled && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (isSpeaking) {
+                                    stopBriefingAudio();
+                                  } else {
+                                    speakText(msg.content);
+                                  }
+                                }}
+                                title={isSpeaking ? "Stop speaking" : "Listen aloud"}
+                                style={{
+                                  background: isSpeaking ? 'rgba(239, 68, 68, 0.12)' : 'rgba(255, 255, 255, 0.06)',
+                                  border: `1px solid ${isSpeaking ? 'rgba(239, 68, 68, 0.35)' : 'rgba(255, 255, 255, 0.12)'}`,
+                                  color: isSpeaking ? '#f87171' : '#38bdf8',
+                                  borderRadius: '8px',
+                                  padding: '3px 8px',
+                                  fontSize: '0.72rem',
+                                  cursor: 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                              >
+                                {isSpeaking ? <Pause size={12} /> : <Volume2 size={12} />}
+                                <span>{isSpeaking ? 'Stop' : 'Listen'}</span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleQuoteReply(msg)}
@@ -7557,14 +7559,57 @@ export default function App() {
                             const customChips = Array.isArray(aData?.follow_ups) ? aData.follow_ups.filter(Boolean).slice(0, 3) : [];
                             let chips = customChips;
                             if (chips.length === 0) {
-                              if (actType === 'expense' || actType === 'income') {
-                                chips = ['Audit my expenses', 'Monthly budget status', 'View today summary'];
-                              } else if (actType === 'task') {
-                                chips = ['Show my pending tasks', 'Optimize today agenda', 'Remind me 1 hour earlier'];
-                              } else if (actType === 'draft_email') {
-                                chips = ['Make tone shorter', 'Make tone formal', 'Create follow-up task'];
+                              const prevUserMsg = (idx > 0 && chatHistory[idx - 1]?.role === 'user')
+                                ? (chatHistory[idx - 1]?.content || '')
+                                : '';
+                              const combined = ((prevUserMsg + ' ' + (msg.content || '')).toLowerCase());
+                              const isHi = /[\u0900-\u097F]/.test(prevUserMsg + (msg.content || '')) ||
+                                /\b(hindi|samachar|khabar|karo|batao|kya|kaise|hai|hain|tha|the)\b/i.test(prevUserMsg);
+
+                              if (actType === 'weather' || /(weather|mausam|rain|temperature|forecast|मौसम|बारिश|तापमान|धूप|thand|garmi)/i.test(combined)) {
+                                chips = isHi
+                                  ? ['कल का मौसम कैसा रहेगा?', 'साप्ताहिक मौसम पूर्वानुमान', 'आज बारिश के आसार हैं क्या?']
+                                  : ["Tomorrow's weather forecast", '7-day weather forecast', 'Any chance of rain today?'];
+                              } else if (/(news|samachar|breaking|headline|समाचार|खबर|अपडेट|सुर्खियां)/i.test(combined)) {
+                                chips = isHi
+                                  ? ['आज की मुख्य खेल समाचार', 'शेयर बाजार और बिजनेस अपडेट', 'राष्ट्रीय व राजनीतिक खबरें']
+                                  : ['Top sports headlines', 'Business and markets news', 'National & political news'];
+                              } else if (actType === 'cricket_scorecard' || /(cricket|score|match|मैच|ipl|cricinfo|scorecard|football|wicket)/i.test(combined)) {
+                                chips = isHi
+                                  ? ['विस्तृत स्कोरकार्ड दिखाओ', 'अगला मैच कब है?', 'पॉइंट्स टेबल स्थिति']
+                                  : ['Detailed match scorecard', 'When is the next match?', 'Points table standings'];
+                              } else if (actType === 'expense' || actType === 'income' || /(spent|expense|kharch|खर्च|balance|rupee|salary|बजट|पैसे)/i.test(combined)) {
+                                chips = isHi
+                                  ? ['खर्चों का पूरा ऑडिट दिखाओ', 'इस महीने का बजट स्टेटस', 'आज का कुल खर्च दिखाओ']
+                                  : ['Audit my recent expenses', 'Monthly budget status', 'View today summary'];
+                              } else if (actType === 'task' || /(task|remind|reminder|रिमाइंडर|काम|schedule|agenda|एजेंडा)/i.test(combined)) {
+                                chips = isHi
+                                  ? ['आज के बाकी पेंडिंग टास्क दिखाओ', 'आज का एजेंडा व्यवस्थित करो', '1 घंटे पहले याद दिलाना']
+                                  : ['Show my pending tasks', 'Optimize today agenda', 'Remind me 1 hour earlier'];
+                              } else if (actType === 'youtube' || /(youtube|song|music|video|गाना|भजन|गीत|संगीत)/i.test(combined)) {
+                                chips = isHi
+                                  ? ['अगला लोकप्रिय गाना चलाओ', 'यह गाना रिपीट पर चलाओ', 'इसी तरह के और गाने खोजें']
+                                  : ['Play next trending song', 'Repeat this song', 'Similar recommended songs'];
+                              } else if (actType === 'draft_email' || /(draft|email|letter|ईमेल|पत्र|संदेश)/i.test(combined)) {
+                                chips = isHi
+                                  ? ['इसे थोड़ा छोटा और संक्षिप्त करो', 'टोन को फॉर्मल बनाओ', 'फॉलो-अप रिमाइंडर बनाओ']
+                                  : ['Make tone shorter', 'Make tone formal', 'Create follow-up task'];
+                              } else if (/(recipe|cook|food|खाना|रेसिपी|dish|व्यंजन)/i.test(combined)) {
+                                chips = isHi
+                                  ? ['बनाने की स्टेप-बाय-स्टेप विधि', 'मुख्य सामग्री की लिस्ट दो', 'कम कैलोरी वाला हेल्दी विकल्प']
+                                  : ['Step-by-step cooking steps', 'Key ingredients list', 'Healthy low-calorie variant'];
+                              } else if (/(code|python|react|javascript|bug|error|api|tech|developer|कोडिंग)/i.test(combined)) {
+                                chips = isHi
+                                  ? ['कोड का आसान उदाहरण दिखाओ', 'स्टेप-बाय-स्टेप लॉजिक समझाओ', 'एरर हैंडलिंग कैसे करें?']
+                                  : ['Show a practical code example', 'Explain step-by-step logic', 'How to test and handle errors?'];
+                              } else if (/(who is|what is|why|how|explain|means|meaning|capital|राजधानी|क्या है|कौन है|समझाओ|परिभाषा|मतलब)/i.test(combined)) {
+                                chips = isHi
+                                  ? ['सरल शब्दों में उदाहरण देकर समझाओ', 'इसके मुख्य कारण और प्रभाव', 'इसके बारे में 3 रोचक तथ्य']
+                                  : ['Explain with a simple example', 'Key causes and effects', '3 interesting facts about this'];
                               } else {
-                                chips = ['Turn key points into tasks', 'Summarize in 3 bullets'];
+                                chips = isHi
+                                  ? ['इसके बारे में और विस्तार से बताएं', 'सरल उदाहरण के साथ समझाएं', 'संक्षेप में 3 मुख्य बिंदु बताएं']
+                                  : ['Tell me more details', 'Explain with an example', 'Key takeaways in 3 points'];
                               }
                             }
                             return (

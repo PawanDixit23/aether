@@ -234,6 +234,9 @@ export const PermissionsModal = ({
                 const nextVal = !voiceOutputEnabled;
                 setVoiceOutputEnabled(nextVal);
                 localStorage.setItem('aether_voice_output', String(nextVal));
+                if (!nextVal) {
+                  try { window.speechSynthesis?.cancel(); } catch (e) {}
+                }
                 showToast(nextVal ? '🔊 Voice output enabled — Indian English / Hindi' : '🔇 Voice output muted — Text only', 'info');
               }}
               role="button"

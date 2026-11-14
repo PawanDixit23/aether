@@ -968,6 +968,19 @@ async def _execute_quick_capture(
     confidence = parsed.get("confidence", 0.95)
     conf_level = parsed.get("confidence_level", "high")
     data = parsed.get("data", {})
+    if not isinstance(data, dict):
+        data = {}
+    if not data.get("follow_ups") or not isinstance(data.get("follow_ups"), list) or len(data.get("follow_ups")) == 0:
+        try:
+            from ai_engine import generate_contextual_follow_ups
+            is_hi_query = (lang == "hi" or bool(re.search(r'[\u0900-\u097F]', user_msg)))
+            data["follow_ups"] = generate_contextual_follow_ups(user_msg, is_hi=is_hi_query, action=action)
+        except Exception as _fe:
+            print(f"[Follow-up Gen Notice] {_fe}")
+    if isinstance(parsed, dict):
+        if not isinstance(parsed.get("data"), dict):
+            parsed["data"] = {}
+        parsed["data"]["follow_ups"] = data.get("follow_ups", [])
 
     # Safety unwrap if response accidentally has embedded JSON
     if action == "query":
