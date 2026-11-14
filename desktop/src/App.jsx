@@ -6428,35 +6428,15 @@ export default function App() {
             <div className="settings-row-item" onClick={() => setActiveSubModal('reminders')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
               <div className="settings-row-left" style={{ minWidth: 0, flex: 1 }}>
                 <div className="settings-row-icon-box" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', flexShrink: 0 }}>
-                  <Bell size={16} />
+                  <Calendar size={16} />
                 </div>
-                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Reminders & Today's Agenda</span>
+                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Tasks, Calendar & Schedule</span>
               </div>
               <div className="settings-row-right" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
                 <span style={{ color: getTodayPendingCount() > 0 ? '#38bdf8' : '#94a3b8', fontWeight: 600, whiteSpace: 'nowrap', fontSize: '0.84rem' }}>
-                  {getTodayPendingCount()} today
+                  {getTodayPendingCount() > 0 ? `${getTodayPendingCount()} today` : 'Agenda'}
                 </span>
                 <ChevronRight size={16} style={{ flexShrink: 0 }} />
-              </div>
-            </div>
-
-            <div className="settings-row-item" onClick={() => { 
-              setActiveSubModal('calendar'); 
-              setRemindersViewMode('calendar'); 
-              setCalSelectedDate(new Date()); 
-              setCalCurrentMonth(new Date()); 
-            }}>
-              <div className="settings-row-left">
-                <div className="settings-row-icon-box" style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#c084fc' }}>
-                  <Calendar size={16} />
-                </div>
-                <span>Calendar & Schedule</span>
-              </div>
-              <div className="settings-row-right">
-                <span style={{ color: '#94a3b8' }}>
-                  Monthly View
-                </span>
-                <ChevronRight size={16} />
               </div>
             </div>
 

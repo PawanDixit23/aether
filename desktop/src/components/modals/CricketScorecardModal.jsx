@@ -392,10 +392,10 @@ export function CricketScorecardModal({
               </div>
             )}
 
-            <div style={{ minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {selectedMatch ? getMatchShortTitle(selectedMatch) : "Live Cricket Scorecards"}
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'nowrap' }}>
+                <h3 style={{ margin: 0, fontSize: isMobile ? '0.96rem' : '1.05rem', fontWeight: 700, color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>
+                  {selectedMatch ? getMatchShortTitle(selectedMatch) : (isMobile ? "Live Cricket" : "Live Cricket Scorecards")}
                 </h3>
                 {!selectedMatch && liveCount > 0 && (
                   <span style={{
@@ -408,9 +408,11 @@ export function CricketScorecardModal({
                     borderRadius: '999px',
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: '4px'
+                    gap: '4px',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0
                   }}>
-                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#ef4444', animation: 'pulse 1.5s infinite' }}></span>
+                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#ef4444', animation: 'pulse 1.5s infinite', flexShrink: 0 }}></span>
                     {liveCount} LIVE
                   </span>
                 )}
