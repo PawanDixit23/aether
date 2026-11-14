@@ -330,6 +330,11 @@ class DateCompletionRequest(BaseModel):
     date: str
     completed: bool
 
+class TaskAttachmentDownloadRequest(BaseModel):
+    filename: Optional[str] = "attachment"
+    data: str
+    mime_type: Optional[str] = None
+
 class FinancialRecordCreate(BaseModel):
     type: str
     user_email: Optional[str] = None
@@ -1343,12 +1348,15 @@ async def _execute_quick_capture(
 
     elif action == "youtube":
         q = data.get("query")
-        if not q or q == user_msg:
-            clean_yt = re.sub(r'(?i)\b(can you|could you|please|kripya|play|open|suno|sunao|chalao|chala do|chala|bajao|baja do|gana|gaana|song|songs|video|bhajan|kholo|karo|dekho)\b', '', user_msg)
+        if not q or q == user_msg or q.lower() in ["any", "some", "a", "song", "video", "youtube"]:
+            clean_yt = re.sub(r'(?i)\b(can you|could you|please|kripya|play|open|suno|sunao|chalao|chala do|chala|bajao|baja do|gana|gaana|song|songs|video|videos|music|bhajan|kholo|karo|dekho)\b', '', user_msg)
             clean_yt = re.sub(r'(?i)\b(on|in|par|pe|me|se)\s+youtube\b', '', clean_yt)
             clean_yt = re.sub(r'(?i)\byoutube\b', '', clean_yt)
+            clean_yt = re.sub(r'(?i)\b(any|some|a|an|the|good|top|best|koi|kuch|ek|accha|achha|hit|latest|naya|purana|new|old|bhi|sa|to|kripya)\b', '', clean_yt)
             clean_yt = re.sub(r'(?i)\b(ka|ke|ki|for)\b\s*$', '', clean_yt).strip()
-            q = re.sub(r'\s+', ' ', clean_yt).strip(' :-.,') or "Trending"
+            q = re.sub(r'\s+', ' ', clean_yt).strip(' :-.,')
+            if not q or len(q) < 2 or q.lower() in ["youtube", "video", "song", "gana", "gaana", "trending", "music", "sangeet"]:
+                q = "Top Trending Songs"
         try:
             from ai_engine import resolve_youtube_playback
         except ImportError:
@@ -1366,9 +1374,9 @@ async def _execute_quick_capture(
 
     elif action == "call":
         raw_name = data.get("contact_name") or "Contact"
-        # Clean leading words like "lets call", "call", "dial", etc.
-        c_name = re.sub(r'(?i)^(?:let\'?s\s+call|call|dial|phone|please\s+call)\s+', '', raw_name).strip() or "Contact"
-        c_name = re.sub(r'(?i)\s+(?:ko|ko\s+call|par\s+call)$', '', c_name).strip() or c_name
+        # Clean leading words like "make a call to", "lets call", "call", "dial", etc.
+        c_name = re.sub(r'(?i)^(?:make\s+a\s+call\s+to|make\s+a\s+call|let\'?s\s+call|call\s+to|call|dial|phone|please\s+call)\s+', '', raw_name).strip() or "Contact"
+        c_name = re.sub(r'(?i)\s+(?:ko|ko\s+call|par\s+call|ko\s+phone)$', '', c_name).strip() or c_name
         data["contact_name"] = c_name
 
         c_num = data.get("phone_number")
@@ -2288,6 +2296,68 @@ def set_task_date_completion(
 
     db.commit()
     return {"status": "ok", "task_id": task_id, "date": clean_date, "completed": req.completed}
+
+# ─── Task Attachment Downloads (Safe & Seamless for Mobile App & Browser) ─────
+_temp_attachment_downloads = {}
+
+@app.post("/api/tasks/temp-download")
+@app.post("/tasks/temp-download")
+def create_temp_task_download(req: TaskAttachmentDownloadRequest):
+    import uuid
+    token = str(uuid.uuid4())
+    data_str = (req.data or "").strip()
+    if not data_str:
+        raise HTTPException(status_code=400, detail="Empty attachment data")
+
+    mime = req.mime_type
+    if "," in data_str:
+        header, b64_str = data_str.split(",", 1)
+        if not mime and "data:" in header and ";" in header:
+            mime = header.split("data:")[1].split(";")[0]
+    else:
+        b64_str = data_str
+
+    try:
+        raw_bytes = base64.b64decode(b64_str)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 encoding: {e}")
+
+    now = time.time()
+    # clean expired tokens older than 15 minutes
+    expired_keys = [k for k, v in _temp_attachment_downloads.items() if v.get("expires_at", 0) < now]
+    for k in expired_keys:
+        _temp_attachment_downloads.pop(k, None)
+
+    _temp_attachment_downloads[token] = {
+        "filename": req.filename or "attachment",
+        "mime_type": mime or "application/octet-stream",
+        "bytes": raw_bytes,
+        "expires_at": now + 900
+    }
+
+    return {"token": token, "download_url": f"/api/tasks/download-file?token={token}"}
+
+@app.get("/api/tasks/download-file")
+@app.get("/tasks/download-file")
+def download_task_attachment_file(token: str):
+    import urllib.parse
+    now = time.time()
+    item = _temp_attachment_downloads.get(token)
+    if not item or item.get("expires_at", 0) < now:
+        raise HTTPException(status_code=404, detail="Download link expired or not found")
+
+    filename = item.get("filename", "attachment")
+    safe_filename = filename.replace('"', '\\"')
+    quoted_filename = urllib.parse.quote(filename)
+    mime = item.get("mime_type", "application/octet-stream")
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{safe_filename}"; filename*=UTF-8\'\'{quoted_filename}',
+        "Content-Type": mime,
+        "Access-Control-Expose-Headers": "Content-Disposition",
+        "Cache-Control": "no-cache"
+    }
+    return Response(content=item["bytes"], media_type=mime, headers=headers)
 
 @app.put("/api/tasks/{task_id}/reschedule")
 def reschedule_task(

@@ -127,6 +127,7 @@ export const TasksModal = ({
 
   // Fullscreen Preview Image Modal
   const [previewImage, setPreviewImage] = useState(null);
+  const [downloadingAttId, setDownloadingAttId] = useState(null);
 
   // Todoist-Style Subtask Adding State
   const [addingSubtaskParentId, setAddingSubtaskParentId] = useState(null);
@@ -245,14 +246,99 @@ export const TasksModal = ({
     e.target.value = '';
   };
 
-  const handleDownloadAttachment = (att) => {
+  const handleDownloadAttachment = async (att) => {
     if (!att || !att.data) return;
-    const a = document.createElement('a');
-    a.href = att.data;
-    a.download = att.name || 'attachment';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const filename = att.name || 'attachment';
+    setDownloadingAttId(att.id || filename);
+
+    // 1. In React Native WebView (Android / iOS Mobile App)
+    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+      try {
+        const origin = (window.location.origin && window.location.origin !== 'null' && !window.location.origin.startsWith('file:'))
+          ? window.location.origin
+          : 'https://aether-kjrj.onrender.com';
+
+        let effApi = '';
+        if (window.location.port === '5173') {
+          effApi = `http://${window.location.hostname}:8000/api`;
+        } else {
+          effApi = `${origin}/api`;
+        }
+
+        const res = await fetch(`${effApi}/tasks/temp-download`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: filename,
+            data: att.data,
+            mime_type: att.type || 'application/octet-stream'
+          })
+        });
+
+        if (res.ok) {
+          const json = await res.json();
+          let dlUrl = json.download_url || '';
+          if (!dlUrl.startsWith('http://') && !dlUrl.startsWith('https://')) {
+            const baseUrl = effApi.replace(/\/api$/, '');
+            dlUrl = `${baseUrl}${dlUrl.startsWith('/') ? '' : '/'}${dlUrl}`;
+          }
+
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'DOWNLOAD_FILE',
+            url: dlUrl,
+            filename: filename
+          }));
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'OPEN_EXTERNAL_URL',
+            url: dlUrl
+          }));
+          setTimeout(() => setDownloadingAttId(null), 1500);
+          return;
+        }
+      } catch (err) {
+        console.warn('Mobile download via backend error:', err);
+      }
+    }
+
+    // 2. Web browser: Try Blob URL download first (best for desktop & web mobile browsers)
+    try {
+      const arr = att.data.split(',');
+      const mime = (arr[0] && arr[0].match(/:(.*?);/)?.[1]) || att.type || 'application/octet-stream';
+      const bstr = atob(arr[1] || arr[0]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      const blob = new Blob([u8arr], { type: mime });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => {
+        URL.revokeObjectURL(blobUrl);
+        setDownloadingAttId(null);
+      }, 2000);
+      return;
+    } catch (e) {
+      console.warn('Blob download error:', e);
+    }
+
+    // 3. Simple fallback
+    try {
+      const a = document.createElement('a');
+      a.href = att.data;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      console.warn('Fallback download error:', err);
+    }
+    setDownloadingAttId(null);
   };
 
   const handleStartEditTask = (t) => {
@@ -3882,6 +3968,7 @@ export const TasksModal = ({
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button
                   type="button"
+                  disabled={!!downloadingAttId}
                   onClick={() => handleDownloadAttachment(previewImage)}
                   style={{
                     background: 'rgba(56, 189, 248, 0.2)',
@@ -3890,14 +3977,15 @@ export const TasksModal = ({
                     borderRadius: '8px',
                     padding: '6px 12px',
                     fontSize: '0.78rem',
-                    cursor: 'pointer',
+                    cursor: downloadingAttId ? 'wait' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '5px',
-                    fontWeight: 600
+                    fontWeight: 600,
+                    opacity: downloadingAttId ? 0.7 : 1
                   }}
                 >
-                  <Download size={14} /> Download
+                  <Download size={14} /> {downloadingAttId ? 'Downloading...' : 'Download'}
                 </button>
                 <button
                   type="button"

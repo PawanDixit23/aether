@@ -4545,7 +4545,7 @@ export default function App() {
       const actionData = result.parsed?.data || result.data || {};
       const newAssistantMsgId = `yt-${Date.now()}`;
 
-      // If YouTube intent: mark media active to protect audio focus; let embedded player play directly
+      // If YouTube intent: mark media active to protect audio focus; let embedded player play directly & launch on mobile
       if (actionType === 'youtube') {
         setActivePlayingVideoId(newAssistantMsgId);
         activeMediaPlayingRef.current = true;
@@ -4555,6 +4555,14 @@ export default function App() {
         }
         const directTarget = actionData.play_url || actionData.watch_url || actionData.url;
         if (directTarget && typeof window !== 'undefined') {
+          if (window.ReactNativeWebView) {
+            try {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'OPEN_EXTERNAL_URL',
+                url: directTarget
+              }));
+            } catch (err) {}
+          }
           try {
             window.open(directTarget, '_blank', 'noopener,noreferrer');
           } catch (e) {
@@ -4563,14 +4571,39 @@ export default function App() {
         }
       }
 
-      // If Phone Call intent: auto trigger dialer on mobile devices
+      // If Phone Call intent: auto trigger dialer on mobile devices and native app bridge
       if (actionType === 'call') {
-        const directTel = actionData.tel_url || (actionData.phone_number ? `tel:${actionData.phone_number}` : null);
-        if (directTel && typeof window !== 'undefined') {
-          try {
-            window.location.href = directTel;
-          } catch (e) {
-            console.warn('Call trigger notice:', e);
+        const directTel = actionData.tel_url || (actionData.phone_number ? `tel:${actionData.phone_number}` : 'tel:');
+        const cleanNumber = (actionData.phone_number || '').replace(/[^\d+*#]/g, '');
+        if (typeof window !== 'undefined') {
+          if (window.ReactNativeWebView) {
+            try {
+              if (cleanNumber) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'MAKE_CALL',
+                  phoneNumber: cleanNumber,
+                  telUrl: directTel
+                }));
+              } else if (actionData.contact_name && actionData.contact_name !== 'Contact') {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'SEARCH_CONTACT_AND_CALL',
+                  contactName: actionData.contact_name
+                }));
+              } else {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'MAKE_CALL',
+                  phoneNumber: '',
+                  telUrl: 'tel:'
+                }));
+              }
+            } catch (err) {}
+          }
+          if (cleanNumber) {
+            try {
+              window.location.href = directTel;
+            } catch (e) {
+              console.warn('Call trigger notice:', e);
+            }
           }
         }
       }
