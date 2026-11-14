@@ -425,37 +425,37 @@ export default function GeminiLiveModal({
 
   if (!isOpen) return null;
 
-  // Dynamic Theme Colors based on Live Session State
+  // Dynamic Theme Colors based on Live Session State (100% Opaque & Immersive)
   const themeGradients = {
     listening: {
       primary: '#38bdf8',
-      glow: 'rgba(56, 189, 248, 0.45)',
-      ring: 'rgba(56, 189, 248, 0.25)',
-      mesh: 'radial-gradient(circle at 50% 40%, rgba(56, 189, 248, 0.18) 0%, rgba(3, 105, 161, 0.08) 50%, rgba(2, 6, 23, 0.98) 100%)',
+      glow: 'rgba(56, 189, 248, 0.55)',
+      ring: 'rgba(56, 189, 248, 0.28)',
+      mesh: 'radial-gradient(circle at 50% 36%, #0c233c 0%, #061527 50%, #020712 100%)',
       statusText: 'Listening... Speak freely',
       statusColor: '#38bdf8'
     },
     thinking: {
       primary: '#f59e0b',
-      glow: 'rgba(245, 158, 11, 0.45)',
-      ring: 'rgba(245, 158, 11, 0.25)',
-      mesh: 'radial-gradient(circle at 50% 40%, rgba(245, 158, 11, 0.18) 0%, rgba(180, 83, 9, 0.08) 50%, rgba(2, 6, 23, 0.98) 100%)',
+      glow: 'rgba(245, 158, 11, 0.55)',
+      ring: 'rgba(245, 158, 11, 0.28)',
+      mesh: 'radial-gradient(circle at 50% 36%, #281a06 0%, #180f03 50%, #020712 100%)',
       statusText: 'Thinking...',
       statusColor: '#fbbf24'
     },
     speaking: {
       primary: '#34d399',
-      glow: 'rgba(52, 211, 153, 0.5)',
-      ring: 'rgba(52, 211, 153, 0.25)',
-      mesh: 'radial-gradient(circle at 50% 40%, rgba(52, 211, 153, 0.2) 0%, rgba(5, 150, 105, 0.08) 50%, rgba(2, 6, 23, 0.98) 100%)',
+      glow: 'rgba(52, 211, 153, 0.6)',
+      ring: 'rgba(52, 211, 153, 0.28)',
+      mesh: 'radial-gradient(circle at 50% 36%, #072a1e 0%, #041912 50%, #020712 100%)',
       statusText: 'Speaking • Tap orb to interrupt',
       statusColor: '#34d399'
     },
     connecting: {
       primary: '#94a3b8',
-      glow: 'rgba(148, 163, 184, 0.25)',
-      ring: 'rgba(148, 163, 184, 0.15)',
-      mesh: 'radial-gradient(circle at 50% 40%, rgba(148, 163, 184, 0.1) 0%, rgba(2, 6, 23, 0.98) 100%)',
+      glow: 'rgba(148, 163, 184, 0.35)',
+      ring: 'rgba(148, 163, 184, 0.18)',
+      mesh: 'radial-gradient(circle at 50% 36%, #111a28 0%, #0b111b 50%, #020712 100%)',
       statusText: 'Connecting microphone...',
       statusColor: '#94a3b8'
     }
@@ -467,9 +467,9 @@ export default function GeminiLiveModal({
     <div style={{
       position: 'fixed',
       inset: 0,
-      zIndex: 99999,
-      background: currentTheme.mesh,
-      backgroundColor: '#030712',
+      zIndex: 999999,
+      backgroundColor: '#020712',
+      backgroundImage: currentTheme.mesh,
       display: 'flex',
       flexDirection: 'column',
       justifyContent: 'space-between',
@@ -489,7 +489,10 @@ export default function GeminiLiveModal({
         width: '100%',
         maxWidth: '560px',
         margin: '0 auto',
-        flexShrink: 0
+        padding: '6px 0',
+        flexShrink: 0,
+        position: 'relative',
+        zIndex: 10
       }}>
         {/* Left: Mode Title Pill */}
         <div style={{
@@ -498,8 +501,8 @@ export default function GeminiLiveModal({
           gap: '8px',
           padding: '6px 14px',
           borderRadius: '999px',
-          background: 'rgba(255, 255, 255, 0.06)',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
+          background: 'rgba(255, 255, 255, 0.08)',
+          border: '1px solid rgba(255, 255, 255, 0.15)',
           backdropFilter: 'blur(12px)'
         }}>
           <span style={{
@@ -529,10 +532,10 @@ export default function GeminiLiveModal({
         <div style={{
           display: 'flex',
           gap: '4px',
-          background: 'rgba(255, 255, 255, 0.06)',
+          background: 'rgba(255, 255, 255, 0.08)',
           padding: '3px',
           borderRadius: '999px',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
+          border: '1px solid rgba(255, 255, 255, 0.12)',
           backdropFilter: 'blur(12px)'
         }}>
           {[
@@ -545,8 +548,8 @@ export default function GeminiLiveModal({
               type="button"
               onClick={() => setActiveLang(l.id)}
               style={{
-                background: activeLang === l.id ? 'rgba(56, 189, 248, 0.25)' : 'transparent',
-                border: activeLang === l.id ? '1px solid rgba(56, 189, 248, 0.45)' : 'none',
+                background: activeLang === l.id ? 'rgba(56, 189, 248, 0.35)' : 'transparent',
+                border: activeLang === l.id ? '1px solid rgba(56, 189, 248, 0.55)' : 'none',
                 color: activeLang === l.id ? '#38bdf8' : '#94a3b8',
                 borderRadius: '999px',
                 padding: '4px 10px',
@@ -711,9 +714,9 @@ export default function GeminiLiveModal({
         {/* Real-time Subtitle / Spoken Transcript Card */}
         <div style={{
           marginTop: '16px',
-          background: 'rgba(15, 23, 42, 0.65)',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
-          borderRadius: '18px',
+          background: '#0a1224',
+          border: '1px solid rgba(56, 189, 248, 0.25)',
+          borderRadius: '20px',
           padding: '16px 20px',
           width: '100%',
           boxSizing: 'border-box',
@@ -723,8 +726,7 @@ export default function GeminiLiveModal({
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
-          backdropFilter: 'blur(16px)',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)'
+          boxShadow: '0 12px 36px rgba(0, 0, 0, 0.7)'
         }}>
           <div style={{
             fontSize: '0.98rem',
