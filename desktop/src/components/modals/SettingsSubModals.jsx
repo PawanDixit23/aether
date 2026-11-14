@@ -722,6 +722,90 @@ export const SettingsSubModals = ({
           });
         };
 
+        const [isSyncingContacts, setIsSyncingContacts] = useState(false);
+
+        const handleSyncPhoneContacts = async () => {
+          setIsSyncingContacts(true);
+          showToast("Reading phone contacts... 📱", "info");
+
+          // 1. Mobile App React Native WebView bridge
+          if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+            try {
+              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_CONTACTS_SYNC' }));
+              return;
+            } catch (e) {}
+          }
+
+          // 2. Modern Web Contacts API fallback (Android Chrome)
+          if (typeof navigator !== 'undefined' && 'contacts' in navigator && 'ContactsManager' in window) {
+            try {
+              const props = ['name', 'tel', 'email'];
+              const opts = { multiple: true };
+              const contacts = await navigator.contacts.select(props, opts);
+              if (contacts && contacts.length > 0) {
+                const formatted = contacts.map(c => ({
+                  name: c.name && c.name[0] ? c.name[0] : 'Contact',
+                  phone: c.tel && c.tel[0] ? c.tel[0] : '',
+                  email: c.email && c.email[0] ? c.email[0] : ''
+                })).filter(c => c.name && c.phone);
+                await saveBulkContactsToVault(formatted);
+                return;
+              }
+            } catch (err) {
+              console.warn('Web Contacts API cancelled or failed:', err);
+            }
+          }
+
+          setIsSyncingContacts(false);
+          showToast("Please open inside Aether Mobile App to sync phone contacts directly! 📲", "info");
+        };
+
+        const saveBulkContactsToVault = async (contactsList) => {
+          if (!contactsList || contactsList.length === 0) {
+            setIsSyncingContacts(false);
+            return;
+          }
+          try {
+            showToast(`Saving ${contactsList.length} contacts to Memory Vault... ⚡`, "info");
+            const resp = await fetch(`${apiBase || '/api'}/memory/bulk-contacts`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(userEmail ? { 'X-User-Email': userEmail } : {})
+              },
+              body: JSON.stringify({
+                contacts: contactsList,
+                user_email: userEmail
+              })
+            });
+            const data = await resp.json();
+            if (data.status === 'ok') {
+              showToast(`✅ ${data.message || 'Contacts saved!'}`, "success");
+              if (refreshAllData) refreshAllData();
+            } else {
+              showToast("Contacts sync error", "error");
+            }
+          } catch (e) {
+            showToast("Could not reach server to sync contacts", "error");
+          } finally {
+            setIsSyncingContacts(false);
+          }
+        };
+
+        useEffect(() => {
+          window.__onContactsBatchSynced = (contactsList) => {
+            saveBulkContactsToVault(contactsList);
+          };
+          window.__onContactsSyncFailed = (err) => {
+            setIsSyncingContacts(false);
+            showToast(err || "Contacts access not granted", "error");
+          };
+          return () => {
+            delete window.__onContactsBatchSynced;
+            delete window.__onContactsSyncFailed;
+          };
+        }, [userEmail, apiBase]);
+
         const handleUploadDocumentToVault = async (e) => {
           const file = e.target.files?.[0];
           if (!file) return;
@@ -976,6 +1060,30 @@ export const SettingsSubModals = ({
                     <Download size={13} />
                     {isMobile ? null : <span>Export</span>}
                   </button>
+                  <button
+                    type="button"
+                    onClick={handleSyncPhoneContacts}
+                    disabled={isSyncingContacts}
+                    style={{
+                      background: 'rgba(56, 189, 248, 0.12)',
+                      border: '1px solid rgba(56, 189, 248, 0.35)',
+                      color: '#38bdf8',
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      padding: isMobile ? '6px 9px' : '5px 10px',
+                      borderRadius: '20px',
+                      cursor: isSyncingContacts ? 'wait' : 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      whiteSpace: 'nowrap',
+                      lineHeight: 1
+                    }}
+                    title="Sync phone contacts to Memory Vault"
+                  >
+                    <span>📲</span>
+                    <span>{isMobile ? 'Sync' : (isSyncingContacts ? 'Syncing...' : 'Sync Contacts')}</span>
+                  </button>
                   <button 
                     type="button" 
                     onClick={() => setActiveSubModal(null)} 
@@ -998,6 +1106,63 @@ export const SettingsSubModals = ({
                     ✕
                   </button>
                 </div>
+              </div>
+
+              {/* 1-Click Phone Contacts Sync Banner */}
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '11px 14px',
+                background: 'linear-gradient(135deg, rgba(2, 132, 199, 0.16) 0%, rgba(3, 105, 161, 0.22) 100%)',
+                borderRadius: '14px',
+                border: '1.2px solid rgba(56, 189, 248, 0.35)',
+                flexShrink: 0,
+                gap: '10px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
+                    background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '1rem',
+                    flexShrink: 0
+                  }}>
+                    📲
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#f8fafc' }}>
+                      Sync Phone Contacts
+                    </div>
+                    <div style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+                      1-click import device phonebook to Memory Vault for instant voice dialing
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSyncPhoneContacts}
+                  disabled={isSyncingContacts}
+                  style={{
+                    background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                    border: '1px solid rgba(56, 189, 248, 0.55)',
+                    color: '#ffffff',
+                    fontSize: '0.74rem',
+                    fontWeight: 700,
+                    padding: '6px 14px',
+                    borderRadius: '999px',
+                    cursor: isSyncingContacts ? 'wait' : 'pointer',
+                    boxShadow: '0 2px 10px rgba(2, 132, 199, 0.3)',
+                    whiteSpace: 'nowrap',
+                    opacity: isSyncingContacts ? 0.7 : 1
+                  }}
+                >
+                  {isSyncingContacts ? 'Syncing...' : 'Sync Now'}
+                </button>
               </div>
 
               {/* Auto-Learn Status Banner */}

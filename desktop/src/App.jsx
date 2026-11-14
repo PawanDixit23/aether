@@ -4175,8 +4175,8 @@ export default function App() {
 
   // Background "Hey Aether" Wake Word Detection (Universal: Mobile App & Desktop)
   useEffect(() => {
-    // Guards: don't listen if onboarding not done, mic disabled, wake word disabled, active voice session, processing, speaking, or media running
-    if (!onboardingDone || !micEnabled || !wakeWordEnabled || isListening || isSpeaking || isProcessing || activeMediaPlayingRef.current) {
+    // Guards: don't listen if onboarding not done, mic disabled, wake word disabled, active voice session, processing, speaking, media running, or Gemini Live open
+    if (!onboardingDone || !micEnabled || !wakeWordEnabled || isListening || isSpeaking || isProcessing || activeMediaPlayingRef.current || showGeminiLive) {
       if (wakeWordRecognitionRef.current) {
         try { wakeWordRecognitionRef.current.abort(); } catch (e) {}
         wakeWordRecognitionRef.current = null;
@@ -4276,7 +4276,7 @@ export default function App() {
       }
       wakeWordRecognitionRef.current = null;
     };
-  }, [wakeWordEnabled, micEnabled, onboardingDone, isListening, isSpeaking, isProcessing, selectedLang]);
+  }, [wakeWordEnabled, micEnabled, onboardingDone, isListening, isSpeaking, isProcessing, selectedLang, showGeminiLive]);
 
   // Helper to split long responses into natural spoken chunks to bypass Chrome's 15s freeze & play 100% complete text
   const splitTextIntoSpeechChunks = (text, maxChunkLen = 160) => {
@@ -6811,6 +6811,10 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       stopBriefingAudio();
+                      if (wakeWordRecognitionRef.current) {
+                        try { wakeWordRecognitionRef.current.abort(); } catch (e) {}
+                        wakeWordRecognitionRef.current = null;
+                      }
                       setShowGeminiLive(true);
                     }}
                     title="Gemini Live Hands-Free Voice Mode"

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, X, Volume2, Sparkles, RefreshCw, Radio } from 'lucide-react';
+import { Mic, MicOff, X, Volume2, Sparkles, RefreshCw, Send, PhoneOff } from 'lucide-react';
 
 export default function GeminiLiveModal({
   isOpen,
@@ -22,9 +22,22 @@ export default function GeminiLiveModal({
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
   const audioPlayerRef = useRef(null);
+  const mediaStreamRef = useRef(null);
   const isSpeakingRef = useRef(false);
   const isListeningRef = useRef(false);
   const isSessionActiveRef = useRef(false);
+
+  // Stop any active audio playback
+  const stopAudioPlayback = () => {
+    isSpeakingRef.current = false;
+    if (audioPlayerRef.current) {
+      try { audioPlayerRef.current.pause(); } catch (e) {}
+      audioPlayerRef.current = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+  };
 
   // Setup / Teardown Voice Engine on Modal Open/Close
   useEffect(() => {
@@ -36,19 +49,41 @@ export default function GeminiLiveModal({
     isSessionActiveRef.current = true;
     setSessionState('connecting');
     setTranscript('');
-    setAiResponse('नमस्ते! मैं सुन रहा हूँ, आप बिना रुके स्वाभाविक रूप से बात कर सकते हैं।');
+    setInterimTranscript('');
+    setAiResponse('नमस्ते! Aether Live तैयार है। आप जो भी पूछना चाहते हैं, सीधे बोलें।');
 
-    // Play greeting welcome chime or start mic
-    setTimeout(() => {
-      if (isSessionActiveRef.current) {
-        startLiveListening();
-      }
-    }, 600);
+    // Request native mic permission and initialize
+    initMicAndListen();
 
     return () => {
       cleanupLiveSession();
     };
   }, [isOpen, activeLang]);
+
+  const initMicAndListen = async () => {
+    // 1. Request permission from mobile WebView bridge if available
+    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_MIC_PERMISSION' }));
+      } catch (e) {}
+    }
+
+    // 2. Request browser getUserMedia to unlock audio stream on mobile Chrome/WebView
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaStreamRef.current = stream;
+      }
+    } catch (streamErr) {
+      console.warn('[Gemini Live getUserMedia notice]:', streamErr);
+    }
+
+    if (isSessionActiveRef.current && !isMuted) {
+      setTimeout(() => {
+        startLiveListening();
+      }, 300);
+    }
+  };
 
   const cleanupLiveSession = () => {
     isSessionActiveRef.current = false;
@@ -66,15 +101,13 @@ export default function GeminiLiveModal({
       recognitionRef.current = null;
     }
 
-    if (audioPlayerRef.current) {
-      try {
-        audioPlayerRef.current.pause();
-      } catch (e) {}
-      audioPlayerRef.current = null;
-    }
+    stopAudioPlayback();
 
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      try { window.speechSynthesis.cancel(); } catch (e) {}
+    if (mediaStreamRef.current) {
+      try {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      } catch (e) {}
+      mediaStreamRef.current = null;
     }
   };
 
@@ -82,24 +115,18 @@ export default function GeminiLiveModal({
   const startLiveListening = () => {
     if (!isSessionActiveRef.current || isMuted) return;
 
-    // If currently playing TTS, stop it immediately (Barge-In)
-    if (audioPlayerRef.current) {
-      try { audioPlayerRef.current.pause(); } catch (e) {}
-      audioPlayerRef.current = null;
-    }
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      try { window.speechSynthesis.cancel(); } catch (e) {}
-    }
-    isSpeakingRef.current = false;
+    stopAudioPlayback();
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      setErrorMsg("Your device browser does not support Speech Recognition. Please use Chrome or Android app.");
+      setErrorMsg("Your browser does not support Speech Recognition. Please use Chrome or Android app.");
+      setSessionState('connecting');
       return;
     }
 
     if (recognitionRef.current) {
       try { recognitionRef.current.abort(); } catch (e) {}
+      recognitionRef.current = null;
     }
 
     try {
@@ -110,71 +137,73 @@ export default function GeminiLiveModal({
       rec.lang = (activeLang === 'hi' || activeLang === 'hi_friend') ? 'hi-IN' : (activeLang === 'hinglish' ? 'en-IN' : 'en-US');
 
       rec.onstart = () => {
+        if (!isSessionActiveRef.current) return;
         isListeningRef.current = true;
         setSessionState('listening');
         setErrorMsg(null);
       };
 
+      // Loop proven in App.jsx across all Android WebViews
       rec.onresult = (event) => {
-        if (!isSessionActiveRef.current || isSpeakingRef.current) return;
+        if (!isSessionActiveRef.current) return;
 
-        let interim = '';
-        let final = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const res = event.results[i];
-          if (res.isFinal) {
-            final += res[0].transcript + ' ';
-          } else {
-            interim += res[0].transcript;
+        let currentText = '';
+        for (let i = 0; i < event.results.length; i++) {
+          if (event.results[i] && event.results[i][0]) {
+            currentText += ' ' + event.results[i][0].transcript;
           }
         }
+        currentText = currentText.trim();
 
-        const combined = (final + interim).trim();
-        setInterimTranscript(combined);
+        if (currentText) {
+          setInterimTranscript(currentText);
 
-        // Barge-in check: If user starts speaking while AI was speaking, cut off AI
-        if (isSpeakingRef.current && combined.length > 2) {
-          if (audioPlayerRef.current) {
-            try { audioPlayerRef.current.pause(); } catch (e) {}
+          // Barge-in check: If AI is talking and user speaks, stop AI immediately
+          if (isSpeakingRef.current) {
+            stopAudioPlayback();
+            setSessionState('listening');
           }
-          isSpeakingRef.current = false;
-        }
 
-        // Automatic End-of-Speech / Silence Detection (1.2 seconds of silence dispatches prompt)
-        clearTimeout(silenceTimerRef.current);
-        if (combined.length > 1) {
+          // Smart dynamic silence detection
+          clearTimeout(silenceTimerRef.current);
+          const lastRes = event.results[event.results.length - 1];
+          const isFinal = Boolean(lastRes && lastRes.isFinal);
+          const debounceDelay = isFinal ? 900 : 1400;
+
           silenceTimerRef.current = setTimeout(() => {
-            if (isSessionActiveRef.current && combined.trim()) {
-              sendLivePrompt(combined.trim());
+            if (isSessionActiveRef.current && currentText.trim()) {
+              sendLivePrompt(currentText.trim());
             }
-          }, 1250);
+          }, debounceDelay);
         }
       };
 
       rec.onerror = (err) => {
-        console.warn('[Gemini Live STT error]', err);
-        if (err.error === 'not-allowed') {
-          setErrorMsg('Microphone permission denied. Please allow microphone access in browser.');
+        console.warn('[Gemini Live STT error notice]', err);
+        if (err.error === 'not-allowed' || err.error === 'service-not-allowed') {
+          setErrorMsg('Microphone permission required. Please allow microphone in settings.');
           setSessionState('connecting');
-        } else if (err.error !== 'no-speech') {
-          // Restart listening on transient error if session active
+        } else if (err.error === 'no-speech') {
+          // Normal silence, keep listening alive
+        } else {
+          // Transient error: auto restart after slight delay
           setTimeout(() => {
-            if (isSessionActiveRef.current && !isSpeakingRef.current) {
-              startLiveListening();
+            if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted) {
+              try { rec.start(); } catch (e) {}
             }
-          }, 500);
+          }, 400);
         }
       };
 
       rec.onend = () => {
         isListeningRef.current = false;
-        // Keep listening alive in hands-free mode unless AI is currently speaking or muted
+        // Keep hands-free listening alive unless AI is currently speaking or user muted
         if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted) {
           setTimeout(() => {
-            if (isSessionActiveRef.current && !isSpeakingRef.current) {
+            if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted) {
               try { rec.start(); } catch (e) {}
             }
-          }, 200);
+          }, 250);
         }
       };
 
@@ -189,24 +218,25 @@ export default function GeminiLiveModal({
     if (!text || !text.trim() || !isSessionActiveRef.current) return;
 
     clearTimeout(silenceTimerRef.current);
-    setTranscript(text);
+    const cleanPrompt = text.trim();
+    setTranscript(cleanPrompt);
     setInterimTranscript('');
     setSessionState('thinking');
 
-    // Pause mic temporarily while sending
+    // Pause STT while awaiting response
     if (recognitionRef.current) {
       try { recognitionRef.current.abort(); } catch (e) {}
     }
 
     try {
-      const resp = await fetch(`${apiBase}/chat`, {
+      const resp = await fetch(`${apiBase || '/api'}/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(userEmail ? { 'X-User-Email': userEmail } : {})
         },
         body: JSON.stringify({
-          prompt: text,
+          prompt: cleanPrompt,
           user_email: userEmail,
           lang: activeLang,
           live_voice: true
@@ -223,7 +253,7 @@ export default function GeminiLiveModal({
         onNewMessage({
           id: `live-${Date.now()}`,
           role: 'user',
-          content: text,
+          content: cleanPrompt,
           created_at: new Date().toISOString()
         });
         onNewMessage({
@@ -236,7 +266,7 @@ export default function GeminiLiveModal({
         });
       }
 
-      // Play AI Audio Response
+      // Speak AI Audio Response
       speakLiveResponse(aiText);
     } catch (err) {
       console.error('[Gemini Live Dispatch Error]', err);
@@ -252,14 +282,14 @@ export default function GeminiLiveModal({
     setSessionState('speaking');
     isSpeakingRef.current = true;
 
-    // Clean markdown stars, hashtags, brackets from text for fluid speech
+    // Clean markdown characters for spoken audio
     const cleanSpeech = text
       .replace(/[*#_`~>]/g, '')
       .replace(/\[.*?\]/g, '')
       .replace(/\(http.*?\)/g, '')
       .trim();
 
-    const ttsUrl = `${apiBase}/tts?text=${encodeURIComponent(cleanSpeech.slice(0, 1500))}&voice=${selectedVoice}&lang=${activeLang}`;
+    const ttsUrl = `${apiBase || '/api'}/tts?text=${encodeURIComponent(cleanSpeech.slice(0, 1500))}&voice=${selectedVoice}&lang=${activeLang}`;
     const audio = new Audio(ttsUrl);
     audioPlayerRef.current = audio;
 
@@ -273,7 +303,7 @@ export default function GeminiLiveModal({
     };
 
     audio.onerror = () => {
-      // Fallback to browser SpeechSynthesis if backend audio fails
+      // Fallback to browser SpeechSynthesis
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         const u = new SpeechSynthesisUtterance(cleanSpeech.slice(0, 500));
         u.lang = activeLang === 'hi' ? 'hi-IN' : 'en-IN';
@@ -303,17 +333,10 @@ export default function GeminiLiveModal({
     }
   };
 
-  // Handle User Interrupt / Tap Orb to Barge-In
-  const handleInterruptOrTap = () => {
+  // Handle User Interrupt / Tap Orb to Barge-In or Send Now
+  const handleOrbTap = () => {
     if (sessionState === 'speaking') {
-      if (audioPlayerRef.current) {
-        try { audioPlayerRef.current.pause(); } catch (e) {}
-        audioPlayerRef.current = null;
-      }
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        try { window.speechSynthesis.cancel(); } catch (e) {}
-      }
-      isSpeakingRef.current = false;
+      stopAudioPlayback();
       setSessionState('listening');
       startLiveListening();
     } else if (sessionState === 'listening') {
@@ -341,62 +364,112 @@ export default function GeminiLiveModal({
     <div style={{
       position: 'fixed',
       inset: 0,
-      zIndex: 9999,
-      background: 'radial-gradient(circle at 50% 40%, #0d1a30 0%, #060b14 70%, #020408 100%)',
+      zIndex: 99999,
+      background: 'radial-gradient(circle at 50% 35%, #0a192f 0%, #050b14 65%, #020408 100%)',
       display: 'flex',
       flexDirection: 'column',
       justifyContent: 'space-between',
       color: '#ffffff',
-      fontFamily: 'Inter, system-ui, sans-serif',
-      padding: '24px 20px',
-      overflow: 'hidden',
-      animation: 'fadeIn 0.3s ease-out'
+      fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      padding: '0 20px 24px 20px',
+      paddingTop: 'max(env(safe-area-inset-top, 56px), 56px)',
+      boxSizing: 'border-box',
+      overflow: 'hidden'
     }}>
-      {/* Top Bar: Title, Lang Switcher & Close */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', maxWidth: '600px', margin: '0 auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{
-            width: '10px',
-            height: '10px',
-            borderRadius: '50%',
-            background: sessionState === 'listening' ? '#38bdf8' : (sessionState === 'speaking' ? '#10b981' : '#f59e0b'),
-            boxShadow: `0 0 12px ${sessionState === 'listening' ? '#38bdf8' : (sessionState === 'speaking' ? '#10b981' : '#f59e0b')}`
-          }} />
-          <span style={{ fontWeight: 700, fontSize: '0.95rem', letterSpacing: '0.04em', color: '#f8fafc' }}>
-            GEMINI LIVE
-          </span>
-          <span style={{
-            fontSize: '0.65rem',
-            padding: '2px 7px',
-            borderRadius: '9999px',
-            background: 'rgba(56, 189, 248, 0.15)',
-            border: '1px solid rgba(56, 189, 248, 0.3)',
-            color: '#38bdf8',
-            fontWeight: 600
-          }}>
-            DUPLEX
-          </span>
+      {/* ── Top Header Bar (Safe Notch & Status Bar Clearance) ── */}
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+        width: '100%',
+        maxWidth: '540px',
+        margin: '0 auto',
+        flexShrink: 0
+      }}>
+        {/* Row 1: Live Badge & Close Button */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px 10px',
+              borderRadius: '999px',
+              background: 'rgba(56, 189, 248, 0.15)',
+              border: '1px solid rgba(56, 189, 248, 0.4)'
+            }}>
+              <span style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                background: sessionState === 'listening' ? '#38bdf8' : (sessionState === 'speaking' ? '#10b981' : '#f59e0b'),
+                boxShadow: `0 0 10px ${sessionState === 'listening' ? '#38bdf8' : (sessionState === 'speaking' ? '#10b981' : '#f59e0b')}`
+              }} />
+              <span style={{ fontWeight: 800, fontSize: '0.82rem', letterSpacing: '0.04em', color: '#f8fafc' }}>
+                AETHER LIVE
+              </span>
+            </div>
+            <span style={{
+              fontSize: '0.64rem',
+              padding: '3px 8px',
+              borderRadius: '999px',
+              background: 'rgba(255, 255, 255, 0.08)',
+              color: '#94a3b8',
+              fontWeight: 600
+            }}>
+              DUPLEX
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: '50%',
+              background: 'rgba(255, 255, 255, 0.1)',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#cbd5e1',
+              cursor: 'pointer',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+            }}
+          >
+            <X size={20} />
+          </button>
         </div>
 
-        {/* Language Pill Selector */}
-        <div style={{ display: 'flex', gap: '6px', background: 'rgba(255, 255, 255, 0.06)', padding: '3px', borderRadius: '12px' }}>
+        {/* Row 2: Centered Language Switcher */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          gap: '6px',
+          background: 'rgba(255, 255, 255, 0.06)',
+          padding: '4px',
+          borderRadius: '14px',
+          width: 'fit-content',
+          margin: '0 auto'
+        }}>
           {[
-            { id: 'hi', label: 'हिन्दी' },
-            { id: 'hinglish', label: 'Hinglish' },
-            { id: 'en', label: 'English' }
+            { id: 'hi', label: '🇮🇳 हिन्दी' },
+            { id: 'hinglish', label: '✨ Hinglish' },
+            { id: 'en', label: '🇬🇧 English' }
           ].map(l => (
             <button
               key={l.id}
               type="button"
               onClick={() => setActiveLang(l.id)}
               style={{
-                background: activeLang === l.id ? 'rgba(56, 189, 248, 0.25)' : 'transparent',
-                border: activeLang === l.id ? '1px solid rgba(56, 189, 248, 0.5)' : 'none',
+                background: activeLang === l.id ? 'rgba(56, 189, 248, 0.28)' : 'transparent',
+                border: activeLang === l.id ? '1px solid rgba(56, 189, 248, 0.55)' : 'none',
                 color: activeLang === l.id ? '#38bdf8' : '#94a3b8',
-                borderRadius: '8px',
-                padding: '4px 8px',
-                fontSize: '0.72rem',
-                fontWeight: 600,
+                borderRadius: '10px',
+                padding: '5px 12px',
+                fontSize: '0.74rem',
+                fontWeight: 700,
                 cursor: 'pointer',
                 transition: 'all 0.15s ease'
               }}
@@ -405,137 +478,176 @@ export default function GeminiLiveModal({
             </button>
           ))}
         </div>
-
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            width: '38px',
-            height: '38px',
-            borderRadius: '50%',
-            background: 'rgba(255, 255, 255, 0.08)',
-            border: '1px solid rgba(255, 255, 255, 0.12)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#cbd5e1',
-            cursor: 'pointer'
-          }}
-        >
-          <X size={20} />
-        </button>
       </div>
 
-      {/* Center: The Interactive Living Pulsing Orb */}
+      {/* ── Center Stage: The Living Animated Orb ── */}
       <div style={{
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         flex: 1,
-        maxWidth: '500px',
+        maxWidth: '480px',
         margin: '0 auto',
         width: '100%',
-        textAlign: 'center'
+        textAlign: 'center',
+        padding: '10px 0'
       }}>
-        {/* Glow Halo */}
+        {/* Animated Orb Container */}
         <div
-          onClick={handleInterruptOrTap}
+          onClick={handleOrbTap}
+          title={sessionState === 'speaking' ? "Tap to interrupt" : "Tap to send immediately"}
           style={{
             position: 'relative',
-            width: '180px',
-            height: '180px',
+            width: '190px',
+            height: '190px',
             borderRadius: '50%',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            transition: 'all 0.4s ease'
+            userSelect: 'none'
           }}
         >
-          {/* Animated Background Ripple Ring */}
+          {/* Outer Breathing Wave Ring 1 */}
           <div style={{
             position: 'absolute',
-            inset: '-20px',
+            inset: '-22px',
             borderRadius: '50%',
             background: sessionState === 'listening'
               ? 'radial-gradient(circle, rgba(56, 189, 248, 0.35) 0%, rgba(56, 189, 248, 0) 70%)'
               : (sessionState === 'speaking'
                 ? 'radial-gradient(circle, rgba(16, 185, 129, 0.35) 0%, rgba(16, 185, 129, 0) 70%)'
                 : 'radial-gradient(circle, rgba(245, 158, 11, 0.35) 0%, rgba(245, 158, 11, 0) 70%)'),
-            animation: 'pulseRing 2.4s infinite ease-in-out'
+            animation: 'liveRipple 2.2s infinite ease-in-out'
           }} />
 
-          {/* Core Orb */}
+          {/* Outer Breathing Wave Ring 2 */}
           <div style={{
-            width: '140px',
-            height: '140px',
+            position: 'absolute',
+            inset: '-8px',
             borderRadius: '50%',
             background: sessionState === 'listening'
-              ? 'radial-gradient(circle at 35% 35%, #38bdf8, #0284c7 60%, #0369a1 100%)'
+              ? 'radial-gradient(circle, rgba(56, 189, 248, 0.25) 0%, rgba(56, 189, 248, 0) 75%)'
               : (sessionState === 'speaking'
-                ? 'radial-gradient(circle at 35% 35%, #34d399, #10b981 60%, #047857 100%)'
-                : 'radial-gradient(circle at 35% 35%, #fbbf24, #f59e0b 60%, #d97706 100%)'),
+                ? 'radial-gradient(circle, rgba(16, 185, 129, 0.25) 0%, rgba(16, 185, 129, 0) 75%)'
+                : 'radial-gradient(circle, rgba(245, 158, 11, 0.25) 0%, rgba(245, 158, 11, 0) 75%)'),
+            animation: 'liveRipple 1.6s infinite ease-in-out 0.4s'
+          }} />
+
+          {/* Core Living Glowing Sphere */}
+          <div style={{
+            width: '146px',
+            height: '146px',
+            borderRadius: '50%',
+            background: sessionState === 'listening'
+              ? 'radial-gradient(circle at 35% 30%, #38bdf8 0%, #0284c7 50%, #0369a1 100%)'
+              : (sessionState === 'speaking'
+                ? 'radial-gradient(circle at 35% 30%, #34d399 0%, #10b981 50%, #047857 100%)'
+                : 'radial-gradient(circle at 35% 30%, #fbbf24 0%, #f59e0b 50%, #d97706 100%)'),
             boxShadow: sessionState === 'listening'
-              ? '0 0 45px rgba(56, 189, 248, 0.65), inset 0 0 25px rgba(255, 255, 255, 0.4)'
+              ? '0 0 50px rgba(56, 189, 248, 0.7), inset 0 0 30px rgba(255, 255, 255, 0.5)'
               : (sessionState === 'speaking'
-                ? '0 0 50px rgba(16, 185, 129, 0.65), inset 0 0 25px rgba(255, 255, 255, 0.4)'
-                : '0 0 45px rgba(245, 158, 11, 0.65), inset 0 0 25px rgba(255, 255, 255, 0.4)'),
+                ? '0 0 50px rgba(16, 185, 129, 0.7), inset 0 0 30px rgba(255, 255, 255, 0.5)'
+                : '0 0 50px rgba(245, 158, 11, 0.7), inset 0 0 30px rgba(255, 255, 255, 0.5)'),
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             position: 'relative',
-            zIndex: 2,
-            transform: sessionState === 'listening' ? 'scale(1.05)' : 'scale(1.0)',
-            transition: 'transform 0.3s ease'
+            zIndex: 3,
+            animation: 'orbBreath 3s infinite ease-in-out'
           }}>
             {sessionState === 'listening' && (
-              <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                <span style={{ width: '4px', height: '24px', background: '#fff', borderRadius: '4px', animation: 'waveBar 0.9s infinite ease-in-out 0.1s' }} />
-                <span style={{ width: '4px', height: '40px', background: '#fff', borderRadius: '4px', animation: 'waveBar 0.9s infinite ease-in-out 0.25s' }} />
-                <span style={{ width: '4px', height: '20px', background: '#fff', borderRadius: '4px', animation: 'waveBar 0.9s infinite ease-in-out 0.4s' }} />
+              <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                <span style={{ width: '4px', height: '18px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.8s infinite ease-in-out 0.1s' }} />
+                <span style={{ width: '4px', height: '34px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.8s infinite ease-in-out 0.25s' }} />
+                <span style={{ width: '4px', height: '46px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.8s infinite ease-in-out 0.4s' }} />
+                <span style={{ width: '4px', height: '26px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.8s infinite ease-in-out 0.15s' }} />
               </div>
             )}
             {sessionState === 'speaking' && (
-              <Volume2 size={44} color="#ffffff" style={{ animation: 'bounceSlow 1.5s infinite' }} />
+              <Volume2 size={46} color="#ffffff" style={{ animation: 'livePulse 1.2s infinite' }} />
             )}
             {sessionState === 'thinking' && (
-              <RefreshCw size={36} color="#ffffff" style={{ animation: 'spin 1.2s linear infinite' }} />
+              <RefreshCw size={40} color="#ffffff" style={{ animation: 'liveSpin 1s linear infinite' }} />
             )}
             {sessionState === 'connecting' && (
-              <Radio size={36} color="#ffffff" />
+              <Mic size={40} color="#ffffff" />
             )}
           </div>
         </div>
 
-        {/* State Label & Subtitle */}
-        <div style={{ marginTop: '28px', minHeight: '80px', padding: '0 10px' }}>
-          <div style={{
-            fontSize: '0.86rem',
-            fontWeight: 700,
-            letterSpacing: '0.06em',
-            textTransform: 'uppercase',
-            color: sessionState === 'listening' ? '#38bdf8' : (sessionState === 'speaking' ? '#34d399' : '#fbbf24')
-          }}>
-            {sessionState === 'listening' && "Aether is Listening... Speak freely"}
-            {sessionState === 'speaking' && "Aether is Speaking • Tap orb to interrupt"}
-            {sessionState === 'thinking' && "Thinking & reasoning..."}
-            {sessionState === 'connecting' && "Connecting Hands-Free Mode..."}
-          </div>
+        {/* State Label */}
+        <div style={{
+          marginTop: '22px',
+          fontSize: '0.82rem',
+          fontWeight: 800,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          color: sessionState === 'listening' ? '#38bdf8' : (sessionState === 'speaking' ? '#34d399' : '#fbbf24')
+        }}>
+          {sessionState === 'listening' && "● LISTENING... SPEAK FREELY"}
+          {sessionState === 'speaking' && "● SPEAKING • TAP ORB TO INTERRUPT"}
+          {sessionState === 'thinking' && "● REASONING RESPONSE..."}
+          {sessionState === 'connecting' && "● CONNECTING MIC..."}
+        </div>
 
-          {/* Real-time Subtitle / Transcript */}
+        {/* Real-time Subtitle / Dialogue Card */}
+        <div style={{
+          marginTop: '14px',
+          background: 'rgba(255, 255, 255, 0.04)',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+          borderRadius: '16px',
+          padding: '14px 18px',
+          width: '100%',
+          boxSizing: 'border-box',
+          minHeight: '80px',
+          maxHeight: '130px',
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          backdropFilter: 'blur(8px)'
+        }}>
           <div style={{
-            fontSize: '1.02rem',
+            fontSize: '0.98rem',
             lineHeight: '1.5',
             color: '#f8fafc',
-            marginTop: '10px',
-            fontWeight: 500,
-            textShadow: '0 2px 8px rgba(0,0,0,0.4)',
-            maxHeight: '120px',
-            overflowY: 'auto'
+            fontWeight: 500
           }}>
-            {interimTranscript ? `"${interimTranscript}"` : (sessionState === 'speaking' ? aiResponse : (transcript ? `"${transcript}"` : "जैसे: 'आज के एजेंडा में क्या है?' या 'अंकित को ₹200 भेजो'"))}
+            {interimTranscript
+              ? `"${interimTranscript}"`
+              : (sessionState === 'speaking'
+                  ? aiResponse
+                  : (transcript
+                      ? `"${transcript}"`
+                      : "उदाहरण: 'आज के एजेंडा में क्या है?' या 'रोहित को ₹500 भेजो'"))}
           </div>
+
+          {interimTranscript && (
+            <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'center' }}>
+              <button
+                type="button"
+                onClick={() => sendLivePrompt(interimTranscript)}
+                style={{
+                  background: 'rgba(56, 189, 248, 0.2)',
+                  border: '1px solid rgba(56, 189, 248, 0.5)',
+                  color: '#38bdf8',
+                  borderRadius: '20px',
+                  padding: '4px 12px',
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                <span>Send Now</span>
+                <Send size={11} />
+              </button>
+            </div>
+          )}
         </div>
 
         {errorMsg && (
@@ -543,28 +655,29 @@ export default function GeminiLiveModal({
             marginTop: '12px',
             padding: '8px 14px',
             borderRadius: '10px',
-            background: 'rgba(239, 68, 68, 0.15)',
-            border: '1px solid rgba(239, 68, 68, 0.35)',
+            background: 'rgba(239, 68, 68, 0.18)',
+            border: '1px solid rgba(239, 68, 68, 0.4)',
             color: '#fca5a5',
-            fontSize: '0.8rem'
+            fontSize: '0.78rem'
           }}>
             {errorMsg}
           </div>
         )}
       </div>
 
-      {/* Bottom Controls Bar */}
+      {/* ── Bottom Action Controls ── */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: '24px',
+        gap: '28px',
         width: '100%',
-        maxWidth: '400px',
+        maxWidth: '360px',
         margin: '0 auto',
-        paddingBottom: '10px'
+        paddingBottom: '8px',
+        flexShrink: 0
       }}>
-        {/* Mute Button */}
+        {/* Mute Mic Toggle */}
         <button
           type="button"
           onClick={toggleMute}
@@ -573,7 +686,7 @@ export default function GeminiLiveModal({
             width: '56px',
             height: '56px',
             borderRadius: '50%',
-            background: isMuted ? 'rgba(239, 68, 68, 0.25)' : 'rgba(255, 255, 255, 0.09)',
+            background: isMuted ? 'rgba(239, 68, 68, 0.25)' : 'rgba(255, 255, 255, 0.08)',
             border: isMuted ? '1.5px solid rgba(239, 68, 68, 0.6)' : '1px solid rgba(255, 255, 255, 0.15)',
             color: isMuted ? '#f87171' : '#f8fafc',
             display: 'flex',
@@ -586,14 +699,14 @@ export default function GeminiLiveModal({
           {isMuted ? <MicOff size={22} /> : <Mic size={22} />}
         </button>
 
-        {/* End Call / Close Live Session */}
+        {/* Big Red Disconnect / End Call Button */}
         <button
           type="button"
           onClick={onClose}
           title="End Live Voice Session"
           style={{
-            width: '64px',
-            height: '64px',
+            width: '66px',
+            height: '66px',
             borderRadius: '50%',
             background: 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)',
             border: 'none',
@@ -602,34 +715,37 @@ export default function GeminiLiveModal({
             alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',
-            boxShadow: '0 4px 18px rgba(239, 68, 68, 0.45)',
+            boxShadow: '0 6px 20px rgba(239, 68, 68, 0.5)',
             transition: 'all 0.15s ease'
           }}
         >
-          <X size={26} strokeWidth={2.6} />
+          <PhoneOff size={26} strokeWidth={2.4} />
         </button>
       </div>
 
-      {/* Styles for animations */}
+      {/* Modern High-Performance Keyframe Animations */}
       <style>{`
-        @keyframes pulseRing {
-          0% { transform: scale(0.95); opacity: 0.6; }
-          50% { transform: scale(1.22); opacity: 0.2; }
-          100% { transform: scale(0.95); opacity: 0.6; }
+        @keyframes liveRipple {
+          0% { transform: scale(0.92); opacity: 0.6; }
+          50% { transform: scale(1.18); opacity: 0.15; }
+          100% { transform: scale(0.92); opacity: 0.6; }
         }
-        @keyframes waveBar {
+        @keyframes orbBreath {
+          0%, 100% { transform: scale(1.0); }
+          50% { transform: scale(1.06); }
+        }
+        @keyframes liveBar {
           0%, 100% { height: 16px; }
-          50% { height: 38px; }
+          50% { height: 42px; }
         }
-        @keyframes spin {
+        @keyframes liveSpin {
           100% { transform: rotate(360deg); }
         }
-        @keyframes bounceSlow {
+        @keyframes livePulse {
           0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.12); }
+          50% { transform: scale(1.14); }
         }
       `}</style>
     </div>
   );
 }
-
