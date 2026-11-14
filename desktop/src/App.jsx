@@ -9111,6 +9111,8 @@ export default function App() {
         onClose={() => setActiveSubModal(null)}
         auditLogs={auditLogs}
         handleUndo={handleUndo}
+        apiBase={API_BASE}
+        userEmail={userEmail}
       />
 
       {/* 5.1 Observability & System Health Modal */}

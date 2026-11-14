@@ -3263,13 +3263,24 @@ def get_executive_audio_briefing(
 # ----------------- Audit Logs & Undo -----------------
 @app.get("/api/audit-logs")
 def list_audit_logs(
-    limit: int = 30, 
+    limit: int = 60, 
+    date: Optional[str] = None,
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
     if not user_email:
         return []
-    return db.query(AuditLog).filter(AuditLog.user_email == user_email).order_by(AuditLog.executed_at.desc()).limit(limit).all()
+    query = db.query(AuditLog).filter(AuditLog.user_email == user_email)
+    if date and date.strip():
+        try:
+            target_date = datetime.strptime(date.strip(), "%Y-%m-%d").date()
+            start_dt = datetime.combine(target_date, datetime.min.time())
+            end_dt = datetime.combine(target_date, datetime.max.time())
+            query = query.filter(AuditLog.executed_at >= start_dt, AuditLog.executed_at <= end_dt)
+            return query.order_by(AuditLog.executed_at.desc()).all()
+        except Exception as e:
+            print(f"[Audit Log Date Filter Error] {e}")
+    return query.order_by(AuditLog.executed_at.desc()).limit(limit).all()
 
 @app.post("/api/audit-logs/{log_id}/undo")
 def undo_action(
