@@ -116,6 +116,7 @@ export const TasksModal = ({
   const [editAttachments, setEditAttachments] = useState([]);
   const editFileInputRef = useRef(null);
   const subtaskEditFileInputRef = useRef(null);
+  const mobileSubtaskEditFileInputRef = useRef(null);
 
   // Optional Completion Prompt Modal (triggered when marking a task complete)
   const [completionPromptTask, setCompletionPromptTask] = useState(null);
@@ -633,6 +634,18 @@ export const TasksModal = ({
     if (p === 'low') return { color: '#10B981', bg: 'rgba(16, 185, 129, 0.15)', border: '#10B981' };
     return { color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.15)', border: '#F59E0B' };
   };
+
+  // Check if currently edited task is a subtask (for dedicated mobile edit sheet)
+  const activeEditingSubtask = useMemo(() => {
+    if (!editingTaskId) return null;
+    for (const t of combinedTasks) {
+      if (t.subtasks && Array.isArray(t.subtasks)) {
+        const found = t.subtasks.find(st => String(st.id) === String(editingTaskId));
+        if (found) return { subtask: found, parentTask: t };
+      }
+    }
+    return null;
+  }, [editingTaskId, combinedTasks]);
 
   // Form submission with validation
   const onSubmitTask = (e) => {
@@ -2391,8 +2404,8 @@ export const TasksModal = ({
                         const stPriorityInfo = priorityMeta[stPriority] || priorityMeta.medium;
                         const stAttachments = parseAttachments(st.attachments);
 
-                        {/* Inline Edit Form for Subtask */}
-                        if (editingTaskId === st.id) {
+                        {/* Inline Edit Form for Subtask (Desktop only; Mobile uses dedicated bottom sheet above keyboard) */}
+                        if (!isMobile && editingTaskId === st.id) {
                           return (
                             <div
                               key={st.id || idx}
@@ -2436,11 +2449,11 @@ export const TasksModal = ({
                               </div>
 
                               {/* Time & Priority Row */}
-                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                <div style={{ flex: 1, minWidth: '120px' }}>
+                              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                                <div style={{ flex: '1 1 160px' }}>
                                   <label style={{ fontSize: '0.68rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Reminder Time</label>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '8px', padding: '6px 8px' }}>
-                                    <Clock size={12} color="#38bdf8" />
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '8px', padding: '6px 10px' }}>
+                                    <Clock size={13} color="#38bdf8" />
                                     <input
                                       type="text"
                                       value={editReminderTime}
@@ -2458,9 +2471,9 @@ export const TasksModal = ({
                                   </div>
                                 </div>
 
-                                <div style={{ flex: 1, minWidth: '140px' }}>
+                                <div style={{ flex: '2 1 250px' }}>
                                   <label style={{ fontSize: '0.68rem', color: '#94a3b8', display: 'block', marginBottom: '3px' }}>Priority</label>
-                                  <div style={{ display: 'flex', gap: '4px' }}>
+                                  <div style={{ display: 'flex', gap: '5px', width: '100%' }}>
                                     {['low', 'medium', 'high', 'urgent'].map(pKey => (
                                       <button
                                         key={pKey}
@@ -2471,12 +2484,17 @@ export const TasksModal = ({
                                           border: `1px solid ${editPriority === pKey ? priorityMeta[pKey].border : 'rgba(255, 255, 255, 0.08)'}`,
                                           color: editPriority === pKey ? priorityMeta[pKey].color : '#94a3b8',
                                           borderRadius: '6px',
-                                          padding: '4px 6px',
-                                          fontSize: '0.66rem',
+                                          padding: '5px 6px',
+                                          fontSize: '0.68rem',
                                           cursor: 'pointer',
                                           fontWeight: 600,
+                                          whiteSpace: 'nowrap',
                                           flex: 1,
-                                          textAlign: 'center'
+                                          textAlign: 'center',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          gap: '3px'
                                         }}
                                       >
                                         <span>{priorityMeta[pKey].dot}</span> {priorityMeta[pKey].label}
@@ -2617,6 +2635,7 @@ export const TasksModal = ({
                           );
                         }
 
+                        const isBeingEdited = editingTaskId === st.id;
                         return (
                           <div
                             key={st.id || idx}
@@ -2624,8 +2643,8 @@ export const TasksModal = ({
                               display: 'flex',
                               flexDirection: 'column',
                               gap: '5px',
-                              background: stDone ? 'rgba(255, 255, 255, 0.02)' : 'rgba(255, 255, 255, 0.04)',
-                              border: stDone ? '1px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(255, 255, 255, 0.09)',
+                              background: isBeingEdited ? 'rgba(56, 189, 248, 0.10)' : (stDone ? 'rgba(255, 255, 255, 0.02)' : 'rgba(255, 255, 255, 0.04)'),
+                              border: isBeingEdited ? '1px solid rgba(56, 189, 248, 0.5)' : (stDone ? '1px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(255, 255, 255, 0.09)'),
                               borderLeft: `3px solid ${stPriorityInfo.color}`,
                               padding: '8px 10px',
                               borderRadius: '10px',
@@ -3134,6 +3153,7 @@ export const TasksModal = ({
           style={{
             position: 'fixed',
             inset: 0,
+            height: viewportHeight ? `${viewportHeight}px` : '100%',
             background: 'rgba(0, 0, 0, 0.65)',
             backdropFilter: 'blur(8px)',
             WebkitBackdropFilter: 'blur(8px)',
@@ -3220,50 +3240,59 @@ export const TasksModal = ({
               }}
             />
 
-            {/* Time & Priority Row */}
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '5px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '8px', padding: '6px 10px', border: '1px solid rgba(255, 255, 255, 0.12)' }}>
-                <Clock size={13} color="#38bdf8" />
-                <input
-                  type="text"
-                  value={subtaskTime}
-                  onChange={(e) => setSubtaskTime(e.target.value)}
-                  placeholder="Time (e.g. 5:00 PM)"
+            {/* Priority Selector (Full Width Segmented Control: 4 equal buttons) */}
+            <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
+              {['low', 'medium', 'high', 'urgent'].map(pKey => (
+                <button
+                  key={pKey}
+                  type="button"
+                  onClick={() => setSubtaskPriority(pKey)}
                   style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#fff',
-                    fontSize: '0.78rem',
-                    width: '110px',
-                    outline: 'none'
+                    background: subtaskPriority === pKey ? priorityMeta[pKey].bg : 'rgba(255, 255, 255, 0.04)',
+                    border: `1px solid ${subtaskPriority === pKey ? priorityMeta[pKey].border : 'rgba(255, 255, 255, 0.12)'}`,
+                    color: subtaskPriority === pKey ? priorityMeta[pKey].color : '#94a3b8',
+                    borderRadius: '8px',
+                    padding: '8px 4px',
+                    fontSize: '0.72rem',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap',
+                    flex: 1,
+                    textAlign: 'center',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '4px',
+                    boxShadow: subtaskPriority === pKey ? '0 2px 8px rgba(0,0,0,0.35)' : 'none',
+                    transition: 'all 0.15s ease'
                   }}
-                />
-              </div>
+                >
+                  <span>{priorityMeta[pKey].dot}</span>
+                  <span>{priorityMeta[pKey].label}</span>
+                </button>
+              ))}
+            </div>
 
-              <div style={{ display: 'flex', gap: '4px', flex: 1, minWidth: '160px' }}>
-                {['low', 'medium', 'high', 'urgent'].map(pKey => (
-                  <button
-                    key={pKey}
-                    type="button"
-                    onClick={() => setSubtaskPriority(pKey)}
-                    style={{
-                      background: subtaskPriority === pKey ? priorityMeta[pKey].bg : 'rgba(255, 255, 255, 0.04)',
-                      border: `1px solid ${subtaskPriority === pKey ? priorityMeta[pKey].border : 'rgba(255, 255, 255, 0.08)'}`,
-                      color: subtaskPriority === pKey ? priorityMeta[pKey].color : '#94a3b8',
-                      borderRadius: '8px',
-                      padding: '6px 6px',
-                      fontSize: '0.68rem',
-                      cursor: 'pointer',
-                      fontWeight: 600,
-                      whiteSpace: 'nowrap',
-                      flex: 1,
-                      textAlign: 'center'
-                    }}
-                  >
-                    <span>{priorityMeta[pKey].dot}</span> {priorityMeta[pKey].label}
-                  </button>
-                ))}
-              </div>
+            {/* Time Input (Full Width Row) */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '10px', padding: '8px 12px', border: '1px solid rgba(255, 255, 255, 0.12)' }}>
+              <Clock size={14} color="#38bdf8" />
+              <input
+                type="text"
+                value={subtaskTime}
+                onChange={(e) => setSubtaskTime(e.target.value)}
+                placeholder="Reminder time (e.g. 5:00 PM, 11 AM)..."
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#fff',
+                  fontSize: '0.82rem',
+                  width: '100%',
+                  outline: 'none'
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleAddSubtaskSubmit(addingSubtaskParentId);
+                }}
+              />
             </div>
 
             {/* Action Buttons */}
@@ -3305,6 +3334,295 @@ export const TasksModal = ({
                 }}
               >
                 Add Subtask ⚡
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MOBILE DEDICATED EDIT SUBTASK SHEET (Always floats above Keyboard, fully spacious) ── */}
+      {isMobile && editingTaskId && activeEditingSubtask && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            height: viewportHeight ? `${viewportHeight}px` : '100%',
+            background: 'rgba(0, 0, 0, 0.65)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            zIndex: 320,
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'flex-end'
+          }}
+          onClick={handleCancelEditTask}
+        >
+          <div
+            style={{
+              background: '#0d1527',
+              borderTop: '2px solid #38bdf8',
+              borderRadius: '24px 24px 0 0',
+              padding: '16px 16px max(24px, env(safe-area-inset-bottom, 20px))',
+              boxShadow: '0 -20px 50px rgba(0, 0, 0, 0.95)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+              maxHeight: 'min(75vh, 480px)',
+              overflowY: 'auto',
+              animation: 'fadeIn 0.18s ease'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                <Edit3 size={15} color="#38bdf8" />
+                <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#38bdf8' }}>
+                  Edit Subtask
+                </span>
+                {activeEditingSubtask.parentTask && (
+                  <span style={{ color: '#94a3b8', fontSize: '0.74rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '170px' }}>
+                    for "{activeEditingSubtask.parentTask.title}"
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={handleCancelEditTask}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: 'none',
+                  color: '#94a3b8',
+                  borderRadius: '50%',
+                  width: '28px',
+                  height: '28px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '0.9rem'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Input: Subtask Title */}
+            <div>
+              <label style={{ fontSize: '0.70rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Subtask Title</label>
+              <input
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                placeholder="Subtask title..."
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid rgba(56, 189, 248, 0.4)',
+                  borderRadius: '12px',
+                  padding: '10px 14px',
+                  color: '#fff',
+                  fontSize: '0.92rem',
+                  outline: 'none'
+                }}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveTaskEdit(editingTaskId);
+                  if (e.key === 'Escape') handleCancelEditTask();
+                }}
+              />
+            </div>
+
+            {/* Priority Selector (Full Width Segmented Control: 4 equal buttons) */}
+            <div>
+              <label style={{ fontSize: '0.70rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Priority</label>
+              <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
+                {['low', 'medium', 'high', 'urgent'].map(pKey => (
+                  <button
+                    key={pKey}
+                    type="button"
+                    onClick={() => setEditPriority(pKey)}
+                    style={{
+                      background: editPriority === pKey ? priorityMeta[pKey].bg : 'rgba(255, 255, 255, 0.04)',
+                      border: `1px solid ${editPriority === pKey ? priorityMeta[pKey].border : 'rgba(255, 255, 255, 0.12)'}`,
+                      color: editPriority === pKey ? priorityMeta[pKey].color : '#94a3b8',
+                      borderRadius: '8px',
+                      padding: '8px 4px',
+                      fontSize: '0.72rem',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      whiteSpace: 'nowrap',
+                      flex: 1,
+                      textAlign: 'center',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '4px',
+                      boxShadow: editPriority === pKey ? '0 2px 8px rgba(0,0,0,0.35)' : 'none',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    <span>{priorityMeta[pKey].dot}</span>
+                    <span>{priorityMeta[pKey].label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Reminder Time (Full Width Row) */}
+            <div>
+              <label style={{ fontSize: '0.70rem', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Reminder Time</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '10px', padding: '8px 12px', border: '1px solid rgba(255, 255, 255, 0.12)' }}>
+                <Clock size={14} color="#38bdf8" />
+                <input
+                  type="text"
+                  value={editReminderTime}
+                  onChange={(e) => setEditReminderTime(e.target.value)}
+                  placeholder="e.g. 10:00 PM or 5 PM"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#fff',
+                    fontSize: '0.82rem',
+                    width: '100%',
+                    outline: 'none'
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveTaskEdit(editingTaskId);
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Note / Comment */}
+            <div>
+              <label style={{ fontSize: '0.70rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
+                <MessageSquare size={12} color="#38bdf8" />
+                <span>Note / Comment</span>
+              </label>
+              <textarea
+                rows={2}
+                value={editCompletionComment}
+                onChange={(e) => setEditCompletionComment(e.target.value)}
+                placeholder="Add note for this subtask..."
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(56, 189, 248, 0.25)',
+                  borderRadius: '10px',
+                  padding: '7px 10px',
+                  color: '#e0f2fe',
+                  fontSize: '0.80rem',
+                  resize: 'none',
+                  outline: 'none'
+                }}
+              />
+            </div>
+
+            {/* Attachments */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <label style={{ fontSize: '0.70rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Paperclip size={12} color="#38bdf8" />
+                  <span>Attachments</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => mobileSubtaskEditFileInputRef.current && mobileSubtaskEditFileInputRef.current.click()}
+                  style={{
+                    background: 'rgba(56, 189, 248, 0.12)',
+                    border: '1px solid rgba(56, 189, 248, 0.3)',
+                    color: '#38bdf8',
+                    borderRadius: '6px',
+                    padding: '3px 8px',
+                    fontSize: '0.70rem',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  <Upload size={11} /> + Attach
+                </button>
+              </div>
+              <input
+                type="file"
+                ref={mobileSubtaskEditFileInputRef}
+                multiple
+                accept="image/*,.pdf,.doc,.docx,.txt"
+                style={{ display: 'none' }}
+                onChange={(e) => handleFileUploadHelper(e, setEditAttachments)}
+              />
+              {editAttachments.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                  {editAttachments.map(att => (
+                    <div
+                      key={att.id}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        background: 'rgba(255, 255, 255, 0.08)',
+                        border: '1px solid rgba(255, 255, 255, 0.15)',
+                        borderRadius: '6px',
+                        padding: '3px 7px',
+                        fontSize: '0.70rem',
+                        color: '#cbd5e1'
+                      }}
+                    >
+                      <FileText size={11} color="#38bdf8" />
+                      <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setEditAttachments(prev => prev.filter(x => x.id !== att.id))}
+                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px' }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
+              <button
+                type="button"
+                onClick={handleCancelEditTask}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: 'none',
+                  color: '#94a3b8',
+                  padding: '9px 16px',
+                  borderRadius: '10px',
+                  fontSize: '0.82rem',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isSavingEdit || !editTitle.trim()}
+                onClick={() => handleSaveTaskEdit(editingTaskId)}
+                style={{
+                  background: 'linear-gradient(135deg, #10b981, #059669)',
+                  border: 'none',
+                  color: '#fff',
+                  padding: '9px 20px',
+                  borderRadius: '10px',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 14px rgba(16, 185, 129, 0.4)',
+                  opacity: (isSavingEdit || !editTitle.trim()) ? 0.6 : 1
+                }}
+              >
+                {isSavingEdit ? 'Saving...' : 'Save Subtask ⚡'}
               </button>
             </div>
           </div>
