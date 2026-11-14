@@ -49,8 +49,16 @@ self.addEventListener('push', (event) => {
     renotify: true,
     requireInteraction: true,   // ✅ User dismiss करे तब तक notification रहेगी
     silent: false,
-    data: { url: payload.data?.url || '/', tag: payload.tag },
-    actions: [
+    data: { 
+      url: payload.data?.url || '/', 
+      tag: payload.tag,
+      taskId: payload.taskId || payload.task_id || payload.data?.taskId || payload.data?.task_id
+    },
+    actions: (payload.taskId || payload.task_id || payload.data?.taskId || payload.data?.task_id) ? [
+      { action: 'complete', title: '✅ Mark Done' },
+      { action: 'snooze',   title: '⏰ Snooze 15m' },
+      { action: 'open',     title: '⚡ Open'      }
+    ] : [
       { action: 'open',     title: '⚡ Aether खोलें' },
       { action: 'dismiss',  title: '✓ देख लिया'     }
     ]
@@ -67,7 +75,44 @@ self.addEventListener('notificationclick', (event) => {
 
   if (event.action === 'dismiss') return;
 
-  const urlToOpen = event.notification.data?.url || '/';
+  const notifData = event.notification.data || {};
+  const taskId = notifData.taskId || notifData.task_id;
+
+  // Handle Actionable "Complete" button click directly in background
+  if (event.action === 'complete' && taskId) {
+    event.waitUntil(
+      fetch(`/api/tasks/${taskId}/complete`, { method: 'POST' })
+        .then(() => self.registration.showNotification('✅ Task Marked as Done!', {
+          body: 'टास्क को सफलतापूर्वक पूरा चिह्नित किया गया।',
+          icon: '/favicon.svg',
+          tag: 'aether-ack',
+          renotify: false
+        }))
+        .catch(err => console.error('Complete task SW error:', err))
+    );
+    return;
+  }
+
+  // Handle Actionable "Snooze 15m" button click directly in background
+  if (event.action === 'snooze' && taskId) {
+    event.waitUntil(
+      fetch(`/api/tasks/${taskId}/snooze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ minutes: 15 })
+      })
+        .then(() => self.registration.showNotification('⏰ Reminder Snoozed (15m)', {
+          body: 'रिमाइंडर को 15 मिनट के लिए आगे बढ़ा दिया गया है।',
+          icon: '/favicon.svg',
+          tag: 'aether-ack',
+          renotify: false
+        }))
+        .catch(err => console.error('Snooze task SW error:', err))
+    );
+    return;
+  }
+
+  const urlToOpen = notifData.url || '/';
 
   event.waitUntil(
     self.clients

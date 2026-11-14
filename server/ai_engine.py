@@ -3097,6 +3097,57 @@ def rule_based_fallback(text: str, context: dict = None) -> dict:
             "explanation": "Rule-based phone dialer intent"
         }
 
+    # 13.5. Universal UPI Payment Intent (PhonePe, GPay, Paytm, BHIM)
+    is_upi_req = (
+        any(w in text_lower for w in ["pay via upi", "upi payment", "pay with upi", "gpay", "google pay", "phonepe", "paytm", "bhim upi", "upi transfer", "upi se pay", "upi karo", "bhejo"]) 
+        or (any(w in text_lower for w in ["pay", "send", "transfer", "bhejna"]) and any(w in text_lower for w in ["rs", "rupees", "rupaye", "₹", "inr"]))
+    )
+    if is_upi_req and not any(w in text_lower for w in ["history", "statement", "summary", "passbook"]):
+        # Extract amount
+        amt_match = re.search(r'(?:₹|rs\.?|inr|rupees?|rupaye?)\s*(\d+(?:\.\d{1,2})?)', text, re.I)
+        if not amt_match:
+            amt_match = re.search(r'(\d+(?:\.\d{1,2})?)\s*(?:₹|rs\.?|inr|rupees?|rupaye?)', text, re.I)
+        if not amt_match:
+            amt_match = re.search(r'\b(?:pay|send|transfer)\s+(\d+(?:\.\d{1,2})?)\b', text, re.I)
+        extracted_amt = amt_match.group(1) if amt_match else ""
+
+        # Extract UPI ID (e.g. name@okhdfcbank or 9876543210@upi)
+        upi_match = re.search(r'([A-Za-z0-9._%+-]+@[a-zA-Z0-9.-]+)', text)
+        extracted_upi = upi_match.group(1).lower() if upi_match else ""
+
+        # Extract payee name or phone number
+        payee_name = ""
+        p_match = re.search(r'(?:to|ko|for|kisko)\s+([A-Za-z0-9\s]{2,25}?)(?:\s+(?:par|pe|via|through|using|rs|rupees|\d|₹)|$)', text, re.I)
+        if p_match:
+            raw_p = p_match.group(1).strip()
+            # Clean common filler words
+            cleaned_p = re.sub(r'(?i)\b(upi|gpay|phonepe|paytm|bhim|money|payment|rs|rupees)\b', '', raw_p).strip()
+            if cleaned_p and len(cleaned_p) >= 2:
+                payee_name = cleaned_p.title()
+        
+        if not payee_name and extracted_upi:
+            payee_name = extracted_upi.split('@')[0].title()
+        if not payee_name:
+            payee_name = "Recipient"
+
+        is_hi = any('\u0900' <= ch <= '\u097f' for ch in text) or any(w in text_lower for w in ["ko", "karo", "bhejo", "bhejna", "ka"])
+        amt_disp = f"₹{extracted_amt}" if extracted_amt else ""
+        msg = f"⚡ **UPI Payment Ready:** {amt_disp} to {payee_name}\n\nTap below to open Google Pay, PhonePe, or Paytm. 💸" if not is_hi else f"⚡ **UPI पेमेंट तैयार है:** {amt_disp} ({payee_name})\n\nगूगल पे, फोनपे या पेटीएम से भुगतान करने के लिए नीचे टैप करें। 💸"
+
+        return {
+            "action": "upi_pay",
+            "confidence": 0.98,
+            "confidence_level": "high",
+            "data": {
+                "payee_name": payee_name,
+                "amount": extracted_amt,
+                "upi_id": extracted_upi,
+                "note": f"Payment to {payee_name}",
+                "response": msg
+            },
+            "explanation": "Rule-based Indian UPI Payment Intent"
+        }
+
     # 14. Automatic Bank SMS Expense / Income Parser
     if any(w in text_lower for w in ["debited", "credited", "spent", "withdrawn", "deposited", "transferred", "a/c", "acct"]):
         sms_parsed = parse_bank_sms(text)

@@ -45,6 +45,7 @@ class MemoryItem(Base):
     category = Column(String, default="general") # preference, personal_rule, contact, context
     fact = Column(Text, nullable=False)
     confidence = Column(Float, default=1.0)
+    embedding = Column(Text, nullable=True) # JSON array of floats for semantic vector search
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
@@ -82,6 +83,7 @@ class ChatMessage(Base):
     action_type = Column(String, default="query")# "task", "expense", "income", "memory", "query"
     action_data = Column(Text, nullable=True)    # JSON string
     confidence = Column(Float, default=1.0)
+    embedding = Column(Text, nullable=True) # JSON array of floats for semantic vector search
     created_at = Column(DateTime, default=datetime.utcnow)
 class PushSubscription(Base):
     __tablename__ = "push_subscriptions"

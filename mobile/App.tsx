@@ -76,12 +76,56 @@ export default function App() {
             bypassDnd: true,
           });
         }
+
+        // Register Actionable Notifications for Task Reminders (Complete & Snooze 15m)
+        await Notifications.setNotificationCategoryAsync('task_reminder', [
+          { identifier: 'complete', buttonTitle: '✅ Mark Done', options: { opensAppToForeground: false } },
+          { identifier: 'snooze', buttonTitle: '⏰ Snooze 15m', options: { opensAppToForeground: false } },
+        ]);
       } catch (notifErr) {
         console.warn('Push notification setup error:', notifErr);
       }
     };
 
     setupPermissions();
+
+    // Listen to notification button clicks (Mark Done / Snooze)
+    const responseListener = Notifications.addNotificationResponseReceivedListener(response => {
+      try {
+        const actionId = response.actionIdentifier;
+        const notifData = response.notification.request.content.data;
+        const taskId = notifData?.id || notifData?.taskId;
+        if (taskId) {
+          if (actionId === 'complete') {
+            fetch(`${AETHER_URL}/api/tasks/${taskId}/complete`, { method: 'POST' }).catch(() => {});
+            webViewRef.current?.injectJavaScript(`
+              if (window.__onTaskCompletedFromNotification) {
+                window.__onTaskCompletedFromNotification(${taskId});
+              }
+              true;
+            `);
+          } else if (actionId === 'snooze') {
+            fetch(`${AETHER_URL}/api/tasks/${taskId}/snooze`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ minutes: 15 })
+            }).catch(() => {});
+            webViewRef.current?.injectJavaScript(`
+              if (window.__onTaskSnoozedFromNotification) {
+                window.__onTaskSnoozedFromNotification(${taskId}, 15);
+              }
+              true;
+            `);
+          }
+        }
+      } catch (e) {
+        console.warn('Notification action handler error:', e);
+      }
+    });
+
+    return () => {
+      responseListener.remove();
+    };
   }, []);
 
   // Handle Android Hardware Back Button to navigate inside webview
@@ -422,6 +466,51 @@ export default function App() {
                 } else {
                   Linking.openURL('tel:').catch(() => {});
                 }
+              } else if (data.type === 'REQUEST_CONTACTS_SYNC') {
+                try {
+                  const { status } = await Contacts.requestPermissionsAsync();
+                  if (status === 'granted') {
+                    const { data: contactsList } = await Contacts.getContactsAsync({
+                      fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name, Contacts.Fields.Emails],
+                    });
+                    const cleanList = (contactsList || []).map((c: any) => ({
+                      name: (c.name || `${c.firstName || ''} ${c.lastName || ''}`).trim(),
+                      phone: c.phoneNumbers && c.phoneNumbers.length > 0 ? c.phoneNumbers[0].number : '',
+                      email: c.emails && c.emails.length > 0 ? c.emails[0].email : ''
+                    })).filter((c: any) => c.name && c.phone);
+
+                    webViewRef.current?.injectJavaScript(`
+                      if (window.__onContactsBatchSynced) {
+                        window.__onContactsBatchSynced(${JSON.stringify(cleanList)});
+                      }
+                      true;
+                    `);
+                  } else {
+                    webViewRef.current?.injectJavaScript(`
+                      if (window.__onContactsSyncFailed) {
+                        window.__onContactsSyncFailed('Contacts permission was not granted on device.');
+                      }
+                      true;
+                    `);
+                  }
+                } catch (cSyncErr: any) {
+                  webViewRef.current?.injectJavaScript(`
+                    if (window.__onContactsSyncFailed) {
+                      window.__onContactsSyncFailed(${JSON.stringify(cSyncErr?.message || 'Error reading contacts')});
+                    }
+                    true;
+                  `);
+                }
+              } else if (data.type === 'OPEN_UPI_PAYMENT') {
+                const upiUri = data.upiUri || '';
+                if (upiUri) {
+                  Linking.openURL(upiUri).catch(() => {
+                    if (Platform.OS === 'android') {
+                      const schemeLess = upiUri.replace('upi://', '');
+                      Linking.openURL(`intent://${schemeLess}#Intent;action=android.intent.action.VIEW;scheme=upi;end`).catch(() => {});
+                    }
+                  });
+                }
               } else if (data.type === 'OPEN_EXTERNAL_URL' || data.type === 'DOWNLOAD_FILE') {
                 let targetUrl = data.url || '';
                 if (targetUrl && !targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
@@ -482,6 +571,8 @@ export default function App() {
                       title,
                       body,
                       sound: true,
+                      categoryIdentifier: 'task_reminder',
+                      data: { id: data.id, taskId: data.id },
                     },
                     trigger: {
                       type: Notifications.SchedulableTriggerInputTypes.DAILY,
@@ -497,6 +588,8 @@ export default function App() {
                       title,
                       body,
                       sound: true,
+                      categoryIdentifier: 'task_reminder',
+                      data: { id: data.id, taskId: data.id },
                     },
                     trigger: {
                       type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,

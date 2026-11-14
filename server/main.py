@@ -11,7 +11,7 @@ import json
 import csv
 import io
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import base64
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, UploadFile, File
 from document_parser import extract_text_from_file
@@ -1443,6 +1443,63 @@ async def _execute_quick_capture(
         else:
             result_message = f"✉️ **ईमेल ड्राफ्ट समीक्षा के लिए तैयार है:**\n• **प्राप्तकर्ता**: {recip}\n• **विषय**: {subj}\n\nसमीक्षा करने या सीधे ईमेल क्लाइंट में खोलने के लिए नीचे दिया गया कार्ड देखें। 📝"
 
+    elif action == "upi_pay":
+        payee_name = data.get("payee_name") or "Recipient"
+        amount = str(data.get("amount") or "")
+        upi_id = data.get("upi_id") or ""
+        note = data.get("note") or f"Payment to {payee_name}"
+        
+        # Check Memory Vault for recipient's UPI ID or phone number
+        if not upi_id:
+            try:
+                target_email = get_effective_email(eff_email or user_email)
+                from memory.hybrid_provider import HybridMemoryProvider
+                recalled = HybridMemoryProvider.recall_context(f"UPI ID or phone number for {payee_name}", target_email, db, limit=5)
+                for mem in recalled.get("top_memories", []):
+                    upi_match = re.search(r'([A-Za-z0-9._%+-]+@[a-zA-Z0-9.-]+)', mem.fact or "")
+                    if upi_match:
+                        upi_id = upi_match.group(1).lower()
+                        data["upi_id"] = upi_id
+                        break
+                    # If phone number found, check if it's 10 digits
+                    phone_match = re.search(r'(\+?\d[\d\s\-]{8,14}\d)', mem.fact or "")
+                    if phone_match and not upi_id:
+                        p_digits = re.sub(r'[^\d]', '', phone_match.group(1))
+                        if len(p_digits) >= 10:
+                            upi_id = f"{p_digits[-10:]}@upi"
+                            data["upi_id"] = upi_id
+            except Exception as e_upi_lookup:
+                print(f"[UPI Memory Lookup Note] {e_upi_lookup}")
+
+        clean_amt = re.sub(r'[^\d\.]', '', amount) if amount else ""
+        if clean_amt:
+            try:
+                clean_amt = f"{float(clean_amt):.2f}"
+            except Exception:
+                pass
+
+        data["payee_name"] = payee_name
+        data["amount"] = clean_amt
+        data["upi_id"] = upi_id
+        data["note"] = note
+
+        import urllib.parse
+        pa_param = f"&pa={upi_id}" if upi_id else ""
+        am_param = f"&am={clean_amt}" if clean_amt else ""
+        pn_param = f"&pn={urllib.parse.quote(payee_name)}"
+        tn_param = f"&tn={urllib.parse.quote(note)}"
+        upi_uri = f"upi://pay?cu=INR{pa_param}{pn_param}{am_param}{tn_param}"
+        data["upi_uri"] = upi_uri
+        executed = True
+
+        amt_display = f"₹{clean_amt}" if clean_amt else ""
+        if lang == "en":
+            result_message = f"⚡ **UPI Payment Ready:** {amt_display} to **{payee_name}**\n\nTap **Pay Now** to launch Google Pay, PhonePe, or Paytm directly. 💸"
+        elif lang == "hinglish":
+            result_message = f"⚡ **UPI Payment Taiyar:** {amt_display} **{payee_name}** ko\n\nGoogle Pay, PhonePe ya Paytm se payment karne ke liye niche **Pay Now** dabayein. 💸"
+        else:
+            result_message = f"⚡ **UPI पेमेंट तैयार है:** {amt_display} **{payee_name}** के लिए\n\nGoogle Pay, PhonePe या Paytm से तुरंत भुगतान करने के लिए नीचे **Pay Now** पर टैप करें। 💸"
+
     # Record AI Response in Chat History (resilient to schema constraints, skip for temporary chats)
     if not is_temporary:
         try:
@@ -2297,6 +2354,54 @@ def set_task_date_completion(
     db.commit()
     return {"status": "ok", "task_id": task_id, "date": clean_date, "completed": req.completed}
 
+# ─── Actionable Task Notifications (Complete & Snooze for SW and Push) ────────
+class TaskSnoozeRequest(BaseModel):
+    minutes: Optional[int] = 15
+
+@app.post("/api/tasks/{task_id}/complete")
+@app.post("/tasks/{task_id}/complete")
+def complete_task_action(
+    task_id: int,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    task_q = db.query(Task).filter(Task.id == task_id)
+    if eff_email and not is_owner_email(eff_email):
+        task_q = task_q.filter(Task.user_email == eff_email)
+    task = task_q.first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task.status = "completed"
+    task.completed = True
+    task.notified = True
+    db.commit()
+    return {"status": "ok", "task_id": task_id, "action": "completed", "title": task.title}
+
+@app.post("/api/tasks/{task_id}/snooze")
+@app.post("/tasks/{task_id}/snooze")
+def snooze_task_action(
+    task_id: int,
+    req: Optional[TaskSnoozeRequest] = None,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email)
+    task_q = db.query(Task).filter(Task.id == task_id)
+    if eff_email and not is_owner_email(eff_email):
+        task_q = task_q.filter(Task.user_email == eff_email)
+    task = task_q.first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    mins = (req.minutes if req and req.minutes else 15)
+    now_dt = datetime.now()
+    new_due = now_dt + timedelta(minutes=mins)
+    task.due_date = new_due.strftime("%Y-%m-%d %H:%M")
+    task.reminder_time = new_due.strftime("%H:%M")
+    task.notified = False # Re-arm reminder notification!
+    db.commit()
+    return {"status": "ok", "task_id": task_id, "action": "snoozed", "snooze_minutes": mins, "new_due_date": task.due_date}
+
 # ─── Task Attachment Downloads (Safe & Seamless for Mobile App & Browser) ─────
 _temp_attachment_downloads = {}
 
@@ -3089,19 +3194,95 @@ def create_memory(
             MemoryItem.category == cat
         ).all()
     matched = next((ex for ex in existing if first_token in (ex.fact or "").lower()), None)
+    from memory.hybrid_provider import get_embedding
+    emb = get_embedding(fact_str)
+    emb_json = json.dumps(emb) if emb else None
+
     if matched:
         matched.fact = fact_str
         matched.user_email = eff_email
+        matched.embedding = emb_json
         matched.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(matched)
         return {"id": matched.id, "fact": matched.fact, "category": matched.category, "updated": True}
 
-    item = MemoryItem(user_email=eff_email, category=cat, fact=fact_str, confidence=1.0)
+    item = MemoryItem(user_email=eff_email, category=cat, fact=fact_str, confidence=1.0, embedding=emb_json)
     db.add(item)
     db.commit()
     db.refresh(item)
     return {"id": item.id, "fact": item.fact, "category": item.category, "created": True}
+
+class BulkContactsSyncRequest(BaseModel):
+    contacts: List[Dict[str, Any]]
+    user_email: Optional[str] = None
+
+@app.post("/api/memory/bulk-contacts")
+@app.post("/memory/bulk-contacts")
+def sync_bulk_contacts(
+    req: BulkContactsSyncRequest,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(req.user_email or user_email)
+    from memory.hybrid_provider import get_embedding
+    
+    contacts_list = req.contacts or []
+    if not contacts_list:
+        return {"status": "ok", "synced_count": 0, "message": "No contacts provided"}
+        
+    synced = 0
+    existing = db.query(MemoryItem).filter(
+        MemoryItem.user_email == eff_email,
+        MemoryItem.category == "contact"
+    ).all()
+    existing_facts = { (e.fact or "").lower(): e for e in existing }
+
+    for c in contacts_list:
+        name = (c.get("name") or "").strip()
+        phone = (c.get("phone") or c.get("phoneNumber") or "").strip()
+        if not name or not phone:
+            continue
+        clean_phone = re.sub(r'[^\d+]', '', phone)
+        if len(clean_phone) < 5:
+            continue
+            
+        fact_str = f"Contact: {name} - Phone: {clean_phone}"
+        if c.get("email"):
+            fact_str += f" - Email: {c.get('email').strip()}"
+        
+        # Skip if exact fact already present
+        if fact_str.lower() in existing_facts:
+            continue
+        
+        # Check if same contact name already exists, update number
+        matched = next((e for e in existing if name.lower() in (e.fact or "").lower()), None)
+        emb = get_embedding(fact_str)
+        emb_json = json.dumps(emb) if emb else None
+        
+        if matched:
+            matched.fact = fact_str
+            matched.embedding = emb_json
+            matched.updated_at = datetime.utcnow()
+        else:
+            new_item = MemoryItem(
+                user_email=eff_email,
+                category="contact",
+                fact=fact_str,
+                confidence=1.0,
+                embedding=emb_json
+            )
+            db.add(new_item)
+            existing.append(new_item)
+        synced += 1
+
+    db.commit()
+    return {
+        "status": "ok", 
+        "synced_count": synced, 
+        "total_contacts": len(contacts_list),
+        "message": f"Successfully synced {synced} contacts into Memory Vault! ⚡"
+    }
 
 @app.put("/api/memory/{item_id}")
 def update_memory(

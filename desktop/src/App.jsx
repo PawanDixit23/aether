@@ -104,6 +104,7 @@ const PermissionsModal = React.lazy(() => import('./components/modals/Permission
 const SettingsSubModals = React.lazy(() => import('./components/modals/SettingsSubModals').then(m => ({ default: m.SettingsSubModals })));
 const WorkspaceToolsModal = React.lazy(() => import('./components/modals/WorkspaceToolsModal').then(m => ({ default: m.WorkspaceToolsModal })));
 const SocialMediaModal = React.lazy(() => import('./components/modals/SocialMediaModal').then(m => ({ default: m.SocialMediaModal })));
+const GeminiLiveModal = React.lazy(() => import('./components/modals/GeminiLiveModal'));
 
 const API_BASE = typeof window !== 'undefined' && (window.location.protocol === 'file:' || window.location.protocol === 'capacitor:')
   ? `http://${window.location.hostname || '127.0.0.1'}:8000/api`
@@ -1023,6 +1024,94 @@ export default function App() {
   const [isBriefingPlaying, setIsBriefingPlaying] = useState(false);
   const [showBriefingModal, setShowBriefingModal] = useState(false);
   const [executiveBriefingData, setExecutiveBriefingData] = useState(null);
+
+  // Gemini Live Duplex Hands-Free Voice Mode State
+  const [showGeminiLive, setShowGeminiLive] = useState(false);
+  const [isSyncingContacts, setIsSyncingContacts] = useState(false);
+
+  // 1-Click Phone Contacts Sync (Mobile Bridge + Web Contacts API)
+  const handleSyncContacts = async () => {
+    setIsSyncingContacts(true);
+    showToast("Syncing device contacts... 📱", "info");
+
+    // 1. Mobile App WebView Bridge
+    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_CONTACTS_SYNC' }));
+        return;
+      } catch (e) {}
+    }
+
+    // 2. Modern Web Contacts API (Android Chrome)
+    if (typeof navigator !== 'undefined' && 'contacts' in navigator && 'ContactsManager' in window) {
+      try {
+        const props = ['name', 'tel', 'email'];
+        const opts = { multiple: true };
+        const contacts = await navigator.contacts.select(props, opts);
+        if (contacts && contacts.length > 0) {
+          const formatted = contacts.map(c => ({
+            name: c.name && c.name[0] ? c.name[0] : 'Contact',
+            phone: c.tel && c.tel[0] ? c.tel[0] : '',
+            email: c.email && c.email[0] ? c.email[0] : ''
+          })).filter(c => c.name && c.phone);
+          await dispatchBulkContactsSync(formatted);
+          return;
+        }
+      } catch (err) {
+        console.warn('Web Contacts API cancelled or failed:', err);
+      }
+    }
+
+    setIsSyncingContacts(false);
+    showToast("Please open inside Aether Mobile App to sync phone contacts directly! 📲", "info");
+  };
+
+  const dispatchBulkContactsSync = async (contactsList) => {
+    if (!contactsList || contactsList.length === 0) {
+      setIsSyncingContacts(false);
+      return;
+    }
+    try {
+      showToast(`Saving ${contactsList.length} contacts to Memory Vault... ⚡`, "info");
+      const resp = await fetch(`${API_BASE}/memory/bulk-contacts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(userEmail ? { 'X-User-Email': userEmail } : {})
+        },
+        body: JSON.stringify({
+          contacts: contactsList,
+          user_email: userEmail
+        })
+      });
+      const data = await resp.json();
+      if (data.status === 'ok') {
+        showToast(`✅ ${data.message || 'Contacts saved!'}`, "success");
+        fetchMemories();
+      } else {
+        showToast("Contacts sync error", "error");
+      }
+    } catch (e) {
+      showToast("Could not reach server to sync contacts", "error");
+    } finally {
+      setIsSyncingContacts(false);
+    }
+  };
+
+  // Register bridge callbacks for mobile contacts sync
+  useEffect(() => {
+    window.__onContactsBatchSynced = (contactsList) => {
+      dispatchBulkContactsSync(contactsList);
+    };
+    window.__onContactsSyncFailed = (err) => {
+      setIsSyncingContacts(false);
+      showToast(err || "Contacts access not granted", "error");
+    };
+    return () => {
+      delete window.__onContactsBatchSynced;
+      delete window.__onContactsSyncFailed;
+    };
+  }, [userEmail]);
 
   // Wealth Section State & Handlers
   const [editingFinanceRecord, setEditingFinanceRecord] = useState(null);
@@ -4599,6 +4688,20 @@ export default function App() {
         }
       }
 
+      // If UPI Payment intent: auto trigger native UPI chooser on mobile devices
+      if (actionType === 'upi_pay' && actionData?.upi_uri) {
+        if (typeof window !== 'undefined') {
+          if (window.ReactNativeWebView) {
+            try {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'OPEN_UPI_PAYMENT',
+                upiUri: actionData.upi_uri
+              }));
+            } catch (err) {}
+          }
+        }
+      }
+
       setChatHistory(prev => {
         const next = [...prev, {
           id: newAssistantMsgId,
@@ -6703,6 +6806,40 @@ export default function App() {
                 </div>
 
                 <div className="gemini-top-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {/* Gemini Live Hands-Free Duplex Voice Mode Pill */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopBriefingAudio();
+                      setShowGeminiLive(true);
+                    }}
+                    title="Gemini Live Hands-Free Voice Mode"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.22) 0%, rgba(2, 132, 199, 0.28) 100%)',
+                      border: '1.2px solid rgba(56, 189, 248, 0.55)',
+                      color: '#38bdf8',
+                      borderRadius: '9999px',
+                      padding: '5px 12px',
+                      fontSize: '0.75rem',
+                      fontWeight: 700,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      cursor: 'pointer',
+                      boxShadow: '0 0 14px rgba(56, 189, 248, 0.28)',
+                      transition: 'all 0.18s ease'
+                    }}
+                  >
+                    <span style={{
+                      width: '7px',
+                      height: '7px',
+                      borderRadius: '50%',
+                      background: '#38bdf8',
+                      boxShadow: '0 0 6px #38bdf8'
+                    }} />
+                    <span>Live</span>
+                  </button>
+
                   {/* Settings & Profile Avatar Button */}
                   <button 
                     type="button" 
@@ -7546,6 +7683,154 @@ export default function App() {
                                   <ExternalLink size={12} />
                                   <span>Open in Gmail</span>
                                 </a>
+                              </div>
+                            </div>
+                          );
+                        }
+                        if (actType === 'upi_pay' || aData?.upi_uri) {
+                          const payee = aData?.payee_name || "Recipient";
+                          const amt = aData?.amount ? `₹${aData.amount}` : "Amount";
+                          const upiId = aData?.upi_id || "";
+                          const upiUri = aData?.upi_uri || `upi://pay?pn=${encodeURIComponent(payee)}&cu=INR${aData?.amount ? `&am=${aData.amount}` : ''}`;
+                          const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(upiUri)}`;
+
+                          return (
+                            <div style={{
+                              marginTop: '12px',
+                              padding: '14px 16px',
+                              borderRadius: '16px',
+                              background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(5, 150, 105, 0.05) 100%)',
+                              border: '1px solid rgba(16, 185, 129, 0.35)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '12px'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                  <div style={{
+                                    width: '40px',
+                                    height: '40px',
+                                    borderRadius: '10px',
+                                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    color: '#fff',
+                                    fontWeight: 800,
+                                    fontSize: '1.2rem',
+                                    boxShadow: '0 2px 10px rgba(16, 185, 129, 0.4)'
+                                  }}>
+                                    ₹
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#f8fafc' }}>
+                                      {amt}
+                                    </div>
+                                    <div style={{ fontSize: '0.78rem', color: '#6ee7b7' }}>
+                                      To: {payee} {upiId ? `(${upiId})` : ''}
+                                    </div>
+                                  </div>
+                                </div>
+                                <span style={{
+                                  fontSize: '0.68rem',
+                                  padding: '3px 8px',
+                                  borderRadius: '6px',
+                                  background: 'rgba(16, 185, 129, 0.2)',
+                                  color: '#34d399',
+                                  fontWeight: 700,
+                                  letterSpacing: '0.04em'
+                                }}>
+                                  ⚡ UPI FAST PAY
+                                </span>
+                              </div>
+
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginTop: '2px' }}>
+                                <a
+                                  href={upiUri}
+                                  onClick={(e) => {
+                                    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
+                                      e.preventDefault();
+                                      try {
+                                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                                          type: 'OPEN_UPI_PAYMENT',
+                                          upiUri
+                                        }));
+                                      } catch (err) {}
+                                    }
+                                  }}
+                                  style={{
+                                    flex: '1 1 180px',
+                                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                    color: '#ffffff',
+                                    textDecoration: 'none',
+                                    padding: '9px 16px',
+                                    borderRadius: '10px',
+                                    fontSize: '0.82rem',
+                                    fontWeight: 700,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '6px',
+                                    boxShadow: '0 3px 12px rgba(16, 185, 129, 0.35)',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  <span>🚀 Pay via GPay / PhonePe / Paytm</span>
+                                </a>
+
+                                {upiId && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (navigator.clipboard) {
+                                        navigator.clipboard.writeText(upiId);
+                                        showToast(`Copied UPI ID: ${upiId} 📋`, "success");
+                                      }
+                                    }}
+                                    style={{
+                                      background: 'rgba(255, 255, 255, 0.08)',
+                                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                                      color: '#f8fafc',
+                                      padding: '9px 12px',
+                                      borderRadius: '10px',
+                                      fontSize: '0.78rem',
+                                      fontWeight: 600,
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    📋 Copy UPI
+                                  </button>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const pop = window.open('', '_blank', 'width=320,height=360');
+                                    if (pop) {
+                                      pop.document.write(`
+                                        <body style="margin:0;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#090d16;color:#fff;font-family:sans-serif;">
+                                          <h3 style="margin-bottom:12px;">Scan to Pay ${amt}</h3>
+                                          <img src="${qrUrl}" style="border-radius:12px;border:4px solid #fff;background:#fff;padding:8px;" />
+                                          <p style="color:#94a3b8;font-size:12px;margin-top:12px;">Google Pay • PhonePe • Paytm • BHIM</p>
+                                        </body>
+                                      `);
+                                    } else {
+                                      window.open(qrUrl, '_blank');
+                                    }
+                                  }}
+                                  style={{
+                                    background: 'rgba(255, 255, 255, 0.08)',
+                                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                                    color: '#f8fafc',
+                                    padding: '9px 12px',
+                                    borderRadius: '10px',
+                                    fontSize: '0.78rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  📱 QR Code
+                                </button>
                               </div>
                             </div>
                           );
@@ -8884,15 +9169,40 @@ export default function App() {
           {/* TAB 3: MEMORY VAULT */}
           {activeTab === 'memory' && (
             <div style={{ maxWidth: '640px', margin: '0 auto', width: '100%', padding: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
                   <h1 style={{ fontFamily: 'Newsreader', fontSize: '1.8rem', fontWeight: 600, color: '#ffffff' }}>
                     Memory Vault
                   </h1>
                   <p style={{ fontSize: '0.82rem', color: '#94a3b8', marginTop: '2px' }}>
-                    Facts & preferences Aether automatically remembers about you
+                    Semantic vector memory & contacts Aether remembers about you
                   </p>
                 </div>
+
+                {/* 1-Click Phone Contacts Sync Button */}
+                <button
+                  type="button"
+                  onClick={handleSyncContacts}
+                  disabled={isSyncingContacts}
+                  style={{
+                    background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                    border: '1px solid rgba(56, 189, 248, 0.5)',
+                    color: '#ffffff',
+                    borderRadius: '12px',
+                    padding: '8px 14px',
+                    fontSize: '0.8rem',
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: isSyncingContacts ? 'wait' : 'pointer',
+                    boxShadow: '0 2px 10px rgba(2, 132, 199, 0.35)',
+                    opacity: isSyncingContacts ? 0.7 : 1
+                  }}
+                >
+                  <span>📲</span>
+                  <span>{isSyncingContacts ? "Syncing..." : "Sync Phone Contacts"}</span>
+                </button>
               </div>
 
               <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px' }}>
@@ -9327,6 +9637,20 @@ export default function App() {
           setActiveSubModal(null);
           setShowDashboard(false);
           handleSendPrompt(prompt);
+        }}
+      />
+
+      {/* 9. Gemini Live Full-Duplex Voice Mode Modal */}
+      <GeminiLiveModal
+        isOpen={showGeminiLive}
+        onClose={() => setShowGeminiLive(false)}
+        apiBase={API_BASE}
+        userEmail={userEmail}
+        selectedVoice={selectedVoice}
+        selectedLang={selectedLang}
+        isFriendMode={isFriendMode}
+        onNewMessage={(msg) => {
+          setChatHistory(prev => [...prev, msg]);
         }}
       />
       </React.Suspense>
