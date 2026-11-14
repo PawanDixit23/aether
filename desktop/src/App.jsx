@@ -4931,7 +4931,7 @@ export default function App() {
     }
   };
 
-  const handleToggleTask = async (taskId, explicitDone = null, explicitDateStr = null) => {
+  const handleToggleTask = async (taskId, explicitDone = null, explicitDateStr = null, completionData = null) => {
     // Support both ID primitive and task object
     const actualTaskId = typeof taskId === 'object' && taskId !== null ? (taskId.id || taskId) : taskId;
     if (!actualTaskId) return;
@@ -4971,6 +4971,8 @@ export default function App() {
           ...t,
           is_completed: willBeDone,
           status: willBeDone ? 'completed' : 'pending',
+          ...(completionData?.completion_comment !== undefined ? { completion_comment: completionData.completion_comment } : {}),
+          ...(completionData?.attachments !== undefined ? { attachments: completionData.attachments } : {}),
           ...(isDaily ? { date_completions: { ...(t.date_completions || {}), [todayDateKey]: willBeDone } } : {})
         };
       }
@@ -4982,7 +4984,9 @@ export default function App() {
               return {
                 ...s,
                 is_completed: willBeDone,
-                status: willBeDone ? 'completed' : 'pending'
+                status: willBeDone ? 'completed' : 'pending',
+                ...(completionData?.completion_comment !== undefined ? { completion_comment: completionData.completion_comment } : {}),
+                ...(completionData?.attachments !== undefined ? { attachments: completionData.attachments } : {})
               };
             }
             return s;
@@ -5014,7 +5018,9 @@ export default function App() {
         },
         body: JSON.stringify({ 
           status: willBeDone ? 'completed' : 'pending',
-          date: todayDateKey
+          date: todayDateKey,
+          ...(completionData?.completion_comment !== undefined ? { completion_comment: completionData.completion_comment } : {}),
+          ...(completionData?.attachments !== undefined ? { attachments: completionData.attachments } : {})
         })
       });
       if (resp.ok) {
@@ -5099,10 +5105,16 @@ export default function App() {
     if (!taskId || !updates) return false;
     const effEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
 
-    // Optimistic local update
+    // Optimistic local update (supports both top-level tasks and nested subtasks)
     setTasks(prev => prev.map(t => {
       if (String(t.id) === String(taskId)) {
         return { ...t, ...updates };
+      }
+      if (t.subtasks && t.subtasks.some(s => String(s.id) === String(taskId))) {
+        return {
+          ...t,
+          subtasks: t.subtasks.map(s => String(s.id) === String(taskId) ? { ...s, ...updates } : s)
+        };
       }
       return t;
     }));
@@ -5118,18 +5130,99 @@ export default function App() {
       });
       if (resp.ok) {
         const saved = await resp.json();
-        setTasks(prev => prev.map(t => String(t.id) === String(taskId) ? { ...t, ...saved } : t));
-        showToast("Reminder updated! ⏰", 'success');
+        setTasks(prev => prev.map(t => {
+          if (String(t.id) === String(taskId)) {
+            return { ...t, ...saved };
+          }
+          if (t.subtasks && t.subtasks.some(s => String(s.id) === String(taskId))) {
+            return {
+              ...t,
+              subtasks: t.subtasks.map(s => String(s.id) === String(taskId) ? { ...s, ...saved } : s)
+            };
+          }
+          return t;
+        }));
+        showToast("Task updated! ⏰", 'success');
         return true;
       } else {
-        showToast("Failed to update reminder", 'error');
+        showToast("Failed to update task", 'error');
         return false;
       }
     } catch (err) {
       console.error("Task update error:", err);
-      showToast("Network error updating reminder", 'error');
+      showToast("Network error updating task", 'error');
       return false;
     }
+  };
+
+  const handleCreateSubtask = async (parentId, subtaskData) => {
+    if (!parentId || !subtaskData || !subtaskData.title?.trim()) return null;
+    const effEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+    const cleanTitle = subtaskData.title.trim();
+    const tempId = 'local_sub_' + Date.now();
+
+    const optimisticSub = {
+      id: tempId,
+      title: cleanTitle,
+      parent_id: parentId,
+      priority: subtaskData.priority || 'medium',
+      reminder_time: subtaskData.reminder_time || null,
+      due_date: subtaskData.due_date || new Date().toISOString(),
+      status: 'pending',
+      is_completed: false,
+      completion_comment: subtaskData.completion_comment || null,
+      attachments: subtaskData.attachments || null,
+      created_at: new Date().toISOString()
+    };
+
+    setTasks(prev => prev.map(t => {
+      if (String(t.id) === String(parentId)) {
+        return {
+          ...t,
+          subtasks: [...(t.subtasks || []), optimisticSub]
+        };
+      }
+      return t;
+    }));
+
+    try {
+      const resp = await fetch(`${API_BASE}/tasks`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(effEmail ? { 'X-User-Email': effEmail } : {})
+        },
+        body: JSON.stringify({
+          title: cleanTitle,
+          parent_id: parentId,
+          priority: subtaskData.priority || 'medium',
+          reminder_time: subtaskData.reminder_time || null,
+          due_date: subtaskData.due_date || null,
+          completion_comment: subtaskData.completion_comment || null,
+          attachments: subtaskData.attachments || null,
+          user_email: effEmail || null
+        })
+      });
+
+      if (resp.ok) {
+        const serverSub = await resp.json();
+        setTasks(prev => prev.map(t => {
+          if (String(t.id) === String(parentId)) {
+            return {
+              ...t,
+              subtasks: (t.subtasks || []).map(s => s.id === tempId ? serverSub : s)
+            };
+          }
+          return t;
+        }));
+        showToast("Subtask added! 🎯", 'success');
+        return serverSub;
+      }
+    } catch (err) {
+      console.error("Subtask create error:", err);
+      showToast("Failed to create subtask", 'error');
+    }
+    return null;
   };
 
   const handleCreateTask = async (e, customTitle, customDateStr, customPriority) => {
@@ -8397,10 +8490,13 @@ export default function App() {
                                           <div 
                                             key={st.id} 
                                             onClick={(e) => { e.stopPropagation(); handleToggleTask(st.id); }}
-                                            style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', padding: '2px 0' }}
+                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', cursor: 'pointer', padding: '2px 0' }}
                                           >
-                                            <span style={{ color: stDone ? '#10b981' : '#64748b', fontSize: '0.80rem' }}>{stDone ? '☑' : '☐'}</span>
-                                            <span style={{ color: stDone ? '#64748b' : '#e2e8f0', fontSize: '0.78rem', textDecoration: stDone ? 'line-through' : 'none' }}>{st.title}</span>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, overflow: 'hidden' }}>
+                                              <span style={{ color: stDone ? '#10b981' : '#64748b', fontSize: '0.80rem' }}>{stDone ? '☑' : '☐'}</span>
+                                              <span style={{ color: stDone ? '#64748b' : '#e2e8f0', fontSize: '0.78rem', textDecoration: stDone ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{st.title}</span>
+                                            </div>
+                                            {st.reminder_time && <span style={{ color: '#38bdf8', fontSize: '0.66rem', flexShrink: 0 }}>⏰ {st.reminder_time}</span>}
                                           </div>
                                         );
                                       })}
@@ -8493,10 +8589,13 @@ export default function App() {
                                             <div 
                                               key={st.id} 
                                               onClick={(e) => { e.stopPropagation(); handleToggleTask(st.id); }}
-                                              style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', padding: '2px 0' }}
+                                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', cursor: 'pointer', padding: '2px 0' }}
                                             >
-                                              <span style={{ color: stDone ? '#10b981' : '#64748b', fontSize: '0.80rem' }}>{stDone ? '☑' : '☐'}</span>
-                                              <span style={{ color: stDone ? '#64748b' : '#e2e8f0', fontSize: '0.78rem', textDecoration: stDone ? 'line-through' : 'none' }}>{st.title}</span>
+                                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, overflow: 'hidden' }}>
+                                                <span style={{ color: stDone ? '#10b981' : '#64748b', fontSize: '0.80rem' }}>{stDone ? '☑' : '☐'}</span>
+                                                <span style={{ color: stDone ? '#64748b' : '#e2e8f0', fontSize: '0.78rem', textDecoration: stDone ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{st.title}</span>
+                                              </div>
+                                              {st.reminder_time && <span style={{ color: '#38bdf8', fontSize: '0.66rem', flexShrink: 0 }}>⏰ {st.reminder_time}</span>}
                                             </div>
                                           );
                                         })}
@@ -8555,6 +8654,17 @@ export default function App() {
                                     ✓ Completed
                                   </span>
                                 </div>
+                                {task.completion_comment && (
+                                  <div style={{ fontSize: '0.74rem', color: '#cbd5e1', fontStyle: 'italic', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <span>💬</span>
+                                    <span>{task.completion_comment}</span>
+                                  </div>
+                                )}
+                                {task.attachments && task.attachments !== '[]' && (
+                                  <div style={{ fontSize: '0.70rem', color: '#38bdf8', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <span>📎 Has attachments</span>
+                                  </div>
+                                )}
                               </div>
                             </div>
                             <button 
@@ -8802,6 +8912,7 @@ export default function App() {
         handleDeleteTask={handleDeleteTask}
         handleCreateTask={handleCreateTask}
         handleUpdateTask={handleUpdateTask}
+        handleCreateSubtask={handleCreateSubtask}
         newTaskInput={newTaskInput}
         setNewTaskInput={setNewTaskInput}
         handleRescheduleAllOverdue={handleRescheduleAllOverdue}

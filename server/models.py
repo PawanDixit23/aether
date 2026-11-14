@@ -20,6 +20,8 @@ class Task(Base):
     recurrence = Column(String, nullable=True, default=None) # e.g. "daily", "weekdays", "weekly_monday" or None
     parent_id = Column(Integer, nullable=True, default=None) # For hierarchical subtasks
     notified = Column(Boolean, default=False)
+    completion_comment = Column(Text, nullable=True) # Comments / notes on completion
+    attachments = Column(Text, nullable=True) # JSON array string of attached files [{name, url, type, size}]
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class FinancialRecord(Base):

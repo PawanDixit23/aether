@@ -59,6 +59,8 @@ def ensure_schema_migrations():
         "ALTER TABLE chat_messages ADD COLUMN user_email VARCHAR",
         "ALTER TABLE tasks ADD COLUMN recurrence VARCHAR",
         "ALTER TABLE tasks ADD COLUMN parent_id INTEGER",
+        "ALTER TABLE tasks ADD COLUMN completion_comment TEXT",
+        "ALTER TABLE tasks ADD COLUMN attachments TEXT",
         "ALTER TABLE chat_messages ADD COLUMN session_id VARCHAR DEFAULT 'default'",
         "ALTER TABLE chat_sessions ADD COLUMN is_pinned BOOLEAN DEFAULT FALSE",
         "ALTER TABLE chat_sessions ADD COLUMN project VARCHAR",

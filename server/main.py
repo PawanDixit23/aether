@@ -302,6 +302,8 @@ class TaskCreate(BaseModel):
     recurrence: Optional[str] = None
     parent_id: Optional[int] = None
     subtasks: Optional[List[str]] = None
+    completion_comment: Optional[str] = None
+    attachments: Optional[str] = None
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
@@ -311,6 +313,8 @@ class TaskUpdate(BaseModel):
     reminder_time: Optional[str] = None
     recurrence: Optional[str] = None
     status: Optional[str] = None
+    completion_comment: Optional[str] = None
+    attachments: Optional[str] = None
 
 class TaskReschedule(BaseModel):
     due_date: Optional[datetime] = None
@@ -319,6 +323,8 @@ class TaskReschedule(BaseModel):
 class TaskToggleRequest(BaseModel):
     status: Optional[str] = None
     date: Optional[str] = None
+    completion_comment: Optional[str] = None
+    attachments: Optional[str] = None
 
 class DateCompletionRequest(BaseModel):
     date: str
@@ -642,6 +648,9 @@ def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
                     priority=t.get("priority", "medium"),
                     status=t.get("status", "pending"),
                     reminder_time=t.get("reminder_time"),
+                    recurrence=t.get("recurrence"),
+                    completion_comment=t.get("completion_comment"),
+                    attachments=t.get("attachments"),
                     due_date=due_dt,
                     created_at=created_dt or datetime.utcnow(),
                     notified=t.get("notified", False)
@@ -2016,6 +2025,8 @@ def serialize_task(t: Task, db: Optional[Session] = None) -> dict:
         "recurrence": getattr(t, "recurrence", None),
         "parent_id": getattr(t, "parent_id", None),
         "notified": t.notified,
+        "completion_comment": getattr(t, "completion_comment", None),
+        "attachments": getattr(t, "attachments", None),
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "subtasks": []
     }
@@ -2122,6 +2133,10 @@ def update_task(
         task.recurrence = req.recurrence
     if req.status is not None:
         task.status = req.status
+    if req.completion_comment is not None:
+        task.completion_comment = req.completion_comment.strip()
+    if req.attachments is not None:
+        task.attachments = req.attachments.strip()
 
     db.commit()
     db.refresh(task)
@@ -2183,6 +2198,12 @@ def toggle_task(
         task.status = new_status
         if new_status == "completed":
             task.notified = True
+
+    if req:
+        if req.completion_comment is not None:
+            task.completion_comment = req.completion_comment.strip()
+        if req.attachments is not None:
+            task.attachments = req.attachments.strip()
     
     # If this task is a subtask, update parent task progress
     if getattr(task, "parent_id", None):
