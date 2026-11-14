@@ -270,7 +270,8 @@ export default function GeminiLiveModal({
 
       // Automatic Language Detection (Hindi, English, or Hinglish based on user's query)
       const isDevanagari = /[\u0900-\u097F]/.test(cleanPrompt);
-      const autoLang = isDevanagari ? 'hi' : 'auto';
+      const isHinglish = /\b(kya|kyu|kyun|kaise|kaisa|kaisi|kab|kahan|kitna|kitne|kitni|kaun|konsa|mera|meri|mere|tum|tumhara|tumhari|aap|aapka|aapki|hum|hamara|mujhe|tujhe|batao|bata|bataiye|karo|kar|kariye|bhejo|bhej|sun|suno|sunao|pa|raha|rahe|rahi|hai|hain|hoon|hun|ho|tha|the|thi|nahi|nahin|mat|bahut|accha|achha|aaj|kal|idhar|udhar|yahan|wahan|paise|kharch|chahiye|madad|bhai|yaar|dhanyavad)\b/i.test(cleanPrompt);
+      const autoLang = isDevanagari ? 'hi' : (isHinglish ? 'hinglish' : 'en');
 
       let data = null;
       try {

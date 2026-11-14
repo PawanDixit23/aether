@@ -1561,7 +1561,7 @@ class DirectChatRequest(BaseModel):
     prompt: Optional[str] = None
     input_text: Optional[str] = None
     user_email: Optional[str] = None
-    lang: Optional[str] = "hi"
+    lang: Optional[str] = "auto"
     language: Optional[str] = None
     live_voice: Optional[bool] = False
 
@@ -1579,7 +1579,7 @@ async def direct_chat_endpoint(
     
     qc_req = QuickCaptureRequest(
         input_text=text,
-        language=req.language or req.lang or "hi",
+        language=req.language or req.lang or "auto",
         user_email=eff_email
     )
     result = await quick_capture(qc_req, user_email=eff_email, db=db)

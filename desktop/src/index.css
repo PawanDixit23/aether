@@ -1977,10 +1977,12 @@ body.theme-oled .settings-user-card {
   flex-shrink: 0;
 }
 
-@media (max-width: 480px) {
-  .aether-switcher-label {
-    display: none;
-  }
+.aether-switcher-label {
+  display: inline-block !important;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .gemini-top-left {

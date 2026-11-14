@@ -1571,6 +1571,66 @@ def clean_task_title(text: str) -> str:
     cleaned = re.sub(r'\s+', ' ', cleaned).strip(' ?.,!:\n')
     return cleaned if len(cleaned) > 2 else text.strip(' ?.,!:\n')
 
+def detect_prompt_language(user_prompt: str) -> str:
+    """
+    Detect whether user's query is in:
+    - 'hi' (Hindi in Devanagari script)
+    - 'hinglish' (Hindi written in Roman/English alphabet)
+    - 'en' (English)
+    """
+    if not user_prompt:
+        return "en"
+    
+    text = user_prompt.strip()
+    text_lower = text.lower()
+    
+    # 1. Explicit requests in prompt
+    if any(w in text_lower for w in ["in hindi", "hindi me", "hindi mein", "हिंदी में", "हिंदी", "translate to hindi"]):
+        return "hi"
+    if any(w in text_lower for w in ["in hinglish", "hinglish me", "hinglish mein"]):
+        return "hinglish"
+    if any(w in text_lower for w in ["in english", "english me", "english mein", "translate to english"]):
+        return "en"
+
+    # 2. Devanagari script detection
+    if bool(re.search(r'[\u0900-\u097F]', text)):
+        return "hi"
+
+    # 3. Hinglish vs English scoring (comparing distinctive Hindi marker words vs English marker words)
+    words = set(re.findall(r'\b[a-z]{2,}\b', text_lower))
+    hinglish_markers = {
+        "kya", "kyu", "kyun", "kaise", "kaisa", "kaisi", "kab", "kahan", "kitna", "kitne", "kitni",
+        "kaun", "konsa", "kisme", "kisne", "mera", "meri", "mere", "tera", "teri", "tere",
+        "tum", "tumhara", "tumhari", "tumhare", "aap", "aapka", "aapki", "aapke",
+        "hum", "hamara", "humara", "mujhe", "tujhe", "hume", "usko", "isko", "unhe", "inhe",
+        "batao", "bataiye", "bata", "karo", "kariye", "kar", "bhejo", "bhej", "dikhao",
+        "sun", "suno", "sunao", "raha", "rahe", "rahi", "hai", "hain", "hoon", "hun", "ho",
+        "hoga", "hogi", "hoge", "nahi", "nahin", "dhanyavad", "shukriya", "achha", "accha",
+        "bahut", "bohot", "thoda", "zyada", "jyada", "aaj", "parso", "idhar", "udhar", "yahan", "wahan",
+        "paise", "kharch", "rupaye", "chahiye", "madad", "dost", "bhai", "yaar", "kuch"
+    }
+    english_markers = {
+        "what", "when", "where", "which", "who", "whom", "whose", "why", "how", "weather",
+        "today", "tomorrow", "yesterday", "remind", "reminder", "schedule", "meeting", "expense",
+        "spend", "balance", "money", "create", "delete", "show", "tell", "please", "thank",
+        "thanks", "hello", "good", "morning", "evening", "night", "about", "your", "name",
+        "help", "can", "could", "would", "should", "will", "shall", "are", "were", "been",
+        "have", "has", "had", "this", "that", "these", "those", "from", "with"
+    }
+
+    hin_score = len(words.intersection(hinglish_markers))
+    eng_score = len(words.intersection(english_markers))
+
+    if hin_score > 0 and hin_score >= eng_score:
+        return "hinglish"
+    if eng_score > hin_score:
+        return "en"
+    if hin_score > 0:
+        return "hinglish"
+
+    # Default to English
+    return "en"
+
 def build_system_prompt(context: dict = None, live_feed: str = "", language: str = "auto", user_name: str = "Operator", user_query: str = "", has_image: bool = False, active_provider: str = "gemini") -> str:
     ctx_str = ""
     display_name = user_name.strip() if user_name and user_name.strip() else "Operator"
@@ -1731,26 +1791,35 @@ Return a strict JSON response:
     if language == "hi" or wants_hindi_in_prompt:
         lang_rules = """
 CRITICAL LANGUAGE INSTRUCTION:
-The user has requested or set language to HINDI (हिन्दी).
+The user has asked in HINDI (हिन्दी).
 YOU MUST RESPOND 100% IN NATURAL, POLITE, FLUENT HINDI (हिन्दी देवनागरी लिपि).
-All explanations, responses, visual analysis, weather summaries, news, match results, and reminders MUST be in Hindi.
+All explanations, responses, visual analysis, weather summaries, news, match results, and reminders MUST be in pure Hindi (देवनागरी लिपि).
 """
     elif language == "hinglish":
         lang_rules = """
 CRITICAL LANGUAGE INSTRUCTION:
-The user has requested HINGLISH.
-YOU MUST RESPOND 100% IN CONVERSATIONAL HINGLISH (Hindi written using the English/Roman alphabet).
+The user has asked in HINGLISH (Hindi spoken using the English/Roman alphabet, e.g. "Aap kaise ho", "Aaj ka weather kaisa hai", "Tum mujhe sun pa rahe ho").
+YOU MUST RESPOND 100% IN NATURAL, CONVERSATIONAL HINGLISH (Hindi written strictly using the English/Roman alphabet).
+DO NOT use Devanagari script.
+Examples of proper Hinglish replies:
+- "Haan, main aapko bilkul saaf sun pa raha hoon. Bataiye main aapki kya madad kar sakta hoon?"
+- "Aaj Jaipur ka mausam saaf hai aur dhoop nikli rahegi. Maximum temperature lagbhag 28 degree Celsius rahega."
+- "Theek hai, maine Rohit ko ₹500 bhejne ka request taiyar kar diya hai."
 """
     elif language == "en":
         lang_rules = """
-LANGUAGE INSTRUCTION:
-Default language is English. Respond in clear, professional English.
-CRITICAL OVERRIDE: If the user explicitly asks for another language (e.g. "in hindi", "hindi me batao", "translate to hindi"), YOU MUST HONOR THAT REQUEST AND RESPOND IN HINDI. Never refuse a language request.
+CRITICAL LANGUAGE INSTRUCTION:
+The user has asked in ENGLISH.
+YOU MUST RESPOND 100% IN NATURAL, CLEAR, PROFESSIONAL ENGLISH.
+DO NOT use Hindi or Devanagari script unless explaining a specific Hindi term.
 """
     else:
         lang_rules = """
-LANGUAGE INSTRUCTION:
-Adaptive Bilingual Context: If the ongoing chat history contains Hindi or the user communicates in Hindi/Hinglish, reply in fluent, natural Hindi (हिन्दी). If asked in English, reply in English. Always be direct, clear, helpful, and polite.
+CRITICAL LANGUAGE INSTRUCTION:
+Strictly mirror the user's current query language:
+1. If the user asked in Hindi (Devanagari), reply 100% in pure Hindi (हिन्दी देवनागरी).
+2. If the user asked in Hinglish (Hindi written in Roman/English alphabet), reply 100% in natural Hinglish (Roman alphabet).
+3. If the user asked in English, reply 100% in clear, professional English.
 """
 
     image_rules = ""
@@ -2220,25 +2289,23 @@ async def parse_intent_with_llm(
     # Detect language requirement in user prompt
     wants_hindi_in_prompt = any(w in user_lower for w in ["in hindi", "hindi me", "hindi mein", "हिंदी में", "हिंदी", "translate to hindi", "hindi news", "hindi me batao"])
     wants_english_in_prompt = any(w in user_lower for w in ["in english", "english me", "english mein", "translate to english"])
+    wants_hinglish_in_prompt = any(w in user_lower for w in ["in hinglish", "hinglish me", "hinglish mein"])
     wants_friend_in_prompt = any(w in user_lower for w in ["talk like a friend", "dost ki tarah", "bhai ki tarah", "friend mode", "दोस्त की तरह", "मित्र की तरह", "दोस्त बनकर"])
-    
-    # Detect Devanagari script in user input
-    has_devanagari = bool(re.search(r'[\u0900-\u097F]', user_input))
-
-    # Detect if active chat session history has Hindi
-    recent_chat = (context or {}).get("recent_chat", [])
-    recent_has_hindi = any(bool(re.search(r'[\u0900-\u097F]', str(m.get("content", "")))) for m in recent_chat[-6:])
 
     if language == "hi_friend" or wants_friend_in_prompt:
         effective_lang = "hi_friend"
-    elif wants_hindi_in_prompt or language == "hi" or (language == "auto" and (has_devanagari or recent_has_hindi)):
+    elif wants_hindi_in_prompt:
         effective_lang = "hi"
-    elif wants_english_in_prompt or language == "en":
+    elif wants_english_in_prompt:
         effective_lang = "en"
-    elif language == "hinglish":
+    elif wants_hinglish_in_prompt:
         effective_lang = "hinglish"
-    else:
+    elif language in ["hi", "en", "hinglish"]:
         effective_lang = language
+    else:
+        # Dynamic, real-time per-query language detection:
+        # If Hindi Devanagari -> 'hi', If Roman Hindi -> 'hinglish', If English -> 'en'
+        effective_lang = detect_prompt_language(user_input)
 
     live_feed = ""
     is_match_query = any(w in user_lower for w in [
