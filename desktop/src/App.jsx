@@ -520,7 +520,17 @@ export default function App() {
   const [thinkingElapsed, setThinkingElapsed] = useState(0);
   const [activePromptContextType, setActivePromptContextType] = useState('general');
   const [isListening, setIsListening] = useState(false);
+  const isListeningRef = useRef(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const isSpeakingRef = useRef(false);
+
+  useEffect(() => {
+    isListeningRef.current = isListening;
+  }, [isListening]);
+
+  useEffect(() => {
+    isSpeakingRef.current = isSpeaking;
+  }, [isSpeaking]);
   const [selectedLang, setSelectedLang] = useState(() => localStorage.getItem('aether_language') || 'auto');
   const [isFriendMode, setIsFriendMode] = useState(() => {
     return typeof localStorage !== 'undefined' 
@@ -3916,13 +3926,14 @@ export default function App() {
   const dayPhase = getDayPhaseInfo();
   const WeatherSymbol = dayPhase.IconComponent;
 
-  // Voice Recognition (Speech to Text) with Mobile Device Microphone Support
-  const toggleVoiceRecognition = async (initialQuery = '') => {
-    if (isListening && !initialQuery) {
+  // Voice Recognition (Speech to Text) — Instant Zero-Lag Mic Activation
+  const toggleVoiceRecognition = (initialQuery = '', fromWakeWord = false) => {
+    if (isListeningRef.current && !initialQuery && !fromWakeWord) {
       clearTimeout(speechSilenceTimeoutRef.current);
       if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch (e) {}
+        try { recognitionRef.current.abort(); } catch (e) {}
       }
+      isListeningRef.current = false;
       setIsListening(false);
       return;
     }
@@ -3933,7 +3944,17 @@ export default function App() {
       return;
     }
 
-    // Play subtle wake chime & trigger crisp haptic pulse (Gemini-grade feedback)
+    // 1. Immediately abort background wake word listener so mic hardware is completely free
+    if (wakeWordRecognitionRef.current) {
+      try {
+        wakeWordRecognitionRef.current.abort();
+      } catch (e) {}
+      wakeWordRecognitionRef.current = null;
+    }
+
+    // 2. Instant visual & haptic feedback with 0ms delay
+    isListeningRef.current = true;
+    setIsListening(true);
     playWakeChime();
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try { navigator.vibrate(20); } catch (e) {}
@@ -3944,43 +3965,28 @@ export default function App() {
       setInputText(initialQuery);
     }
 
-    // Trigger native Android microphone permission if wrapped in mobile app
-    const isInReactNativeWebView = typeof window !== 'undefined' && !!window.ReactNativeWebView;
-    if (isInReactNativeWebView) {
+    // Non-blocking notification to React Native WebView wrapper if running inside mobile shell
+    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
       try {
         window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_MIC_PERMISSION' }));
-        await new Promise((resolve) => {
-          window.__onMicPermissionResult = (granted) => {
-            window.__onMicPermissionResult = null;
-            resolve(granted);
-          };
-          setTimeout(() => resolve(true), 2000);
-        });
       } catch (e) {}
-    }
-
-    // Non-fatal getUserMedia check
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(track => track.stop());
-      } catch (micErr) {
-        console.warn('getUserMedia non-fatal:', micErr);
-      }
     }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
+      isListeningRef.current = false;
+      setIsListening(false);
       showToast("Voice input is unavailable on this device/WebView. Please type your message.", 'info');
       setIsTypeInputOpen(true);
       return;
     }
 
-    try {
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch (e) {}
-      }
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch (e) {}
+      recognitionRef.current = null;
+    }
 
+    try {
       const recognition = new SpeechRecognition();
       recognitionRef.current = recognition;
       recognition.continuous = true;
@@ -3988,6 +3994,7 @@ export default function App() {
       recognition.lang = (isFriendMode || selectedLang === 'hi' || selectedLang === 'hi_friend') ? 'hi-IN' : 'en-IN';
 
       recognition.onstart = () => {
+        isListeningRef.current = true;
         setIsListening(true);
         showToast("🎙️ Aether is listening... Speak now", 'info');
       };
@@ -4012,13 +4019,14 @@ export default function App() {
         clearTimeout(speechSilenceTimeoutRef.current);
         const lastResult = event.results[event.results.length - 1];
         const isFinal = Boolean(lastResult && lastResult.isFinal);
-        const debounceDelay = isFinal ? 700 : 1100;
+        const debounceDelay = isFinal ? 650 : 1200;
 
         speechSilenceTimeoutRef.current = setTimeout(() => {
           try { recognition.stop(); } catch (e) {}
+          isListeningRef.current = false;
           setIsListening(false);
           clearTimeout(speechSilenceTimeoutRef.current);
-          const cleanPrompt = currentTranscript.replace(/^(hey\s*aether|ok\s*aether|okay\s*aether|hey\s*ether|ok\s*ether|okay\s*ether|aether|ether|हे\s*ईथर|ईथर|सुनो\s*ईथर|नमस्ते\s*ईथर)[,\s]+/i, '').trim() || currentTranscript;
+          const cleanPrompt = currentTranscript.replace(/^(hey\s*aether|hi\s*aether|hello\s*aether|ok\s*aether|okay\s*aether|hey\s*ether|hi\s*ether|hello\s*ether|ok\s*ether|okay\s*ether|aether|ether|हे\s*ईथर|हे\s*एथर|ईथर|एथर|सुनो\s*ईथर|नमस्ते\s*ईथर)[,\s]+/i, '').trim() || currentTranscript;
           if (cleanPrompt.length > 0) {
             handleSendPrompt(cleanPrompt);
           }
@@ -4027,23 +4035,29 @@ export default function App() {
 
       recognition.onerror = (event) => {
         console.warn("Speech recognition notice:", event.error);
-        if (event.error === 'not-allowed') {
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           showToast("Please grant microphone permission to Aether in Settings.", 'error');
+          isListeningRef.current = false;
           setIsListening(false);
           clearTimeout(speechSilenceTimeoutRef.current);
-        } else if (event.error !== 'no-speech') {
+        } else if (event.error === 'no-speech') {
+          // Normal silence, keep listening
+        } else {
+          isListeningRef.current = false;
           setIsListening(false);
           clearTimeout(speechSilenceTimeoutRef.current);
         }
       };
 
       recognition.onend = () => {
+        isListeningRef.current = false;
         setIsListening(false);
       };
 
       recognition.start();
     } catch (err) {
       console.error("Failed to start speech recognition:", err);
+      isListeningRef.current = false;
       setIsListening(false);
       clearTimeout(speechSilenceTimeoutRef.current);
       showToast("Failed to start microphone. Please use the text prompt.", 'error');
@@ -4058,7 +4072,7 @@ export default function App() {
     // Guards: don't listen if onboarding not done, mic disabled, wake word disabled, active voice session, processing, speaking, or media running
     if (!onboardingDone || !micEnabled || !wakeWordEnabled || isListening || isSpeaking || isProcessing || activeMediaPlayingRef.current) {
       if (wakeWordRecognitionRef.current) {
-        try { wakeWordRecognitionRef.current.stop(); } catch (e) {}
+        try { wakeWordRecognitionRef.current.abort(); } catch (e) {}
         wakeWordRecognitionRef.current = null;
       }
       return;
@@ -4078,7 +4092,7 @@ export default function App() {
       wakeRec.lang = (isFriendMode || selectedLang === 'hi' || selectedLang === 'hi_friend') ? 'hi-IN' : 'en-IN';
 
       wakeRec.onresult = (event) => {
-        if (isDestroyed || isSpeaking) return;
+        if (isDestroyed || isSpeakingRef.current || isListeningRef.current) return;
         
         let latestSegment = "";
         for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -4086,51 +4100,63 @@ export default function App() {
             latestSegment += " " + event.results[i][0].transcript;
           }
         }
-        const text = latestSegment.trim().toLowerCase();
-        if (!text) return;
+        let fullRecent = "";
+        for (let i = Math.max(0, event.results.length - 3); i < event.results.length; i++) {
+          if (event.results[i] && event.results[i][0]) {
+            fullRecent += " " + event.results[i][0].transcript;
+          }
+        }
+        const textToTest = (fullRecent + " " + latestSegment).trim().toLowerCase();
+        if (!textToTest) return;
 
-        // Supported wake words: "hey aether", "ok aether", "aether", "hey ether", "हे ईथर", "ईथर", "सुनो ईथर"
-        const wakeWordRegex = /\b(hey\s*aether|ok\s*aether|okay\s*aether|hey\s*ether|ok\s*ether|okay\s*ether|aether|ether|हे\s*ईथर|ईथर|सुनो\s*ईथर|नमस्ते\s*ईथर)\b/i;
-        const match = text.match(wakeWordRegex);
+        // Supported wake words: "hey aether", "hi aether", "ok aether", "aether", "ether", "हे ईथर", "हे एथर", "सुनो ईथर", etc.
+        const wakeWordRegex = /\b(hey\s*aether|hi\s*aether|hello\s*aether|ok\s*aether|okay\s*aether|hey\s*ether|hi\s*ether|hello\s*ether|ok\s*ether|okay\s*ether|hey\s*ather|hey\s*either|hey\s*heather|hey\s*other|aether|ether|ayther|हे\s*ईथर|हे\s*एथर|हे\s*ऐथर|हे\s*इधर|सुनो\s*ईथर|सुनो\s*एथर|नमस्ते\s*ईथर|नमस्ते\s*एथर|ईथर|एथर)\b/i;
+        const match = textToTest.match(wakeWordRegex);
 
         if (match) {
-          console.log("[Wake Word Detected]:", text);
+          console.log("[Wake Word Detected]:", textToTest);
           showToast("⚡ 'Hey Aether' detected!", "info");
           playWakeChime();
           if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
             try { navigator.vibrate([25, 20, 25]); } catch (e) {}
           }
           
-          try { wakeRec.stop(); } catch (e) {}
+          isDestroyed = true;
+          isListeningRef.current = true;
+          setIsListening(true);
+
+          try { wakeRec.abort(); } catch (e) {}
           wakeWordRecognitionRef.current = null;
 
-          // Extract any query spoken along with the wake word
-          const queryPart = text.slice(match.index + match[0].length).replace(/^[,.\s]+/, '').trim();
+          // Extract any query spoken along with the wake word (e.g. "Hey Aether what is today agenda")
+          const matchEndIdx = match.index + match[0].length;
+          const queryPart = textToTest.slice(matchEndIdx).replace(/^[,.\s]+/, '').trim();
+          
           setTimeout(() => {
-            toggleVoiceRecognition(queryPart);
-          }, 60);
+            toggleVoiceRecognition(queryPart, true);
+          }, 100);
         }
       };
 
       wakeRec.onerror = (e) => {
-        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current) {
-          if (e.error !== 'not-allowed') {
-            setTimeout(() => {
-              try { if (!isDestroyed && !activeMediaPlayingRef.current && !isSpeaking) wakeRec.start(); } catch (err) {}
-            }, 800);
-          }
-        }
+        if (isDestroyed || e.error === 'not-allowed') return;
+        // Let onend handle clean restart to avoid double-start collision
       };
 
       wakeRec.onend = () => {
-        if (!isDestroyed && wakeWordEnabled && micEnabled && !isListening && !isSpeaking && !isProcessing && !activeMediaPlayingRef.current) {
-          setTimeout(() => {
-            try { if (!isDestroyed && !activeMediaPlayingRef.current && !isSpeaking) wakeRec.start(); } catch (e) {}
-          }, 350);
+        if (isDestroyed || !wakeWordEnabled || !micEnabled || isListeningRef.current || isSpeakingRef.current || isProcessingRef.current || activeMediaPlayingRef.current) {
+          return;
         }
+        setTimeout(() => {
+          try {
+            if (!isDestroyed && wakeWordEnabled && micEnabled && !isListeningRef.current && !isSpeakingRef.current && !isProcessingRef.current && !activeMediaPlayingRef.current) {
+              wakeRec.start();
+            }
+          } catch (e) {}
+        }, 350);
       };
 
-      if (!isDestroyed && !activeMediaPlayingRef.current && !isSpeaking) {
+      if (!isDestroyed && !activeMediaPlayingRef.current && !isSpeakingRef.current && !isListeningRef.current) {
         wakeRec.start();
       }
     } catch (e) {
@@ -4140,7 +4166,7 @@ export default function App() {
     return () => {
       isDestroyed = true;
       if (wakeRec) {
-        try { wakeRec.stop(); } catch (e) {}
+        try { wakeRec.abort(); } catch (e) {}
       }
       wakeWordRecognitionRef.current = null;
     };
