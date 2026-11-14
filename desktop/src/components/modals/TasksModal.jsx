@@ -1131,67 +1131,66 @@ export const TasksModal = ({
           </div>
         </div>
 
-        {/* ── 5. OVERDUE RECOVERY BANNER (When Overdue exists) ── */}
-        {overdueCount > 0 && agendaFilter !== 'completed' && (
-          <div style={{
-            margin: isMobile ? '6px 14px 0' : '6px 18px 0',
-            padding: '8px 12px',
-            borderRadius: '12px',
-            background: 'rgba(239, 68, 68, 0.12)',
-            border: '1px solid rgba(239, 68, 68, 0.3)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '8px',
-            boxSizing: 'border-box'
-          }}>
-            <div
-              onClick={() => {
-                setAgendaFilter('overdue');
-                if (setCalSelectedDate) setCalSelectedDate(new Date());
-              }}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, cursor: 'pointer', flex: 1, overflow: 'hidden' }}
-              title="Click to view all overdue tasks"
-            >
-              <span style={{ fontSize: '0.95rem', flexShrink: 0 }}>⚠️</span>
-              <div style={{ fontSize: '0.76rem', fontWeight: 700, color: '#FCA5A5', whiteSpace: 'nowrap' }}>
-                {overdueCount} {overdueCount > 1 ? 'tasks are' : 'task is'} overdue
-              </div>
-              <span style={{ fontSize: '0.68rem', color: '#f87171', textDecoration: 'underline', marginLeft: '3px', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                View All ↗
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={handleRescheduleAllOverdue}
-              style={{
-                background: '#EF4444',
-                color: '#FFFFFF',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '5px 10px',
-                fontSize: '0.70rem',
-                fontWeight: 700,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-                boxShadow: '0 2px 8px rgba(239, 68, 68, 0.3)'
-              }}
-            >
-              Reschedule All ⚡
-            </button>
-          </div>
-        )}
-
         {/* ── 6. TASK LIST FOR CURRENT SELECTED DATE / FILTER ── */}
         <div style={{
           flex: 1,
           overflowY: 'auto',
-          padding: isMobile ? '8px 14px 20px' : '8px 18px 20px',
+          padding: isMobile ? '10px 12px 60px' : '10px 18px 30px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '8px'
+          gap: '10px'
         }}>
+          {/* ── OVERDUE RECOVERY BANNER (Inside scrollable list so it never overlaps open edit forms) ── */}
+          {overdueCount > 0 && agendaFilter !== 'completed' && (
+            <div style={{
+              margin: '0 0 2px 0',
+              padding: '9px 12px',
+              borderRadius: '14px',
+              background: 'rgba(239, 68, 68, 0.12)',
+              border: '1px solid rgba(239, 68, 68, 0.35)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '8px',
+              boxSizing: 'border-box'
+            }}>
+              <div
+                onClick={() => {
+                  setAgendaFilter('overdue');
+                  if (setCalSelectedDate) setCalSelectedDate(new Date());
+                }}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, cursor: 'pointer', flex: 1, overflow: 'hidden' }}
+                title="Click to view all overdue tasks"
+              >
+                <span style={{ fontSize: '0.95rem', flexShrink: 0 }}>⚠️</span>
+                <div style={{ fontSize: '0.76rem', fontWeight: 700, color: '#FCA5A5', whiteSpace: 'nowrap' }}>
+                  {overdueCount} {overdueCount > 1 ? 'tasks are' : 'task is'} overdue
+                </div>
+                <span style={{ fontSize: '0.68rem', color: '#f87171', textDecoration: 'underline', marginLeft: '3px', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  View All ↗
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleRescheduleAllOverdue}
+                style={{
+                  background: '#EF4444',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '5px 10px',
+                  fontSize: '0.70rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                  boxShadow: '0 2px 8px rgba(239, 68, 68, 0.3)'
+                }}
+              >
+                Reschedule All ⚡
+              </button>
+            </div>
+          )}
           {filteredTasks.length === 0 ? (
             <div style={{
               textAlign: 'center',
@@ -1610,7 +1609,366 @@ export const TasksModal = ({
                         </button>
                       </div>
                     </div>
+                  ) : isMobile ? (
+                    /* ── MOBILE OPTIMIZED PARENT TASK CARD ── */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
+                      
+                      {/* Top Row: Checkbox + Full-width Title + Delete / GCal */}
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
+                        <div
+                          onClick={() => !t.is_google_calendar && onToggleTaskInternal(t)}
+                          style={{
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '8px',
+                            border: done 
+                              ? '2px solid #10B981' 
+                              : overdue 
+                                ? '2px solid #EF4444' 
+                                : '2px solid #475569',
+                            background: done ? '#10B981' : 'transparent',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: t.is_google_calendar ? 'default' : 'pointer',
+                            flexShrink: 0,
+                            marginTop: '2px',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          {done && <Check size={15} color="#FFFFFF" strokeWidth={3.2} />}
+                        </div>
+
+                        <div style={{
+                          flex: 1,
+                          minWidth: 0,
+                          color: done ? '#64748B' : '#F8FAFC',
+                          fontSize: '0.94rem',
+                          fontWeight: 600,
+                          textDecoration: done ? 'line-through' : 'none',
+                          wordBreak: 'break-word',
+                          lineHeight: 1.35
+                        }}>
+                          {t.title}
+                        </div>
+
+                        {t.is_google_calendar ? (
+                          t.htmlLink && (
+                            <button
+                              type="button"
+                              onClick={() => window.open(t.htmlLink, '_blank', 'noopener,noreferrer')}
+                              style={{ background: 'none', border: 'none', color: '#60A5FA', cursor: 'pointer', padding: '4px', flexShrink: 0 }}
+                              title="Open in GCal"
+                            >
+                              <ExternalLink size={15} />
+                            </button>
+                          )
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTask(t.id)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#EF4444',
+                              opacity: 0.65,
+                              cursor: 'pointer',
+                              padding: '4px',
+                              flexShrink: 0
+                            }}
+                            title="Delete task"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Optional Description */}
+                      {t.description && (
+                        <div style={{
+                          color: done ? '#64748B' : '#94A3B8',
+                          fontSize: '0.78rem',
+                          marginLeft: '34px',
+                          lineHeight: 1.4,
+                          wordBreak: 'break-word',
+                          background: 'rgba(255, 255, 255, 0.02)',
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          borderLeft: '2px solid rgba(13, 148, 136, 0.4)'
+                        }}>
+                          {t.description}
+                        </div>
+                      )}
+
+                      {/* Completion Comment / Note Display */}
+                      {t.completion_comment && (
+                        <div style={{
+                          color: '#e0f2fe',
+                          fontSize: '0.78rem',
+                          marginLeft: '34px',
+                          lineHeight: 1.4,
+                          wordBreak: 'break-word',
+                          background: 'rgba(56, 189, 248, 0.08)',
+                          padding: '5px 9px',
+                          borderRadius: '8px',
+                          borderLeft: '3px solid #38bdf8',
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: '6px'
+                        }}>
+                          <MessageSquare size={13} color="#38bdf8" style={{ marginTop: '2px', flexShrink: 0 }} />
+                          <div style={{ flex: 1 }}>
+                            <span style={{ color: '#38bdf8', fontSize: '0.70rem', fontWeight: 700, display: 'block', marginBottom: '1px' }}>
+                              Completion Note:
+                            </span>
+                            {t.completion_comment}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Attachments Display */}
+                      {parseAttachments(t.attachments).length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginLeft: '34px' }}>
+                          {parseAttachments(t.attachments).map(att => {
+                            const isImg = att.type?.startsWith('image/') || (att.data && att.data.startsWith('data:image/'));
+                            return (
+                              <div
+                                key={att.id}
+                                onClick={() => isImg ? setPreviewImage(att) : handleDownloadAttachment(att)}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                  background: 'rgba(255, 255, 255, 0.06)',
+                                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                                  borderRadius: '8px',
+                                  padding: '3px 8px',
+                                  fontSize: '0.72rem',
+                                  color: '#cbd5e1',
+                                  cursor: 'pointer',
+                                  maxWidth: '200px'
+                                }}
+                                title={isImg ? "Click to view photo" : "Click to download file"}
+                              >
+                                {isImg ? (
+                                  <img src={att.data} alt={att.name} style={{ width: '16px', height: '16px', borderRadius: '3px', objectFit: 'cover' }} />
+                                ) : (
+                                  <FileText size={12} color="#38bdf8" />
+                                )}
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.name}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Metadata row with Clean Wrapping */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '34px', flexWrap: 'wrap' }}>
+                        
+                        <span style={{
+                          color: done ? '#64748B' : overdue ? '#F87171' : '#94A3B8',
+                          fontSize: '0.70rem',
+                          fontWeight: 500,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          <Clock size={11} color={done ? '#64748B' : overdue ? '#F87171' : '#0D9488'} />
+                          <span>
+                            {overdue && '⚠️ '}
+                            {t.reminder_time 
+                              ? (overdue ? `Overdue - ${t.reminder_time}` : t.reminder_time)
+                              : (taskDateStr || 'Anytime')}
+                          </span>
+                        </span>
+
+                        <span style={{
+                          background: done ? 'rgba(16, 185, 129, 0.16)' : overdue ? 'rgba(239, 68, 68, 0.18)' : 'rgba(13, 148, 136, 0.16)',
+                          color: done ? '#34D399' : overdue ? '#EF4444' : '#0D9488',
+                          border: done ? '1px solid rgba(16, 185, 129, 0.3)' : overdue ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(13, 148, 136, 0.3)',
+                          borderRadius: '6px',
+                          padding: '1px 6px',
+                          fontSize: '0.64rem',
+                          fontWeight: 700,
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {done ? '✓ Completed' : overdue ? '⚠️ Overdue' : '⏳ Pending'}
+                        </span>
+
+                        {daily && (
+                          <span style={{
+                            background: 'rgba(168, 85, 247, 0.14)',
+                            color: '#C084FC',
+                            border: '1px solid rgba(168, 85, 247, 0.28)',
+                            borderRadius: '6px',
+                            padding: '1px 6px',
+                            fontSize: '0.64rem',
+                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '3px',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            <Repeat size={10} />
+                            <span>Daily{t.reminder_time ? ` at ${t.reminder_time}` : ''}</span>
+                          </span>
+                        )}
+
+                        {t.priority && (
+                          <span style={{
+                            background: priorityAccent.bg,
+                            color: priorityAccent.color,
+                            border: `1px solid ${priorityAccent.color}40`,
+                            borderRadius: '6px',
+                            padding: '1px 6px',
+                            fontSize: '0.64rem',
+                            fontWeight: 700,
+                            textTransform: 'capitalize',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {t.priority}
+                          </span>
+                        )}
+
+                        {t.is_google_calendar && (
+                          <span style={{
+                            background: 'rgba(66, 133, 244, 0.16)',
+                            color: '#60A5FA',
+                            border: '1px solid rgba(66, 133, 244, 0.3)',
+                            borderRadius: '6px',
+                            padding: '1px 6px',
+                            fontSize: '0.64rem',
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap'
+                          }}>
+                            GCal
+                          </span>
+                        )}
+
+                        {hasSubtasks && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleExpand(t.id);
+                            }}
+                            style={{
+                              background: completedSubCount === subtaskCount ? 'rgba(16, 185, 129, 0.16)' : 'rgba(56, 189, 248, 0.14)',
+                              border: completedSubCount === subtaskCount ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid rgba(56, 189, 248, 0.35)',
+                              color: completedSubCount === subtaskCount ? '#34d399' : '#38bdf8',
+                              borderRadius: '6px',
+                              padding: '2px 8px',
+                              fontSize: '0.65rem',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              whiteSpace: 'nowrap',
+                              flexShrink: 0
+                            }}
+                            title="Click to view/hide subtasks"
+                          >
+                            <span>📁 {completedSubCount}/{subtaskCount} Subtasks ({subtaskPercent}%)</span>
+                            {isExpanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Mobile Dedicated Clean Action Toolbar */}
+                      {!t.is_google_calendar && (
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          marginLeft: '34px',
+                          marginTop: '2px',
+                          flexWrap: 'wrap'
+                        }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingTaskId(null);
+                              setAddingSubtaskParentId(t.id);
+                              setLocalExpanded(prev => ({ ...prev, [t.id]: true }));
+                              setSubtaskTitle('');
+                              setSubtaskTime('');
+                            }}
+                            style={{
+                              background: 'rgba(56, 189, 248, 0.1)',
+                              border: '1px solid rgba(56, 189, 248, 0.25)',
+                              color: '#38bdf8',
+                              borderRadius: '7px',
+                              cursor: 'pointer',
+                              padding: '5px 9px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '0.70rem',
+                              fontWeight: 600
+                            }}
+                            title="Add subtask to this task"
+                          >
+                            <Plus size={12} />
+                            <span>Subtask</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCompletionPromptTask(t);
+                              setPromptComment(t.completion_comment || '');
+                              setPromptAttachments(parseAttachments(t.attachments));
+                            }}
+                            style={{
+                              background: (t.completion_comment || (t.attachments && t.attachments !== '[]')) ? 'rgba(56, 189, 248, 0.16)' : 'rgba(255, 255, 255, 0.05)',
+                              border: (t.completion_comment || (t.attachments && t.attachments !== '[]')) ? '1px solid rgba(56, 189, 248, 0.35)' : '1px solid rgba(255, 255, 255, 0.1)',
+                              color: (t.completion_comment || (t.attachments && t.attachments !== '[]')) ? '#38bdf8' : '#94a3b8',
+                              borderRadius: '7px',
+                              cursor: 'pointer',
+                              padding: '5px 9px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '0.70rem',
+                              fontWeight: 600
+                            }}
+                            title="Add or view completion note & attachments"
+                          >
+                            <MessageSquare size={12} />
+                            <span>{(t.completion_comment || (t.attachments && t.attachments !== '[]')) ? 'Note/📎' : '+ Note'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAddingSubtaskParentId(null);
+                              handleStartEditTask(t);
+                            }}
+                            style={{
+                              background: 'rgba(56, 189, 248, 0.1)',
+                              border: '1px solid rgba(56, 189, 248, 0.25)',
+                              color: '#38bdf8',
+                              borderRadius: '7px',
+                              cursor: 'pointer',
+                              padding: '5px 9px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '0.70rem',
+                              fontWeight: 600
+                            }}
+                            title="Edit reminder / description"
+                          >
+                            <Edit3 size={12} />
+                            <span>Edit</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   ) : (
+                    /* ── DESKTOP PARENT TASK CARD ── */
                     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
                       
                       {/* Squircle Checkbox with Date-Aware Toggle */}
@@ -1740,7 +2098,8 @@ export const TasksModal = ({
                             fontWeight: 500,
                             display: 'inline-flex',
                             alignItems: 'center',
-                            gap: '4px'
+                            gap: '4px',
+                            whiteSpace: 'nowrap'
                           }}>
                             <Clock size={11} color={done ? '#64748B' : overdue ? '#F87171' : '#0D9488'} />
                             <span>
@@ -1758,7 +2117,8 @@ export const TasksModal = ({
                             borderRadius: '6px',
                             padding: '1px 6px',
                             fontSize: '0.64rem',
-                            fontWeight: 700
+                            fontWeight: 700,
+                            whiteSpace: 'nowrap'
                           }}>
                             {done ? '✓ Completed' : overdue ? '⚠️ Overdue' : '⏳ Pending'}
                           </span>
@@ -1774,7 +2134,8 @@ export const TasksModal = ({
                               fontWeight: 600,
                               display: 'inline-flex',
                               alignItems: 'center',
-                              gap: '3px'
+                              gap: '3px',
+                              whiteSpace: 'nowrap'
                             }}>
                               <Repeat size={10} />
                               <span>Daily{t.reminder_time ? ` at ${t.reminder_time}` : ''}</span>
@@ -1790,7 +2151,8 @@ export const TasksModal = ({
                               padding: '1px 6px',
                               fontSize: '0.64rem',
                               fontWeight: 700,
-                              textTransform: 'capitalize'
+                              textTransform: 'capitalize',
+                              whiteSpace: 'nowrap'
                             }}>
                               {t.priority}
                             </span>
@@ -1804,7 +2166,8 @@ export const TasksModal = ({
                               borderRadius: '6px',
                               padding: '1px 6px',
                               fontSize: '0.64rem',
-                              fontWeight: 600
+                              fontWeight: 600,
+                              whiteSpace: 'nowrap'
                             }}>
                               GCal
                             </span>
@@ -1828,7 +2191,9 @@ export const TasksModal = ({
                                 cursor: 'pointer',
                                 display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '4px'
+                                gap: '4px',
+                                whiteSpace: 'nowrap',
+                                flexShrink: 0
                               }}
                               title="Click to view/hide subtasks"
                             >
@@ -1845,6 +2210,7 @@ export const TasksModal = ({
                           <button
                             type="button"
                             onClick={() => {
+                              setEditingTaskId(null);
                               setAddingSubtaskParentId(t.id);
                               setLocalExpanded(prev => ({ ...prev, [t.id]: true }));
                               setSubtaskTitle('');
@@ -1861,7 +2227,8 @@ export const TasksModal = ({
                               alignItems: 'center',
                               gap: '3px',
                               fontSize: '0.68rem',
-                              fontWeight: 600
+                              fontWeight: 600,
+                              whiteSpace: 'nowrap'
                             }}
                             title="Add subtask to this task"
                           >
@@ -1890,7 +2257,8 @@ export const TasksModal = ({
                                 alignItems: 'center',
                                 gap: '3px',
                                 fontSize: '0.68rem',
-                                fontWeight: 600
+                                fontWeight: 600,
+                                whiteSpace: 'nowrap'
                               }}
                               title="Add or view completion note & attachments"
                             >
@@ -1899,7 +2267,10 @@ export const TasksModal = ({
                             </button>
                             <button
                               type="button"
-                              onClick={() => handleStartEditTask(t)}
+                              onClick={() => {
+                                setAddingSubtaskParentId(null);
+                                handleStartEditTask(t);
+                              }}
                               style={{
                                 background: 'rgba(56, 189, 248, 0.1)',
                                 border: '1px solid rgba(56, 189, 248, 0.25)',
@@ -1911,7 +2282,8 @@ export const TasksModal = ({
                                 alignItems: 'center',
                                 gap: '3px',
                                 fontSize: '0.68rem',
-                                fontWeight: 600
+                                fontWeight: 600,
+                                whiteSpace: 'nowrap'
                               }}
                               title="Edit reminder / description"
                             >
@@ -1958,9 +2330,9 @@ export const TasksModal = ({
                   {isExpanded && (hasSubtasks || addingSubtaskParentId === t.id) && (
                     <div style={{
                       marginTop: '8px',
-                      paddingLeft: isMobile ? '12px' : '24px',
+                      paddingLeft: isMobile ? '8px' : '22px',
                       borderLeft: '2px solid rgba(56, 189, 248, 0.25)',
-                      marginLeft: isMobile ? '8px' : '16px',
+                      marginLeft: isMobile ? '4px' : '16px',
                       display: 'flex',
                       flexDirection: 'column',
                       gap: '7px',
@@ -2230,7 +2602,7 @@ export const TasksModal = ({
                             style={{
                               display: 'flex',
                               flexDirection: 'column',
-                              gap: '4px',
+                              gap: '5px',
                               background: stDone ? 'rgba(255, 255, 255, 0.02)' : 'rgba(255, 255, 255, 0.04)',
                               border: stDone ? '1px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(255, 255, 255, 0.09)',
                               borderLeft: `3px solid ${stPriorityInfo.color}`,
@@ -2239,139 +2611,287 @@ export const TasksModal = ({
                               transition: 'all 0.15s ease'
                             }}
                           >
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                              <div 
-                                onClick={() => onToggleTaskInternal(st)}
-                                style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', flex: 1, minWidth: 0 }}
-                              >
-                                <div style={{
-                                  width: '18px',
-                                  height: '18px',
-                                  borderRadius: '5px',
-                                  border: stDone ? '1.5px solid #10B981' : '1.5px solid #475569',
-                                  background: stDone ? '#10B981' : 'transparent',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  flexShrink: 0
-                                }}>
-                                  {stDone && <Check size={11} color="#FFF" strokeWidth={3} />}
+                            {isMobile ? (
+                              /* ── MOBILE SUBTASK LAYOUT: 2 Clean Rows ── */
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', width: '100%' }}>
+                                {/* Row 1: Checkbox + Full-width Subtask Title + Edit & Delete Icons */}
+                                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
+                                  <div 
+                                    onClick={() => onToggleTaskInternal(st)}
+                                    style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', cursor: 'pointer', flex: 1, minWidth: 0 }}
+                                  >
+                                    <div style={{
+                                      width: '18px',
+                                      height: '18px',
+                                      borderRadius: '5px',
+                                      border: stDone ? '1.5px solid #10B981' : '1.5px solid #475569',
+                                      background: stDone ? '#10B981' : 'transparent',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      flexShrink: 0,
+                                      marginTop: '2px'
+                                    }}>
+                                      {stDone && <Check size={11} color="#FFF" strokeWidth={3} />}
+                                    </div>
+                                    <span style={{
+                                      color: stDone ? '#64748B' : '#E2E8F0',
+                                      fontSize: '0.84rem',
+                                      fontWeight: 500,
+                                      textDecoration: stDone ? 'line-through' : 'none',
+                                      wordBreak: 'break-word',
+                                      lineHeight: 1.35
+                                    }}>
+                                      {st.title}
+                                    </span>
+                                  </div>
+
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setAddingSubtaskParentId(null);
+                                        handleStartEditTask(st);
+                                      }}
+                                      style={{
+                                        background: 'rgba(56, 189, 248, 0.1)',
+                                        border: '1px solid rgba(56, 189, 248, 0.25)',
+                                        color: '#38bdf8',
+                                        borderRadius: '5px',
+                                        cursor: 'pointer',
+                                        padding: '3px 6px',
+                                        display: 'inline-flex',
+                                        alignItems: 'center'
+                                      }}
+                                      title="Edit subtask"
+                                    >
+                                      <Edit3 size={11} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteTask(st.id);
+                                      }}
+                                      style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        color: '#EF4444',
+                                        opacity: 0.6,
+                                        cursor: 'pointer',
+                                        padding: '3px'
+                                      }}
+                                      title="Delete subtask"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </div>
                                 </div>
-                                <span style={{
-                                  color: stDone ? '#64748B' : '#E2E8F0',
-                                  fontSize: '0.82rem',
-                                  fontWeight: 500,
-                                  textDecoration: stDone ? 'line-through' : 'none',
-                                  wordBreak: 'break-word',
-                                  lineHeight: 1.3
-                                }}>
-                                  {st.title}
-                                </span>
-                              </div>
 
-                              {/* Subtask Meta Chips & Quick Actions */}
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                                {st.reminder_time && (
+                                {/* Row 2: Metadata & Quick Note (indented under title) */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '26px', flexWrap: 'wrap' }}>
+                                  {st.reminder_time && (
+                                    <span style={{
+                                      color: '#38bdf8',
+                                      fontSize: '0.66rem',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '2px',
+                                      background: 'rgba(56, 189, 248, 0.12)',
+                                      border: '1px solid rgba(56, 189, 248, 0.25)',
+                                      borderRadius: '4px',
+                                      padding: '1px 5px',
+                                      whiteSpace: 'nowrap'
+                                    }}>
+                                      <Clock size={10} />
+                                      <span>{st.reminder_time}</span>
+                                    </span>
+                                  )}
+
                                   <span style={{
-                                    color: '#38bdf8',
-                                    fontSize: '0.66rem',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '2px',
-                                    background: 'rgba(56, 189, 248, 0.12)',
-                                    border: '1px solid rgba(56, 189, 248, 0.25)',
+                                    color: stPriorityInfo.color,
+                                    background: stPriorityInfo.bg,
+                                    border: `1px solid ${stPriorityInfo.border}`,
                                     borderRadius: '4px',
-                                    padding: '1px 5px'
+                                    padding: '1px 5px',
+                                    fontSize: '0.64rem',
+                                    fontWeight: 700,
+                                    whiteSpace: 'nowrap'
                                   }}>
-                                    <Clock size={10} />
-                                    <span>{st.reminder_time}</span>
+                                    {stPriorityInfo.dot} {stPriorityInfo.label}
                                   </span>
-                                )}
 
-                                <span style={{
-                                  color: stPriorityInfo.color,
-                                  background: stPriorityInfo.bg,
-                                  border: `1px solid ${stPriorityInfo.border}`,
-                                  borderRadius: '4px',
-                                  padding: '1px 5px',
-                                  fontSize: '0.64rem',
-                                  fontWeight: 700
-                                }}>
-                                  {stPriorityInfo.dot} {stPriorityInfo.label}
-                                </span>
-
-                                {/* Subtask Note / Attach button */}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setCompletionPromptTask(st);
-                                    setPromptComment(st.completion_comment || '');
-                                    setPromptAttachments(parseAttachments(st.attachments));
-                                  }}
-                                  style={{
-                                    background: (st.completion_comment || (st.attachments && st.attachments !== '[]')) ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-                                    border: (st.completion_comment || (st.attachments && st.attachments !== '[]')) ? '1px solid rgba(56, 189, 248, 0.35)' : '1px solid rgba(255, 255, 255, 0.1)',
-                                    color: (st.completion_comment || (st.attachments && st.attachments !== '[]')) ? '#38bdf8' : '#94a3b8',
-                                    borderRadius: '5px',
-                                    cursor: 'pointer',
-                                    padding: '2px 5px',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '2px',
-                                    fontSize: '0.64rem',
-                                    fontWeight: 600
-                                  }}
-                                  title="Note / Attachments"
-                                >
-                                  <MessageSquare size={10} />
-                                  <span>{(st.completion_comment || (st.attachments && st.attachments !== '[]')) ? 'Note/📎' : '+ Note'}</span>
-                                </button>
-
-                                {/* Subtask Edit button */}
-                                <button
-                                  type="button"
-                                  onClick={() => handleStartEditTask(st)}
-                                  style={{
-                                    background: 'rgba(56, 189, 248, 0.08)',
-                                    border: '1px solid rgba(56, 189, 248, 0.2)',
-                                    color: '#38bdf8',
-                                    borderRadius: '5px',
-                                    cursor: 'pointer',
-                                    padding: '2px 5px',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '2px',
-                                    fontSize: '0.64rem',
-                                    fontWeight: 600
-                                  }}
-                                  title="Edit subtask"
-                                >
-                                  <Edit3 size={10} />
-                                </button>
-
-                                {/* Subtask Delete button */}
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteTask(st.id);
-                                  }}
-                                  style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    color: '#EF4444',
-                                    opacity: 0.5,
-                                    cursor: 'pointer',
-                                    padding: '2px',
-                                    display: 'flex',
-                                    alignItems: 'center'
-                                  }}
-                                  title="Delete subtask"
-                                >
-                                  <Trash2 size={12} />
-                                </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setCompletionPromptTask(st);
+                                      setPromptComment(st.completion_comment || '');
+                                      setPromptAttachments(parseAttachments(st.attachments));
+                                    }}
+                                    style={{
+                                      background: (st.completion_comment || (st.attachments && st.attachments !== '[]')) ? 'rgba(56, 189, 248, 0.16)' : 'rgba(255, 255, 255, 0.05)',
+                                      border: (st.completion_comment || (st.attachments && st.attachments !== '[]')) ? '1px solid rgba(56, 189, 248, 0.35)' : '1px solid rgba(255, 255, 255, 0.1)',
+                                      color: (st.completion_comment || (st.attachments && st.attachments !== '[]')) ? '#38bdf8' : '#94a3b8',
+                                      borderRadius: '5px',
+                                      cursor: 'pointer',
+                                      padding: '2px 6px',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px',
+                                      fontSize: '0.66rem',
+                                      fontWeight: 600,
+                                      whiteSpace: 'nowrap'
+                                    }}
+                                    title="Note / Attachments"
+                                  >
+                                    <MessageSquare size={10} />
+                                    <span>{(st.completion_comment || (st.attachments && st.attachments !== '[]')) ? 'Note/📎' : '+ Note'}</span>
+                                  </button>
+                                </div>
                               </div>
-                            </div>
+                            ) : (
+                              /* ── DESKTOP SUBTASK LAYOUT ── */
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                                <div 
+                                  onClick={() => onToggleTaskInternal(st)}
+                                  style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', flex: 1, minWidth: 0 }}
+                                >
+                                  <div style={{
+                                    width: '18px',
+                                    height: '18px',
+                                    borderRadius: '5px',
+                                    border: stDone ? '1.5px solid #10B981' : '1.5px solid #475569',
+                                    background: stDone ? '#10B981' : 'transparent',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    flexShrink: 0
+                                  }}>
+                                    {stDone && <Check size={11} color="#FFF" strokeWidth={3} />}
+                                  </div>
+                                  <span style={{
+                                    color: stDone ? '#64748B' : '#E2E8F0',
+                                    fontSize: '0.82rem',
+                                    fontWeight: 500,
+                                    textDecoration: stDone ? 'line-through' : 'none',
+                                    wordBreak: 'break-word',
+                                    lineHeight: 1.3
+                                  }}>
+                                    {st.title}
+                                  </span>
+                                </div>
+
+                                {/* Subtask Meta Chips & Quick Actions */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                                  {st.reminder_time && (
+                                    <span style={{
+                                      color: '#38bdf8',
+                                      fontSize: '0.66rem',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '2px',
+                                      background: 'rgba(56, 189, 248, 0.12)',
+                                      border: '1px solid rgba(56, 189, 248, 0.25)',
+                                      borderRadius: '4px',
+                                      padding: '1px 5px',
+                                      whiteSpace: 'nowrap'
+                                    }}>
+                                      <Clock size={10} />
+                                      <span>{st.reminder_time}</span>
+                                    </span>
+                                  )}
+
+                                  <span style={{
+                                    color: stPriorityInfo.color,
+                                    background: stPriorityInfo.bg,
+                                    border: `1px solid ${stPriorityInfo.border}`,
+                                    borderRadius: '4px',
+                                    padding: '1px 5px',
+                                    fontSize: '0.64rem',
+                                    fontWeight: 700,
+                                    whiteSpace: 'nowrap'
+                                  }}>
+                                    {stPriorityInfo.dot} {stPriorityInfo.label}
+                                  </span>
+
+                                  {/* Subtask Note / Attach button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setCompletionPromptTask(st);
+                                      setPromptComment(st.completion_comment || '');
+                                      setPromptAttachments(parseAttachments(st.attachments));
+                                    }}
+                                    style={{
+                                      background: (st.completion_comment || (st.attachments && st.attachments !== '[]')) ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                                      border: (st.completion_comment || (st.attachments && st.attachments !== '[]')) ? '1px solid rgba(56, 189, 248, 0.35)' : '1px solid rgba(255, 255, 255, 0.1)',
+                                      color: (st.completion_comment || (st.attachments && st.attachments !== '[]')) ? '#38bdf8' : '#94a3b8',
+                                      borderRadius: '5px',
+                                      cursor: 'pointer',
+                                      padding: '2px 5px',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '2px',
+                                      fontSize: '0.64rem',
+                                      fontWeight: 600,
+                                      whiteSpace: 'nowrap'
+                                    }}
+                                    title="Note / Attachments"
+                                  >
+                                    <MessageSquare size={10} />
+                                    <span>{(st.completion_comment || (st.attachments && st.attachments !== '[]')) ? 'Note/📎' : '+ Note'}</span>
+                                  </button>
+
+                                  {/* Subtask Edit button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAddingSubtaskParentId(null);
+                                      handleStartEditTask(st);
+                                    }}
+                                    style={{
+                                      background: 'rgba(56, 189, 248, 0.08)',
+                                      border: '1px solid rgba(56, 189, 248, 0.2)',
+                                      color: '#38bdf8',
+                                      borderRadius: '5px',
+                                      cursor: 'pointer',
+                                      padding: '2px 5px',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '2px',
+                                      fontSize: '0.64rem',
+                                      fontWeight: 600,
+                                      whiteSpace: 'nowrap'
+                                    }}
+                                    title="Edit subtask"
+                                  >
+                                    <Edit3 size={10} />
+                                  </button>
+
+                                  {/* Subtask Delete button */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteTask(st.id);
+                                    }}
+                                    style={{
+                                      background: 'none',
+                                      border: 'none',
+                                      color: '#EF4444',
+                                      opacity: 0.5,
+                                      cursor: 'pointer',
+                                      padding: '2px',
+                                      display: 'flex',
+                                      alignItems: 'center'
+                                    }}
+                                    title="Delete subtask"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              </div>
+                            )}
 
                             {/* Subtask Note Display */}
                             {st.completion_comment && (
@@ -2499,7 +3019,8 @@ export const TasksModal = ({
                                     padding: '2px 7px',
                                     fontSize: '0.68rem',
                                     cursor: 'pointer',
-                                    fontWeight: 600
+                                    fontWeight: 600,
+                                    whiteSpace: 'nowrap'
                                   }}
                                 >
                                   <span>{priorityMeta[pKey].dot}</span> {priorityMeta[pKey].label}
@@ -2550,6 +3071,7 @@ export const TasksModal = ({
                         <button
                           type="button"
                           onClick={() => {
+                            setEditingTaskId(null);
                             setAddingSubtaskParentId(t.id);
                             setSubtaskTitle('');
                             setSubtaskTime('');
