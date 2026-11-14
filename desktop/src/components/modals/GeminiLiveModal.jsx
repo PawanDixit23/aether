@@ -494,7 +494,6 @@ export default function GeminiLiveModal({
         borderRadius: '50%',
         background: `radial-gradient(circle, ${currentTheme.glow} 0%, rgba(3, 7, 18, 0) 70%)`,
         pointerEvents: 'none',
-        transition: 'background 0.4s ease',
         zIndex: 1
       }} />
 
@@ -826,31 +825,6 @@ export default function GeminiLiveModal({
           <PhoneOff size={22} />
         </button>
       </div>
-
-      {/* Keyframe animations */}
-      <style>{`
-        @keyframes liveRipple {
-          0% { transform: scale(0.92); opacity: 0.7; }
-          50% { transform: scale(1.15); opacity: 0.3; }
-          100% { transform: scale(0.92); opacity: 0.7; }
-        }
-        @keyframes orbBreath {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.05); }
-        }
-        @keyframes liveBar {
-          0%, 100% { transform: scaleY(0.4); opacity: 0.7; }
-          50% { transform: scaleY(1.2); opacity: 1; }
-        }
-        @keyframes livePulse {
-          0%, 100% { transform: scale(0.95); opacity: 0.8; }
-          50% { transform: scale(1.08); opacity: 1; }
-        }
-        @keyframes liveSpin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   );
 }

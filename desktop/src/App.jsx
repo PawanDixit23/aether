@@ -104,7 +104,7 @@ const PermissionsModal = React.lazy(() => import('./components/modals/Permission
 const SettingsSubModals = React.lazy(() => import('./components/modals/SettingsSubModals').then(m => ({ default: m.SettingsSubModals })));
 const WorkspaceToolsModal = React.lazy(() => import('./components/modals/WorkspaceToolsModal').then(m => ({ default: m.WorkspaceToolsModal })));
 const SocialMediaModal = React.lazy(() => import('./components/modals/SocialMediaModal').then(m => ({ default: m.SocialMediaModal })));
-const GeminiLiveModal = React.lazy(() => import('./components/modals/GeminiLiveModal'));
+import GeminiLiveModal from './components/modals/GeminiLiveModal';
 
 const API_BASE = typeof window !== 'undefined' && (
   window.location.protocol === 'file:' || 
@@ -831,6 +831,7 @@ export default function App() {
 
   // Reliable Scroll to Bottom for Chat Feed (Ensures chat always opens at the bottom)
   const scrollToBottom = (behavior = 'auto') => {
+    if (showGeminiLive) return; // Prevent viewport scroll jitter while Live duplex modal is active
     if (geminiChatFeedRef.current) {
       geminiChatFeedRef.current.scrollTop = geminiChatFeedRef.current.scrollHeight;
     }
@@ -841,7 +842,7 @@ export default function App() {
 
   // Auto-scroll chat feed to bottom on new messages, opening chat, switching sessions or stop processing
   useEffect(() => {
-    if (!showDashboard && chatHistory.length > 0) {
+    if (!showDashboard && !showGeminiLive && chatHistory.length > 0) {
       scrollToBottom('auto');
       // Multiple delayed passes to guarantee landing at bottom after layout, images & markdown calculation
       const t1 = setTimeout(() => scrollToBottom('auto'), 40);
@@ -853,7 +854,7 @@ export default function App() {
         clearTimeout(t3);
       };
     }
-  }, [showDashboard, activeSessionId, chatHistory.length, isProcessing]);
+  }, [showDashboard, showGeminiLive, activeSessionId, chatHistory.length, isProcessing]);
 
   // Dynamic Claude-style Thinking & Research state (changes emoji & text smoothly)
   useEffect(() => {
@@ -3978,10 +3979,10 @@ export default function App() {
 
   // Scroll to bottom only if user hasn't scrolled up
   useEffect(() => {
-    if (!userScrolledUpRef.current && showConversation) {
+    if (!userScrolledUpRef.current && showConversation && !showGeminiLive) {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [chatHistory, isProcessing, showConversation]);
+  }, [chatHistory, isProcessing, showConversation, showGeminiLive]);
 
   // Determine current day phase dynamically
   const getDayPhaseInfo = () => {
