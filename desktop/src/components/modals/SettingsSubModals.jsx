@@ -980,7 +980,7 @@ export const SettingsSubModals = ({
                 paddingTop: isMobile ? 'max(52px, calc(env(safe-area-inset-top, 0px) + 16px))' : '22px',
                 paddingBottom: isMobile ? 'max(24px, env(safe-area-inset-bottom))' : '20px',
                 width: '100%', 
-                maxWidth: isMobile ? '100%' : '520px', 
+                maxWidth: isMobile ? '100%' : '580px', 
                 height: isMobile ? '100dvh' : 'auto',
                 maxHeight: isMobile ? '100dvh' : '92vh', 
                 overflowY: 'auto', 
@@ -991,20 +991,20 @@ export const SettingsSubModals = ({
                 gap: '12px'
               }}
             >
-              {/* Header: Edge to Edge matching Finance Tab */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, gap: '8px' }}>
+              {/* Header: Clean Edge to Edge matching Finance Tab */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, gap: '10px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '10px', minWidth: 0, flex: 1 }}>
                   <div style={{ width: '38px', height: '38px', borderRadius: '12px', background: 'rgba(56, 189, 248, 0.14)', border: '1px solid rgba(56, 189, 248, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', flexShrink: 0 }}>
                     <Database size={19} />
                   </div>
                   <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
-                      <span style={{ fontSize: isMobile ? '1.08rem' : '1.25rem', fontWeight: 700, color: '#ffffff', letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>Memory Vault</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'nowrap' }}>
+                      <span style={{ fontSize: isMobile ? '1.05rem' : '1.2rem', fontWeight: 700, color: '#ffffff', letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>Memory Vault</span>
                       <span style={{ fontSize: '0.68rem', fontWeight: 700, background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.3)', padding: '2px 8px', borderRadius: '999px', color: '#38bdf8', whiteSpace: 'nowrap', flexShrink: 0, display: 'inline-flex', alignItems: 'center' }}>
                         {(memories || []).length} facts
                       </span>
                     </div>
-                    <div style={{ fontSize: '0.70rem', color: '#64748b', marginTop: '1px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Personal context & continuous learning</div>
+                    <div style={{ fontSize: '0.70rem', color: '#64748b', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Personal context & continuous learning</div>
                   </div>
                 </div>
 
@@ -1059,30 +1059,6 @@ export const SettingsSubModals = ({
                   >
                     <Download size={13} />
                     {isMobile ? null : <span>Export</span>}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSyncPhoneContacts}
-                    disabled={isSyncingContacts}
-                    style={{
-                      background: 'rgba(56, 189, 248, 0.12)',
-                      border: '1px solid rgba(56, 189, 248, 0.35)',
-                      color: '#38bdf8',
-                      fontSize: '0.72rem',
-                      fontWeight: 600,
-                      padding: isMobile ? '6px 9px' : '5px 10px',
-                      borderRadius: '20px',
-                      cursor: isSyncingContacts ? 'wait' : 'pointer',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      whiteSpace: 'nowrap',
-                      lineHeight: 1
-                    }}
-                    title="Sync phone contacts to Memory Vault"
-                  >
-                    <span>📲</span>
-                    <span>{isMobile ? 'Sync' : (isSyncingContacts ? 'Syncing...' : 'Sync Contacts')}</span>
                   </button>
                   <button 
                     type="button" 

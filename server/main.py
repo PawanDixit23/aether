@@ -844,7 +844,7 @@ async def _execute_quick_capture(
     # Ensure ChatSession exists or auto-title it (Skip completely for Temporary Chats)
     if eff_email and not is_temporary:
         try:
-            sess_obj = db.query(ChatSession).filter(ChatSession.id == active_session_id, ChatSession.user_email == eff_email).first()
+            sess_obj = db.query(ChatSession).filter(ChatSession.id == active_session_id).first()
             raw_title = user_msg.replace("📸", "").strip()
             smart_title = (raw_title[:38] + ("..." if len(raw_title) > 38 else "")) if raw_title else "New Conversation"
             if not sess_obj:
@@ -857,6 +857,7 @@ async def _execute_quick_capture(
                 )
                 db.add(sess_obj)
             else:
+                sess_obj.user_email = eff_email
                 if sess_obj.title in ["New Conversation", "New Chat", "default"] and smart_title:
                     sess_obj.title = smart_title
                 sess_obj.updated_at = datetime.utcnow()

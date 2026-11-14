@@ -318,8 +318,8 @@ export default function GeminiLiveModal({
       console.error('[Gemini Live Dispatch Error]', err);
       isDispatchingRef.current = false;
       latestSpokenRef.current = '';
-      setSessionState('listening');
-      startLiveListening();
+      setAiResponse("नमस्ते! मैं सुन रहा हूँ, कृपया दोबारा बोलें।");
+      speakLiveResponse("नमस्ते! मैं सुन रहा हूँ, कृपया दोबारा बोलें।");
     }
   };
 

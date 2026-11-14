@@ -106,7 +106,11 @@ const WorkspaceToolsModal = React.lazy(() => import('./components/modals/Workspa
 const SocialMediaModal = React.lazy(() => import('./components/modals/SocialMediaModal').then(m => ({ default: m.SocialMediaModal })));
 const GeminiLiveModal = React.lazy(() => import('./components/modals/GeminiLiveModal'));
 
-const API_BASE = typeof window !== 'undefined' && (window.location.protocol === 'file:' || window.location.protocol === 'capacitor:')
+const API_BASE = typeof window !== 'undefined' && (
+  window.location.protocol === 'file:' || 
+  window.location.protocol === 'capacitor:' || 
+  window.location.port === '5173'
+)
   ? `http://${window.location.hostname || '127.0.0.1'}:8000/api`
   : '/api';
 

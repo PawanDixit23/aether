@@ -65,6 +65,7 @@ def ensure_schema_migrations():
         "ALTER TABLE chat_sessions ADD COLUMN is_pinned BOOLEAN DEFAULT FALSE",
         "ALTER TABLE chat_sessions ADD COLUMN project VARCHAR",
         "ALTER TABLE memory_vault ADD COLUMN embedding TEXT",
+        "ALTER TABLE chat_messages ADD COLUMN embedding TEXT",
     ]
 
     for stmt in migration_statements:
