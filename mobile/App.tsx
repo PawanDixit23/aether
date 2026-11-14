@@ -479,24 +479,33 @@ export default function App() {
                       email: c.emails && c.emails.length > 0 ? c.emails[0].email : ''
                     })).filter((c: any) => c.name && c.phone);
 
+                    const safePayload = encodeURIComponent(JSON.stringify(cleanList));
                     webViewRef.current?.injectJavaScript(`
-                      if (window.__onContactsBatchSynced) {
-                        window.__onContactsBatchSynced(${JSON.stringify(cleanList)});
+                      try {
+                        const parsed = JSON.parse(decodeURIComponent("${safePayload}"));
+                        if (window.__onContactsBatchSynced) {
+                          window.__onContactsBatchSynced(parsed);
+                        }
+                      } catch (err) {
+                        if (window.__onContactsSyncFailed) {
+                          window.__onContactsSyncFailed("Sync decode error: " + err.message);
+                        }
                       }
                       true;
                     `);
                   } else {
                     webViewRef.current?.injectJavaScript(`
                       if (window.__onContactsSyncFailed) {
-                        window.__onContactsSyncFailed('Contacts permission was not granted on device.');
+                        window.__onContactsSyncFailed('Contacts permission was not granted on device. Please allow Contacts in Phone Settings.');
                       }
                       true;
                     `);
                   }
                 } catch (cSyncErr: any) {
+                  const safeErrMsg = encodeURIComponent(cSyncErr?.message || 'Error reading contacts');
                   webViewRef.current?.injectJavaScript(`
                     if (window.__onContactsSyncFailed) {
-                      window.__onContactsSyncFailed(${JSON.stringify(cSyncErr?.message || 'Error reading contacts')});
+                      window.__onContactsSyncFailed(decodeURIComponent("${safeErrMsg}"));
                     }
                     true;
                   `);

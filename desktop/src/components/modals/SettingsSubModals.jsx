@@ -85,25 +85,35 @@ export const SettingsSubModals = ({
   const currentKeyVal = modalProviderTab === 'openai' ? (openaiKey || '') : modalProviderTab === 'grok' ? (grokKey || '') : (apiKey || '');
 
   const [isSyncingContacts, setIsSyncingContacts] = useState(false);
+  const syncTimeoutRef = useRef(null);
 
   const handleSyncPhoneContacts = async () => {
     setIsSyncingContacts(true);
     showToast("Reading phone contacts... 📱", "info");
+
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    syncTimeoutRef.current = setTimeout(() => {
+      setIsSyncingContacts(false);
+      showToast("Sync timed out. Please allow Contacts permission in phone settings.", "info");
+    }, 12000);
 
     // 1. Mobile App React Native WebView bridge
     if (typeof window !== 'undefined' && window.ReactNativeWebView) {
       try {
         window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_CONTACTS_SYNC' }));
         return;
-      } catch (e) {}
+      } catch (e) {
+        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+      }
     }
 
     // 2. Modern Web Contacts API fallback (Android Chrome)
-    if (typeof navigator !== 'undefined' && 'contacts' in navigator && 'ContactsManager' in window) {
+    if (typeof navigator !== 'undefined' && 'contacts' in navigator && typeof navigator.contacts?.select === 'function') {
       try {
         const props = ['name', 'tel', 'email'];
         const opts = { multiple: true };
         const contacts = await navigator.contacts.select(props, opts);
+        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
         if (contacts && contacts.length > 0) {
           const formatted = contacts.map(c => ({
             name: c.name && c.name[0] ? c.name[0] : 'Contact',
@@ -114,17 +124,21 @@ export const SettingsSubModals = ({
           return;
         }
       } catch (err) {
+        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
         console.warn('Web Contacts API cancelled or failed:', err);
       }
     }
 
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
     setIsSyncingContacts(false);
     showToast("Please open inside Aether Mobile App to sync phone contacts directly! 📲", "info");
   };
 
   const saveBulkContactsToVault = async (contactsList) => {
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
     if (!contactsList || contactsList.length === 0) {
       setIsSyncingContacts(false);
+      showToast("No contacts found on device", "info");
       return;
     }
     try {
@@ -156,13 +170,16 @@ export const SettingsSubModals = ({
 
   useEffect(() => {
     window.__onContactsBatchSynced = (contactsList) => {
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
       saveBulkContactsToVault(contactsList);
     };
     window.__onContactsSyncFailed = (err) => {
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
       setIsSyncingContacts(false);
       showToast(err || "Contacts access not granted", "error");
     };
     return () => {
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
       delete window.__onContactsBatchSynced;
       delete window.__onContactsSyncFailed;
     };

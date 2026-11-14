@@ -6767,16 +6767,16 @@ export default function App() {
                         display: 'flex',
                         alignItems: 'center',
                         gap: '6px',
-                        padding: '5px 12px',
+                        padding: '5px 14px',
                         borderRadius: '16px',
                         fontSize: '12px',
-                        fontWeight: 500,
+                        fontWeight: 600,
                         border: 'none',
                         cursor: 'pointer',
                         transition: 'all 0.18s ease',
-                        background: !showDashboard ? 'rgba(99, 102, 241, 0.25)' : 'transparent',
-                        color: !showDashboard ? '#818cf8' : 'rgba(255, 255, 255, 0.55)',
-                        boxShadow: !showDashboard ? '0 1px 4px rgba(0,0,0,0.2)' : 'none'
+                        background: !showDashboard ? 'rgba(56, 189, 248, 0.22)' : 'transparent',
+                        color: !showDashboard ? '#38bdf8' : 'rgba(255, 255, 255, 0.55)',
+                        boxShadow: !showDashboard ? '0 1px 6px rgba(56, 189, 248, 0.2)' : 'none'
                       }}
                       title="AI Chat"
                     >
@@ -6785,68 +6785,38 @@ export default function App() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setShowDashboard(true)}
+                      onClick={() => {
+                        stopBriefingAudio();
+                        if (wakeWordRecognitionRef.current) {
+                          try { wakeWordRecognitionRef.current.abort(); } catch (e) {}
+                          wakeWordRecognitionRef.current = null;
+                        }
+                        setShowGeminiLive(true);
+                      }}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: '6px',
-                        padding: '5px 12px',
+                        padding: '5px 14px',
                         borderRadius: '16px',
                         fontSize: '12px',
-                        fontWeight: 500,
+                        fontWeight: 600,
                         border: 'none',
                         cursor: 'pointer',
                         transition: 'all 0.18s ease',
-                        background: showDashboard ? 'rgba(99, 102, 241, 0.25)' : 'transparent',
-                        color: showDashboard ? '#818cf8' : 'rgba(255, 255, 255, 0.55)',
-                        boxShadow: showDashboard ? '0 1px 4px rgba(0,0,0,0.2)' : 'none'
+                        background: showGeminiLive ? 'linear-gradient(135deg, rgba(56, 189, 248, 0.3) 0%, rgba(99, 102, 241, 0.35) 100%)' : 'transparent',
+                        color: showGeminiLive ? '#38bdf8' : 'rgba(255, 255, 255, 0.7)',
+                        boxShadow: showGeminiLive ? '0 1px 6px rgba(56, 189, 248, 0.3)' : 'none'
                       }}
-                      title="Dashboard"
+                      title="Talk with Aether Voice"
                     >
-                      <LayoutDashboard size={14} />
-                      <span className="aether-switcher-label">Dashboard</span>
+                      <Mic size={14} />
+                      <span className="aether-switcher-label">Talk</span>
                     </button>
                   </div>
                 </div>
 
                 <div className="gemini-top-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {/* Gemini Live Hands-Free Duplex Voice Mode Pill */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      stopBriefingAudio();
-                      if (wakeWordRecognitionRef.current) {
-                        try { wakeWordRecognitionRef.current.abort(); } catch (e) {}
-                        wakeWordRecognitionRef.current = null;
-                      }
-                      setShowGeminiLive(true);
-                    }}
-                    title="Gemini Live Hands-Free Voice Mode"
-                    style={{
-                      background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.22) 0%, rgba(2, 132, 199, 0.28) 100%)',
-                      border: '1.2px solid rgba(56, 189, 248, 0.55)',
-                      color: '#38bdf8',
-                      borderRadius: '9999px',
-                      padding: '5px 12px',
-                      fontSize: '0.75rem',
-                      fontWeight: 700,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      cursor: 'pointer',
-                      boxShadow: '0 0 14px rgba(56, 189, 248, 0.28)',
-                      transition: 'all 0.18s ease'
-                    }}
-                  >
-                    <span style={{
-                      width: '7px',
-                      height: '7px',
-                      borderRadius: '50%',
-                      background: '#38bdf8',
-                      boxShadow: '0 0 6px #38bdf8'
-                    }} />
-                    <span>Live</span>
-                  </button>
 
                   {/* Settings & Profile Avatar Button */}
                   <button 
