@@ -800,6 +800,9 @@ export default function App() {
         setIsSpeaking(false);
         setAudioSamplePlaying(null);
         currentAudioRef.current = null;
+        if (continuousVoiceMode && micEnabled && !isListeningRef.current) {
+          setTimeout(() => { try { toggleVoiceRecognition(); } catch {} }, 350);
+        }
       };
       audio.onerror = (e) => {
         console.warn('Audio stream playback error:', e);
@@ -4303,6 +4306,9 @@ export default function App() {
                   playChunkAt(speechCurrentIndexRef.current);
                 } else {
                   stopBriefingAudio();
+                  if (continuousVoiceMode && micEnabled && !isListeningRef.current) {
+                    setTimeout(() => { try { toggleVoiceRecognition(); } catch {} }, 350);
+                  }
                 }
               };
 
