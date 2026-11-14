@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, X, Volume2, Sparkles, RefreshCw, PhoneOff, Radio } from 'lucide-react';
+import { Mic, MicOff, X, Volume2, Sparkles, RefreshCw, PhoneOff, Radio, Square } from 'lucide-react';
 
 export default function GeminiLiveModal({
   isOpen,
@@ -28,11 +28,16 @@ export default function GeminiLiveModal({
   const latestSpokenRef = useRef('');
   const isDispatchingRef = useRef(false);
 
-  // Stop any active audio playback
+  // Stop any active audio playback and immediately release dispatch lock
   const stopAudioPlayback = () => {
     isSpeakingRef.current = false;
+    isDispatchingRef.current = false;
     if (audioPlayerRef.current) {
-      try { audioPlayerRef.current.pause(); } catch (e) {}
+      try {
+        audioPlayerRef.current.onended = null;
+        audioPlayerRef.current.onerror = null;
+        audioPlayerRef.current.pause();
+      } catch (e) {}
       audioPlayerRef.current = null;
     }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -123,7 +128,12 @@ export default function GeminiLiveModal({
     }
 
     if (recognitionRef.current) {
-      try { recognitionRef.current.abort(); } catch (e) {}
+      try {
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onend = null;
+        recognitionRef.current.abort();
+      } catch (e) {}
       recognitionRef.current = null;
     }
 
@@ -217,7 +227,16 @@ export default function GeminiLiveModal({
         }
       };
 
-      rec.start();
+      // Slight safety delay before starting recognition so browser audio pipelines detach cleanly
+      setTimeout(() => {
+        if (isSessionActiveRef.current && !isSpeakingRef.current && !isMuted) {
+          try {
+            rec.start();
+          } catch (err) {
+            console.warn('[rec.start exception]', err);
+          }
+        }
+      }, 50);
     } catch (err) {
       console.warn('[Live Mic start exception]', err);
     }
@@ -408,14 +427,28 @@ export default function GeminiLiveModal({
 
   // Handle User Interrupt / Tap Orb to Barge-In or Send Now
   const handleOrbTap = () => {
-    if (sessionState === 'speaking') {
+    if (sessionState === 'speaking' || isSpeakingRef.current) {
       stopAudioPlayback();
+      clearTimeout(silenceTimerRef.current);
+      latestSpokenRef.current = '';
+      setInterimTranscript('');
       setSessionState('listening');
       startLiveListening();
     } else if (sessionState === 'listening') {
-      if (interimTranscript.trim()) {
-        sendLivePrompt(interimTranscript.trim());
+      const textToSend = (interimTranscript || latestSpokenRef.current || '').trim();
+      if (textToSend) {
+        clearTimeout(silenceTimerRef.current);
+        latestSpokenRef.current = '';
+        setInterimTranscript('');
+        sendLivePrompt(textToSend);
       }
+    } else if (sessionState === 'thinking') {
+      stopAudioPlayback();
+      clearTimeout(silenceTimerRef.current);
+      latestSpokenRef.current = '';
+      setInterimTranscript('');
+      setSessionState('listening');
+      startLiveListening();
     }
   };
 
@@ -772,24 +805,36 @@ export default function GeminiLiveModal({
         <button
           type="button"
           onClick={handleOrbTap}
-          title={sessionState === 'speaking' ? "Tap to interrupt AI" : "Tap to send immediately"}
+          title={
+            sessionState === 'speaking'
+              ? "Aether को रोकें और नया सवाल पूछें (Interrupt AI)"
+              : sessionState === 'thinking'
+              ? "रद्द करें और दोबारा बोलें"
+              : "तुरंत भेजें (Tap to send immediately)"
+          }
           style={{
             width: '64px',
             height: '64px',
             borderRadius: '50%',
-            background: 'rgba(56, 189, 248, 0.18)',
-            border: '1.5px solid rgba(56, 189, 248, 0.45)',
-            color: '#38bdf8',
+            background: sessionState === 'speaking' ? 'rgba(239, 68, 68, 0.22)' : 'rgba(56, 189, 248, 0.18)',
+            border: sessionState === 'speaking' ? '1.5px solid rgba(239, 68, 68, 0.55)' : '1.5px solid rgba(56, 189, 248, 0.45)',
+            color: sessionState === 'speaking' ? '#f87171' : '#38bdf8',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',
             backdropFilter: 'blur(10px)',
-            boxShadow: '0 4px 20px rgba(56, 189, 248, 0.25)',
+            boxShadow: sessionState === 'speaking' ? '0 4px 20px rgba(239, 68, 68, 0.3)' : '0 4px 20px rgba(56, 189, 248, 0.25)',
             transition: 'all 0.18s ease'
           }}
         >
-          <Sparkles size={24} />
+          {sessionState === 'speaking' ? (
+            <Square size={20} fill="#f87171" />
+          ) : sessionState === 'thinking' ? (
+            <RefreshCw size={22} style={{ animation: 'liveSpin 1s linear infinite' }} />
+          ) : (
+            <Sparkles size={24} />
+          )}
         </button>
 
         {/* End Call Button */}
