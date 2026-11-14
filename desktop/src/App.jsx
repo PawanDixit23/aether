@@ -638,6 +638,7 @@ export default function App() {
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
+  const [showGeminiLive, setShowGeminiLive] = useState(false);
   const [isChatDrawerOpen, setIsChatDrawerOpen] = useState(false);
   const [isTemporaryChat, setIsTemporaryChat] = useState(false);
   const [chatHistory, setChatHistory] = useState(() => {
@@ -1030,8 +1031,6 @@ export default function App() {
   const [showBriefingModal, setShowBriefingModal] = useState(false);
   const [executiveBriefingData, setExecutiveBriefingData] = useState(null);
 
-  // Gemini Live Duplex Hands-Free Voice Mode State
-  const [showGeminiLive, setShowGeminiLive] = useState(false);
   const [isSyncingContacts, setIsSyncingContacts] = useState(false);
 
   // 1-Click Phone Contacts Sync (Mobile Bridge + Web Contacts API)
