@@ -4432,6 +4432,11 @@ export default function App() {
 
     const controller = new AbortController();
     activeAbortControllerRef.current = controller;
+    let fetchWatchdog = setTimeout(() => {
+      if (controller && !controller.signal.aborted) {
+        try { controller.abort('timeout'); } catch (e) {}
+      }
+    }, 45000); // 45-second watchdog so prompts never hang indefinitely
 
     try {
       const fullPrompt = activeReplyContext
@@ -4571,39 +4576,25 @@ export default function App() {
         }
       }
 
-      // If Phone Call intent: auto trigger dialer on mobile devices and native app bridge
+      // If Phone Call intent: auto trigger dialer ONLY if a real phone number is already known!
+      // If number is missing, the interactive card lets the user enter it in-app first and save it.
       if (actionType === 'call') {
-        const directTel = actionData.tel_url || (actionData.phone_number ? `tel:${actionData.phone_number}` : 'tel:');
         const cleanNumber = (actionData.phone_number || '').replace(/[^\d+*#]/g, '');
-        if (typeof window !== 'undefined') {
+        if (cleanNumber && typeof window !== 'undefined') {
+          const directTel = actionData.tel_url || `tel:${cleanNumber}`;
           if (window.ReactNativeWebView) {
             try {
-              if (cleanNumber) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({
-                  type: 'MAKE_CALL',
-                  phoneNumber: cleanNumber,
-                  telUrl: directTel
-                }));
-              } else if (actionData.contact_name && actionData.contact_name !== 'Contact') {
-                window.ReactNativeWebView.postMessage(JSON.stringify({
-                  type: 'SEARCH_CONTACT_AND_CALL',
-                  contactName: actionData.contact_name
-                }));
-              } else {
-                window.ReactNativeWebView.postMessage(JSON.stringify({
-                  type: 'MAKE_CALL',
-                  phoneNumber: '',
-                  telUrl: 'tel:'
-                }));
-              }
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'MAKE_CALL',
+                phoneNumber: cleanNumber,
+                telUrl: directTel
+              }));
             } catch (err) {}
           }
-          if (cleanNumber) {
-            try {
-              window.location.href = directTel;
-            } catch (e) {
-              console.warn('Call trigger notice:', e);
-            }
+          try {
+            window.location.href = directTel;
+          } catch (e) {
+            console.warn('Call trigger notice:', e);
           }
         }
       }
@@ -4650,10 +4641,13 @@ export default function App() {
       refreshAllData({ skipChatHistory: true });
     } catch (err) {
       if (err.name === 'AbortError' || controller.signal.aborted) {
+        const isTimeout = controller.signal.reason === 'timeout';
         setChatHistory(prev => [...prev, {
           id: `stopped-${Date.now()}`,
           role: 'assistant',
-          content: "Stopped by user ⏹️",
+          content: isTimeout 
+            ? "Request timed out (server took longer than 45s). Please try again or rephrase your request. ⏱️"
+            : "Stopped by user ⏹️",
           created_at: new Date().toISOString()
         }]);
       } else {
@@ -4665,6 +4659,7 @@ export default function App() {
         showToast("Could not reach Aether Core", 'error');
       }
     } finally {
+      if (fetchWatchdog) clearTimeout(fetchWatchdog);
       activeAbortControllerRef.current = null;
       if (messageQueueRef.current.length > 0) {
         const nextItem = messageQueueRef.current.shift();
@@ -7335,11 +7330,11 @@ export default function App() {
                               </div>
 
                               {!knownPhone && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '4px' }}>
-                                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '4px', width: '100%', boxSizing: 'border-box' }}>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', width: '100%', boxSizing: 'border-box' }}>
                                     <input
                                       type="tel"
-                                      placeholder={`${contactName}'s mobile number (e.g. 8949546909)`}
+                                      placeholder="Enter mobile number (e.g. 8949546909)"
                                       value={currentInputVal}
                                       onChange={(e) => {
                                         const val = e.target.value;
@@ -7350,18 +7345,21 @@ export default function App() {
                                         }));
                                       }}
                                       style={{
-                                        flex: 1,
+                                        flex: '1 1 180px',
+                                        minWidth: 0,
+                                        width: '100%',
+                                        boxSizing: 'border-box',
                                         background: 'rgba(15, 23, 42, 0.85)',
                                         border: '1px solid rgba(34, 197, 94, 0.4)',
                                         borderRadius: '8px',
-                                        padding: '8px 12px',
+                                        padding: '9px 12px',
                                         color: '#f8fafc',
-                                        fontSize: '0.82rem',
+                                        fontSize: '0.84rem',
                                         outline: 'none'
                                       }}
                                     />
-                                    <a
-                                      href={dialHref}
+                                    <button
+                                      type="button"
                                       onClick={(e) => {
                                         if (cleanDigits) {
                                           saveToVault(contactName, cleanDigits);
@@ -7376,37 +7374,41 @@ export default function App() {
                                               }));
                                             } catch (err) {}
                                           }
-                                          window.location.href = dialHref;
+                                          if (cleanDigits) {
+                                            window.location.href = dialHref;
+                                          }
                                         }
                                       }}
                                       style={{
+                                        flex: '1 1 auto',
+                                        minWidth: '120px',
                                         background: '#22c55e',
                                         color: '#fff',
                                         border: 'none',
-                                        padding: '8px 14px',
+                                        padding: '9px 16px',
                                         borderRadius: '8px',
-                                        fontSize: '0.78rem',
+                                        fontSize: '0.82rem',
                                         fontWeight: 600,
                                         display: 'inline-flex',
                                         alignItems: 'center',
-                                        gap: '5px',
+                                        justifyContent: 'center',
+                                        gap: '6px',
                                         cursor: 'pointer',
                                         whiteSpace: 'nowrap',
-                                        textDecoration: 'none',
                                         boxShadow: '0 2px 6px rgba(34, 197, 94, 0.3)'
                                       }}
                                     >
-                                      <Phone size={13} fill="#fff" />
+                                      <Phone size={14} fill="#fff" />
                                       <span>Call & Save</span>
-                                    </a>
+                                    </button>
                                   </div>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '6px', width: '100%' }}>
+                                    <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
                                       💡 Enter once and Aether will remember this contact number
                                     </span>
-                                    <a
-                                      href="tel:"
-                                      onClick={(e) => {
+                                    <button
+                                      type="button"
+                                      onClick={() => {
                                         if (typeof window !== 'undefined') {
                                           if (window.ReactNativeWebView) {
                                             try {
@@ -7429,14 +7431,13 @@ export default function App() {
                                         fontSize: '0.72rem',
                                         cursor: 'pointer',
                                         whiteSpace: 'nowrap',
-                                        textDecoration: 'none',
                                         display: 'inline-flex',
                                         alignItems: 'center',
                                         gap: '4px'
                                       }}
                                     >
                                       📱 Open Phone Dialer
-                                    </a>
+                                    </button>
                                   </div>
                                 </div>
                               )}
@@ -7924,6 +7925,36 @@ export default function App() {
                         <div className="gemini-waveform-icon" style={{ marginLeft: '4px', opacity: 0.85 }}>
                           <span style={{ background: '#38bdf8' }} /><span style={{ background: '#38bdf8' }} /><span style={{ background: '#38bdf8' }} />
                         </div>
+
+                        {/* Direct Mobile & Desktop Stop Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStopGeneration();
+                          }}
+                          className="gemini-thinking-stop-btn"
+                          title="Stop response"
+                          style={{
+                            marginLeft: '8px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            padding: '3px 10px',
+                            borderRadius: '9999px',
+                            background: 'rgba(239, 68, 68, 0.16)',
+                            border: '1px solid rgba(239, 68, 68, 0.45)',
+                            color: '#f87171',
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                            transition: 'all 0.18s ease'
+                          }}
+                        >
+                          <span style={{ width: '7px', height: '7px', background: '#ef4444', borderRadius: '1.5px', display: 'inline-block' }} />
+                          Stop
+                        </button>
                       </div>
                     );
                   })()}
@@ -8353,6 +8384,28 @@ export default function App() {
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                         <line x1="22" y1="2" x2="11" y2="13" />
                         <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                      </svg>
+                    </button>
+                  ) : isProcessing ? (
+                    /* Prominent Stop Generation Button when AI is responding & input is empty */
+                    <button
+                      type="button"
+                      className="gemini-prompt-btn stop-btn"
+                      onClick={handleStopGeneration}
+                      title="Stop generating"
+                      style={{
+                        background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.25) 0%, rgba(220, 38, 38, 0.35) 100%)',
+                        border: '1.5px solid rgba(239, 68, 68, 0.75)',
+                        color: '#f87171',
+                        boxShadow: '0 0 14px rgba(239, 68, 68, 0.45)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="5" y="5" width="14" height="14" rx="2.5" />
                       </svg>
                     </button>
                   ) : (
