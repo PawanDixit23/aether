@@ -70,6 +70,12 @@
           "icon": "./assets/icon.png",
           "color": "#00f0ff"
         }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Allow Aether to access your contacts to sync them with Memory Vault for instant voice dialing."
+        }
       ]
     ]
   }

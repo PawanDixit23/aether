@@ -88,6 +88,60 @@ export const SettingsSubModals = ({
 
   const [isSyncingContacts, setIsSyncingContacts] = useState(false);
   const syncTimeoutRef = useRef(null);
+  const vcfInputRef = useRef(null);
+
+  const handleVcfFileUpload = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      showToast(`Reading ${file.name}... 📄`, 'info');
+      const text = await file.text();
+      const contacts = [];
+      if (file.name.toLowerCase().endsWith('.vcf') || text.includes('BEGIN:VCARD')) {
+        const cards = text.split(/BEGIN:VCARD/i).slice(1);
+        for (const card of cards) {
+          let name = '';
+          let phone = '';
+          let email = '';
+          const fnMatch = card.match(/FN[;:]([^\r\n]+)/i);
+          if (fnMatch) name = fnMatch[1].trim();
+          if (!name) {
+            const nMatch = card.match(/N[;:]([^\r\n]+)/i);
+            if (nMatch) name = nMatch[1].replace(/;/g, ' ').trim();
+          }
+          const telMatch = card.match(/TEL[^:]*:([^\r\n]+)/i);
+          if (telMatch) phone = telMatch[1].replace(/[\s\-\(\)]/g, '').trim();
+          const emailMatch = card.match(/EMAIL[^:]*:([^\r\n]+)/i);
+          if (emailMatch) email = emailMatch[1].trim();
+          if (name && phone) contacts.push({ name, phone, email });
+        }
+      } else if (file.name.toLowerCase().endsWith('.csv') || text.includes(',')) {
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (lines.length > 1) {
+          const header = lines[0].toLowerCase().split(',');
+          const nameIdx = header.findIndex(h => h.includes('name'));
+          const phoneIdx = header.findIndex(h => h.includes('phone') || h.includes('tel') || h.includes('mobile'));
+          const emailIdx = header.findIndex(h => h.includes('mail'));
+          for (let i = 1; i < lines.length; i++) {
+            const cols = lines[i].split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
+            const name = nameIdx >= 0 ? cols[nameIdx] : cols[0];
+            const phone = phoneIdx >= 0 ? cols[phoneIdx] : cols[1];
+            const email = emailIdx >= 0 ? cols[emailIdx] : '';
+            if (name && phone) contacts.push({ name, phone, email });
+          }
+        }
+      }
+      if (contacts.length === 0) {
+        showToast("No valid contacts found in file", "error");
+        return;
+      }
+      await saveBulkContactsToVault(contacts);
+    } catch (err) {
+      showToast("Could not parse contacts file: " + err.message, "error");
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  };
 
   const handleSyncPhoneContacts = async () => {
     const isAllowed = contactsEnabled ?? (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_contacts_permission') === 'true' : false);
@@ -103,7 +157,7 @@ export const SettingsSubModals = ({
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
     syncTimeoutRef.current = setTimeout(() => {
       setIsSyncingContacts(false);
-      showToast("Sync timed out. Please allow Contacts permission in phone settings.", "info");
+      showToast("Sync timed out. If native contacts prompt didn't appear, use '📁 .vcf' button to import contacts directly.", "info");
     }, 12000);
 
     // 1. Mobile App React Native WebView bridge
@@ -1115,64 +1169,99 @@ export const SettingsSubModals = ({
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                padding: '11px 14px',
+                padding: '12px 14px',
                 background: 'linear-gradient(135deg, rgba(2, 132, 199, 0.16) 0%, rgba(3, 105, 161, 0.22) 100%)',
                 borderRadius: '14px',
                 border: '1.2px solid rgba(56, 189, 248, 0.35)',
                 flexShrink: 0,
-                gap: '10px'
+                gap: '12px'
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
                   <div style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '8px',
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '10px',
                     background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    fontSize: '1rem',
+                    fontSize: '1.1rem',
                     flexShrink: 0
                   }}>
                     📲
                   </div>
-                  <div>
-                    <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span>Sync Phone Contacts</span>
-                      {contactsEnabled ? (
-                        <span style={{ fontSize: '0.62rem', background: 'rgba(16,185,129,0.18)', color: '#34d399', border: '1px solid rgba(16,185,129,0.3)', padding: '1px 6px', borderRadius: '6px', fontWeight: 600 }}>● Allowed</span>
-                      ) : (
-                        <span style={{ fontSize: '0.62rem', background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', padding: '1px 6px', borderRadius: '6px', fontWeight: 600 }}>🔒 Disabled</span>
-                      )}
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      Sync Phone Contacts
                     </div>
-                    <div style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
-                      {contactsEnabled
-                        ? '1-click import device phonebook to Memory Vault for instant voice dialing'
-                        : 'Enable "Contacts & Phonebook" in App Permissions to sync'}
+                    <div style={{ fontSize: '0.68rem', color: '#94a3b8', lineHeight: '1.3', marginTop: '2px' }}>
+                      {contactsEnabled ? (
+                        <span style={{ color: '#34d399', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#34d399', display: 'inline-block' }} />
+                          Permission allowed • Ready to sync
+                        </span>
+                      ) : (
+                        <span style={{ color: '#f87171', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#f87171', display: 'inline-block' }} />
+                          Permission disabled in Settings
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleSyncPhoneContacts}
-                  disabled={isSyncingContacts}
-                  style={{
-                    background: contactsEnabled ? 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)' : 'rgba(255, 255, 255, 0.08)',
-                    border: contactsEnabled ? '1px solid rgba(56, 189, 248, 0.55)' : '1px solid rgba(255, 255, 255, 0.15)',
-                    color: contactsEnabled ? '#ffffff' : '#94a3b8',
-                    fontSize: '0.74rem',
-                    fontWeight: 700,
-                    padding: '6px 14px',
-                    borderRadius: '999px',
-                    cursor: isSyncingContacts ? 'wait' : 'pointer',
-                    boxShadow: contactsEnabled ? '0 2px 10px rgba(2, 132, 199, 0.3)' : 'none',
-                    whiteSpace: 'nowrap',
-                    opacity: isSyncingContacts ? 0.7 : 1
-                  }}
-                >
-                  {isSyncingContacts ? 'Syncing...' : contactsEnabled ? 'Sync Now' : 'Enable Permission'}
-                </button>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    onClick={() => vcfInputRef.current?.click()}
+                    title="Import contacts from .vcf or .csv file"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.08)',
+                      border: '1px solid rgba(255, 255, 255, 0.18)',
+                      color: '#cbd5e1',
+                      fontSize: '0.70rem',
+                      fontWeight: 600,
+                      padding: '6px 10px',
+                      borderRadius: '999px',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    <span>📁</span>
+                    <span>.vcf</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSyncPhoneContacts}
+                    disabled={isSyncingContacts}
+                    style={{
+                      background: contactsEnabled ? 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)' : 'rgba(255, 255, 255, 0.08)',
+                      border: contactsEnabled ? '1px solid rgba(56, 189, 248, 0.55)' : '1px solid rgba(255, 255, 255, 0.15)',
+                      color: contactsEnabled ? '#ffffff' : '#94a3b8',
+                      fontSize: '0.74rem',
+                      fontWeight: 700,
+                      padding: '6px 14px',
+                      borderRadius: '999px',
+                      cursor: isSyncingContacts ? 'wait' : 'pointer',
+                      boxShadow: contactsEnabled ? '0 2px 10px rgba(2, 132, 199, 0.3)' : 'none',
+                      whiteSpace: 'nowrap',
+                      opacity: isSyncingContacts ? 0.7 : 1
+                    }}
+                  >
+                    {isSyncingContacts ? 'Syncing...' : contactsEnabled ? 'Sync Now' : 'Enable'}
+                  </button>
+                </div>
               </div>
+              <input
+                type="file"
+                ref={vcfInputRef}
+                accept=".vcf,.csv,text/vcard,text/x-vcard"
+                style={{ display: 'none' }}
+                onChange={handleVcfFileUpload}
+              />
 
               {/* Auto-Learn Status Banner */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
