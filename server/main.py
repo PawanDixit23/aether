@@ -24,6 +24,20 @@ from sqlalchemy import func
 import httpx
 import re
 import traceback
+import gc
+import ctypes
+
+def trim_memory():
+    """Forces garbage collection and releases unmapped heap memory back to OS kernel (Render 512MB RAM optimization)."""
+    try:
+        gc.collect()
+        try:
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(0)
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 # ─── Web Push (VAPID) Setup ────────────────────────────────────────────────────
 # Loaded securely from Environment Variables or auto-generated & persisted locally
@@ -1545,6 +1559,9 @@ async def _execute_quick_capture(
             except Exception:
                 db.rollback()
             print(f"[Aether Chat Record Note] {chat_db_err}")
+
+    if req.image_data or req.images:
+        trim_memory()
 
     return {
         "status": "executed",
@@ -3407,6 +3424,7 @@ def get_executive_briefing(
     city: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
+    global _BRIEFING_CACHE
     # Rapid repeated calls पर cached response return करो
     loc_key = f"{round(lat, 2) if lat else ''}_{round(lon, 2) if lon else ''}_{(city or '').strip().lower()}"
     _cache_key = f"{user_email or 'guest'}_{loc_key}"
@@ -3496,7 +3514,12 @@ def get_executive_briefing(
         "city_guide": city_guide,
         "generated_at": now.isoformat()
     }
-    # Cache save — अगले 5 min rapid calls इसी से serve होंगी
+    # Cache save — अगले 5 min rapid calls इसी से serve होंगी (Memory capped for 512MB RAM)
+    if len(_BRIEFING_CACHE) > 12:
+        now_ts = _briefing_time.time()
+        _BRIEFING_CACHE = {k: v for k, v in _BRIEFING_CACHE.items() if (now_ts - v.get("ts", 0) < _BRIEFING_CACHE_TTL)}
+        if len(_BRIEFING_CACHE) > 12:
+            _BRIEFING_CACHE.clear()
     _BRIEFING_CACHE[_cache_key] = {"data": response_data, "ts": _briefing_time.time()}
     return response_data
 
@@ -4058,6 +4081,7 @@ async def start_reminder_background_worker():
     import asyncio
     async def reminder_loop():
         await asyncio.sleep(5)
+        loop_counter = 0
         while True:
             try:
                 db = SessionLocal()
@@ -4067,7 +4091,13 @@ async def start_reminder_background_worker():
                     db.close()
             except Exception as e:
                 print(f"[ReminderWorker Background Error] {e}")
-            await asyncio.sleep(30)
+
+            loop_counter += 1
+            if loop_counter >= 3:
+                loop_counter = 0
+                trim_memory()
+
+            await asyncio.sleep(60)
     asyncio.create_task(reminder_loop())
 
 @app.post("/api/reminders/push-check")

@@ -78,8 +78,8 @@ def get_embedding(text: str) -> List[float]:
                     values = data.get("embedding", {}).get("values")
                     if values and isinstance(values, list):
                         _EMBEDDING_CACHE[cache_key] = values
-                        if len(_EMBEDDING_CACHE) > 500:
-                            # Prune cache
+                        if len(_EMBEDDING_CACHE) > 50:
+                            # Prune cache to preserve 512MB RAM budget
                             _EMBEDDING_CACHE.pop(next(iter(_EMBEDDING_CACHE)))
                         return values
         except Exception as e:
@@ -87,6 +87,8 @@ def get_embedding(text: str) -> List[float]:
             pass
             
     fallback_vec = _deterministic_local_vector(cleaned)
+    if len(_EMBEDDING_CACHE) > 50:
+        _EMBEDDING_CACHE.pop(next(iter(_EMBEDDING_CACHE)))
     _EMBEDDING_CACHE[cache_key] = fallback_vec
     return fallback_vec
 

@@ -6,7 +6,7 @@ name: ⚡ Aether Keep-Alive & Push Notifications
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # हर 5 मिनट पर पिंग (Render 15 min स्लीप से हमेशा पहले)
+    - cron: '*/9 * * * *'   # हर 9 मिनट पर पिंग (Render 15 min स्लीप से हमेशा पहले)
   workflow_dispatch:        # Manual trigger भी कर सकते हैं
 
 jobs:

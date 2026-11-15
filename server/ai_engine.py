@@ -216,7 +216,9 @@ def get_live_weather_data(lat: float = None, lon: float = None, city_name: str =
                 "city_hi": clean_city,
                 "city_hinglish": clean_city
             }
-            # Per-coordinate cache save
+            # Per-coordinate cache save (Memory capped)
+            if len(WEATHER_COORD_CACHE) > 15:
+                WEATHER_COORD_CACHE.clear()
             WEATHER_COORD_CACHE[coord_key] = {"data": result, "timestamp": now_ts}
             # Global cache भी update (default location के लिए)
             if not lat:
@@ -615,6 +617,8 @@ def get_city_travel_guide(city_name: str = None, lat: float = None, lon: float =
             "पर्यटक स्थलों पर जाने के लिए सुबह का समय सबसे सुखद और कम भीड़-भाड़ वाला होता है।"
         ]
     }
+    if len(CITY_GUIDE_CACHE) > 12:
+        CITY_GUIDE_CACHE.clear()
     CITY_GUIDE_CACHE[cache_key] = dynamic_guide
     return dynamic_guide
 
@@ -1340,6 +1344,8 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
                             'striker_name': striker_name
                         } if (striker_id or striker_name) else {}
                     }
+                    if len(_scorecard_cache) > 8:
+                        _scorecard_cache.clear()
                     _scorecard_cache[match_id] = (now_ts, res)
                     return res
         except Exception:
@@ -1460,6 +1466,8 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
         ],
         'game_info': {'venue': 'Hagley Oval, Christchurch', 'series': 'India A tour of New Zealand 2026/27'}
     }
+    if len(_scorecard_cache) > 8:
+        _scorecard_cache.clear()
     _scorecard_cache[match_id] = (now_ts, fallback_res)
     return fallback_res
 
