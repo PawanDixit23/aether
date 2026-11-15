@@ -37,11 +37,21 @@ def upgrade() -> None:
     if 'sender_pairing_rate_limits' in tables:
         existing_uqs = {u['name'] for u in inspector.get_unique_constraints('sender_pairing_rate_limits') if u.get('name')}
         if 'uq_sender_pairing_rate_limit' not in existing_uqs:
-            try:
-                with op.batch_alter_table('sender_pairing_rate_limits') as batch_op:
-                    batch_op.create_unique_constraint('uq_sender_pairing_rate_limit', ['channel', 'sender'])
-            except Exception:
-                pass
+            # Deduplicate sender_pairing_rate_limits before creating unique constraint
+            if bind.dialect.name == "postgresql":
+                bind.execute(sa.text("""
+                    DELETE FROM sender_pairing_rate_limits a USING sender_pairing_rate_limits b
+                    WHERE a.id < b.id AND a.channel = b.channel AND a.sender = b.sender;
+                """))
+            else:
+                bind.execute(sa.text("""
+                    DELETE FROM sender_pairing_rate_limits
+                    WHERE id NOT IN (
+                        SELECT MAX(id) FROM sender_pairing_rate_limits GROUP BY channel, sender
+                    );
+                """))
+            with op.batch_alter_table('sender_pairing_rate_limits') as batch_op:
+                batch_op.create_unique_constraint('uq_sender_pairing_rate_limit', ['channel', 'sender'])
 
     # 3. Processed webhook events status column
     if 'processed_webhook_events' in tables:

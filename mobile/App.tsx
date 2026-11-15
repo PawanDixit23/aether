@@ -91,6 +91,11 @@ const ALLOWED_BRIDGE_ACTIONS = new Set([
 export default function App() {
   const webViewRef = useRef<WebView>(null);
   const currentTopUrlRef = useRef<string>(AETHER_URL);
+  // Cryptographic Top-Level Bridge Authentication Token (AETH-P0-04)
+  // Cross-origin and untrusted subframes cannot access this secret due to browser Same-Origin Policy
+  const bridgeSessionToken = useRef<string>(
+    'aeth_br_' + Math.random().toString(36).substring(2) + Date.now().toString(36) + Math.random().toString(36).substring(2)
+  ).current;
   const [canGoBack, setCanGoBack] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -330,39 +335,55 @@ export default function App() {
           mediaCapturePermissionGrantType="prompt"
           injectedJavaScriptBeforeContentLoaded={`
             (function() {
-              function stripBridge(target) {
-                if (!target) return;
+              var BRIDGE_AUTH_TOKEN = "${bridgeSessionToken}";
+              if (window.self === window.top) {
+                // Top-level document: Bind token in non-enumerable, read-only property (AETH-P0-04)
                 try {
-                  delete target.ReactNativeWebView;
-                  Object.defineProperty(target, 'ReactNativeWebView', {
+                  Object.defineProperty(window, '__AETHER_TOP_BRIDGE_KEY__', {
+                    value: BRIDGE_AUTH_TOKEN,
+                    writable: false,
+                    configurable: false,
+                    enumerable: false
+                  });
+                } catch(e) {}
+
+                // Wrap ReactNativeWebView.postMessage to sign messages with top-level secret token
+                function wrapBridge() {
+                  if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+                    var origPost = window.ReactNativeWebView.postMessage;
+                    window.ReactNativeWebView.postMessage = function(data) {
+                      try {
+                        var payload = (typeof data === 'string') ? JSON.parse(data) : data;
+                        if (payload && typeof payload === 'object') {
+                          payload._bridgeToken = BRIDGE_AUTH_TOKEN;
+                          origPost.call(window.ReactNativeWebView, JSON.stringify(payload));
+                          return;
+                        }
+                      } catch(e) {}
+                      origPost.call(window.ReactNativeWebView, data);
+                    };
+                    return true;
+                  }
+                  return false;
+                }
+                if (!wrapBridge()) {
+                  var retries = 0;
+                  var intv = setInterval(function() {
+                    retries++;
+                    if (wrapBridge() || retries > 20) clearInterval(intv);
+                  }, 50);
+                }
+              } else {
+                // Subframes & iframes: delete and freeze ReactNativeWebView so untrusted subframes cannot call it
+                try {
+                  delete window.ReactNativeWebView;
+                  Object.defineProperty(window, 'ReactNativeWebView', {
                     get: function() { return undefined; },
                     set: function() {},
                     configurable: false,
                     enumerable: false
                   });
-                } catch (e) {}
-              }
-
-              if (window.self !== window.top) {
-                stripBridge(window);
-              } else {
-                // Top-level frame: continuously sanitize all present, nested and dynamically created child frames (AETH-P0-04)
-                try {
-                  var observer = new MutationObserver(function(mutations) {
-                    mutations.forEach(function(m) {
-                      m.addedNodes.forEach(function(node) {
-                        if (node && node.nodeName === 'IFRAME') {
-                          try {
-                            stripBridge(node.contentWindow);
-                          } catch(e) {}
-                        }
-                      });
-                    });
-                  });
-                  if (document.documentElement) {
-                    observer.observe(document.documentElement, { childList: true, subtree: true });
-                  }
-                } catch (e) {}
+                } catch(e) {}
               }
             })();
             true;
@@ -619,7 +640,16 @@ export default function App() {
                 return;
               }
               const data = JSON.parse(rawData);
-              if (!data || typeof data !== 'object' || !ALLOWED_BRIDGE_ACTIONS.has(data.type)) {
+
+              // 1. Validate Cryptographic Top-Frame Bridge Session Token (AETH-P0-04)
+              // Cross-origin and untrusted subframes cannot read window.top.__AETHER_TOP_BRIDGE_KEY__ due to browser SOP
+              if (!data || typeof data !== 'object' || data._bridgeToken !== bridgeSessionToken) {
+                console.warn('[WebView Bridge Security Alert] Dropping bridge message: missing or invalid top-frame bridge session token!');
+                return;
+              }
+
+              // 2. Validate Allowed Bridge Actions
+              if (!ALLOWED_BRIDGE_ACTIONS.has(data.type)) {
                 console.warn('[WebView Bridge] Dropping unauthorized bridge action:', data?.type);
                 return;
               }

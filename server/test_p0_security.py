@@ -592,7 +592,22 @@ def test_p0_05_messaging_webhooks():
     assert not is_business_action_executed(db, mut_key), "Unexecuted mutation must return False"
     record_business_action_executed(db, mut_key, "user@example.com", "11111111-1111-4111-8111-111111111111", "Task created")
     assert is_business_action_executed(db, mut_key), "Executed mutation must be detected as recorded"
-    print("✅ P0-05: Webhook business action idempotency verified.")
+
+    # 9. Atomic Transactional Business Mutation (AETH-P0-05)
+    from main import execute_idempotent_business_mutation
+    mut_atomic_key = f"webhook_atomic_{int(time.time())}"
+    created_count = 0
+    def _create_sample_task(s):
+        nonlocal created_count
+        created_count += 1
+        return "Atomic Task created"
+
+    already, msg = execute_idempotent_business_mutation(db, mut_atomic_key, _create_sample_task, "user@example.com", "11111111-1111-4111-8111-111111111111")
+    assert not already and msg == "Atomic Task created" and created_count == 1
+    # Second execution must return already=True and NOT invoke create_fn
+    already2, msg2 = execute_idempotent_business_mutation(db, mut_atomic_key, _create_sample_task, "user@example.com", "11111111-1111-4111-8111-111111111111")
+    assert already2 and msg2 == "Atomic Task created" and created_count == 1
+    print("✅ P0-05: Webhook business action idempotency and atomic transactional mutation verified.")
 
 
 def run_all_tests():
