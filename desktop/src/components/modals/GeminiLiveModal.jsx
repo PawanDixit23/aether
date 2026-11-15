@@ -736,8 +736,9 @@ export default function GeminiLiveModal({
       justifyContent: 'space-between',
       color: '#ffffff',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif',
-      padding: '0 20px 28px 20px',
-      paddingTop: 'max(env(safe-area-inset-top, 48px), 48px)',
+      padding: '0 16px',
+      paddingTop: 'max(env(safe-area-inset-top, 24px), 24px)',
+      paddingBottom: 'max(env(safe-area-inset-bottom, 16px), 16px)',
       boxSizing: 'border-box',
       overflow: 'hidden'
     }}>
@@ -825,13 +826,17 @@ export default function GeminiLiveModal({
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        justifyContent: 'center',
+        justifyContent: activeMediaAction ? 'flex-start' : 'center',
         flex: 1,
-        maxWidth: '480px',
+        minHeight: 0,
+        overflowY: 'auto',
+        scrollbarWidth: 'none',
+        WebkitOverflowScrolling: 'touch',
+        maxWidth: '520px',
         margin: '0 auto',
         width: '100%',
         textAlign: 'center',
-        padding: '10px 0',
+        padding: activeMediaAction ? '2px 0 8px 0' : '10px 0',
         position: 'relative'
       }}>
         {/* Living Multi-layered Orb */}
@@ -840,41 +845,43 @@ export default function GeminiLiveModal({
           title={isMuted ? "Tap to unmute" : (sessionState === 'speaking' ? "Tap to interrupt" : "Tap to send immediately")}
           style={{
             position: 'relative',
-            width: '210px',
-            height: '210px',
+            width: activeMediaAction ? '90px' : (isMobile ? '160px' : '200px'),
+            height: activeMediaAction ? '90px' : (isMobile ? '160px' : '200px'),
             borderRadius: '50%',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             userSelect: 'none',
-            margin: '0 auto'
+            margin: '0 auto',
+            flexShrink: 0,
+            transition: 'all 0.4s ease'
           }}
         >
           {/* Ripple Wave 1 */}
           <div style={{
             position: 'absolute',
-            inset: '-28px',
+            inset: activeMediaAction ? '-14px' : '-28px',
             borderRadius: '50%',
             background: `radial-gradient(circle, ${currentTheme.ring} 0%, rgba(0,0,0,0) 70%)`,
             animation: 'liveRipple 2.6s infinite ease-in-out',
-            transition: 'background 0.5s ease'
+            transition: 'all 0.5s ease'
           }} />
 
           {/* Ripple Wave 2 */}
           <div style={{
             position: 'absolute',
-            inset: '-12px',
+            inset: activeMediaAction ? '-6px' : '-12px',
             borderRadius: '50%',
             background: `radial-gradient(circle, ${currentTheme.ring} 0%, rgba(0,0,0,0) 75%)`,
             animation: 'liveRipple 1.8s infinite ease-in-out 0.4s',
-            transition: 'background 0.5s ease'
+            transition: 'all 0.5s ease'
           }} />
 
           {/* Core Living Glass Orb */}
           <div style={{
-            width: '160px',
-            height: '160px',
+            width: activeMediaAction ? '68px' : (isMobile ? '120px' : '150px'),
+            height: activeMediaAction ? '68px' : (isMobile ? '120px' : '150px'),
             borderRadius: '50%',
             background: isMuted
               ? 'radial-gradient(circle at 35% 30%, #ef4444 0%, #b91c1c 45%, #7f1d1d 85%, #450a0a 100%)'
@@ -885,22 +892,22 @@ export default function GeminiLiveModal({
                   : (sessionState === 'thinking'
                     ? 'radial-gradient(circle at 35% 30%, #fbbf24 0%, #f59e0b 45%, #b45309 85%, #451a03 100%)'
                     : 'radial-gradient(circle at 35% 30%, #94a3b8 0%, #64748b 50%, #334155 100%)'))),
-            boxShadow: `0 0 60px ${currentTheme.glow}, inset 0 0 35px rgba(255, 255, 255, 0.4)`,
+            boxShadow: `0 0 ${activeMediaAction ? '30px' : '60px'} ${currentTheme.glow}, inset 0 0 25px rgba(255, 255, 255, 0.4)`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             position: 'relative',
             zIndex: 3,
             animation: 'orbBreath 3.2s infinite ease-in-out',
-            transition: 'all 0.5s ease'
+            transition: 'all 0.4s ease'
           }}>
             {/* Ambient Shimmer Specular Light */}
             <div style={{
               position: 'absolute',
               top: '12%',
               left: '20%',
-              width: '50px',
-              height: '30px',
+              width: activeMediaAction ? '24px' : '50px',
+              height: activeMediaAction ? '14px' : '30px',
               borderRadius: '50%',
               background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.7) 0%, rgba(255,255,255,0) 80%)',
               transform: 'rotate(-25deg)',
@@ -909,7 +916,13 @@ export default function GeminiLiveModal({
 
             {/* Inner Graphic State */}
             {isMuted ? (
-              <MicOff size={44} color="#ffffff" />
+              <MicOff size={activeMediaAction ? 22 : 44} color="#ffffff" />
+            ) : activeMediaAction ? (
+              <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
+                <span style={{ width: '3px', height: '10px', background: '#ffffff', borderRadius: '3px', animation: 'liveBar 0.7s infinite ease-in-out 0.1s' }} />
+                <span style={{ width: '3px', height: '18px', background: '#ffffff', borderRadius: '3px', animation: 'liveBar 0.7s infinite ease-in-out 0.3s' }} />
+                <span style={{ width: '3px', height: '12px', background: '#ffffff', borderRadius: '3px', animation: 'liveBar 0.7s infinite ease-in-out 0.2s' }} />
+              </div>
             ) : sessionState === 'listening' ? (
               <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                 <span style={{ width: '4px', height: '18px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.9s infinite ease-in-out 0.1s' }} />
@@ -918,18 +931,18 @@ export default function GeminiLiveModal({
                 <span style={{ width: '4px', height: '28px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.9s infinite ease-in-out 0.15s' }} />
               </div>
             ) : sessionState === 'speaking' ? (
-              <Volume2 size={46} color="#ffffff" style={{ animation: 'livePulse 1.2s infinite' }} />
+              <Volume2 size={activeMediaAction ? 24 : 46} color="#ffffff" style={{ animation: 'livePulse 1.2s infinite' }} />
             ) : sessionState === 'thinking' ? (
-              <RefreshCw size={42} color="#ffffff" style={{ animation: 'liveSpin 1.1s linear infinite' }} />
+              <RefreshCw size={activeMediaAction ? 22 : 42} color="#ffffff" style={{ animation: 'liveSpin 1.1s linear infinite' }} />
             ) : (
-              <Mic size={42} color="#ffffff" />
+              <Mic size={activeMediaAction ? 22 : 42} color="#ffffff" />
             )}
           </div>
         </div>
 
         {/* State Label */}
         <div style={{
-          marginTop: '22px',
+          marginTop: activeMediaAction ? '8px' : '18px',
           fontSize: '0.84rem',
           fontWeight: 700,
           letterSpacing: '0.04em',
@@ -939,7 +952,8 @@ export default function GeminiLiveModal({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: '8px'
+          gap: '8px',
+          flexShrink: 0
         }}>
           {sessionState === 'thinking' ? (
             <div style={{
@@ -983,7 +997,7 @@ export default function GeminiLiveModal({
         </div>
 
         {/* Real-time Subtitle / Spoken Transcript Card */}
-        <div style={{ position: 'relative', width: '100%', marginTop: '16px' }}>
+        <div style={{ position: 'relative', width: '100%', marginTop: activeMediaAction ? '10px' : '16px' }}>
           <div
             ref={transcriptBoxRef}
             onScroll={handleTranscriptScroll}
@@ -991,11 +1005,11 @@ export default function GeminiLiveModal({
               background: '#0a1224',
               border: sessionState === 'thinking' ? '1px solid rgba(245, 158, 11, 0.35)' : '1px solid rgba(56, 189, 248, 0.28)',
               borderRadius: '20px',
-              padding: '16px 20px',
+              padding: activeMediaAction ? '12px 16px' : '16px 20px',
               width: '100%',
               boxSizing: 'border-box',
               minHeight: '85px',
-              maxHeight: activeMediaAction ? (isMobile ? '380px' : '440px') : (isMobile ? '230px' : '280px'),
+              maxHeight: activeMediaAction ? (isMobile ? '280px' : '360px') : (isMobile ? '210px' : '260px'),
               overflowY: 'auto',
               display: 'flex',
               flexDirection: 'column',
@@ -1186,12 +1200,15 @@ export default function GeminiLiveModal({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: '24px',
+        gap: isMobile ? '20px' : '26px',
         width: '100%',
         maxWidth: '360px',
         margin: '0 auto',
-        paddingBottom: '8px',
-        flexShrink: 0
+        paddingTop: '10px',
+        paddingBottom: 'max(env(safe-area-inset-bottom, 8px), 8px)',
+        flexShrink: 0,
+        position: 'relative',
+        zIndex: 20
       }}>
         {/* Mute Mic Toggle Button */}
         <button
