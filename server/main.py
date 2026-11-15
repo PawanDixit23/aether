@@ -5110,56 +5110,20 @@ async def _send_whatsapp_message(
         return {"status": "error", "detail": str(e)}
 
 @app.get("/api/whatsapp/sync-waba")
-async def sync_whatsapp_waba(db: Session = Depends(get_db)):
-    """Subscribes WABA to the app and sends a direct test ping."""
-    token = os.environ.get("WHATSAPP_TOKEN", "").strip()
-    phone_id = os.environ.get("WHATSAPP_PHONE_ID", "1432995866556035").strip()
-    waba_id = "1095690750105581"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    
-    # Pre-pair the user's phone with their account
-    user_phone = "918741838653"
-    user_email = "e.pawandixit@gmail.com"
-    link_mem = db.query(MemoryItem).filter(
-        MemoryItem.category == "whatsapp_pairing",
-        MemoryItem.fact.like(f"{user_phone}:%")
-    ).first()
-    if link_mem:
-        link_mem.fact = f"{user_phone}:{user_email}"
-    else:
-        db.add(MemoryItem(user_email=user_email, category="whatsapp_pairing", fact=f"{user_phone}:{user_email}"))
-    db.commit()
+async def sync_whatsapp_waba():
+    """
+    Retired insecure setup endpoint.
 
-    results = {"pairing": f"{user_phone} -> {user_email}"}
-    async with httpx.AsyncClient() as client:
-        # 1. Subscribe WABA
-        sub_resp = await client.post(
-            f"https://graph.facebook.com/v21.0/{waba_id}/subscribed_apps",
-            headers=headers
-        )
-        results["waba_subscribe"] = {"status": sub_resp.status_code, "body": sub_resp.text}
-        
-        # 2. Check Subscribed Apps
-        check_resp = await client.get(
-            f"https://graph.facebook.com/v21.0/{waba_id}/subscribed_apps",
-            headers=headers
-        )
-        results["waba_check"] = {"status": check_resp.status_code, "body": check_resp.text}
+    The former handler performed account pairing without authentication/OTP,
+    embedded a personal phone/email, and sent a live WhatsApp message on GET.
+    Use the authenticated OTP pairing flow and configure WABA subscriptions
+    out-of-band in the Meta developer console instead.
+    """
+    raise HTTPException(
+        status_code=410,
+        detail="This legacy endpoint is disabled. Use the authenticated WhatsApp pairing flow."
+    )
 
-        # 3. Direct Test Ping to user's phone
-        test_msg = await client.post(
-            f"https://graph.facebook.com/v21.0/{phone_id}/messages",
-            headers=headers,
-            json={
-                "messaging_product": "whatsapp",
-                "to": user_phone,
-                "type": "text",
-                "text": {"body": "⚡ *Aether Connected!*\n\nनमस्ते! आपका Aether WhatsApp बॉट सफलतापूर्वक सक्रिय हो चुका है।\n\nअब आप मुझे यहाँ कोई भी काम बोल सकते हैं, जैसे:\n• 'कल सुबह 10 बजे मीटिंग का रिमाइंडर लगाओ'\n• '500 रुपये पेट्रोल में खर्च हुए'"}
-            }
-        )
-        results["test_message_send"] = {"status": test_msg.status_code, "body": test_msg.text}
-    
-    return results
 
 @app.post("/api/whatsapp/send-digest")
 async def trigger_whatsapp_digest(

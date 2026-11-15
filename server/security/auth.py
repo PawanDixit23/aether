@@ -11,7 +11,6 @@ import base64
 import time
 import math
 import hashlib
-import logging
 from functools import lru_cache
 from typing import Optional, Dict, Any
 import jwt
@@ -59,23 +58,6 @@ def _decode_jwt_unverified(token: str) -> Optional[Dict[str, Any]]:
 
 UUID_REGEX = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
 
-logger = logging.getLogger(__name__)
-
-
-def _log_jwt_diagnostic(reason: str, algorithm: Optional[str] = None, kid_present: bool = False, exception_type: Optional[str] = None) -> None:
-    """Temporary, opt-in JWT diagnostics. Never log tokens, claims, or secrets."""
-    if os.environ.get("AETHER_AUTH_DIAGNOSTICS", "").strip().lower() not in {"1", "true", "yes"}:
-        return
-    logger.warning(
-        "AETHER_AUTH_DIAGNOSTIC reason=%s algorithm=%s kid_present=%s exception_type=%s",
-        reason,
-        algorithm or "unknown",
-        kid_present,
-        exception_type or "none",
-    )
-
-
-
 def _supabase_jwks_url() -> str:
     """Resolve Supabase JWKS endpoint, allowing an explicit deployment override."""
     configured = os.environ.get("SUPABASE_JWKS_URL", "").strip()
@@ -104,14 +86,10 @@ def verify_supabase_jwt(
     Verify Supabase access tokens using their declared signing algorithm.
     ES256 uses the matching public key from Supabase JWKS; HS256 uses the
     legacy JWT secret for existing tokens. All other algorithms fail closed.
-    Temporary diagnostics are opt-in and never expose token/claim values.
     """
-    algorithm = None
-    kid_present = False
     try:
         header = jwt.get_unverified_header(token)
         algorithm = header.get("alg")
-        kid_present = bool(header.get("kid"))
 
         if algorithm == "ES256":
             jwks_client = _get_jwks_client(jwks_url or _supabase_jwks_url())
@@ -120,12 +98,10 @@ def verify_supabase_jwt(
             allowed_algorithms = ["ES256"]
         elif algorithm == "HS256":
             if not jwt_secret:
-                _log_jwt_diagnostic("legacy_hs256_secret_missing", algorithm, kid_present)
                 return None
             verification_key = jwt_secret
             allowed_algorithms = ["HS256"]
         else:
-            _log_jwt_diagnostic("unsupported_algorithm", algorithm, kid_present)
             return None
 
         required_claims = ["exp", "sub", "aud"]
@@ -144,32 +120,25 @@ def verify_supabase_jwt(
 
         sub = payload.get("sub")
         if not sub or not UUID_REGEX.match(str(sub).strip()):
-            _log_jwt_diagnostic("invalid_subject", algorithm, kid_present)
             return None
 
         exp = payload.get("exp")
         if not isinstance(exp, (int, float)) or not math.isfinite(exp):
-            _log_jwt_diagnostic("invalid_expiration_claim", algorithm, kid_present)
             return None
         if float(exp) > time.time() + 365 * 86400:
-            _log_jwt_diagnostic("expiration_too_far_in_future", algorithm, kid_present)
             return None
 
         nbf = payload.get("nbf")
         if nbf is not None and (
             not isinstance(nbf, (int, float)) or not math.isfinite(nbf)
         ):
-            _log_jwt_diagnostic("invalid_not_before_claim", algorithm, kid_present)
             return None
 
         return payload
-    except (InvalidTokenError, PyJWKClientError, ValueError, TypeError, KeyError) as exc:
-        # Log only the exception class; exception messages can contain deployment details.
-        _log_jwt_diagnostic("verification_rejected", algorithm, kid_present, type(exc).__name__)
+    except (InvalidTokenError, PyJWKClientError, ValueError, TypeError, KeyError):
         return None
-    except Exception as exc:
+    except Exception:
         # JWKS/network/cryptographic failures must never fall back to unverified claims.
-        _log_jwt_diagnostic("verification_internal_error", algorithm, kid_present, type(exc).__name__)
         return None
 
 
@@ -330,14 +299,15 @@ def validate_security_config_at_startup():
         return
 
     errors = []
-    jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
-    if not jwt_secret:
-        errors.append("SUPABASE_JWT_SECRET is required in production.")
-
+    # ES256 is verified with the Supabase JWKS public key. The legacy HS256
+    # secret is optional and is only needed while accepting still-valid HS256 tokens.
     jwt_iss = os.environ.get("SUPABASE_JWT_ISSUER", "").strip()
     supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+    jwks_url = os.environ.get("SUPABASE_JWKS_URL", "").strip()
     if not jwt_iss and not supabase_url:
         errors.append("SUPABASE_JWT_ISSUER (or SUPABASE_URL) is required in production.")
+    if not supabase_url and not jwks_url:
+        errors.append("SUPABASE_URL (or SUPABASE_JWKS_URL) is required for ES256 verification in production.")
 
     # Validate webhook secrets if enabled in production
     if os.environ.get("ENABLE_TELEGRAM", "").lower() in ["true", "1", "yes"] or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip():

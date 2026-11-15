@@ -129,21 +129,23 @@ def test_p0_01_jwt_auth():
     old_secret = os.environ.pop("SUPABASE_JWT_SECRET", None)
     old_iss = os.environ.pop("SUPABASE_JWT_ISSUER", None)
     old_url = os.environ.pop("SUPABASE_URL", None)
+    old_jwks = os.environ.pop("SUPABASE_JWKS_URL", None)
     startup_failed = False
     try:
         validate_security_config_at_startup()
     except RuntimeError as e:
         startup_failed = True
-        assert "SUPABASE_JWT_SECRET is required" in str(e)
-    assert startup_failed, "Production startup must fail closed if JWT secrets are missing"
-    print("✅ P0-01: Startup validation fails closed with fatal error when production JWT secret is missing.")
-    
+        assert "SUPABASE_URL" in str(e) or "SUPABASE_JWT_ISSUER" in str(e)
+    assert startup_failed, "Production startup must fail closed when Supabase verification endpoint is missing"
+    print("✅ P0-01: Startup validation fails closed when Supabase issuer/JWKS configuration is missing.")
+
     # Restore test environment
     os.environ["ENVIRONMENT"] = "test"
     os.environ["ENABLE_INSECURE_DEV_AUTH"] = "true"
     if old_secret: os.environ["SUPABASE_JWT_SECRET"] = old_secret
     if old_iss: os.environ["SUPABASE_JWT_ISSUER"] = old_iss
     if old_url: os.environ["SUPABASE_URL"] = old_url
+    if old_jwks: os.environ["SUPABASE_JWKS_URL"] = old_jwks
 
 
 def test_p0_02_tenant_isolation():
@@ -456,6 +458,11 @@ def test_p0_04_android_webview():
 
 def test_p0_05_messaging_webhooks():
     print("\n--- Testing P0-05: Webhook Security, Atomic Deduplication & OTP Pairing ---")
+    # The legacy GET setup route must not auto-pair a hard-coded identity or send a live message.
+    retired_sync = client.get("/api/whatsapp/sync-waba")
+    assert retired_sync.status_code == 410, (
+        "Legacy WABA sync endpoint must be retired; pairing must use authenticated OTP flow"
+    )
     db = SessionLocal()
     headers_a = {"Authorization": "Bearer test_user_a@tenant.com"}
 
