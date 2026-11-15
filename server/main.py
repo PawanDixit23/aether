@@ -2610,19 +2610,24 @@ def send_test_push(request: Request, db: Session = Depends(get_db)):
     return {"status": "success", "sent": sent, "total": len(subs), "errors": errors}
 
 @app.delete("/api/push/subscribe")
-def unsubscribe_push(user_email: str, endpoint: str, db: Session = Depends(get_db)):
-    """Push subscription हटाएं (logout पर)।"""
-    email = user_email.strip().lower()
+def unsubscribe_push(request: Request, endpoint: str, db: Session = Depends(get_db)):
+    """Remove only the authenticated user's push subscription."""
+    email = request.state.user_email
     if email in _push_subscriptions:
         _push_subscriptions[email] = [
-            s for s in _push_subscriptions[email]
-            if s.get("endpoint") != endpoint
+            subscription for subscription in _push_subscriptions[email]
+            if subscription.get("endpoint") != endpoint
         ]
     try:
-        db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint).delete()
+        db.query(PushSubscription).filter(
+            PushSubscription.user_email == email,
+            PushSubscription.endpoint == endpoint,
+        ).delete()
         db.commit()
     except Exception as dbe:
+        db.rollback()
         print(f"[PushUnsubscribe DB Error] {dbe}")
+        raise HTTPException(status_code=500, detail="Unable to remove push subscription")
     return {"status": "unsubscribed"}
 
 class PushRefreshRequest(BaseModel):
@@ -2630,7 +2635,11 @@ class PushRefreshRequest(BaseModel):
     subscription: dict
 
 @app.post("/api/push/refresh-subscription")
-def refresh_push_subscription(req: PushRefreshRequest, db: Session = Depends(get_db)):
+def refresh_push_subscription(
+    req: PushRefreshRequest,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db),
+):
     """Service Worker pushsubscriptionchange event से automatically new subscription update करें।"""
     sub_data = req.subscription
     new_endpoint = sub_data.get("endpoint", "")
@@ -2645,9 +2654,9 @@ def refresh_push_subscription(req: PushRefreshRequest, db: Session = Depends(get
     
     existing = None
     if old_endpoint:
-        existing = db.query(PushSubscription).filter(PushSubscription.endpoint == old_endpoint).first()
+        existing = db.query(PushSubscription).filter(PushSubscription.user_email == user_email, PushSubscription.endpoint == old_endpoint).first()
     if not existing:
-        existing = db.query(PushSubscription).filter(PushSubscription.endpoint == new_endpoint).first()
+        existing = db.query(PushSubscription).filter(PushSubscription.user_email == user_email, PushSubscription.endpoint == new_endpoint).first()
         
     if existing:
         email = existing.user_email
