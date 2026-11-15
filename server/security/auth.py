@@ -6,6 +6,8 @@ and eliminates caller-controlled identity spoofing or unverified fallback in pro
 
 import os
 import re
+import json
+import base64
 import time
 import math
 import hashlib
@@ -40,6 +42,18 @@ class UserIdentity:
 
     def __repr__(self):
         return f"<UserIdentity id={self.id} email={self.email} role={self.role}>"
+
+
+def _decode_jwt_unverified(token: str) -> Optional[Dict[str, Any]]:
+    """Decode JWT claims without verification for explicitly enabled local dev/test only."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        padded = parts[1] + "=" * (-len(parts[1]) % 4)
+        return json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+    except Exception:
+        return None
 
 
 UUID_REGEX = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
