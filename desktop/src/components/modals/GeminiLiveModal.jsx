@@ -12,6 +12,25 @@ const stripEmojis = (str) => {
     .trim();
 };
 
+const thinkingPhasesHi = [
+  { emoji: '🧠', text: 'आपके सवाल पर विचार कर रहा हूँ...' },
+  { emoji: '🔍', text: 'ज्ञान व मेमोरी में खोज रहा हूँ...' },
+  { emoji: '⚡', text: 'मुख्य बिंदुओं का विश्लेषण जारी है...' },
+  { emoji: '✍️', text: 'उत्तर तैयार कर रहा हूँ...' },
+  { emoji: '✨', text: 'सटीक उत्तर अंतिम रूप में...' },
+  { emoji: '💡', text: 'बस कुछ ही पलों में...' }
+];
+
+const thinkingPhasesEn = [
+  { emoji: '🧠', text: 'Thinking through your request...' },
+  { emoji: '🔍', text: 'Searching knowledge & memory...' },
+  { emoji: '⚡', text: 'Synthesizing key insights...' },
+  { emoji: '📊', text: 'Analyzing context & details...' },
+  { emoji: '✍️', text: 'Composing response...' },
+  { emoji: '✨', text: 'Polishing final answer...' },
+  { emoji: '💡', text: 'Almost ready...' }
+];
+
 export default function GeminiLiveModal({
   isOpen,
   onClose,
@@ -33,6 +52,8 @@ export default function GeminiLiveModal({
   const [activeLang, setActiveLang] = useState(selectedLang || 'hi');
   const [errorMsg, setErrorMsg] = useState(null);
   const [isMobile, setIsMobile] = useState(() => (typeof window !== 'undefined' ? window.innerWidth <= 640 : false));
+  const [thinkingPhaseIndex, setThinkingPhaseIndex] = useState(0);
+  const [thinkingElapsed, setThinkingElapsed] = useState(0);
 
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
@@ -52,6 +73,36 @@ export default function GeminiLiveModal({
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // Dynamic live thinking phase rotation (synced with Claude/Gemini dynamic status)
+  useEffect(() => {
+    if (sessionState !== 'thinking') {
+      setThinkingPhaseIndex(0);
+      setThinkingElapsed(0);
+      return;
+    }
+
+    const startTime = Date.now();
+    setThinkingPhaseIndex(0);
+    setThinkingElapsed(0);
+
+    const elapsedTimer = setInterval(() => {
+      setThinkingElapsed(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+
+    const phaseTimer = setInterval(() => {
+      setThinkingPhaseIndex((prev) => prev + 1);
+    }, 1800);
+
+    return () => {
+      clearInterval(elapsedTimer);
+      clearInterval(phaseTimer);
+    };
+  }, [sessionState]);
+
+  const isHiLang = (activeLang === 'hi' || activeLang === 'hi_friend');
+  const phases = isHiLang ? thinkingPhasesHi : thinkingPhasesEn;
+  const currentThinking = phases[thinkingPhaseIndex % phases.length];
 
   // Stop any active audio playback and immediately release dispatch lock
   const stopAudioPlayback = () => {
@@ -838,16 +889,54 @@ export default function GeminiLiveModal({
           marginTop: '22px',
           fontSize: '0.84rem',
           fontWeight: 700,
-          letterSpacing: '0.06em',
+          letterSpacing: '0.04em',
           textTransform: 'uppercase',
           color: currentTheme.statusColor,
           transition: 'color 0.3s ease',
           display: 'flex',
           alignItems: 'center',
-          gap: '6px'
+          justifyContent: 'center',
+          gap: '8px'
         }}>
-          <span>●</span>
-          <span>{currentTheme.statusText}</span>
+          {sessionState === 'thinking' ? (
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '5px 14px',
+              borderRadius: '999px',
+              background: 'rgba(245, 158, 11, 0.12)',
+              border: '1px solid rgba(245, 158, 11, 0.35)',
+              boxShadow: '0 2px 14px rgba(245, 158, 11, 0.22)',
+              color: '#fbbf24'
+            }}>
+              <span style={{ fontSize: '1rem', animation: 'livePulse 1.5s infinite' }}>
+                {currentThinking.emoji}
+              </span>
+              <span
+                key={`think-label-${thinkingPhaseIndex}`}
+                style={{
+                  color: '#fbbf24',
+                  fontWeight: 700,
+                  fontSize: '0.82rem',
+                  letterSpacing: '0.02em',
+                  animation: 'fadeInThinking 0.25s ease'
+                }}
+              >
+                {currentThinking.text}
+              </span>
+              {thinkingElapsed > 0 && (
+                <span style={{ fontSize: '0.72rem', color: '#fde68a', opacity: 0.85 }}>
+                  {thinkingElapsed}s
+                </span>
+              )}
+            </div>
+          ) : (
+            <>
+              <span>●</span>
+              <span>{currentTheme.statusText}</span>
+            </>
+          )}
         </div>
 
         {/* Real-time Subtitle / Spoken Transcript Card */}
@@ -857,7 +946,7 @@ export default function GeminiLiveModal({
             onScroll={handleTranscriptScroll}
             style={{
               background: '#0a1224',
-              border: '1px solid rgba(56, 189, 248, 0.28)',
+              border: sessionState === 'thinking' ? '1px solid rgba(245, 158, 11, 0.35)' : '1px solid rgba(56, 189, 248, 0.28)',
               borderRadius: '20px',
               padding: '16px 20px',
               width: '100%',
@@ -867,11 +956,12 @@ export default function GeminiLiveModal({
               overflowY: 'auto',
               display: 'flex',
               flexDirection: 'column',
-              justifyContent: (sessionState === 'speaking' || (transcript && transcript.length > 70)) ? 'flex-start' : 'center',
-              boxShadow: '0 12px 36px rgba(0, 0, 0, 0.7)',
+              justifyContent: (sessionState === 'speaking' || sessionState === 'thinking' || (transcript && transcript.length > 70)) ? 'flex-start' : 'center',
+              boxShadow: sessionState === 'thinking' ? '0 12px 36px rgba(245, 158, 11, 0.15)' : '0 12px 36px rgba(0, 0, 0, 0.7)',
               scrollbarWidth: 'thin',
               scrollbarColor: 'rgba(56, 189, 248, 0.35) transparent',
-              WebkitOverflowScrolling: 'touch'
+              WebkitOverflowScrolling: 'touch',
+              transition: 'all 0.3s ease'
             }}
           >
             <div style={{
@@ -899,6 +989,44 @@ export default function GeminiLiveModal({
                       animation: 'livePulse 0.8s infinite'
                     }} />
                   )}
+                </div>
+              ) : sessionState === 'thinking' ? (
+                <div style={{ width: '100%' }}>
+                  {transcript && (
+                    <div style={{ color: '#cbd5e1', marginBottom: '12px', fontSize: '0.96rem', fontStyle: 'italic' }}>
+                      "{transcript}"
+                    </div>
+                  )}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '10px 14px',
+                    borderRadius: '14px',
+                    background: 'rgba(245, 158, 11, 0.08)',
+                    border: '1px solid rgba(245, 158, 11, 0.25)',
+                    color: '#fbbf24',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.2)'
+                  }}>
+                    <span style={{ fontSize: '1.15rem', animation: 'livePulse 1.5s infinite' }}>
+                      {currentThinking.emoji}
+                    </span>
+                    <span
+                      key={`card-think-${thinkingPhaseIndex}`}
+                      style={{
+                        fontSize: '0.88rem',
+                        fontWeight: 600,
+                        animation: 'fadeInThinking 0.25s ease'
+                      }}
+                    >
+                      {currentThinking.text}
+                    </span>
+                    {thinkingElapsed > 0 && (
+                      <span style={{ fontSize: '0.75rem', color: '#fde68a', marginLeft: 'auto', fontWeight: 600 }}>
+                        {thinkingElapsed}s
+                      </span>
+                    )}
+                  </div>
                 </div>
               ) : transcript ? (
                 <span style={{ color: '#f1f5f9' }}>"{transcript}"</span>
