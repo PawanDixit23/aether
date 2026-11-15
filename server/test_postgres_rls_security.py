@@ -5,8 +5,8 @@ Tests strictly against live PostgreSQL:
    - Live application testing MUST connect under a non-superuser role (NOSUPERUSER & NOBYPASSRLS).
 2. Verification of RLS on ALL 15 Tenant-Owned Application Tables:
    - Asserts relrowsecurity and relforcerowsecurity are active on all 15 tables.
-3. Cross-Tenant Isolation under Real PostgreSQL RLS — FULL CRUD on ALL 15 TABLES:
-   - User A inserts records in ALL 15 tables inside User A's transaction context.
+3. Cross-Tenant Isolation under real PostgreSQL RLS; representative CRUD coverage (not full CRUD on all 15 tables):
+   - User A inserts records across the tested tenant-owned tables inside User A's transaction context.
    - User B with set_config('request.jwt.claim.sub', UUID_B, true) cannot SELECT, UPDATE, or DELETE ANY of User A's records.
    - User B cannot INSERT with owner_user_id = UUID_A (fails PostgreSQL WITH CHECK violation) on tasks table (representative).
 4. Webhook Bridge & RLS Integration:
@@ -200,8 +200,8 @@ def test_postgres_rls_suite():
             aa_tmp = ActionApproval(
                 owner_user_id=user_a, user_email="usera@example.com",
                 action_id=str(uuid.uuid4()), tool_name="delete_all_data",
-                params_hash="deadbeef", params_json="{}",
-                status="pending", created_at=datetime.utcnow()
+                param_hash="deadbeef", params_json="{}",
+                expires_at=time.time() + 600, consumed=False, created_at=datetime.utcnow()
             )
             sess.add(aa_tmp)
 
@@ -287,7 +287,7 @@ def test_postgres_rls_suite():
             assert d2 == 0, f"User B deleted PushSubscription! ({d2} rows)"
             assert d3 == 0, f"User B deleted BriefingPreference! ({d3} rows)"
     print("✅ P0-02: User B cannot DELETE records from any of User A's additional tables.")
-    print("✅ P0-02 CLEARED: Full SELECT/INSERT/UPDATE/DELETE cross-tenant isolation verified on ALL 15 tenant-owned tables.")
+    print("ℹ️ P0-02: Representative CRUD isolation checks passed; this test does NOT claim full CRUD coverage for all 15 tables.")
 
     # 7. Webhook & RLS Integration Verification (AETH-P0-02 & AETH-P0-05)
     phone_sender = f"9198{int(time.time()) % 100000000:08d}"
@@ -447,95 +447,49 @@ def test_postgres_rls_suite():
     print(f"✅ P0-03: Real PostgreSQL concurrent consumption race condition resolved (exactly 1 authorized, 4 replay-blocked: '{failures[0][2]}').")
 
 
-    # 10. P0-03: Orchestrator-Level Approval Gate — End-to-End test through actual AgentOrchestrator
-    print("\n--- P0-03: Orchestrator-Level Action Approval Gate ---")
+    # 10. P0-03: Exercise the actual AgentOrchestrator approval gate without external side effects.
+    print("\\n--- P0-03: Orchestrator-Level Action Approval Gate ---")
     try:
-        from agent.orchestrator import AgentOrchestrator, AgentState
-        from agent.governance import ActionTier
+        import asyncio
+        from unittest.mock import patch
+        from agent.orchestrator import AgentOrchestrator
+        from agent.state import ToolCall
+        from agent.tools import ToolRegistry
+        from agent.governance import VerificationEngine
 
         orch_db_sess = Session()
         try:
             set_db_rls_context(orch_db_sess, user_a)
             orchestrator = AgentOrchestrator(db=orch_db_sess, owner_user_id=user_a, user_email="usera@example.com")
+            test_params = {"to": "+919000000001", "message": "P0 approval test"}
+            orchestrator._resolve_tool_for_step = lambda *args: ("send_whatsapp", test_params)
 
-            # Inject a Tier-3 critical tool call (wire_transfer) WITHOUT approval_id
-            # The orchestrator MUST block this and set requires_approval = True
-            state_no_approval = AgentState(
-                messages=[],
-                tool_calls=[],
-                context={},  # No approval_id supplied
-                owner_user_id=user_a,
-                user_email="usera@example.com"
+            blocked = asyncio.run(orchestrator.run("send a WhatsApp message", context={}))
+            assert blocked.requires_approval is True, "Orchestrator did not require approval for send_whatsapp"
+            assert blocked.executed_tools and blocked.executed_tools[0].status == "waiting_approval"
+            approval_id = blocked.metadata["pending_action"]["action_id"]
+            assert approval_id, "Orchestrator did not return a durable action_id"
+
+            set_db_rls_context(orch_db_sess, user_a)
+            mocked_call = ToolCall(tool_name="send_whatsapp", parameters=test_params, status="executed", message="mocked")
+            with patch.object(ToolRegistry, "execute_tool", return_value=mocked_call), \\
+                 patch.object(VerificationEngine, "verify_post_execution", return_value=None):
+                authorized = asyncio.run(orchestrator.run("send a WhatsApp message", context={"action_id": approval_id}))
+            assert authorized.executed_tools and authorized.executed_tools[0].status == "executed", (
+                "Valid approval did not pass the real orchestrator gate"
             )
-            # Simulate the governance check for a Tier-3 action directly
-            tier = None
-            try:
-                from agent.governance import PermissionEngine
-                tier = PermissionEngine.classify_action("execute_wire_transfer", {"amount": 50000, "to": "external_account"})
-            except Exception:
-                tier = ActionTier.TIER_3_CRITICAL  # fallback if classify_action unavailable
 
-            assert tier == ActionTier.TIER_3_CRITICAL, f"Wire transfer should be Tier-3, got: {tier}"
-            print(f"✅ P0-03: execute_wire_transfer correctly classified as TIER_3_CRITICAL (tier={tier})")
-
-            # Create a real approval, then verify it gates execution
-            test_params = {"amount": 50000, "to": "external_account"}
-            approval_id = ActionApprovalManager.create_approval_request(
-                tool_name="execute_wire_transfer",
-                params=test_params,
-                user_email="usera@example.com",
-                owner_user_id=user_a,
-                db=orch_db_sess
-            )
-            assert approval_id, "ActionApprovalManager failed to create approval request"
-            print(f"✅ P0-03: Approval request created (action_id={approval_id})")
-
-            # Verify that the approval was recorded in the DB under RLS
-            stored = orch_db_sess.query(ActionApproval).filter(
-                ActionApproval.action_id == approval_id,
-                ActionApproval.owner_user_id == user_a
-            ).first()
-            assert stored is not None, "Approval not persisted in DB under RLS context!"
-            assert stored.status == "pending", f"Expected pending, got: {stored.status}"
-            print(f"✅ P0-03: Approval persisted in DB (status=pending, owner={stored.owner_user_id})")
-
-            # User B cannot see or consume User A's approval
-            with Session() as b_sess:
-                with b_sess.begin():
-                    set_db_rls_context(b_sess, user_b)
-                    b_approval = b_sess.query(ActionApproval).filter(ActionApproval.action_id == approval_id).first()
-                    assert b_approval is None, "Security Violation: User B can see User A's action approval!"
-            print("✅ P0-03: User B cannot see User A's pending approval under RLS.")
-
-            # Verify & consume with correct params succeeds
-            ok, msg = ActionApprovalManager.verify_and_consume(
-                action_id=approval_id,
-                tool_name="execute_wire_transfer",
-                params=test_params,
-                user_email="usera@example.com",
-                owner_user_id=user_a,
-                db=orch_db_sess
-            )
-            assert ok, f"P0-03: Legitimate approval verification failed: {msg}"
-            print(f"✅ P0-03: Legitimate approval successfully consumed: {msg}")
-
-            # Replay attempt: Same approval_id cannot be consumed again (one-time use)
-            ok2, msg2 = ActionApprovalManager.verify_and_consume(
-                action_id=approval_id,
-                tool_name="execute_wire_transfer",
-                params=test_params,
-                user_email="usera@example.com",
-                owner_user_id=user_a,
-                db=orch_db_sess
-            )
-            assert not ok2, f"P0-03 Replay Attack: Consumed approval was accepted a second time! msg={msg2}"
-            print(f"✅ P0-03: Replay attack blocked (approval already consumed): {msg2}")
-
-            print("✅ P0-03 CLEARED: Orchestrator-level approval gate verified end-to-end.")
+            set_db_rls_context(orch_db_sess, user_a)
+            with patch.object(ToolRegistry, "execute_tool", return_value=mocked_call), \\
+                 patch.object(VerificationEngine, "verify_post_execution", return_value=None):
+                replay = asyncio.run(orchestrator.run("send a WhatsApp message", context={"action_id": approval_id}))
+            assert replay.requires_approval is True, "Consumed approval was replayed by the orchestrator"
+            assert replay.executed_tools[0].status == "waiting_approval"
+            print("✅ P0-03: Actual AgentOrchestrator blocked without approval, passed with approval, and blocked replay.")
         finally:
             orch_db_sess.close()
     except ImportError as e:
-        print(f"⚠️  P0-03 orchestrator test skipped (import unavailable in this test environment): {e}")
+        raise AssertionError(f"P0-03 orchestrator integration test dependencies unavailable: {e}")
 
     print("\n🎉 ALL REAL POSTGRESQL RLS & CONCURRENCY TESTS ON ACTUAL APPLICATION TABLES PASSED 100%!")
 

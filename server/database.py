@@ -43,13 +43,21 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 @event.listens_for(SessionLocal, "after_begin")
 def receive_after_begin(session, transaction, connection):
-    """Re-applies transaction-local PostgreSQL RLS context whenever a new transaction begins (AETH-P0-02)."""
+    """Re-applies tenant OR verified webhook context on every transaction (SET LOCAL resets on commit)."""
+    if "postgres" not in str(engine.url).lower():
+        return
     user_id = session.info.get("rls_user_id")
-    if user_id and "postgres" in str(engine.url).lower():
-        try:
-            connection.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": str(user_id).strip()})
-        except Exception as e:
-            raise RuntimeError(f"Failed to apply transaction-local RLS security context: {e}")
+    webhook_provider = session.info.get("webhook_provider")
+    try:
+        connection.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": str(user_id or "").strip()})
+        if webhook_provider:
+            connection.execute(text("SELECT set_config('request.webhook_service_authorized', 'true', true)"))
+            connection.execute(text("SELECT set_config('request.webhook_provider', :provider, true)"), {"provider": webhook_provider})
+        else:
+            connection.execute(text("SELECT set_config('request.webhook_service_authorized', 'false', true)"))
+            connection.execute(text("SELECT set_config('request.webhook_provider', '', true)"))
+    except Exception as e:
+        raise RuntimeError(f"Failed to apply transaction-local database security context: {e}")
 
 Base = declarative_base()
 
@@ -274,14 +282,20 @@ def ensure_schema_migrations():
 
 def set_webhook_service_rls_context(db: Session, authorized_provider: str):
     """
-    Sets transaction-local webhook service context ONLY after cryptographic webhook signature validation (AETH-P0-05).
-    Enables bridge tables (user_integration_pairings, channel_pairing_challenges) lookup strictly within this transaction.
+    Set a transaction-local provider scope after webhook signature validation.
+    Provider is the bridge-table channel, not transport: Twilio maps to WhatsApp.
+    Session info reapplies the scope after each commit/rollback starts a new transaction.
     """
+    provider = str(authorized_provider or "").strip().lower()
+    if provider not in {"telegram", "whatsapp"}:
+        raise ValueError("Unsupported webhook bridge provider")
+    db.info["rls_user_id"] = ""
+    db.info["webhook_provider"] = provider
     try:
-        is_pg = "postgres" in str(engine.url).lower()
-        if is_pg:
+        if "postgres" in str(engine.url).lower():
+            db.execute(text("SELECT set_config('request.jwt.claim.sub', '', true)"))
             db.execute(text("SELECT set_config('request.webhook_service_authorized', 'true', true)"))
-            db.execute(text("SELECT set_config('request.webhook_provider', :provider, true)"), {"provider": authorized_provider})
+            db.execute(text("SELECT set_config('request.webhook_provider', :provider, true)"), {"provider": provider})
     except Exception as e:
         raise RuntimeError(f"Webhook service security context initialization failed: {e}")
 
@@ -294,12 +308,13 @@ def set_db_rls_context(db: Session, user_id: Optional[str]):
     """
     clean_sub = str(user_id).strip() if user_id else ""
     db.info["rls_user_id"] = clean_sub
+    db.info.pop("webhook_provider", None)
     try:
         is_pg = "postgres" in str(engine.url).lower()
         if is_pg:
             db.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": clean_sub})
-            # Clear webhook bridge authorization so subsequent business operations are strictly scoped to the tenant
             db.execute(text("SELECT set_config('request.webhook_service_authorized', 'false', true)"))
+            db.execute(text("SELECT set_config('request.webhook_provider', '', true)"))
     except Exception as e:
         raise RuntimeError(f"Database security context initialization failed: {e}")
 

@@ -4810,17 +4810,14 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
         ).first()
         user_email = pairing.user_email if pairing else None
         owner_id = pairing.owner_user_id if pairing else None
-        if owner_id:
-            set_db_rls_context(db, owner_id)
+        clean_code = re.sub(r'[^0-9]', '', text)
+        # OTP verification retains provider scope; ordinary messages use the verified tenant scope.
+        if len(clean_code) == 6 or not owner_id:
+            set_webhook_service_rls_context(db, "telegram")
         else:
-            set_db_rls_context(db, None)
-        if owner_id:
             set_db_rls_context(db, owner_id)
-        else:
-            set_db_rls_context(db, None)
 
         # 3. Atomic OTP-Only Pairing Handler via DB ChannelPairingChallenge (AETH-P0-05)
-        clean_code = re.sub(r'[^0-9]', '', text)
         if len(clean_code) == 6:
             code_hash = hashlib.sha256(clean_code.encode()).hexdigest()
             now_ts = time.time()
@@ -5980,7 +5977,7 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
                 raise HTTPException(status_code=403, detail="Twilio webhook signature verification failed")
 
     # Authorize bridge tables (user_integration_pairings, channel_pairing_challenges) for verified webhook
-    set_webhook_service_rls_context(db, "twilio")
+    set_webhook_service_rls_context(db, "whatsapp")
 
     # Atomic event deduplication and retry state machine for Twilio (AETH-P0-05)
     msg_sid = form.get("MessageSid") or form.get("SmsMessageSid") or form.get("SmsSid")
@@ -5993,12 +5990,13 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
             return Response(content="<Response></Response>", media_type="application/xml")
         # AETH-P0-05 CRITICAL: claim_webhook_event() calls db.commit() internally which resets
         # transaction-local SET LOCAL settings. Re-establish webhook service RLS context after claim.
-        set_webhook_service_rls_context(db, "twilio")
+        set_webhook_service_rls_context(db, "whatsapp")
 
     try:
         sender_full = form.get("From", "")  # e.g. "whatsapp:+919876543210"
         sender = sender_full.replace("whatsapp:", "").strip()
         body = form.get("Body", "").strip()
+        clean_code = re.sub(r'[^0-9]', '', body)
 
         # Check verified pairing from UserIntegrationPairing (AETH-P0-05)
         pairing = db.query(UserIntegrationPairing).filter(
@@ -6008,13 +6006,13 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
         ).first()
         user_email = pairing.user_email if pairing else None
         owner_id = pairing.owner_user_id if pairing else None
-        if owner_id:
-            set_db_rls_context(db, owner_id)
+        # Twilio is a transport for the WhatsApp channel; OTP lookup remains provider-scoped.
+        if len(clean_code) == 6 or not owner_id:
+            set_webhook_service_rls_context(db, "whatsapp")
         else:
-            set_db_rls_context(db, None)
+            set_db_rls_context(db, owner_id)
 
         # Check 6-digit OTP pairing atomically with per-sender rate limiting (AETH-P0-05)
-        clean_code = re.sub(r'[^0-9]', '', body)
         if len(clean_code) == 6:
             code_hash = hashlib.sha256(clean_code.encode()).hexdigest()
             now_ts = time.time()
