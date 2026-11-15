@@ -11,6 +11,8 @@ Covers:
 
 import sys
 import os
+os.environ["ENVIRONMENT"] = "test"
+os.environ["ENABLE_INSECURE_DEV_AUTH"] = "true"
 import asyncio
 
 try:
@@ -175,7 +177,8 @@ async def test_agent_orchestrator_multi_step_workflow():
     db = next(get_db())
     test_email = "test_agent_flow@aether.local"
 
-    orchestrator = AgentOrchestrator(db=db, user_email=test_email, lang="en")
+    test_uuid = "00000000-0000-4000-8000-000000000001"
+    orchestrator = AgentOrchestrator(db=db, user_email=test_email, owner_user_id=test_uuid, lang="en")
     
     # Composite prompt containing both an expense and a reminder
     composite_prompt = "Spent 350 for groceries and remind me at 8 PM to cook dinner"

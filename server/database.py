@@ -1,5 +1,6 @@
 import os
 from typing import Optional, Any, Dict, List
+from fastapi import Request
 from sqlalchemy import create_engine, text, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -46,13 +47,13 @@ def receive_after_begin(session, transaction, connection):
     user_id = session.info.get("rls_user_id")
     if user_id and "postgres" in str(engine.url).lower():
         try:
-            connection.execute(text("SET LOCAL request.jwt.claim.sub = :sub"), {"sub": str(user_id).strip()})
+            connection.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": str(user_id).strip()})
         except Exception as e:
             raise RuntimeError(f"Failed to apply transaction-local RLS security context: {e}")
 
 Base = declarative_base()
 
-def get_db(request: Optional[Any] = None):
+def get_db(request: Request = None):
     """FastAPI database dependency wired with transaction-local RLS context (AETH-P0-02)."""
     db = SessionLocal()
     try:
@@ -211,13 +212,16 @@ def ensure_schema_migrations():
                     """))
                     conn.commit()
             except Exception as e:
-                print(f"[RLS Migration Note] {t}: {e}")
+                print(f"[RLS Migration Error] {t}: {e}")
+                env = os.environ.get("ENVIRONMENT", "production").lower()
+                if env in ["prod", "production"] or is_pg:
+                    raise RuntimeError(f"CRITICAL: Failed to enforce RLS policy on table {t}: {e}")
 
 
 def set_db_rls_context(db: Session, user_id: str):
     """
     Sets transaction-local PostgreSQL RLS context from verified authenticated UUID (AETH-P0-02).
-    Ensures current_setting('request.jwt.claim.sub', true) matches verified user_id in all queries.
+    Uses official PostgreSQL set_config(setting_name, new_val, is_local=true) for parameter-bound transaction isolation.
     Fails closed if the identity cannot be set.
     """
     if not user_id:
@@ -227,7 +231,7 @@ def set_db_rls_context(db: Session, user_id: str):
     try:
         is_pg = "postgres" in str(engine.url).lower()
         if is_pg:
-            db.execute(text("SET LOCAL request.jwt.claim.sub = :sub"), {"sub": clean_sub})
+            db.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": clean_sub})
     except Exception as e:
         raise RuntimeError(f"Database security context initialization failed: {e}")
 

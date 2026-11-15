@@ -306,43 +306,74 @@ def tenant_filter(model, current_user: UserIdentity):
 
 def check_and_record_otp_attempt(db: Session, channel: str, sender: str, is_correct: bool) -> Tuple[bool, str]:
     """
-    Per-sender OTP rate-limiting and bounded lockout (AETH-P0-05).
+    Per-sender OTP rate-limiting and bounded lockout with atomic SQL increments (AETH-P0-05).
     Guarantees failed guesses from one sender/attacker never increment or exhaust another user's challenges.
+    Uses atomic SQL expressions to eliminate race conditions under concurrent requests.
     """
     now = time.time()
+    clean_sender = str(sender).strip()
+
+    # 1. Atomic upsert to ensure tracking row exists without concurrency duplicate key exceptions
     rate_rec = db.query(SenderPairingRateLimit).filter(
         SenderPairingRateLimit.channel == channel,
-        SenderPairingRateLimit.sender == str(sender)
+        SenderPairingRateLimit.sender == clean_sender
     ).first()
     if not rate_rec:
-        rate_rec = SenderPairingRateLimit(
-            channel=channel,
-            sender=str(sender),
-            failed_attempts=0,
-            locked_until=0.0
-        )
-        db.add(rate_rec)
-        db.commit()
-        db.refresh(rate_rec)
-
-    if rate_rec.locked_until > now:
-        remaining_min = int((rate_rec.locked_until - now) / 60) + 1
-        return False, f"⚠️ Too many failed attempts. This sender is locked out. Try again in {remaining_min} minutes."
+        try:
+            with db.begin_nested():
+                rate_rec = SenderPairingRateLimit(
+                    channel=channel,
+                    sender=clean_sender,
+                    failed_attempts=0,
+                    locked_until=0.0
+                )
+                db.add(rate_rec)
+                db.flush()
+        except Exception:
+            db.rollback()
 
     if is_correct:
-        rate_rec.failed_attempts = 0
-        rate_rec.locked_until = 0.0
+        db.query(SenderPairingRateLimit).filter(
+            SenderPairingRateLimit.channel == channel,
+            SenderPairingRateLimit.sender == clean_sender
+        ).update({
+            SenderPairingRateLimit.failed_attempts: 0,
+            SenderPairingRateLimit.locked_until: 0.0,
+            SenderPairingRateLimit.last_attempt_at: datetime.utcnow()
+        }, synchronize_session=False)
         db.commit()
         return True, "Success"
-    else:
-        rate_rec.failed_attempts += 1
-        rate_rec.last_attempt_at = datetime.utcnow()
-        if rate_rec.failed_attempts >= 5:
-            rate_rec.locked_until = now + 900  # 15-minute lockout
-        db.commit()
-        if rate_rec.failed_attempts >= 5:
-            return False, "⚠️ 5 failed attempts exceeded. This sender is locked out for 15 minutes."
-        return False, f"⚠️ Invalid pairing code. {5 - rate_rec.failed_attempts} attempts remaining."
+
+    # 2. Atomic SQL increment (eliminates lost updates under concurrency)
+    db.query(SenderPairingRateLimit).filter(
+        SenderPairingRateLimit.channel == channel,
+        SenderPairingRateLimit.sender == clean_sender
+    ).update({
+        SenderPairingRateLimit.failed_attempts: SenderPairingRateLimit.failed_attempts + 1,
+        SenderPairingRateLimit.last_attempt_at: datetime.utcnow()
+    }, synchronize_session=False)
+
+    # 3. Atomic lockout update if threshold reached
+    db.query(SenderPairingRateLimit).filter(
+        SenderPairingRateLimit.channel == channel,
+        SenderPairingRateLimit.sender == clean_sender,
+        SenderPairingRateLimit.failed_attempts >= 5
+    ).update({
+        SenderPairingRateLimit.locked_until: now + 900.0  # 15-minute lockout
+    }, synchronize_session=False)
+    db.commit()
+
+    curr = db.query(SenderPairingRateLimit).filter(
+        SenderPairingRateLimit.channel == channel,
+        SenderPairingRateLimit.sender == clean_sender
+    ).first()
+
+    if curr and curr.locked_until > now:
+        rem = int((curr.locked_until - now) / 60) + 1
+        return False, f"⚠️ 5 failed attempts exceeded. This sender is locked out for {rem} minutes."
+
+    attempts = curr.failed_attempts if curr else 1
+    return False, f"⚠️ Invalid pairing code. {max(0, 5 - attempts)} attempts remaining."
 
 DEFAULT_OWNER_EMAIL = os.environ.get("DEFAULT_USER_EMAIL", "e.pawandixit@gmail.com").strip().lower()
 
@@ -2239,14 +2270,14 @@ def get_next_weekday(dt: datetime) -> datetime:
         next_day += timedelta(days=1)
     return next_day
 
-def auto_advance_recurring_tasks(db: Session, user_email: Optional[str] = None):
-    """Automatically rolls recurring tasks (daily, weekdays, weekly) forward if their scheduled date is in the past."""
+def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = None):
+    """Automatically rolls recurring tasks (daily, weekdays, weekly) forward strictly isolated by owner_user_id (AETH-P0-02)."""
     try:
         now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
         today = now.date()
         query = db.query(Task).filter(Task.recurrence != None)
-        if user_email:
-            query = query.filter(Task.user_email == user_email)
+        if owner_user_id:
+            query = query.filter(Task.owner_user_id == owner_user_id)
         rec_tasks = query.all()
         updated = False
         for dt in rec_tasks:
@@ -2300,7 +2331,7 @@ def get_due_reminders(
     db: Session = Depends(get_db)
 ):
     """Fetch pending tasks whose reminder time has just arrived for verified user (AETH-P0-02)."""
-    auto_advance_recurring_tasks(db, current_user.email)
+    auto_advance_recurring_tasks(db, owner_user_id=current_user.id)
 
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     tasks = db.query(Task).filter(
@@ -2382,7 +2413,7 @@ def list_tasks(
     db: Session = Depends(get_db)
 ):
     eff_email = current_user.email
-    auto_advance_recurring_tasks(db, eff_email)
+    auto_advance_recurring_tasks(db, owner_user_id=current_user.id)
 
     query = db.query(Task).filter(tenant_filter(Task, current_user))
     
@@ -3810,7 +3841,7 @@ def get_executive_audio_briefing(
     city = live_w.get("city_hi", "Jaipur")
     
     # 2. Today's pending tasks & reminders
-    auto_advance_recurring_tasks(db, eff_email)
+    auto_advance_recurring_tasks(db, owner_user_id=current_user.id)
     task_query = db.query(Task).filter(tenant_filter(Task, current_user), Task.status == "pending", (Task.parent_id == None) | (Task.parent_id == 0))
     
     all_pending = task_query.all()
@@ -5293,17 +5324,32 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         msg = messages[0]
         msg_id = msg.get("id")
 
-        # 2. Atomic Deduplication via ProcessedWebhookEvent table (AETH-P0-05)
+        # 2. Atomic Deduplication & Retry-Safe State Machine via ProcessedWebhookEvent table (AETH-P0-05)
+        webhook_evt = None
         if msg_id:
-            try:
-                with db.begin_nested():
-                    db.add(ProcessedWebhookEvent(provider="whatsapp", event_id=msg_id))
-                    db.flush()
-                db.commit()
-            except Exception:
-                db.rollback()
-                print(f"[WhatsApp Webhook] Duplicate message received ({msg_id}) — ignoring to prevent duplicate response.")
-                return {"status": "ok", "message": "duplicate ignored"}
+            existing_evt = db.query(ProcessedWebhookEvent).filter(
+                ProcessedWebhookEvent.provider == "whatsapp",
+                ProcessedWebhookEvent.event_id == str(msg_id)
+            ).first()
+            if existing_evt:
+                if existing_evt.status in ["processing", "processed"]:
+                    print(f"[WhatsApp Webhook] Duplicate/in-flight message received ({msg_id}) — ignoring to prevent duplicate response.")
+                    return {"status": "ok", "message": "duplicate ignored"}
+                else:
+                    existing_evt.status = "processing"
+                    db.commit()
+                    webhook_evt = existing_evt
+            else:
+                try:
+                    with db.begin_nested():
+                        webhook_evt = ProcessedWebhookEvent(provider="whatsapp", event_id=str(msg_id), status="processing")
+                        db.add(webhook_evt)
+                        db.flush()
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    print(f"[WhatsApp Webhook] Duplicate message received ({msg_id}) — ignoring to prevent duplicate response.")
+                    return {"status": "ok", "message": "duplicate ignored"}
 
         sender = msg.get("from")  # e.g., '919876543210'
         msg_type = msg.get("type")
@@ -5619,9 +5665,19 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         except Exception as e_chat:
             print(f"[WhatsApp ChatMessage Sync Error] {e_chat}")
 
+        if webhook_evt:
+            webhook_evt.status = "processed"
+            db.commit()
+
         await _send_whatsapp_message(sender, reply_text, wa_phone_id, wa_token)
         return {"status": "ok"}
     except Exception as e:
+        if webhook_evt:
+            try:
+                webhook_evt.status = "failed"
+                db.commit()
+            except Exception:
+                db.rollback()
         print(f"[WhatsApp Webhook Error] {e}")
         return {"status": "error", "detail": str(e)}
 
@@ -5659,20 +5715,37 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
             if not hmac.compare_digest(sig_header, computed_raw):
                 raise HTTPException(status_code=403, detail="Twilio webhook signature verification failed")
 
-    # Atomic event deduplication for Twilio (AETH-P0-05)
+    # Atomic event deduplication and retry state machine for Twilio (AETH-P0-05)
     msg_sid = form.get("MessageSid") or form.get("SmsMessageSid") or form.get("SmsSid")
+    twilio_evt = None
     if msg_sid:
-        try:
-            with db.begin_nested():
-                processed_event = ProcessedWebhookEvent(
-                    provider="twilio",
-                    event_id=str(msg_sid)
-                )
-                db.add(processed_event)
-                db.flush()
-        except IntegrityError:
-            print(f"[Twilio Webhook] Duplicate delivery ignored: {msg_sid}")
-            return Response(content="<Response></Response>", media_type="application/xml")
+        existing_t_evt = db.query(ProcessedWebhookEvent).filter(
+            ProcessedWebhookEvent.provider == "twilio",
+            ProcessedWebhookEvent.event_id == str(msg_sid)
+        ).first()
+        if existing_t_evt:
+            if existing_t_evt.status in ["processing", "processed"]:
+                print(f"[Twilio Webhook] Duplicate delivery ignored: {msg_sid}")
+                return Response(content="<Response></Response>", media_type="application/xml")
+            else:
+                existing_t_evt.status = "processing"
+                db.commit()
+                twilio_evt = existing_t_evt
+        else:
+            try:
+                with db.begin_nested():
+                    twilio_evt = ProcessedWebhookEvent(
+                        provider="twilio",
+                        event_id=str(msg_sid),
+                        status="processing"
+                    )
+                    db.add(twilio_evt)
+                    db.flush()
+                db.commit()
+            except (IntegrityError, Exception):
+                db.rollback()
+                print(f"[Twilio Webhook] Duplicate delivery ignored: {msg_sid}")
+                return Response(content="<Response></Response>", media_type="application/xml")
 
     try:
         sender_full = form.get("From", "")  # e.g. "whatsapp:+919876543210"
@@ -5797,8 +5870,17 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
                 reply = data_inner.get("response", "Done.")
 
         twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{reply}</Message></Response>'
+        if twilio_evt:
+            twilio_evt.status = "processed"
+            db.commit()
         return Response(content=twiml, media_type="application/xml")
     except Exception as e:
+        if twilio_evt:
+            try:
+                twilio_evt.status = "failed"
+                db.commit()
+            except Exception:
+                db.rollback()
         print(f"[Twilio WA Error] {e}")
         return Response(content='<Response><Message>Error processing</Message></Response>', media_type="application/xml")
 

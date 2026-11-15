@@ -328,6 +328,21 @@ export default function App() {
           allowsInlineMediaPlayback={true}
           mediaPlaybackRequiresUserAction={false}
           mediaCapturePermissionGrantType="prompt"
+          injectedJavaScriptBeforeContentLoaded={`
+            (function() {
+              if (window.self !== window.top) {
+                try {
+                  delete window.ReactNativeWebView;
+                  Object.defineProperty(window, 'ReactNativeWebView', {
+                    get: function() { return undefined; },
+                    set: function() {},
+                    configurable: false
+                  });
+                } catch (e) {}
+              }
+            })();
+            true;
+          `}
           {...({
             onPermissionRequest: (event: any) => {
               // Deny if origin is missing or untrusted (AETH-P0-04)
@@ -365,10 +380,31 @@ export default function App() {
                 { cancelable: false }
               );
             },
-            onGeolocationPermissionsShowPrompt: (event: any) => {
+            onGeolocationPermissionsShowPrompt: async (event: any) => {
               if (!event?.origin || !isTrustedOrigin(event.origin)) {
                 if (typeof event?.deny === 'function') event.deny();
                 return;
+              }
+              if (Platform.OS === 'android') {
+                try {
+                  const osGranted = await PermissionsAndroid.request(
+                    PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+                    {
+                      title: 'Location Permission',
+                      message: 'Aether requires device location for weather reports and local services.',
+                      buttonPositive: 'Allow',
+                      buttonNegative: 'Deny'
+                    }
+                  );
+                  if (osGranted !== PermissionsAndroid.RESULTS.GRANTED) {
+                    if (typeof event?.deny === 'function') event.deny();
+                    return;
+                  }
+                } catch (e) {
+                  console.warn('[Location Permission Error]', e);
+                  if (typeof event?.deny === 'function') event.deny();
+                  return;
+                }
               }
               Alert.alert(
                 'Location Permission',

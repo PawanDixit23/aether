@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text, UniqueConstraint
 
 try:
     from .database import Base
@@ -220,6 +220,9 @@ class SenderPairingRateLimit(Base):
     Guarantees failed guesses from one sender/attacker never increment or exhaust another user's challenges.
     """
     __tablename__ = "sender_pairing_rate_limits"
+    __table_args__ = (
+        UniqueConstraint("channel", "sender", name="uq_sender_pairing_rate_limit"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     channel = Column(String, index=True, nullable=False)  # "whatsapp", "telegram"
