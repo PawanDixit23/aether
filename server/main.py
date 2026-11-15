@@ -4783,6 +4783,8 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
         data = await req.json()
         # 2. Atomic Durable deduplication & state machine via DB (AETH-P0-05)
         update_id = data.get("update_id")
+        if update_id is None:
+            raise HTTPException(status_code=400, detail="Telegram update_id is required for replay protection")
         if update_id:
             event_key = f"tg_{update_id}"
             claimed, webhook_evt = claim_webhook_event(db, provider="telegram", event_id=event_key)
@@ -5470,6 +5472,9 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
     is_prod = env in ["prod", "production"]
     raw_body = await req.body()
 
+    # An empty app secret is not a valid signature key. Never accept an attacker-computable empty-key HMAC.
+    if is_prod and not whatsapp_secret:
+        raise HTTPException(status_code=503, detail="WhatsApp webhook verification is not configured")
     # 1. Cryptographic signature verification against Meta app secret (Mandatory in production)
     if whatsapp_secret or is_prod:
         hub_sig = req.headers.get("X-Hub-Signature-256", "").strip()
@@ -5515,6 +5520,8 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
 
         msg = messages[0]
         msg_id = msg.get("id")
+        if not isinstance(msg_id, str) or not msg_id.strip():
+            raise HTTPException(status_code=400, detail="WhatsApp message ID is required for replay protection")
 
         # 2. Atomic Deduplication & Retry-Safe State Machine via ProcessedWebhookEvent table (AETH-P0-05)
         webhook_evt = None
@@ -5920,6 +5927,9 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
     form = await req.form()
     form_dict = {k: str(v) for k, v in form.items()}
 
+    # An empty auth token makes the expected HMAC publicly computable; fail closed when absent.
+    if is_prod and not twilio_auth_token:
+        raise HTTPException(status_code=503, detail="Twilio webhook verification is not configured")
     # Cryptographic Twilio signature verification with reverse-proxy canonical URL (AETH-P0-05)
     if twilio_auth_token or is_prod:
         sig_header = req.headers.get("X-Twilio-Signature", "").strip()
@@ -5944,10 +5954,12 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
                 raise HTTPException(status_code=403, detail="Twilio webhook signature verification failed")
 
     # Authorize bridge tables (user_integration_pairings, channel_pairing_challenges) for verified webhook
-    set_webhook_service_rls_context(db, "twilio")
+    set_webhook_service_rls_context(db, "whatsapp")
 
     # Atomic event deduplication and retry state machine for Twilio (AETH-P0-05)
     msg_sid = form.get("MessageSid") or form.get("SmsMessageSid") or form.get("SmsSid")
+    if not msg_sid or not str(msg_sid).strip():
+        raise HTTPException(status_code=400, detail="Twilio MessageSid is required for replay protection")
     twilio_evt = None
     webhook_success = True
     if msg_sid:
@@ -5957,7 +5969,7 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
             return Response(content="<Response></Response>", media_type="application/xml")
         # AETH-P0-05 CRITICAL: claim_webhook_event() calls db.commit() internally which resets
         # transaction-local SET LOCAL settings. Re-establish webhook service RLS context after claim.
-        set_webhook_service_rls_context(db, "twilio")
+        set_webhook_service_rls_context(db, "whatsapp")
 
     try:
         sender_full = form.get("From", "")  # e.g. "whatsapp:+919876543210"
