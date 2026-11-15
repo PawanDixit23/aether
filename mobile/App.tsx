@@ -67,6 +67,31 @@ function isTrustedOrigin(urlStr?: string): boolean {
   }
 }
 
+
+
+/**
+ * Accept only canonical YouTube video embed URLs. Prefix checks are unsafe here:
+ * they can accept path lookalikes and traversal-shaped URLs. Keep the host, scheme,
+ * port, and exact 11-character video ID constrained before allowing an iframe.
+ */
+function isAllowedYoutubeEmbedUrl(urlStr?: string): boolean {
+  if (!urlStr) return false;
+  try {
+    const parsed = new URL(urlStr);
+    const host = parsed.hostname.toLowerCase();
+    return (
+      parsed.protocol === 'https:' &&
+      (parsed.port === '' || parsed.port === '443') &&
+      !parsed.username &&
+      !parsed.password &&
+      (host === 'www.youtube.com' || host === 'www.youtube-nocookie.com') &&
+      /^\/embed\/[A-Za-z0-9_-]{11}\/?$/.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 const ALLOWED_BRIDGE_ACTIONS = new Set([
   'MAKE_CALL',
   'SEARCH_CONTACT_AND_CALL',
@@ -517,8 +542,7 @@ export default function App() {
             if (request.isTopFrame === false) {
               const subUrl = url || '';
               if (
-                subUrl.startsWith('https://www.youtube.com/embed/') ||
-                subUrl.startsWith('https://www.youtube-nocookie.com/embed/') ||
+                isAllowedYoutubeEmbedUrl(subUrl) ||
                 isTrustedOrigin(subUrl)
               ) {
                 return true;
@@ -527,16 +551,9 @@ export default function App() {
             }
 
             // 2. Allow embedded YouTube players and media to load smoothly inside the WebView (Strict Origin & Path)
-            try {
-              const parsed = new URL(url);
-              if (
-                parsed.protocol === 'https:' &&
-                (parsed.hostname === 'www.youtube.com' || parsed.hostname === 'www.youtube-nocookie.com') &&
-                parsed.pathname.startsWith('/embed/')
-              ) {
-                return true;
-              }
-            } catch {}
+            if (isAllowedYoutubeEmbedUrl(url)) {
+              return true;
+            }
 
             // 3. Open native Phone Dialer, SMS, and Mail externally without breaking the WebView session
             if (url.startsWith('tel:')) {
