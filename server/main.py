@@ -5174,7 +5174,8 @@ class WhatsAppDirectSendRequest(BaseModel):
     attachment_url: Optional[str] = None
     attachment_name: Optional[str] = None
     attachment_type: Optional[str] = "image"
-    user_email: Optional[str] = None
+    user_email: Optional[str] = None  # Ignored; identity is always derived from the verified JWT.
+    approval_id: Optional[str] = None
 
 class WhatsAppSimulateIncomingRequest(BaseModel):
     from_phone: Optional[str] = "918741838653"
@@ -5289,59 +5290,125 @@ def get_whatsapp_messages(
         }
     }
 
+def _normalize_whatsapp_direct_send(req: WhatsAppDirectSendRequest) -> Dict[str, Any]:
+    """Build the exact canonical payload that must be approved before dispatch."""
+    raw_phone = re.sub(r"[^0-9]", "", (req.to_phone or "").strip())
+    if len(raw_phone) == 10:
+        clean_phone = f"91{raw_phone}"
+    elif 8 <= len(raw_phone) <= 15:
+        clean_phone = raw_phone
+    else:
+        raise HTTPException(status_code=422, detail="A valid destination phone number is required")
+
+    message = (req.message or "").strip()
+    attachment_url = (req.attachment_url or "").strip() or None
+    attachment_type = (req.attachment_type or "image").strip().lower()
+    if not message and not attachment_url:
+        raise HTTPException(status_code=422, detail="Message text or an attachment is required")
+    if attachment_type not in {"image", "document"}:
+        raise HTTPException(status_code=422, detail="Unsupported attachment type")
+    if attachment_url:
+        from urllib.parse import urlparse
+        parsed = urlparse(attachment_url)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise HTTPException(status_code=422, detail="Attachments must use an HTTPS URL")
+
+    return {
+        "to_phone": clean_phone,
+        "message": message,
+        "attachment_url": attachment_url,
+        "attachment_name": (req.attachment_name or "").strip() or None,
+        "attachment_type": attachment_type,
+    }
+
+
+@app.post("/api/whatsapp/send/prepare")
+def prepare_whatsapp_direct_send(
+    req: WhatsAppDirectSendRequest,
+    current_user: UserIdentity = Depends(get_current_user_identity),
+    db: Session = Depends(get_db)
+):
+    """Create a short-lived, user-bound approval for the exact WhatsApp recipient and content."""
+    from agent.governance import ActionApprovalManager
+
+    approved_payload = _normalize_whatsapp_direct_send(req)
+    approval = ActionApprovalManager.create_approval_request(
+        tool_name="send_whatsapp",
+        params=approved_payload,
+        user_email=current_user.email,
+        owner_user_id=current_user.id,
+        db=db,
+    )
+    return {
+        "status": "approval_required",
+        "approval_id": approval["action_id"],
+        "expires_at": approval["expires_at"],
+        "recipient": approved_payload["to_phone"],
+        "message": approved_payload["message"],
+        "attachment": approved_payload["attachment_name"] or bool(approved_payload["attachment_url"]),
+        "confirmation_required": True,
+    }
+
+
 @app.post("/api/whatsapp/send")
 async def send_whatsapp_direct(
     req: WhatsAppDirectSendRequest,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Sends a WhatsApp message with optional image/document attachment directly from inside Aether."""
-    eff_email = get_effective_email(user_email or req.user_email) or DEFAULT_OWNER_EMAIL
-    raw_phone = re.sub(r'[^0-9]', '', req.to_phone.strip())
-    if len(raw_phone) == 10:
-        clean_phone = f"91{raw_phone}"
-    elif len(raw_phone) == 12 and raw_phone.startswith("91"):
-        clean_phone = raw_phone
-    elif len(raw_phone) > 8:
-        clean_phone = raw_phone
-    else:
-        clean_phone = "918741838653"
+    """Dispatch only after consuming a one-time approval bound to this user and exact payload."""
+    from agent.governance import ActionApprovalManager
+
+    if not req.approval_id:
+        raise HTTPException(status_code=403, detail="Explicit WhatsApp send approval is required")
+    approved_payload = _normalize_whatsapp_direct_send(req)
+    authorized, reason = ActionApprovalManager.verify_and_consume(
+        action_id=req.approval_id,
+        tool_name="send_whatsapp",
+        params=approved_payload,
+        user_email=current_user.email,
+        owner_user_id=current_user.id,
+        db=db,
+    )
+    if not authorized:
+        raise HTTPException(status_code=403, detail=reason)
 
     token = os.environ.get("WHATSAPP_TOKEN", "").strip()
-    phone_id = os.environ.get("WHATSAPP_PHONE_ID", "1432995866556035").strip()
-
-    now_iso = datetime.utcnow().isoformat()
-    activity_events = [
-        {"event": "created", "timestamp": now_iso, "note": "Message composed inside Aether app"},
-        {"event": "dispatched", "timestamp": now_iso, "note": "Dispatched to Meta Cloud Gateway"}
-    ]
+    phone_id = os.environ.get("WHATSAPP_PHONE_ID", "").strip()
+    if not token or not phone_id:
+        raise HTTPException(status_code=503, detail="WhatsApp delivery is not configured")
 
     dispatch_res = await _send_whatsapp_message(
-        to_number=clean_phone,
-        message_body=req.message or "",
+        to_number=approved_payload["to_phone"],
+        message_body=approved_payload["message"],
         phone_id=phone_id,
         access_token=token,
-        attachment_url=req.attachment_url,
-        attachment_type=req.attachment_type or "image",
-        attachment_name=req.attachment_name
+        attachment_url=approved_payload["attachment_url"],
+        attachment_type=approved_payload["attachment_type"],
+        attachment_name=approved_payload["attachment_name"],
     )
+    if not isinstance(dispatch_res, dict) or dispatch_res.get("status") != "success":
+        raise HTTPException(status_code=502, detail="WhatsApp provider did not accept the message")
 
-    waba_id = dispatch_res.get("id") if isinstance(dispatch_res, dict) else None
-    activity_events.append({"event": "delivered", "timestamp": datetime.utcnow().isoformat(), "note": "Delivered with double tick"})
-
+    now = datetime.utcnow()
+    activity_events = [
+        {"event": "created", "timestamp": now.isoformat(), "note": "Approved message composed inside Aether"},
+        {"event": "dispatched", "timestamp": now.isoformat(), "note": "Accepted by Meta Cloud API"},
+    ]
     new_msg = WhatsAppMessage(
-        user_email=eff_email,
+        owner_user_id=current_user.id,
+        user_email=current_user.email,
         direction="outbound",
-        phone_number=clean_phone,
-        sender_name="Pawan Dixit (Aether)",
-        message_text=req.message or "",
-        attachment_url=req.attachment_url,
-        attachment_name=req.attachment_name,
-        attachment_type=req.attachment_type or "image",
-        status="delivered",
-        waba_message_id=waba_id,
+        phone_number=approved_payload["to_phone"],
+        sender_name="Aether",
+        message_text=approved_payload["message"],
+        attachment_url=approved_payload["attachment_url"],
+        attachment_name=approved_payload["attachment_name"],
+        attachment_type=approved_payload["attachment_type"],
+        status="sent",
+        waba_message_id=dispatch_res.get("id"),
         activity_data=json.dumps(activity_events),
-        created_at=datetime.utcnow()
+        created_at=now,
     )
     db.add(new_msg)
     db.commit()
@@ -5353,15 +5420,10 @@ async def send_whatsapp_direct(
             "id": new_msg.id,
             "direction": new_msg.direction,
             "phone_number": new_msg.phone_number,
-            "sender_name": new_msg.sender_name,
             "message_text": new_msg.message_text,
-            "attachment_url": new_msg.attachment_url,
-            "attachment_name": new_msg.attachment_name,
-            "attachment_type": new_msg.attachment_type,
             "status": new_msg.status,
-            "activity": activity_events,
-            "created_at": new_msg.created_at.isoformat()
-        }
+            "waba_message_id": new_msg.waba_message_id,
+        },
     }
 
 @app.post("/api/whatsapp/simulate-incoming")
