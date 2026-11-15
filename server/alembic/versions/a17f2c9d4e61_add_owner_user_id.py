@@ -66,6 +66,12 @@ def upgrade():
                         lower(current_setting('app.current_user_email', true))
                 )
                 OR (
+                    COALESCE(current_setting('app.is_webhook_service', true), 'false') = 'true'
+                    AND NULLIF(current_setting('app.current_user_email', true), '') IS NOT NULL
+                    AND lower(COALESCE(user_email, '')) =
+                        lower(current_setting('app.current_user_email', true))
+                )
+                OR (
                     COALESCE(current_setting('app.is_owner', true), 'false') = 'true'
                     AND (user_email IS NULL OR lower(user_email) IN ('', 'operator@aether.ai'))
                 )
@@ -83,6 +89,12 @@ def upgrade():
                 )
                 OR (
                     owner_user_id IS NULL
+                    AND NULLIF(current_setting('app.current_user_email', true), '') IS NOT NULL
+                    AND lower(COALESCE(user_email, '')) =
+                        lower(current_setting('app.current_user_email', true))
+                )
+                OR (
+                    COALESCE(current_setting('app.is_webhook_service', true), 'false') = 'true'
                     AND NULLIF(current_setting('app.current_user_email', true), '') IS NOT NULL
                     AND lower(COALESCE(user_email, '')) =
                         lower(current_setting('app.current_user_email', true))

@@ -7,7 +7,7 @@ from uuid import uuid4
 SERVER_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "server"))
 sys.path.insert(0, SERVER_DIR)
 
-from database import SessionLocal, engine, set_worker_context
+from database import SessionLocal, engine, set_worker_context, set_tenant_context
 from models import (
     Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage,
     PushSubscription, ScheduledJob,
@@ -129,6 +129,16 @@ class TestPostgresTenantRLS(unittest.TestCase):
                 MemoryItem.category == "telegram_pairing"
             ).all()
             self.assertTrue(any(p.user_email == self.email_a for p in pairings))
+            self.assertEqual(
+                webhook.query(Task).filter(Task.title == "webhook isolation sentinel").count(),
+                0,
+            )
+            set_tenant_context(webhook, self.email_a)
+            self.assertEqual(
+                webhook.query(Task).filter(Task.title == "webhook isolation sentinel").count(),
+                1,
+            )
+            set_tenant_context(webhook, self.email_b)
             self.assertEqual(
                 webhook.query(Task).filter(Task.title == "webhook isolation sentinel").count(),
                 0,
