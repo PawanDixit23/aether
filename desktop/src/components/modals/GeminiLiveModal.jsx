@@ -1,5 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, X, Volume2, Sparkles, RefreshCw, PhoneOff, Radio, Square } from 'lucide-react';
+import { Mic, MicOff, X, Volume2, Sparkles, RefreshCw, PhoneOff, Radio, Square, ArrowDown } from 'lucide-react';
+import { FormattedMessage } from '../chat/FormattedMessage';
+
+// Strip all emojis and pictographs so TTS voice never pronounces emoji names
+const stripEmojis = (str) => {
+  if (!str) return '';
+  return str
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{200D}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
 
 export default function GeminiLiveModal({
   isOpen,
@@ -15,9 +26,13 @@ export default function GeminiLiveModal({
   const [transcript, setTranscript] = useState('');
   const [interimTranscript, setInterimTranscript] = useState('');
   const [aiResponse, setAiResponse] = useState('');
+  const [displayedResponse, setDisplayedResponse] = useState('');
+  const [isStreamingText, setIsStreamingText] = useState(false);
+  const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [activeLang, setActiveLang] = useState(selectedLang || 'hi');
   const [errorMsg, setErrorMsg] = useState(null);
+  const [isMobile, setIsMobile] = useState(() => (typeof window !== 'undefined' ? window.innerWidth <= 640 : false));
 
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
@@ -28,11 +43,25 @@ export default function GeminiLiveModal({
   const latestSpokenRef = useRef('');
   const isDispatchingRef = useRef(false);
   const isMutedRef = useRef(false);
+  const typewriterTimerRef = useRef(null);
+  const transcriptBoxRef = useRef(null);
+  const userScrolledUpRef = useRef(false);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 640);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Stop any active audio playback and immediately release dispatch lock
   const stopAudioPlayback = () => {
     isSpeakingRef.current = false;
     isDispatchingRef.current = false;
+    if (typewriterTimerRef.current) {
+      clearInterval(typewriterTimerRef.current);
+      typewriterTimerRef.current = null;
+    }
+    setIsStreamingText(false);
     if (audioPlayerRef.current) {
       try {
         audioPlayerRef.current.onended = null;
@@ -96,6 +125,64 @@ export default function GeminiLiveModal({
     }
   };
 
+  // Dynamic Curated Streaming / Typewriter Effect for Live Talk
+  const startCuratedStreamingText = (fullText) => {
+    if (typewriterTimerRef.current) {
+      clearInterval(typewriterTimerRef.current);
+      typewriterTimerRef.current = null;
+    }
+    userScrolledUpRef.current = false;
+    setShowScrollBottomBtn(false);
+
+    if (!fullText) {
+      setDisplayedResponse('');
+      setIsStreamingText(false);
+      return;
+    }
+
+    setIsStreamingText(true);
+    const tokens = fullText.split(/(\s+)/);
+    let currentIdx = 0;
+    setDisplayedResponse('');
+
+    const tokenInterval = Math.max(16, Math.min(42, Math.floor(2200 / Math.max(tokens.length, 1))));
+
+    typewriterTimerRef.current = setInterval(() => {
+      currentIdx += 2;
+      if (currentIdx >= tokens.length) {
+        clearInterval(typewriterTimerRef.current);
+        typewriterTimerRef.current = null;
+        setDisplayedResponse(fullText);
+        setIsStreamingText(false);
+      } else {
+        const partial = tokens.slice(0, currentIdx).join('');
+        setDisplayedResponse(partial);
+      }
+
+      if (transcriptBoxRef.current && !userScrolledUpRef.current) {
+        transcriptBoxRef.current.scrollTop = transcriptBoxRef.current.scrollHeight;
+      }
+    }, tokenInterval);
+  };
+
+  const handleTranscriptScroll = () => {
+    if (!transcriptBoxRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = transcriptBoxRef.current;
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 35;
+    userScrolledUpRef.current = !isAtBottom;
+    setShowScrollBottomBtn(!isAtBottom);
+  };
+
+  const scrollToTranscriptBottom = () => {
+    if (!transcriptBoxRef.current) return;
+    userScrolledUpRef.current = false;
+    setShowScrollBottomBtn(false);
+    transcriptBoxRef.current.scrollTo({
+      top: transcriptBoxRef.current.scrollHeight,
+      behavior: 'smooth'
+    });
+  };
+
   const cleanupLiveSession = () => {
     isSessionActiveRef.current = false;
     isSpeakingRef.current = false;
@@ -105,6 +192,14 @@ export default function GeminiLiveModal({
     setIsMuted(false);
     latestSpokenRef.current = '';
     clearTimeout(silenceTimerRef.current);
+    if (typewriterTimerRef.current) {
+      clearInterval(typewriterTimerRef.current);
+      typewriterTimerRef.current = null;
+    }
+    setIsStreamingText(false);
+    setDisplayedResponse('');
+    userScrolledUpRef.current = false;
+    setShowScrollBottomBtn(false);
 
     if (recognitionRef.current) {
       try {
@@ -320,6 +415,7 @@ export default function GeminiLiveModal({
 
       const aiText = data?.response || data?.message || data?.content || "समझ गया।";
       setAiResponse(aiText);
+      startCuratedStreamingText(aiText);
 
       if (onNewMessage) {
         onNewMessage({
@@ -344,8 +440,10 @@ export default function GeminiLiveModal({
       console.error('[Gemini Live Dispatch Error]', err);
       isDispatchingRef.current = false;
       latestSpokenRef.current = '';
-      setAiResponse("नमस्ते! मैं सुन रहा हूँ, कृपया दोबारा बोलें।");
-      speakLiveResponse("नमस्ते! मैं सुन रहा हूँ, कृपया दोबारा बोलें।");
+      const fallbackText = "नमस्ते! मैं सुन रहा हूँ, कृपया दोबारा बोलें।";
+      setAiResponse(fallbackText);
+      startCuratedStreamingText(fallbackText);
+      speakLiveResponse(fallbackText);
     }
   };
 
@@ -359,12 +457,13 @@ export default function GeminiLiveModal({
     setSessionState('speaking');
     isSpeakingRef.current = true;
 
-    // Clean markdown characters for spoken audio
-    const cleanSpeech = text
-      .replace(/[*#_`~>]/g, '')
-      .replace(/\[.*?\]/g, '')
-      .replace(/\(http.*?\)/g, '')
-      .trim();
+    // Clean markdown characters and EMOJIS for spoken audio so no emoji names are spoken
+    const cleanSpeech = stripEmojis(
+      text
+        .replace(/\[(.*?)\]\([^)]*\)/g, '$1')
+        .replace(/https?:\/\/[^\s]+/g, '')
+        .replace(/[*#_`~>|]/g, '')
+    );
 
     // Natural Voice selection: Hindi for Devanagari text, English/natural otherwise
     const isDevanagari = /[\u0900-\u097F]/.test(cleanSpeech);
@@ -752,36 +851,93 @@ export default function GeminiLiveModal({
         </div>
 
         {/* Real-time Subtitle / Spoken Transcript Card */}
-        <div style={{
-          marginTop: '16px',
-          background: '#0a1224',
-          border: '1px solid rgba(56, 189, 248, 0.25)',
-          borderRadius: '20px',
-          padding: '16px 20px',
-          width: '100%',
-          boxSizing: 'border-box',
-          minHeight: '85px',
-          maxHeight: '140px',
-          overflowY: 'auto',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          boxShadow: '0 12px 36px rgba(0, 0, 0, 0.7)'
-        }}>
-          <div style={{
-            fontSize: '0.98rem',
-            lineHeight: '1.5',
-            color: '#f8fafc',
-            fontWeight: 500
-          }}>
-            {interimTranscript
-              ? `"${interimTranscript}"`
-              : (sessionState === 'speaking'
-                  ? aiResponse
-                  : (transcript
-                      ? `"${transcript}"`
-                      : "सुन रहा हूँ... आप सीधे बोलें जैसे 'आज के टास्क बताओ' या 'रोहित को कॉल करो'"))}
+        <div style={{ position: 'relative', width: '100%', marginTop: '16px' }}>
+          <div
+            ref={transcriptBoxRef}
+            onScroll={handleTranscriptScroll}
+            style={{
+              background: '#0a1224',
+              border: '1px solid rgba(56, 189, 248, 0.28)',
+              borderRadius: '20px',
+              padding: '16px 20px',
+              width: '100%',
+              boxSizing: 'border-box',
+              minHeight: '85px',
+              maxHeight: isMobile ? '230px' : '280px',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: (sessionState === 'speaking' || (transcript && transcript.length > 70)) ? 'flex-start' : 'center',
+              boxShadow: '0 12px 36px rgba(0, 0, 0, 0.7)',
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(56, 189, 248, 0.35) transparent',
+              WebkitOverflowScrolling: 'touch'
+            }}
+          >
+            <div style={{
+              fontSize: '0.98rem',
+              lineHeight: '1.58',
+              color: '#f8fafc',
+              fontWeight: 500,
+              width: '100%',
+              textAlign: 'left'
+            }}>
+              {interimTranscript ? (
+                <span style={{ color: '#38bdf8', fontStyle: 'italic' }}>"{interimTranscript}"</span>
+              ) : sessionState === 'speaking' ? (
+                <div style={{ position: 'relative' }}>
+                  <FormattedMessage text={displayedResponse || aiResponse} />
+                  {isStreamingText && (
+                    <span style={{
+                      display: 'inline-block',
+                      width: '6px',
+                      height: '14px',
+                      background: '#38bdf8',
+                      marginLeft: '4px',
+                      verticalAlign: 'middle',
+                      borderRadius: '2px',
+                      animation: 'livePulse 0.8s infinite'
+                    }} />
+                  )}
+                </div>
+              ) : transcript ? (
+                <span style={{ color: '#f1f5f9' }}>"{transcript}"</span>
+              ) : (
+                <span style={{ color: '#64748b' }}>
+                  सुन रहा हूँ... आप सीधे बोलें जैसे "आज के टास्क बताओ" या "रोहित को कॉल करो"
+                </span>
+              )}
+            </div>
           </div>
+
+          {showScrollBottomBtn && (
+            <button
+              type="button"
+              onClick={scrollToTranscriptBottom}
+              style={{
+                position: 'absolute',
+                bottom: '10px',
+                right: '16px',
+                background: 'rgba(15, 23, 42, 0.94)',
+                border: '1px solid rgba(56, 189, 248, 0.45)',
+                borderRadius: '999px',
+                color: '#38bdf8',
+                padding: '4px 10px',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                cursor: 'pointer',
+                boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
+                backdropFilter: 'blur(8px)',
+                zIndex: 10
+              }}
+            >
+              <ArrowDown size={12} />
+              <span>Jump to latest</span>
+            </button>
+          )}
         </div>
 
         {errorMsg && (

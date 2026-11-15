@@ -1259,6 +1259,8 @@ export default function App() {
     setIsSpeaking(true);
 
     const cleanText = text
+      .replace(/\p{Extended_Pictographic}/gu, '')
+      .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{200D}]/gu, '')
       .replace(/\[.*?\]\(.*?\)/g, '')
       .replace(/[*_#`🔗]/gu, '')
       .replace(/\n+/g, ' ')
@@ -4392,6 +4394,8 @@ export default function App() {
       .replace(/\[(.*?)\]\([^)]*\)/g, '$1')   // preserve headline text from markdown links
       .replace(/https?:\/\/[^\s]+/g, '')      // remove raw URLs
       .replace(/Link:\s*(?:स्रोत पढ़ें|Read Source)?/gi, '') // clean link labels
+      .replace(/\p{Extended_Pictographic}/gu, '')
+      .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}\u{FE00}-\u{FE0F}\u{200D}]/gu, '')
       .replace(/[*_#`🔗🏆📰•⚡✨🎯💡📌|]/gu, '') // remove markdown formatting & symbols/emojis
       .replace(/```[\s\S]*?```/g, '')         // remove code blocks
       .replace(/₹\s*([0-9,.-]+)/g, (match, p1) => hasDevanagari ? `${p1} रुपये` : `${p1} Rupees`)

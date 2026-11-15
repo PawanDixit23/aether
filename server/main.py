@@ -3662,7 +3662,16 @@ def text_to_speech(request: Request, text: str = "", voice: str = "zephyr", lang
     import urllib.parse
     import re
 
-    clean_text = text.strip()[:2500]
+    # Strip emojis, pictographs, symbols and markdown formatting so TTS never pronounces emoji names
+    emoji_regex = re.compile(
+        r'[\U00010000-\U0010ffff]|[\u2600-\u27bf]|[\ufe00-\ufe0f]|\u200d',
+        flags=re.UNICODE
+    )
+    raw_cleaned = emoji_regex.sub('', text)
+    raw_cleaned = re.sub(r'[*#_`~>|]', '', raw_cleaned)
+    raw_cleaned = re.sub(r'\[(.*?)\]\([^)]*\)', r'\1', raw_cleaned)
+    raw_cleaned = re.sub(r'https?://\S+', '', raw_cleaned)
+    clean_text = re.sub(r'\s+', ' ', raw_cleaned).strip()[:2500]
     if not clean_text:
         raise HTTPException(status_code=400, detail="Text required")
 
