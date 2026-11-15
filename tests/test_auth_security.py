@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 SERVER_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "server"))
 sys.path.insert(0, SERVER_DIR)
 
-from main import app
+from main import app, SessionLocal
+from models import Task
 
 
 async def fake_verify_supabase_access_token(token: str):
@@ -54,6 +55,28 @@ class TestVerifiedIdentityMiddleware(unittest.TestCase):
             },
         )
         self.assertEqual(response.status_code, 200)
+
+
+    def test_authenticated_task_is_stamped_with_verified_owner_uuid(self):
+        owner_id = str(uuid5(NAMESPACE_URL, "alice"))
+        response = self.client.post(
+            "/api/tasks",
+            headers={"Authorization": "Bearer valid-alice", "X-User-Email": "bob@example.test"},
+            json={"title": "tenant owner uuid test", "priority": "low"},
+        )
+        self.assertEqual(response.status_code, 200)
+        db = SessionLocal()
+        try:
+            task = db.query(Task).filter(
+                Task.user_email == "alice@example.test",
+                Task.title == "tenant owner uuid test",
+            ).order_by(Task.id.desc()).first()
+            self.assertIsNotNone(task)
+            self.assertEqual(task.owner_user_id, owner_id)
+            db.delete(task)
+            db.commit()
+        finally:
+            db.close()
 
     def test_public_health_endpoint_does_not_require_authentication(self):
         response = self.client.get("/api/health")
