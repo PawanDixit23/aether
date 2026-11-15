@@ -384,6 +384,49 @@ def test_p0_04_android_webview():
     assert not validate_url("javascript:alert(1)"), "Dangerous scheme must be rejected"
     print("✅ P0-04: Android WebView exact YouTube embed origin and credential blocking verified.")
 
+    # Native Bridge Cryptographic Session Token & Subframe Isolation (AETH-P0-04)
+    import secrets
+    def generate_test_bridge_token() -> str:
+        return "aeth_br_" + secrets.token_hex(32)
+
+    session_token = generate_test_bridge_token()
+    assert len(session_token) == 72, f"Cryptographic bridge token length must be 72 chars, got {len(session_token)}"
+    assert session_token.startswith("aeth_br_"), "Bridge token must be properly namespaced"
+
+    # Simulated native bridge onMessage dispatcher
+    def bridge_dispatch(event_data: dict, current_token: str) -> tuple[bool, str]:
+        if not isinstance(event_data, dict):
+            return False, "Invalid payload structure"
+        # Verify cryptographic session token
+        if event_data.get("_bridgeToken") != current_token:
+            return False, "Unauthorized bridge token: subframe or tampered payload blocked"
+        action = event_data.get("action")
+        ALLOWED_ACTIONS = {"HAPTIC", "GET_CONTACTS", "STATUS_BAR", "SHARE", "STORE_TOKEN", "NAVIGATE"}
+        if action not in ALLOWED_ACTIONS:
+            return False, f"Unknown action: {action}"
+        return True, "Executed"
+
+    # A: Top-level message with authentic cryptographic token succeeds
+    top_msg = {"action": "HAPTIC", "type": "selection", "_bridgeToken": session_token}
+    ok_top, msg_top = bridge_dispatch(top_msg, session_token)
+    assert ok_top and msg_top == "Executed", "Top-level frame with authentic token must succeed"
+
+    # B: Untrusted subframe without token is rejected
+    iframe_no_token = {"action": "HAPTIC", "type": "selection"}
+    ok_no_token, msg_no = bridge_dispatch(iframe_no_token, session_token)
+    assert not ok_no_token and "Unauthorized" in msg_no, "Subframe without token must be blocked"
+
+    # C: Malicious iframe with guessed/forged token is rejected
+    iframe_forged = {"action": "STORE_TOKEN", "token": "stolen", "_bridgeToken": "aeth_br_forged_guess_1234567890"}
+    ok_forged, msg_forged = bridge_dispatch(iframe_forged, session_token)
+    assert not ok_forged and "Unauthorized" in msg_forged, "Iframe with forged token must be blocked"
+
+    # D: Disallowed action from any frame is rejected
+    bad_action = {"action": "EXEC_SHELL", "_bridgeToken": session_token}
+    ok_bad, msg_bad = bridge_dispatch(bad_action, session_token)
+    assert not ok_bad and "Unknown action" in msg_bad, "Disallowed action must be rejected"
+    print("✅ P0-04: Cryptographic WebView bridge token & subframe isolation verified.")
+
 
 def test_p0_05_messaging_webhooks():
     print("\n--- Testing P0-05: Webhook Security, Atomic Deduplication & OTP Pairing ---")

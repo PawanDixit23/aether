@@ -124,7 +124,7 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
 # ──────────────────────────────────────────────────────────────────────────────
 
 try:
-    from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
+    from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_db_rls_context, set_webhook_service_rls_context
     from models import (
         Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
         ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
@@ -134,7 +134,7 @@ try:
     from ai_engine import parse_intent_with_llm
 except ImportError:
     try:
-        from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
+        from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_db_rls_context, set_webhook_service_rls_context
         from server.models import (
             Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
             ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
@@ -4606,14 +4606,15 @@ def request_telegram_pairing(
 # ─────────────────────────────────────────────────────────────────────────────
 # AETH-P0-05: Atomic Conditional Webhook Event Claiming & Business Idempotency
 # ─────────────────────────────────────────────────────────────────────────────
-def claim_webhook_event(db: Session, provider: str, event_id: str) -> Tuple[bool, Optional[ProcessedWebhookEvent]]:
+def claim_webhook_event(db: Session, provider: str, event_id: str, lease_seconds: int = 120) -> Tuple[bool, Optional[ProcessedWebhookEvent]]:
     """
     Atomically claims a webhook event across concurrent workers using conditional atomic SQL operations (AETH-P0-05).
     Guarantees:
-    1. If the event is currently 'processing' or 'processed', rejects immediately.
-    2. If the event is 'failed', uses a conditional atomic UPDATE to claim it ('failed' -> 'processing').
+    1. If the event is currently 'processed', rejects immediately.
+    2. If the event is 'processing' but lease expired (> lease_seconds), atomically reclaims it.
+    3. If the event is 'failed', uses a conditional atomic UPDATE to claim it ('failed' -> 'processing').
        If multiple concurrent workers race to retry, exactly ONE worker wins the update.
-    3. If the event is new, performs an atomic insert with status='processing'.
+    4. If the event is new, performs an atomic insert with status='processing'.
        If multiple workers race to insert, unique constraint on event_id ensures only one succeeds.
     Returns:
         (claimed: bool, event_record: Optional[ProcessedWebhookEvent])
@@ -4624,15 +4625,42 @@ def claim_webhook_event(db: Session, provider: str, event_id: str) -> Tuple[bool
         ProcessedWebhookEvent.event_id == evt_str
     ).first()
 
+    now = datetime.utcnow()
     if existing:
-        if existing.status in ["processing", "processed"]:
+        if existing.status == "processed":
             return False, None
+        
+        if existing.status == "processing":
+            # Stale lease recovery: Check if previous worker crashed or lease expired (AETH-P0-05)
+            age = (now - existing.created_at).total_seconds() if existing.created_at else 9999
+            if age < lease_seconds:
+                return False, None
+            # Lease expired: atomically reclaim
+            stale_threshold = now - timedelta(seconds=lease_seconds)
+            claimed_stale = db.query(ProcessedWebhookEvent).filter(
+                ProcessedWebhookEvent.provider == provider,
+                ProcessedWebhookEvent.event_id == evt_str,
+                ProcessedWebhookEvent.status == "processing",
+                ProcessedWebhookEvent.created_at <= stale_threshold
+            ).update({
+                ProcessedWebhookEvent.status: "processing",
+                ProcessedWebhookEvent.created_at: now
+            }, synchronize_session=False)
+            db.commit()
+            if claimed_stale > 0:
+                db.refresh(existing)
+                return True, existing
+            return False, None
+
         # status is 'failed': Attempt atomic conditional claim
         claimed_count = db.query(ProcessedWebhookEvent).filter(
             ProcessedWebhookEvent.provider == provider,
             ProcessedWebhookEvent.event_id == evt_str,
             ProcessedWebhookEvent.status == "failed"
-        ).update({ProcessedWebhookEvent.status: "processing"}, synchronize_session=False)
+        ).update({
+            ProcessedWebhookEvent.status: "processing",
+            ProcessedWebhookEvent.created_at: now
+        }, synchronize_session=False)
         db.commit()
         if claimed_count > 0:
             db.refresh(existing)
@@ -4656,11 +4684,21 @@ def finalize_webhook_event(db: Session, event_record: Optional[ProcessedWebhookE
     """Transitions event status to 'processed' on success, or 'failed' on unhandled error (AETH-P0-05)."""
     if not event_record:
         return
+    target_status = "processed" if success else "failed"
     try:
-        event_record.status = "processed" if success else "failed"
+        event_record.status = target_status
         db.commit()
-    except Exception:
+    except Exception as e:
         db.rollback()
+        # Fallback raw update with new transaction in case of entity session error
+        try:
+            db.query(ProcessedWebhookEvent).filter(
+                ProcessedWebhookEvent.id == event_record.id
+            ).update({ProcessedWebhookEvent.status: target_status}, synchronize_session=False)
+            db.commit()
+        except Exception:
+            db.rollback()
+            print(f"[Webhook Finalize Warning] Failed to update event {event_record.event_id} status: {e}")
 
 def is_business_action_executed(db: Session, mutation_key: str) -> bool:
     """Checks if a business action was previously executed via ProcessedMutation (AETH-P0-05)."""
@@ -4736,6 +4774,9 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
         if not token_header or not hmac.compare_digest(token_header, telegram_secret):
             raise HTTPException(status_code=403, detail="Invalid or missing Telegram webhook secret token")
 
+    # Authorize bridge tables (user_integration_pairings, channel_pairing_challenges) for verified webhook
+    set_webhook_service_rls_context(db, "telegram")
+
     webhook_evt = None
     webhook_success = True
     try:
@@ -4766,6 +4807,14 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
         ).first()
         user_email = pairing.user_email if pairing else None
         owner_id = pairing.owner_user_id if pairing else None
+        if owner_id:
+            set_db_rls_context(db, owner_id)
+        else:
+            set_db_rls_context(db, None)
+        if owner_id:
+            set_db_rls_context(db, owner_id)
+        else:
+            set_db_rls_context(db, None)
 
         # 3. Atomic OTP-Only Pairing Handler via DB ChannelPairingChallenge (AETH-P0-05)
         clean_code = re.sub(r'[^0-9]', '', text)
@@ -4809,6 +4858,8 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
                 ).first()
                 target_email = challenge.user_email
                 target_owner = challenge.owner_user_id
+                set_db_rls_context(db, target_owner)
+                set_db_rls_context(db, target_owner)
                 if pairing:
                     pairing.owner_user_id = target_owner
                     pairing.user_email = target_email
@@ -5461,6 +5512,9 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         if not hmac.compare_digest(hub_sig, expected_sig):
             raise HTTPException(status_code=403, detail="WhatsApp webhook signature mismatch")
 
+    # Authorize bridge tables (user_integration_pairings, channel_pairing_challenges) for verified webhook
+    set_webhook_service_rls_context(db, "whatsapp")
+
     webhook_evt = None
     webhook_success = True
     try:
@@ -5559,6 +5613,7 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
                 ).first()
                 paired_user_email = challenge.user_email
                 paired_owner_id = challenge.owner_user_id
+                set_db_rls_context(db, paired_owner_id)
 
                 # Persist verified pairing in UserIntegrationPairing table
                 existing = db.query(UserIntegrationPairing).filter(
@@ -5608,6 +5663,10 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
 
         user_email = verified_pairing.user_email if verified_pairing else None
         owner_id = verified_pairing.owner_user_id if verified_pairing else None
+        if owner_id:
+            set_db_rls_context(db, owner_id)
+        else:
+            set_db_rls_context(db, None)
 
         # 5. Insecure email commands are rejected and guided to OTP
         if user_text.lower().startswith("/login") or user_text.lower().startswith("/start"):
@@ -5914,6 +5973,9 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
             if not hmac.compare_digest(sig_header, computed_raw):
                 raise HTTPException(status_code=403, detail="Twilio webhook signature verification failed")
 
+    # Authorize bridge tables (user_integration_pairings, channel_pairing_challenges) for verified webhook
+    set_webhook_service_rls_context(db, "twilio")
+
     # Atomic event deduplication and retry state machine for Twilio (AETH-P0-05)
     msg_sid = form.get("MessageSid") or form.get("SmsMessageSid") or form.get("SmsSid")
     twilio_evt = None
@@ -5937,6 +5999,10 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
         ).first()
         user_email = pairing.user_email if pairing else None
         owner_id = pairing.owner_user_id if pairing else None
+        if owner_id:
+            set_db_rls_context(db, owner_id)
+        else:
+            set_db_rls_context(db, None)
 
         # Check 6-digit OTP pairing atomically with per-sender rate limiting (AETH-P0-05)
         clean_code = re.sub(r'[^0-9]', '', body)
@@ -5974,6 +6040,7 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
                 ).first()
                 target_email = challenge.user_email
                 target_owner = challenge.owner_user_id
+                set_db_rls_context(db, target_owner)
                 if pairing:
                     pairing.owner_user_id = target_owner
                     pairing.user_email = target_email

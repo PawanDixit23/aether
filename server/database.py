@@ -220,19 +220,42 @@ def ensure_schema_migrations():
                 with engine.connect() as conn:
                     conn.execute(text(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY;"))
                     conn.execute(text(f"ALTER TABLE {t} FORCE ROW LEVEL SECURITY;"))
-                    conn.execute(text(f"""
-                        DO $$
-                        BEGIN
-                            IF NOT EXISTS (
-                                SELECT 1 FROM pg_policies WHERE tablename = '{t}' AND policyname = '{t}_tenant_isolation'
-                            ) THEN
+                    if t in ["user_integration_pairings", "channel_pairing_challenges"]:
+                        # AETH-P0-05: Bridge tables allow verified webhook provider lookup OR tenant access
+                        conn.execute(text(f"""
+                            DO $$
+                            BEGIN
+                                IF EXISTS (
+                                    SELECT 1 FROM pg_policies WHERE tablename = '{t}' AND policyname = '{t}_tenant_isolation'
+                                ) THEN
+                                    DROP POLICY {t}_tenant_isolation ON {t};
+                                END IF;
                                 CREATE POLICY {t}_tenant_isolation ON {t}
                                     FOR ALL
-                                    USING (owner_user_id = current_setting('request.jwt.claim.sub', true))
-                                    WITH CHECK (owner_user_id = current_setting('request.jwt.claim.sub', true));
-                            END IF;
-                        END $$;
-                    """))
+                                    USING (
+                                        owner_user_id = current_setting('request.jwt.claim.sub', true)
+                                        OR current_setting('request.webhook_service_authorized', true) = 'true'
+                                    )
+                                    WITH CHECK (
+                                        owner_user_id = current_setting('request.jwt.claim.sub', true)
+                                        OR current_setting('request.webhook_service_authorized', true) = 'true'
+                                    );
+                            END $$;
+                        """))
+                    else:
+                        conn.execute(text(f"""
+                            DO $$
+                            BEGIN
+                                IF NOT EXISTS (
+                                    SELECT 1 FROM pg_policies WHERE tablename = '{t}' AND policyname = '{t}_tenant_isolation'
+                                ) THEN
+                                    CREATE POLICY {t}_tenant_isolation ON {t}
+                                        FOR ALL
+                                        USING (owner_user_id = current_setting('request.jwt.claim.sub', true))
+                                        WITH CHECK (owner_user_id = current_setting('request.jwt.claim.sub', true));
+                                END IF;
+                            END $$;
+                        """))
                     conn.commit()
             except Exception as e:
                 print(f"[RLS Migration Error] {t}: {e}")
@@ -241,20 +264,34 @@ def ensure_schema_migrations():
                     raise RuntimeError(f"CRITICAL: Failed to enforce RLS policy on table {t}: {e}")
 
 
-def set_db_rls_context(db: Session, user_id: str):
+def set_webhook_service_rls_context(db: Session, authorized_provider: str):
+    """
+    Sets transaction-local webhook service context ONLY after cryptographic webhook signature validation (AETH-P0-05).
+    Enables bridge tables (user_integration_pairings, channel_pairing_challenges) lookup strictly within this transaction.
+    """
+    try:
+        is_pg = "postgres" in str(engine.url).lower()
+        if is_pg:
+            db.execute(text("SELECT set_config('request.webhook_service_authorized', 'true', true)"))
+            db.execute(text("SELECT set_config('request.webhook_provider', :provider, true)"), {"provider": authorized_provider})
+    except Exception as e:
+        raise RuntimeError(f"Webhook service security context initialization failed: {e}")
+
+
+def set_db_rls_context(db: Session, user_id: Optional[str]):
     """
     Sets transaction-local PostgreSQL RLS context from verified authenticated UUID (AETH-P0-02).
     Uses official PostgreSQL set_config(setting_name, new_val, is_local=true) for parameter-bound transaction isolation.
     Fails closed if the identity cannot be set.
     """
-    if not user_id:
-        return
-    clean_sub = str(user_id).strip()
+    clean_sub = str(user_id).strip() if user_id else ""
     db.info["rls_user_id"] = clean_sub
     try:
         is_pg = "postgres" in str(engine.url).lower()
         if is_pg:
             db.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": clean_sub})
+            # Clear webhook bridge authorization so subsequent business operations are strictly scoped to the tenant
+            db.execute(text("SELECT set_config('request.webhook_service_authorized', 'false', true)"))
     except Exception as e:
         raise RuntimeError(f"Database security context initialization failed: {e}")
 

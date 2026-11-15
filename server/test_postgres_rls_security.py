@@ -1,18 +1,21 @@
 """
-Aether Real PostgreSQL RLS & Security Integration Test Suite (AETH-P0-02 & AETH-P0-03)
+Aether Real PostgreSQL RLS & Security Integration Test Suite (AETH-P0-02, P0-03 & P0-05)
 Tests strictly against live PostgreSQL:
 1. Application Role Verification:
    - Live application testing MUST connect under a non-superuser role (NOSUPERUSER & NOBYPASSRLS).
-2. Verification of RLS on ACTUAL Application Tables:
-   - Relies on real tables: tasks, financial_records, memory_vault, chat_messages, scheduled_jobs, action_approvals.
-   - Asserts relrowsecurity and relforcerowsecurity are active on all tables.
+2. Verification of RLS on ALL 15 Tenant-Owned Application Tables:
+   - Asserts relrowsecurity and relforcerowsecurity are active on all 15 tables.
 3. Cross-Tenant Isolation under Real PostgreSQL RLS:
    - User A inserts Task, FinancialRecord, MemoryItem, ChatMessage inside User A's transaction context.
    - User B with set_config('request.jwt.claim.sub', UUID_B, true) cannot SELECT, UPDATE, or DELETE User A's records.
    - User B cannot INSERT with owner_user_id = UUID_A (fails PostgreSQL WITH CHECK violation).
-4. Connection Pooling / Transaction-Local Reset Verification:
+4. Webhook Bridge & RLS Integration:
+   - Unauthenticated access to user_integration_pairings returns 0 rows.
+   - Verified webhook provider context (set_webhook_service_rls_context) securely resolves pairing.
+   - Context transitions to verified tenant UUID (set_db_rls_context); subsequent business operations execute under full RLS.
+5. Connection Pooling / Transaction-Local Reset Verification:
    - set_config('request.jwt.claim.sub', ..., true) is strictly transaction-local and does NOT leak across pooled sessions.
-5. ActionApprovalManager Real Concurrency, Tampering & Replay Protection on PostgreSQL:
+6. ActionApprovalManager Real Concurrency, Tampering & Replay Protection on PostgreSQL:
    - Tests actual ActionApproval model via ActionApprovalManager.create_approval_request() and verify_and_consume().
    - Validates parameter tampering detection and cross-user rejection.
    - Concurrent worker threads attempt to consume the same approval; exactly ONE succeeds.
@@ -33,8 +36,12 @@ if server_dir not in sys.path:
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from models import Task, FinancialRecord, MemoryItem, ChatMessage, ScheduledJob, ActionApproval
+from models import (
+    Task, FinancialRecord, MemoryItem, ChatMessage, ScheduledJob, 
+    ActionApproval, UserIntegrationPairing, ChannelPairingChallenge
+)
 from agent.governance import ActionApprovalManager
+from database import set_db_rls_context, set_webhook_service_rls_context
 
 
 def get_postgres_engine():
@@ -64,13 +71,20 @@ def test_postgres_rls_suite():
         assert not is_super, f"Security Violation: Database role '{rolname}' is SUPERUSER! Production/CI app role MUST be NOSUPERUSER to enforce RLS."
         assert not bypass_rls, f"Security Violation: Database role '{rolname}' has BYPASSRLS enabled! Production/CI app role MUST be NOBYPASSRLS."
 
-    # 2. Verify RLS and FORCE RLS on actual application tables
-    required_tables = ["tasks", "financial_records", "memory_vault", "chat_messages", "scheduled_jobs", "action_approvals"]
+    # 2. Verify RLS and FORCE RLS on ALL 15 tenant-owned application tables
+    required_tables = [
+        "tasks", "financial_records", "memory_vault", "chat_sessions",
+        "chat_messages", "audit_logs", "action_approvals", "user_integration_pairings",
+        "push_subscriptions", "scheduled_jobs", "whatsapp_messages",
+        "task_date_completions", "processed_mutations", "briefing_preferences",
+        "channel_pairing_challenges"
+    ]
     with engine.connect() as conn:
-        rows = conn.execute(text("""
+        in_clause = ", ".join(f"'{t}'" for t in required_tables)
+        rows = conn.execute(text(f"""
             SELECT relname, relrowsecurity, relforcerowsecurity 
             FROM pg_class 
-            WHERE relname IN ('tasks', 'financial_records', 'memory_vault', 'chat_messages', 'scheduled_jobs', 'action_approvals');
+            WHERE relname IN ({in_clause});
         """)).fetchall()
         table_rls = {r[0]: (r[1], r[2]) for r in rows}
         for tbl in required_tables:
@@ -78,7 +92,7 @@ def test_postgres_rls_suite():
             rls_enabled, rls_forced = table_rls[tbl]
             assert rls_enabled, f"Security Violation: Table '{tbl}' does not have ROW LEVEL SECURITY enabled!"
             assert rls_forced, f"Security Violation: Table '{tbl}' does not have FORCE ROW LEVEL SECURITY enabled!"
-            print(f"✅ Table '{tbl}': RLS enabled={rls_enabled}, RLS forced={rls_forced}")
+        print(f"✅ All {len(required_tables)} tenant-owned tables have RLS and FORCE RLS active.")
 
     user_a = str(uuid.uuid4())
     user_b = str(uuid.uuid4())
@@ -91,7 +105,7 @@ def test_postgres_rls_suite():
 
     with Session() as sess:
         with sess.begin():
-            sess.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": user_a})
+            set_db_rls_context(sess, user_a)
             
             t = Task(owner_user_id=user_a, user_email="usera@example.com", title="Confidential Strategy of User A")
             sess.add(t)
@@ -99,7 +113,8 @@ def test_postgres_rls_suite():
             f = FinancialRecord(owner_user_id=user_a, user_email="usera@example.com", type="expense", category="strategy", amount=12500.0, note="Confidential M&A")
             sess.add(f)
             
-            m = MemoryItem(owner_user_id=user_a, user_email="usera@example.com", key="api_key_secret", value="secret_user_a_token")
+            # Correct MemoryItem fields: category, fact
+            m = MemoryItem(owner_user_id=user_a, user_email="usera@example.com", category="personal_rule", fact="Confidential User A information")
             sess.add(m)
             
             c = ChatMessage(owner_user_id=user_a, user_email="usera@example.com", role="user", content="Classified intelligence")
@@ -117,7 +132,7 @@ def test_postgres_rls_suite():
     # 4. Cross-tenant SELECT: User B cannot see User A's records under PostgreSQL RLS
     with Session() as sess:
         with sess.begin():
-            sess.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": user_b})
+            set_db_rls_context(sess, user_b)
             
             assert sess.query(Task).filter(Task.id == task_id).first() is None, "Security Violation: User B read User A's Task!"
             assert sess.query(FinancialRecord).filter(FinancialRecord.id == fin_id).first() is None, "Security Violation: User B read User A's FinancialRecord!"
@@ -128,7 +143,7 @@ def test_postgres_rls_suite():
     # 5. Cross-tenant UPDATE & DELETE: User B cannot modify or delete User A's records
     with Session() as sess:
         with sess.begin():
-            sess.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": user_b})
+            set_db_rls_context(sess, user_b)
             
             updated_tasks = sess.query(Task).filter(Task.id == task_id).update({Task.title: "Compromised!"})
             assert updated_tasks == 0, "Security Violation: User B was able to update User A's task!"
@@ -143,7 +158,7 @@ def test_postgres_rls_suite():
     # 6. Cross-tenant INSERT: User B cannot forge a record with User A's owner_user_id (WITH CHECK policy violation)
     with Session() as sess:
         with sess.begin():
-            sess.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": user_b})
+            set_db_rls_context(sess, user_b)
             spoofed_task = Task(owner_user_id=user_a, user_email="usera@example.com", title="Forged Task By User B")
             sess.add(spoofed_task)
             try:
@@ -154,71 +169,134 @@ def test_postgres_rls_suite():
                 assert "row-level security policy" in err_str or "violates" in err_str or "check" in err_str
                 print("✅ Cross-tenant INSERT strictly blocked by PostgreSQL RLS WITH CHECK policy on tasks table.")
 
-    # 7. Connection pooling / transaction-local leakage test
+    # 7. Webhook & RLS Integration Verification (AETH-P0-02 & AETH-P0-05)
+    phone_sender = f"9198{int(time.time()) % 100000000:08d}"
+    with Session() as sess:
+        with sess.begin():
+            # Setup User A's pairing
+            set_db_rls_context(sess, user_a)
+            pairing_a = UserIntegrationPairing(
+                owner_user_id=user_a,
+                user_email="usera@example.com",
+                channel="whatsapp",
+                channel_user_id=phone_sender,
+                is_active=True
+            )
+            sess.add(pairing_a)
+
+    # 7a: Unauthenticated / Unverified lookup cannot see pairings
+    with Session() as sess:
+        with sess.begin():
+            set_db_rls_context(sess, None)
+            hidden_p = sess.query(UserIntegrationPairing).filter(
+                UserIntegrationPairing.channel == "whatsapp",
+                UserIntegrationPairing.channel_user_id == phone_sender
+            ).first()
+            assert hidden_p is None, "Security Violation: Unauthenticated query saw integration pairing under RLS!"
+    print("✅ Unauthenticated query cannot access bridge tables under RLS.")
+
+    # 7b: Verified Webhook Service Context successfully resolves pairing
+    resolved_owner = None
+    with Session() as sess:
+        with sess.begin():
+            set_webhook_service_rls_context(sess, "whatsapp")
+            p = sess.query(UserIntegrationPairing).filter(
+                UserIntegrationPairing.channel == "whatsapp",
+                UserIntegrationPairing.channel_user_id == phone_sender,
+                UserIntegrationPairing.is_active == True
+            ).first()
+            assert p is not None and p.owner_user_id == user_a, "Failed to resolve pairing under webhook service context"
+            resolved_owner = p.owner_user_id
+
+            # Transition context to resolved owner
+            set_db_rls_context(sess, resolved_owner)
+            webhook_task = Task(owner_user_id=resolved_owner, user_email="usera@example.com", title="Inbound WhatsApp Task")
+            sess.add(webhook_task)
+            sess.flush()
+            wb_task_id = webhook_task.id
+    assert wb_task_id is not None
+    print(f"✅ Webhook service context successfully resolved pairing and executed tenant mutation (task_id={wb_task_id}).")
+
+    # 7c: User B cannot see the webhook-created task
+    with Session() as sess:
+        with sess.begin():
+            set_db_rls_context(sess, user_b)
+            assert sess.query(Task).filter(Task.id == wb_task_id).first() is None, "User B saw task created via webhook!"
+    print("✅ Webhook-created records strictly isolated to matched tenant under RLS.")
+
+    # 8. Connection pooling / transaction-local leakage test
     # Verify that after a transaction completes, set_config with is_local=true does not persist
     with engine.connect() as conn:
         sub_val = conn.execute(text("SELECT current_setting('request.jwt.claim.sub', true);")).scalar()
         assert sub_val is None or sub_val == "", f"Security Violation: RLS claim leaked into subsequent connection: {sub_val}"
     print("✅ Connection pool isolation verified: Transaction-local claim is wiped after transaction.")
 
-    # 8. P0-03 Action Approval Concurrency & Replay Protection on real ActionApproval table via ActionApprovalManager
+    # 9. P0-03 Action Approval Concurrency & Replay Protection on real ActionApproval table with explicit RLS context
     os.environ["ENVIRONMENT"] = "production"
     
     test_params = {"destination": "0x1234567890abcdef", "amount_usd": 25000}
     action_info = None
     with Session() as sess:
-        action_info = ActionApprovalManager.create_approval_request(
-            tool_name="execute_wire_transfer",
-            params=test_params,
-            user_email="usera@example.com",
-            owner_user_id=user_a,
-            db=sess
-        )
-    action_id = action_info["action_id"]
-    assert action_id is not None
-    print(f"✅ Created real ActionApproval request: action_id={action_id}")
-
-    # 8a. Tampering Protection: Tampered parameters must be rejected
-    tampered_params = {"destination": "0x1234567890abcdef", "amount_usd": 999999}
-    with Session() as sess:
-        auth_ok, auth_msg = ActionApprovalManager.verify_and_consume(
-            action_id=action_id,
-            tool_name="execute_wire_transfer",
-            params=tampered_params,
-            user_email="usera@example.com",
-            owner_user_id=user_a,
-            db=sess
-        )
-        assert not auth_ok, "Security Violation: Tampered action parameters were authorized!"
-        print(f"✅ ActionApproval parameter tampering rejected: {auth_msg}")
-
-    # 8b. Tenant Isolation: User B cannot consume User A's approval request
-    with Session() as sess:
-        auth_ok, auth_msg = ActionApprovalManager.verify_and_consume(
-            action_id=action_id,
-            tool_name="execute_wire_transfer",
-            params=test_params,
-            user_email="userb@example.com",
-            owner_user_id=user_b,
-            db=sess
-        )
-        assert not auth_ok, "Security Violation: User B was able to consume User A's action approval!"
-        print(f"✅ ActionApproval cross-tenant consumption rejected: {auth_msg}")
-
-    # 8c. Real PostgreSQL Concurrent Consumption: 5 concurrent threads attempt to consume the same approval
-    results = []
-    def worker_consume(worker_name):
-        w_sess = Session()
-        try:
-            ok, msg = ActionApprovalManager.verify_and_consume(
-                action_id=action_id,
+        with sess.begin():
+            set_db_rls_context(sess, user_a)
+            action_info = ActionApprovalManager.create_approval_request(
                 tool_name="execute_wire_transfer",
                 params=test_params,
                 user_email="usera@example.com",
                 owner_user_id=user_a,
-                db=w_sess
+                db=sess
             )
-            results.append((worker_name, ok, msg))
+    action_id = action_info["action_id"]
+    assert action_id is not None
+    print(f"✅ Created real ActionApproval request with tenant RLS context: action_id={action_id}")
+
+    # 9a. Tampering Protection: Tampered parameters must be rejected
+    tampered_params = {"destination": "0x1234567890abcdef", "amount_usd": 999999}
+    with Session() as sess:
+        with sess.begin():
+            set_db_rls_context(sess, user_a)
+            auth_ok, auth_msg = ActionApprovalManager.verify_and_consume(
+                action_id=action_id,
+                tool_name="execute_wire_transfer",
+                params=tampered_params,
+                user_email="usera@example.com",
+                owner_user_id=user_a,
+                db=sess
+            )
+            assert not auth_ok, "Security Violation: Tampered action parameters were authorized!"
+            print(f"✅ ActionApproval parameter tampering rejected: {auth_msg}")
+
+    # 9b. Tenant Isolation: User B cannot consume User A's approval request
+    with Session() as sess:
+        with sess.begin():
+            set_db_rls_context(sess, user_b)
+            auth_ok, auth_msg = ActionApprovalManager.verify_and_consume(
+                action_id=action_id,
+                tool_name="execute_wire_transfer",
+                params=test_params,
+                user_email="userb@example.com",
+                owner_user_id=user_b,
+                db=sess
+            )
+            assert not auth_ok, "Security Violation: User B was able to consume User A's action approval!"
+            print(f"✅ ActionApproval cross-tenant consumption rejected: {auth_msg}")
+
+    # 9c. Real PostgreSQL Concurrent Consumption: 5 concurrent threads attempt to consume the same approval
+    results = []
+    def worker_consume(worker_name):
+        w_sess = Session()
+        try:
+            with w_sess.begin():
+                set_db_rls_context(w_sess, user_a)
+                ok, msg = ActionApprovalManager.verify_and_consume(
+                    action_id=action_id,
+                    tool_name="execute_wire_transfer",
+                    params=test_params,
+                    user_email="usera@example.com",
+                    owner_user_id=user_a,
+                    db=w_sess
+                )
+                results.append((worker_name, ok, msg))
         except Exception as exc:
             results.append((worker_name, False, f"error: {exc}"))
         finally:

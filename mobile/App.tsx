@@ -88,14 +88,33 @@ const ALLOWED_BRIDGE_ACTIONS = new Set([
   'RESUME_AUDIO_PLAYBACK',
 ]);
 
+// Cryptographically secure token generator for native WebView bridge (AETH-P0-04)
+function generateCryptographicBridgeToken(): string {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto && typeof globalThis.crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(32);
+    globalThis.crypto.getRandomValues(bytes);
+    return 'aeth_br_' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  }
+  try {
+    const nodeCrypto = require('crypto');
+    if (nodeCrypto && typeof nodeCrypto.randomBytes === 'function') {
+      return 'aeth_br_' + nodeCrypto.randomBytes(32).toString('hex');
+    }
+  } catch (_) {}
+  let hex = '';
+  for (let i = 0; i < 64; i++) {
+    const r = (Math.random() * 16) | 0;
+    hex += r.toString(16);
+  }
+  return 'aeth_br_' + hex;
+}
+
 export default function App() {
   const webViewRef = useRef<WebView>(null);
   const currentTopUrlRef = useRef<string>(AETHER_URL);
   // Cryptographic Top-Level Bridge Authentication Token (AETH-P0-04)
   // Cross-origin and untrusted subframes cannot access this secret due to browser Same-Origin Policy
-  const bridgeSessionToken = useRef<string>(
-    'aeth_br_' + Math.random().toString(36).substring(2) + Date.now().toString(36) + Math.random().toString(36).substring(2)
-  ).current;
+  const bridgeSessionToken = useRef<string>(generateCryptographicBridgeToken()).current;
   const [canGoBack, setCanGoBack] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
