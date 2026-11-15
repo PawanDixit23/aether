@@ -1698,7 +1698,7 @@ def get_chat_sessions(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
+    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
     if not eff_email:
         return []
     
@@ -1845,14 +1845,23 @@ def pin_chat_session(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).first()
+    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not session:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-    session.is_pinned = req.is_pinned
-    session.updated_at = datetime.utcnow()
+        session = ChatSession(
+            id=session_id,
+            user_email=eff_email,
+            title="Conversation",
+            is_pinned=req.is_pinned,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        db.add(session)
+    else:
+        if not session.user_email and eff_email:
+            session.user_email = eff_email
+        session.is_pinned = req.is_pinned
+        session.updated_at = datetime.utcnow()
     db.commit()
     return {"status": "ok", "id": session.id, "is_pinned": session.is_pinned}
 
@@ -1863,14 +1872,23 @@ def set_chat_session_project(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).first()
+    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not session:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-    session.project = (req.project.strip() if req.project else None)
-    session.updated_at = datetime.utcnow()
+        session = ChatSession(
+            id=session_id,
+            user_email=eff_email,
+            title="Conversation",
+            project=(req.project.strip() if req.project else None),
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        db.add(session)
+    else:
+        if not session.user_email and eff_email:
+            session.user_email = eff_email
+        session.project = (req.project.strip() if req.project else None)
+        session.updated_at = datetime.utcnow()
     db.commit()
     return {"status": "ok", "id": session.id, "project": session.project}
 
@@ -1917,7 +1935,7 @@ def get_chat_history(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
+    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
     if not eff_email:
         return []
     
@@ -2063,7 +2081,7 @@ def get_due_reminders(
     db: Session = Depends(get_db)
 ):
     """Fetch pending tasks whose reminder time has just arrived (within active window) and have not been alerted yet."""
-    eff_email = get_effective_email(user_email)
+    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
     if not eff_email:
         return []
 
@@ -2150,7 +2168,7 @@ def list_tasks(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
+    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
     if not eff_email:
         return []
 
@@ -3207,7 +3225,7 @@ def list_memory(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
+    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
     if not eff_email:
         return []
     return db.query(MemoryItem).filter(MemoryItem.user_email == eff_email).order_by(MemoryItem.created_at.desc()).all()
@@ -4802,7 +4820,7 @@ def list_routines(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
+    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
     if not eff_email:
         return []
     jobs = db.query(ScheduledJob).filter(

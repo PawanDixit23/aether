@@ -5133,6 +5133,20 @@ export default function App() {
     }
   };
 
+  // Toggle pinned status of a session and persist in state & local cache
+  const handleTogglePinSession = (sessionId, isPinned) => {
+    setChatSessions(prev => {
+      const next = prev.map(s => s.id === sessionId ? { ...s, is_pinned: isPinned } : s);
+      const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
+      if (currentEmail) {
+        try {
+          localStorage.setItem(`aether_chat_sessions_${currentEmail}`, JSON.stringify(next));
+        } catch (e) {}
+      }
+      return next;
+    });
+  };
+
   const handleToggleTask = async (taskId, explicitDone = null, explicitDateStr = null, completionData = null) => {
     // Support both ID primitive and task object
     const actualTaskId = typeof taskId === 'object' && taskId !== null ? (taskId.id || taskId) : taskId;
@@ -9282,6 +9296,8 @@ export default function App() {
         onStartTemporaryChat={handleStartTemporaryChat}
         onRenameSession={handleRenameSession}
         onDeleteSession={handleDeleteSession}
+        onTogglePinSession={handleTogglePinSession}
+        apiBase={API_BASE}
         userEmail={userEmail}
         userName={userName}
         todayTasks={getTodayTasks()}

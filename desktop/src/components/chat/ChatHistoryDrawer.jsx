@@ -37,6 +37,8 @@ export const ChatHistoryDrawer = ({
   onNewChat,
   onRenameSession,
   onDeleteSession,
+  onTogglePinSession,
+  apiBase,
   userEmail,
   userName,
   todayTasks = [],
@@ -76,17 +78,19 @@ export const ChatHistoryDrawer = ({
 
   // Auto-sync pinned sessions and projects whenever sessions arrive from server
   useEffect(() => {
-    if (sessions && sessions.length > 0) {
+    if (sessions && Array.isArray(sessions) && sessions.length > 0) {
+      const sessionIds = new Set(sessions.map(s => s.id));
       const serverPinned = sessions.filter(s => s.is_pinned).map(s => s.id);
-      if (serverPinned.length > 0) {
-        setPinnedSessionIds(prev => {
-          const merged = Array.from(new Set([...prev, ...serverPinned]));
-          try {
-            localStorage.setItem('aether_pinned_sessions', JSON.stringify(merged));
-          } catch (e) {}
-          return merged;
-        });
-      }
+
+      setPinnedSessionIds(prev => {
+        // Keep any locally pinned sessions not yet in server list, plus server pinned
+        const remainingLocal = prev.filter(id => !sessionIds.has(id));
+        const updated = Array.from(new Set([...remainingLocal, ...serverPinned]));
+        try {
+          localStorage.setItem('aether_pinned_sessions', JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
+      });
 
       const projMap = {};
       sessions.forEach(s => {
@@ -117,20 +121,29 @@ export const ChatHistoryDrawer = ({
       return next;
     });
 
+    if (onTogglePinSession) {
+      onTogglePinSession(sessionId, willBePinned);
+    }
+
     try {
+      const effectiveApiBase = (apiBase || (typeof window !== 'undefined' && (
+        window.location.protocol === 'file:' || 
+        window.location.protocol === 'capacitor:' || 
+        window.location.port === '5173'
+      ) ? `http://${window.location.hostname || '127.0.0.1'}:8000/api` : '/api')).replace(/\/+$/, '');
+
       const authHeaders = {
         'Content-Type': 'application/json',
         ...(userEmail ? { 'X-User-Email': userEmail } : {})
       };
-      const apiEndpoint = typeof window !== 'undefined' && window.location.port === '5173'
-        ? `http://${window.location.hostname}:8000/api`
-        : '/api';
-      fetch(`${apiEndpoint}/chat/sessions/${encodeURIComponent(sessionId)}/pin`, {
+      await fetch(`${effectiveApiBase}/chat/sessions/${encodeURIComponent(sessionId)}/pin`, {
         method: 'PUT',
         headers: authHeaders,
         body: JSON.stringify({ is_pinned: willBePinned })
-      }).catch(() => {});
-    } catch (err) {}
+      });
+    } catch (err) {
+      console.warn('[Pin Sync] Failed to persist pin to server:', err);
+    }
   };
 
   const handleSetProject = async (e, sessionId, projectId) => {
@@ -145,19 +158,24 @@ export const ChatHistoryDrawer = ({
     setProjectMenuSessionId(null);
 
     try {
+      const effectiveApiBase = (apiBase || (typeof window !== 'undefined' && (
+        window.location.protocol === 'file:' || 
+        window.location.protocol === 'capacitor:' || 
+        window.location.port === '5173'
+      ) ? `http://${window.location.hostname || '127.0.0.1'}:8000/api` : '/api')).replace(/\/+$/, '');
+
       const authHeaders = {
         'Content-Type': 'application/json',
         ...(userEmail ? { 'X-User-Email': userEmail } : {})
       };
-      const apiEndpoint = typeof window !== 'undefined' && window.location.port === '5173'
-        ? `http://${window.location.hostname}:8000/api`
-        : '/api';
-      fetch(`${apiEndpoint}/chat/sessions/${encodeURIComponent(sessionId)}/project`, {
+      await fetch(`${effectiveApiBase}/chat/sessions/${encodeURIComponent(sessionId)}/project`, {
         method: 'PUT',
         headers: authHeaders,
         body: JSON.stringify({ project: projectId || null })
-      }).catch(() => {});
-    } catch (err) {}
+      });
+    } catch (err) {
+      console.warn('[Project Sync] Failed to persist project to server:', err);
+    }
   };
 
   // Filter sessions by search query and project (exclude temporary chats)
@@ -192,7 +210,7 @@ export const ChatHistoryDrawer = ({
     const pinned = [];
     const unpinned = [];
     filteredSessions.forEach(s => {
-      if (pinnedSessionIds.includes(s.id)) {
+      if (pinnedSessionIds.includes(s.id) || s.is_pinned) {
         pinned.push(s);
       } else {
         unpinned.push(s);
@@ -1013,6 +1031,7 @@ export const ChatHistoryDrawer = ({
   );
 
   function renderSessionItem(session, isPinned) {
+    const isItemPinned = Boolean(isPinned || pinnedSessionIds.includes(session.id) || session.is_pinned);
     const isActive = session.id === activeSessionId;
     const currentProj = sessionProjects[session.id] || session.project;
 
@@ -1028,13 +1047,13 @@ export const ChatHistoryDrawer = ({
           borderRadius: '14px',
           background: isActive 
             ? 'linear-gradient(90deg, rgba(56, 189, 248, 0.18) 0%, rgba(56, 189, 248, 0.06) 100%)' 
-            : (isPinned ? 'rgba(245, 158, 11, 0.05)' : 'rgba(255, 255, 255, 0.03)'),
+            : (isItemPinned ? 'rgba(245, 158, 11, 0.05)' : 'rgba(255, 255, 255, 0.03)'),
           border: isActive 
             ? '1px solid rgba(56, 189, 248, 0.45)' 
-            : (isPinned ? '1px solid rgba(245, 158, 11, 0.2)' : '1px solid rgba(255, 255, 255, 0.06)'),
+            : (isItemPinned ? '1px solid rgba(245, 158, 11, 0.2)' : '1px solid rgba(255, 255, 255, 0.06)'),
           borderLeft: isActive 
             ? '3px solid #38bdf8' 
-            : (isPinned ? '3px solid #f59e0b' : '1px solid rgba(255, 255, 255, 0.06)'),
+            : (isItemPinned ? '3px solid #f59e0b' : '1px solid rgba(255, 255, 255, 0.06)'),
           boxSizing: 'border-box',
           transition: 'all 0.15s',
           gap: '8px'
@@ -1062,13 +1081,13 @@ export const ChatHistoryDrawer = ({
             borderRadius: '8px',
             background: isActive 
               ? 'rgba(56, 189, 248, 0.2)' 
-              : (isPinned ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255, 255, 255, 0.04)'),
+              : (isItemPinned ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255, 255, 255, 0.04)'),
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0
           }}>
-            {isPinned ? (
+            {isItemPinned ? (
               <Pin size={14} color="#f59e0b" fill="#f59e0b" />
             ) : (
               <MessageSquare 
@@ -1209,9 +1228,9 @@ export const ChatHistoryDrawer = ({
             type="button"
             onClick={(e) => handleTogglePin(e, session.id)}
             style={{
-              background: isPinned ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-              border: isPinned ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(255, 255, 255, 0.08)',
-              color: isPinned ? '#f59e0b' : '#94a3b8',
+              background: isItemPinned ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+              border: isItemPinned ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(255, 255, 255, 0.08)',
+              color: isItemPinned ? '#f59e0b' : '#94a3b8',
               cursor: 'pointer',
               width: '30px',
               height: '30px',
@@ -1221,9 +1240,9 @@ export const ChatHistoryDrawer = ({
               justifyContent: 'center',
               transition: 'all 0.15s'
             }}
-            title={isPinned ? "Unpin chat" : "Pin chat to top"}
+            title={isItemPinned ? "Unpin chat" : "Pin chat to top"}
           >
-            {isPinned ? <PinOff size={13} /> : <Pin size={13} />}
+            {isItemPinned ? <PinOff size={13} /> : <Pin size={13} />}
           </button>
 
           {/* Rename Button */}
