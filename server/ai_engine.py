@@ -2281,6 +2281,7 @@ async def parse_intent_with_llm(
 
     if context is None:
         context = {}
+    recent_chat = context.get('recent_chat', []) or []
     if user_city and not context.get('user_location'):
         context['user_location'] = user_city
     if not context.get('city_guide'):
@@ -2698,6 +2699,7 @@ async def parse_intent_with_llm(
         }
 
     # Fallback to direct weather/news if LLM call failed
+    has_devanagari = any('\u0900' <= ch <= '\u097f' for ch in user_input)
     is_hi_query = (effective_lang in ["hi", "hi_friend"]) or has_devanagari
     if is_weather_query:
         return {
