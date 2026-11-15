@@ -33,6 +33,7 @@ jobs:
           alembic upgrade head || python -c "from database import engine, Base; import models; Base.metadata.create_all(bind=engine)"
           cd ..
           python tests/test_agent_orchestrator.py
+          python tests/test_auth_security.py
 
       - name: Verify Alembic Migrations
         run: |

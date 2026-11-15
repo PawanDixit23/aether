@@ -10,3 +10,14 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     detectSessionInUrl: true,
   },
 });
+
+
+/** Fetch an Aether API endpoint with the current verified Supabase session. */
+export async function authenticatedFetch(input, init = {}) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const headers = new Headers(init.headers || {});
+  if (session?.access_token) {
+    headers.set('Authorization', `Bearer ${session.access_token}`);
+  }
+  return fetch(input, { ...init, headers });
+}
