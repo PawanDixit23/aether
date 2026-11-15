@@ -461,11 +461,9 @@ def test_postgres_rls_suite():
             # Inject a Tier-3 critical tool call (wire_transfer) WITHOUT approval_id
             # The orchestrator MUST block this and set requires_approval = True
             state_no_approval = AgentState(
-                messages=[],
-                tool_calls=[],
-                context={},  # No approval_id supplied
-                owner_user_id=user_a,
-                user_email="usera@example.com"
+                user_msg="Transfer 50000 to external_account",
+                user_email="usera@example.com",
+                metadata={}  # No server-issued approval_id supplied
             )
             # Simulate the governance check for a Tier-3 action directly
             tier = None
