@@ -447,18 +447,29 @@ export default function GeminiLiveModal({
       }, 180000); // 3-minute (180s) watchdog
 
       try {
+        const livePayload = {
+          prompt: cleanPrompt,
+          input_text: cleanPrompt,
+          user_email: userEmail,
+          lang: autoLang,
+          language: autoLang,
+          live_voice: true,
+          api_key: (localStorage.getItem('aether_gemini_key') || '').trim(),
+          openai_key: (localStorage.getItem('aether_openai_key') || '').trim(),
+          grok_key: (localStorage.getItem('aether_grok_key') || '').trim(),
+          active_provider: localStorage.getItem('aether_active_provider') || 'gemini',
+          user_name: localStorage.getItem('aether_user_name') || 'Pawan',
+          client_time: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
+        };
+
         const resp = await fetch(chatEndpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             ...(userEmail ? { 'X-User-Email': userEmail } : {})
           },
-          body: JSON.stringify({
-            prompt: cleanPrompt,
-            user_email: userEmail,
-            lang: autoLang,
-            live_voice: true
-          }),
+          body: JSON.stringify(livePayload),
           signal: liveAbortController.signal
         });
         if (resp.ok) {
@@ -479,7 +490,12 @@ export default function GeminiLiveModal({
             body: JSON.stringify({
               input_text: cleanPrompt,
               user_email: userEmail,
-              language: autoLang
+              language: autoLang,
+              api_key: (localStorage.getItem('aether_gemini_key') || '').trim(),
+              openai_key: (localStorage.getItem('aether_openai_key') || '').trim(),
+              grok_key: (localStorage.getItem('aether_grok_key') || '').trim(),
+              active_provider: localStorage.getItem('aether_active_provider') || 'gemini',
+              user_name: localStorage.getItem('aether_user_name') || 'Pawan'
             }),
             signal: liveAbortController.signal
           });
@@ -497,7 +513,13 @@ export default function GeminiLiveModal({
         return;
       }
 
-      const aiText = data?.response || data?.message || data?.content || "समझ गया।";
+      let aiText = data?.response || data?.message || data?.content;
+      if (!aiText || aiText.trim() === 'समझ गया।' || aiText.trim() === 'समझ गया') {
+        const isHi = autoLang === 'hi' || /[\u0900-\u097F]/.test(cleanPrompt) || /\b(bhai|kya|kaise|sun|idhar|suno|karo|batao)\b/i.test(cleanPrompt);
+        aiText = isHi
+          ? 'हाँ जी भाई, मैं सुन रहा हूँ। बताइए मैं क्या मदद करूँ?'
+          : (autoLang === 'hinglish' ? 'Haan, main sun raha hoon. Bataiye kya madad kar sakta hoon?' : 'Yes, I can hear you clearly. How can I help?');
+      }
       setAiResponse(aiText);
       startCuratedStreamingText(aiText);
 

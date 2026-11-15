@@ -1955,8 +1955,8 @@ body.theme-oled .settings-user-card {
   overflow: hidden;
   background: radial-gradient(circle at 50% 30%, rgba(20, 30, 55, 0.6) 0%, var(--bg-app) 80%);
   color: #f1f5f9;
-  /* Top padding: 38px clearance for phone status bar (clock, battery, camera hole) */
-  padding: max(38px, env(safe-area-inset-top, 38px)) 12px max(6px, env(safe-area-inset-bottom, 6px)) 12px;
+  /* Outer container has 0 top padding so safe area is cleanly owned by the top bar (matching Chat History) */
+  padding: 0 12px max(6px, env(safe-area-inset-bottom, 6px)) 12px;
   box-sizing: border-box;
   position: relative;
 }
@@ -1964,7 +1964,7 @@ body.theme-oled .settings-user-card {
 /* On standard desktop browsers with window > 768px and not in mobile wrapper, use compact top padding */
 @media (min-width: 769px) {
   body:not(.in-mobile-app) .gemini-screen-container {
-    padding-top: 12px;
+    padding-top: 0px;
   }
 }
 
@@ -1972,17 +1972,17 @@ body.theme-oled .settings-user-card {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 12px;
+  padding: 8px 12px;
   z-index: 20;
   flex-shrink: 0;
 }
 
 @media (max-width: 768px) {
   .gemini-top-bar {
-    padding-top: max(env(safe-area-inset-top, 44px), 44px) !important;
-    padding-left: 12px !important;
-    padding-right: 12px !important;
-    padding-bottom: 8px !important;
+    padding-top: max(env(safe-area-inset-top, 48px), 48px) !important;
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+    padding-bottom: 12px !important;
   }
 }
 

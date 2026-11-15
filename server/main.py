@@ -1608,6 +1608,25 @@ async def _execute_quick_capture(
         else:
             result_message = f"⚡ **UPI पेमेंट तैयार है:** {amt_display} **{payee_name}** के लिए\n\nGoogle Pay, PhonePe या Paytm से तुरंत भुगतान करने के लिए नीचे **Pay Now** पर टैप करें। 💸"
 
+    else:
+        fallback_greeting = (
+            f"नमस्ते {req.user_name or 'साथी'}! मैं सुन रहा हूँ। बताइए, मैं आपकी क्या सहायता करूँ?"
+            if (lang == "hi" or lang == "auto")
+            else f"Hello {req.user_name or 'Pawan'}! I am listening. How can I assist you right now?"
+        )
+        result_message = data.get("response") or data.get("explanation") or data.get("message") or fallback_greeting
+        data["response"] = result_message
+        executed = True
+
+    if not result_message or not result_message.strip():
+        fallback_greeting = (
+            f"नमस्ते {req.user_name or 'साथी'}! मैं सुन रहा हूँ। बताइए, मैं आपकी क्या सहायता करूँ?"
+            if (lang == "hi" or lang == "auto")
+            else f"Hello {req.user_name or 'Pawan'}! I am listening. How can I assist you right now?"
+        )
+        result_message = data.get("response") or data.get("explanation") or fallback_greeting
+        data["response"] = result_message
+
     # Record AI Response in Chat History (resilient to schema constraints, skip for temporary chats)
     if not is_temporary:
         try:
@@ -1674,6 +1693,16 @@ class DirectChatRequest(BaseModel):
     lang: Optional[str] = "auto"
     language: Optional[str] = None
     live_voice: Optional[bool] = False
+    api_key: Optional[str] = None
+    openai_key: Optional[str] = None
+    grok_key: Optional[str] = None
+    active_provider: Optional[str] = None
+    user_name: Optional[str] = None
+    client_time: Optional[str] = None
+    timezone: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    city: Optional[str] = None
 
 @app.post("/api/chat")
 @app.post("/chat")
@@ -1690,15 +1719,34 @@ async def direct_chat_endpoint(
     qc_req = QuickCaptureRequest(
         input_text=text,
         language=req.language or req.lang or "auto",
-        user_email=eff_email
+        user_email=eff_email,
+        api_key=req.api_key,
+        openai_key=req.openai_key,
+        grok_key=req.grok_key,
+        active_provider=req.active_provider,
+        user_name=req.user_name,
+        client_time=req.client_time,
+        timezone=req.timezone,
+        latitude=req.latitude,
+        longitude=req.longitude,
+        city=req.city
     )
     result = await quick_capture(qc_req, user_email=eff_email, db=db)
     
     reply = result.get("message") or ""
     if not reply and result.get("parsed"):
         reply = result.get("parsed", {}).get("data", {}).get("response", "")
-    if not reply:
-        reply = "समझ गया।"
+    if not reply or reply.strip() == "समझ गया।":
+        # Provide natural, polite conversational answers instead of one-word robotic acknowledgments
+        user_l = text.lower()
+        is_hi = any('\u0900' <= ch <= '\u097f' for ch in text) or any(w in user_l for w in ["kya", "bhai", "kaise", "suno", "sun", "idhar", "batao", "namaste", "yaar"])
+        is_en = any(w in user_l for w in ["listen", "hearing", "how", "what", "hello", "hi", "there", "you"])
+        if is_hi:
+            reply = "हाँ जी भाई, मैं आपकी बात ध्यान से सुन रहा हूँ। बताइए मैं क्या मदद करूँ?"
+        elif is_en:
+            reply = "Yes, I am listening to you clearly. How can I help you right now?"
+        else:
+            reply = "हाँ, मैं सुन रहा हूँ। कृपया बताइए अभी आपके किस काम में मदद करूँ?"
         
     return {
         "status": "ok",

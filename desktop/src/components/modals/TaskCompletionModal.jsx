@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { CheckCircle2, MessageSquare, Paperclip, Upload, FileText, X } from 'lucide-react';
+import { Paperclip, Upload, FileText, Clock } from 'lucide-react';
 
 export const TaskCompletionModal = ({
   task,
@@ -9,6 +9,7 @@ export const TaskCompletionModal = ({
   if (!task) return null;
 
   const [comment, setComment] = useState(task.completion_comment || '');
+  const [priority, setPriority] = useState(task.priority || 'medium');
   const [attachments, setAttachments] = useState(() => {
     if (!task.attachments) return [];
     if (Array.isArray(task.attachments)) return task.attachments;
@@ -21,6 +22,46 @@ export const TaskCompletionModal = ({
   });
   const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef(null);
+  const inputRef = useRef(null);
+
+  // Track exact mobile visual viewport height (handles virtual soft keyboard correctly)
+  const [viewportHeight, setViewportHeight] = useState(() => {
+    if (typeof window !== 'undefined' && window.visualViewport) {
+      return window.visualViewport.height;
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    const handleViewportChange = () => {
+      if (window.visualViewport) {
+        setViewportHeight(window.visualViewport.height);
+      }
+    };
+    if (typeof window !== 'undefined' && window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleViewportChange);
+      window.visualViewport.addEventListener('scroll', handleViewportChange);
+    }
+    return () => {
+      if (typeof window !== 'undefined' && window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleViewportChange);
+        window.visualViewport.removeEventListener('scroll', handleViewportChange);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    setTimeout(() => {
+      if (inputRef.current) inputRef.current.focus();
+    }, 100);
+  }, []);
+
+  const priorityMeta = {
+    low: { label: 'Low', color: '#10b981', bg: 'rgba(16, 185, 129, 0.15)', border: 'rgba(16, 185, 129, 0.4)', dot: '🟢' },
+    medium: { label: 'Medium', color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.15)', border: 'rgba(245, 158, 11, 0.4)', dot: '🟡' },
+    high: { label: 'High', color: '#f97316', bg: 'rgba(249, 115, 22, 0.15)', border: 'rgba(249, 115, 22, 0.4)', dot: '🟠' },
+    urgent: { label: 'Urgent', color: '#ef4444', bg: 'rgba(239, 68, 68, 0.15)', border: 'rgba(239, 68, 68, 0.4)', dot: '🔴' }
+  };
 
   const handleFileUpload = (e) => {
     const files = Array.from(e.target.files || []);
@@ -97,6 +138,7 @@ export const TaskCompletionModal = ({
       if (onSave) {
         await onSave(task.id, {
           completion_comment: comment.trim() || null,
+          priority: priority || task.priority,
           attachments: attachments.length > 0 ? JSON.stringify(attachments) : null
         });
       }
@@ -114,47 +156,41 @@ export const TaskCompletionModal = ({
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0, 0, 0, 0.78)',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
+        height: viewportHeight ? `${viewportHeight}px` : '100%',
+        background: 'rgba(0, 0, 0, 0.65)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
         zIndex: 99999,
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '16px',
-        paddingTop: 'max(env(safe-area-inset-top, 40px), 40px)',
-        boxSizing: 'border-box'
+        flexDirection: 'column',
+        justifyContent: 'flex-end'
       }}
       onClick={onClose}
     >
       <div
         style={{
           background: '#0d1527',
-          border: '1px solid rgba(56, 189, 248, 0.35)',
-          borderRadius: '24px',
-          padding: '22px',
-          width: '100%',
-          maxWidth: '460px',
-          boxShadow: '0 24px 64px rgba(0, 0, 0, 0.9), 0 0 35px rgba(56, 189, 248, 0.15)',
+          borderTop: '2px solid #38bdf8',
+          borderRadius: '24px 24px 0 0',
+          padding: '16px 16px max(24px, env(safe-area-inset-bottom, 20px))',
+          boxShadow: '0 -20px 50px rgba(0, 0, 0, 0.95)',
           display: 'flex',
           flexDirection: 'column',
-          gap: '14px',
+          gap: '12px',
           animation: 'fadeIn 0.18s ease'
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <CheckCircle2 size={20} color="#10b981" />
-              <span style={{ fontSize: '1.05rem', fontWeight: 700, color: '#f8fafc' }}>
-                Task Completed!
-              </span>
-            </div>
-            <div style={{ fontSize: '0.80rem', color: '#94a3b8', marginTop: '4px', fontWeight: 500, lineHeight: 1.35 }}>
-              "{task.title}"
-            </div>
+        {/* Header - Matching Screenshot 4 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+            <span style={{ fontSize: '1rem' }}>📁</span>
+            <span style={{ fontSize: '0.86rem', fontWeight: 700, color: '#38bdf8' }}>
+              + Task Note
+            </span>
+            <span style={{ color: '#94a3b8', fontSize: '0.74rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+              for "{task.title}"
+            </span>
           </div>
           <button
             type="button"
@@ -166,163 +202,189 @@ export const TaskCompletionModal = ({
               borderRadius: '50%',
               width: '28px',
               height: '28px',
+              cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              cursor: 'pointer'
+              fontSize: '0.9rem'
             }}
           >
-            <X size={15} />
+            ✕
           </button>
         </div>
 
-        {/* Note / Comment Text Area */}
-        <div>
-          <label style={{ fontSize: '0.74rem', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '6px', fontWeight: 600 }}>
-            <MessageSquare size={13} color="#38bdf8" />
-            <span>Add Completion Note / Comment (Optional)</span>
-          </label>
-          <textarea
-            rows={3}
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            placeholder="e.g. Done today, files uploaded, followed up with team..."
-            style={{
-              width: '100%',
-              boxSizing: 'border-box',
-              background: 'rgba(255, 255, 255, 0.05)',
-              border: '1px solid rgba(56, 189, 248, 0.3)',
-              borderRadius: '12px',
-              padding: '10px 12px',
-              color: '#e0f2fe',
-              fontSize: '0.84rem',
-              resize: 'vertical',
-              outline: 'none',
-              fontFamily: 'inherit'
-            }}
-            autoFocus
-          />
-        </div>
+        {/* Note / Comment Input - Matching Screenshot 4 Input */}
+        <input
+          ref={inputRef}
+          type="text"
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="Task note / comment (e.g. Done today, files uploaded)..."
+          style={{
+            width: '100%',
+            boxSizing: 'border-box',
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: '1px solid rgba(56, 189, 248, 0.4)',
+            borderRadius: '12px',
+            padding: '11px 14px',
+            color: '#fff',
+            fontSize: '0.92rem',
+            outline: 'none'
+          }}
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSave();
+            if (e.key === 'Escape') onClose();
+          }}
+        />
 
-        {/* Attachments Section */}
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-            <label style={{ fontSize: '0.74rem', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 600 }}>
-              <Paperclip size={13} color="#38bdf8" />
-              <span>Attachments (Photos, Receipts, Docs)</span>
-            </label>
+        {/* Priority Selector (Full Width Segmented Control: 4 equal buttons - Matching Screenshot 4) */}
+        <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
+          {['low', 'medium', 'high', 'urgent'].map(pKey => (
             <button
+              key={pKey}
               type="button"
-              onClick={() => fileInputRef.current && fileInputRef.current.click()}
+              onClick={() => setPriority(pKey)}
               style={{
-                background: 'rgba(56, 189, 248, 0.12)',
-                border: '1px solid rgba(56, 189, 248, 0.35)',
-                color: '#38bdf8',
+                background: priority === pKey ? priorityMeta[pKey].bg : 'rgba(255, 255, 255, 0.04)',
+                border: `1px solid ${priority === pKey ? priorityMeta[pKey].border : 'rgba(255, 255, 255, 0.12)'}`,
+                color: priority === pKey ? priorityMeta[pKey].color : '#94a3b8',
                 borderRadius: '8px',
-                padding: '4px 10px',
+                padding: '8px 4px',
                 fontSize: '0.72rem',
                 cursor: 'pointer',
+                fontWeight: 600,
+                whiteSpace: 'nowrap',
+                flex: 1,
+                textAlign: 'center',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '5px',
-                fontWeight: 600
+                justifyContent: 'center',
+                gap: '4px',
+                boxShadow: priority === pKey ? '0 2px 8px rgba(0,0,0,0.35)' : 'none',
+                transition: 'all 0.15s ease'
               }}
             >
-              <Upload size={12} /> + Attach File
+              <span>{priorityMeta[pKey].dot}</span>
+              <span>{priorityMeta[pKey].label}</span>
             </button>
-          </div>
-
-          <input
-            type="file"
-            ref={fileInputRef}
-            multiple
-            accept="image/*,.pdf,.doc,.docx,.txt"
-            style={{ display: 'none' }}
-            onChange={handleFileUpload}
-          />
-
-          {attachments.length > 0 ? (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '110px', overflowY: 'auto', padding: '2px 0' }}>
-              {attachments.map(att => {
-                const isImg = att.type?.startsWith('image/') || (att.data && att.data.startsWith('data:image/'));
-                return (
-                  <div
-                    key={att.id}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      background: 'rgba(255, 255, 255, 0.08)',
-                      border: '1px solid rgba(255, 255, 255, 0.15)',
-                      borderRadius: '8px',
-                      padding: '4px 8px',
-                      fontSize: '0.72rem',
-                      color: '#cbd5e1'
-                    }}
-                  >
-                    {isImg ? (
-                      <img src={att.data} alt={att.name} style={{ width: '18px', height: '18px', borderRadius: '4px', objectFit: 'cover' }} />
-                    ) : (
-                      <FileText size={12} color="#38bdf8" />
-                    )}
-                    <span style={{ maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {att.name}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setAttachments(prev => prev.filter(x => x.id !== att.id))}
-                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px', fontSize: '0.82rem', lineHeight: 1 }}
-                      title="Remove attachment"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div style={{ fontSize: '0.70rem', color: '#64748b', fontStyle: 'italic', padding: '2px 0' }}>
-              Optional: attach photos, receipts, or PDF files.
-            </div>
-          )}
+          ))}
         </div>
 
-        {/* Footer Actions */}
-        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '6px' }}>
+        {/* Attachments Row */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '10px', padding: '6px 12px', border: '1px solid rgba(255, 255, 255, 0.12)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.76rem', color: '#94a3b8' }}>
+            <Paperclip size={14} color="#38bdf8" />
+            <span>{attachments.length > 0 ? `${attachments.length} file(s) attached` : 'Attach proof/files (optional)'}</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => fileInputRef.current && fileInputRef.current.click()}
+            style={{
+              background: 'rgba(56, 189, 248, 0.14)',
+              border: '1px solid rgba(56, 189, 248, 0.35)',
+              color: '#38bdf8',
+              borderRadius: '6px',
+              padding: '4px 10px',
+              fontSize: '0.72rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontWeight: 600
+            }}
+          >
+            <Upload size={12} /> + Attach
+          </button>
+        </div>
+
+        <input
+          type="file"
+          ref={fileInputRef}
+          multiple
+          accept="image/*,.pdf,.doc,.docx,.txt"
+          style={{ display: 'none' }}
+          onChange={handleFileUpload}
+        />
+
+        {attachments.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '80px', overflowY: 'auto' }}>
+            {attachments.map(att => {
+              const isImg = att.type?.startsWith('image/') || (att.data && att.data.startsWith('data:image/'));
+              return (
+                <div
+                  key={att.id}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    background: 'rgba(255, 255, 255, 0.08)',
+                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    borderRadius: '8px',
+                    padding: '3px 8px',
+                    fontSize: '0.70rem',
+                    color: '#cbd5e1'
+                  }}
+                >
+                  {isImg ? (
+                    <img src={att.data} alt={att.name} style={{ width: '16px', height: '16px', borderRadius: '4px', objectFit: 'cover' }} />
+                  ) : (
+                    <FileText size={12} color="#38bdf8" />
+                  )}
+                  <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {att.name}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setAttachments(prev => prev.filter(x => x.id !== att.id))}
+                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px', fontSize: '0.80rem', lineHeight: 1 }}
+                    title="Remove"
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Bottom Action Buttons - Exactly matching Screenshot 4 */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
           <button
             type="button"
             onClick={onClose}
             style={{
               background: 'rgba(255, 255, 255, 0.08)',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
+              border: 'none',
               color: '#94a3b8',
-              padding: '8px 16px',
-              borderRadius: '10px',
-              fontSize: '0.80rem',
+              padding: '9px 18px',
+              borderRadius: '8px',
+              fontSize: '0.78rem',
               cursor: 'pointer',
               fontWeight: 600
             }}
           >
-            Skip / Done
+            Cancel
           </button>
           <button
             type="button"
             disabled={isSaving}
             onClick={handleSave}
             style={{
-              background: 'linear-gradient(135deg, #0284c7, #0369a1)',
+              background: 'linear-gradient(135deg, #0284c7, #2563eb)',
               border: 'none',
               color: '#fff',
-              padding: '8px 18px',
-              borderRadius: '10px',
-              fontSize: '0.80rem',
-              cursor: 'pointer',
+              padding: '9px 20px',
+              borderRadius: '8px',
+              fontSize: '0.78rem',
               fontWeight: 700,
+              cursor: 'pointer',
               boxShadow: '0 4px 14px rgba(2, 132, 199, 0.4)',
               opacity: isSaving ? 0.7 : 1
             }}
           >
-            {isSaving ? 'Saving...' : 'Save Note'}
+            {isSaving ? 'Saving...' : 'Save Note ⚡'}
           </button>
         </div>
       </div>
