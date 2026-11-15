@@ -195,8 +195,9 @@ class ActionApprovalManager:
                     ActionApproval.consumed: True,
                     ActionApproval.consumed_at: datetime.utcnow()
                 }, synchronize_session=False)
-                db.commit()
-
+                # The caller owns the SQLAlchemy transaction. Do not commit here:
+                # verify_and_consume may run inside an explicit transaction context,
+                # and committing it would close the caller's transaction prematurely.
                 if rows_updated > 0:
                     return True, "Authorized"
 
@@ -216,7 +217,8 @@ class ActionApprovalManager:
                     return False, "Parameter tampering detected! Provided parameters do not match approved payload."
                 return False, "Approval token consumption rejected"
             except Exception as e:
-                db.rollback()
+                # Leave rollback/transaction cleanup to the caller. If the DB transaction
+                # is invalidated by the error, the caller's transaction context will roll it back.
                 return False, f"Database error during approval verification: {e}"
 
         # 2. In-memory check strictly forbidden in production (AETH-P0-03)
