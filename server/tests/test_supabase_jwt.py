@@ -41,6 +41,40 @@ class SupabaseJwtVerificationTests(unittest.TestCase):
             "exp": int(time.time()) + 300,
         }
 
+    def test_production_startup_accepts_es256_without_legacy_hs256_secret(self):
+        env = {
+            "ENVIRONMENT": "production",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_JWT_ISSUER": ISSUER,
+            "SUPABASE_JWT_SECRET": "",
+            "TELEGRAM_BOT_TOKEN": "",
+            "ENABLE_TELEGRAM": "",
+            "WHATSAPP_TOKEN": "",
+            "ENABLE_WHATSAPP": "",
+            "TWILIO_ACCOUNT_SID": "",
+            "ENABLE_TWILIO": "",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            auth.validate_security_config_at_startup()
+
+    def test_production_startup_rejects_missing_supabase_jwks_and_issuer_configuration(self):
+        env = {
+            "ENVIRONMENT": "production",
+            "SUPABASE_URL": "",
+            "SUPABASE_JWKS_URL": "",
+            "SUPABASE_JWT_ISSUER": "",
+            "SUPABASE_JWT_SECRET": "",
+            "TELEGRAM_BOT_TOKEN": "",
+            "ENABLE_TELEGRAM": "",
+            "WHATSAPP_TOKEN": "",
+            "ENABLE_WHATSAPP": "",
+            "TWILIO_ACCOUNT_SID": "",
+            "ENABLE_TWILIO": "",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "SUPABASE_URL"):
+                auth.validate_security_config_at_startup()
+
     def test_accepts_es256_token_from_jwks(self):
         token = jwt.encode(self.claims, self.private_key, algorithm="ES256", headers={"kid": "test-key"})
         with patch.object(auth, "PyJWKClient", FakeJwksClient):
