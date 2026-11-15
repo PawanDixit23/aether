@@ -32,6 +32,47 @@ Notifications.setNotificationHandler({
 
 const AETHER_URL = process.env.EXPO_PUBLIC_AETHER_URL || 'https://aether-kjrj.onrender.com';
 
+// Strict Trusted Origins and Bridge Actions (AETH-P0-04)
+const ALLOWED_ORIGIN_HOSTS = new Set([
+  'aether-kjrj.onrender.com',
+  'localhost',
+  '127.0.0.1',
+  '10.0.2.2',
+  'accounts.google.com',
+  'dwyiledlboolxywizkbm.supabase.co'
+]);
+
+function isTrustedOrigin(urlStr?: string): boolean {
+  if (!urlStr) return false;
+  try {
+    const parsed = new URL(urlStr);
+    return ALLOWED_ORIGIN_HOSTS.has(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+const ALLOWED_BRIDGE_ACTIONS = new Set([
+  'MAKE_CALL',
+  'SEARCH_CONTACT_AND_CALL',
+  'OPEN_SETTINGS',
+  'SYNC_ALL_CONTACTS',
+  'OPEN_UPI_PAYMENT',
+  'OPEN_EXTERNAL_URL',
+  'OPEN_NATIVE_MAP',
+  'CHECK_SPEECH_PERMISSIONS',
+  'REQUEST_SPEECH_PERMISSIONS',
+  'START_LIVE_SPEECH_LISTENING',
+  'STOP_LIVE_SPEECH_LISTENING',
+  'START_AUDIO_RECORDER',
+  'STOP_AND_SEND_AUDIO_RECORDER',
+  'CHECK_AUDIO_PLAYBACK_STATUS',
+  'PLAY_AUDIO_STREAM_FILE',
+  'STOP_AUDIO_PLAYBACK',
+  'PAUSE_AUDIO_PLAYBACK',
+  'RESUME_AUDIO_PLAYBACK',
+]);
+
 export default function App() {
   const webViewRef = useRef<WebView>(null);
   const [canGoBack, setCanGoBack] = useState(false);
@@ -273,17 +314,30 @@ export default function App() {
           mediaCapturePermissionGrantType="grant"
           {...({
             onPermissionRequest: (event: any) => {
-              event?.grant?.(event.resources);
+              if (isTrustedOrigin(event?.origin || AETHER_URL)) {
+                event?.grant?.(event.resources);
+              } else {
+                event?.deny?.();
+              }
             },
             onGeolocationPermissionsShowPrompt: (event: any) => {
-              if (event && typeof event.allow === 'function') {
-                event.allow(event.origin, true, false);
-              } else if (event && typeof event.grant === 'function') {
-                event.grant(event.origin);
+              if (isTrustedOrigin(event?.origin || AETHER_URL)) {
+                if (event && typeof event.allow === 'function') {
+                  event.allow(event.origin, true, false);
+                } else if (event && typeof event.grant === 'function') {
+                  event.grant(event.origin);
+                }
               }
             }
           } as any)}
-          originWhitelist={['https://*', 'http://localhost*', 'http://127.0.0.1*']}
+          originWhitelist={[
+            'https://aether-kjrj.onrender.com*',
+            'http://localhost*',
+            'http://127.0.0.1*',
+            'http://10.0.2.2*',
+            'https://accounts.google.com*',
+            'https://dwyiledlboolxywizkbm.supabase.co*'
+          ]}
           mixedContentMode="never"
           cacheEnabled={false}
           cacheMode="LOAD_NO_CACHE"
@@ -396,7 +450,16 @@ export default function App() {
           }}
           onMessage={async (event) => {
             try {
-              const data = JSON.parse(event.nativeEvent.data);
+              const rawData = event.nativeEvent.data;
+              if (!rawData || rawData.length > 65536) {
+                console.warn('[WebView Bridge] Dropping empty or oversized message (>64KB)');
+                return;
+              }
+              const data = JSON.parse(rawData);
+              if (!data || typeof data !== 'object' || !ALLOWED_BRIDGE_ACTIONS.has(data.type)) {
+                console.warn('[WebView Bridge] Dropping unauthorized bridge action:', data?.type);
+                return;
+              }
               if (data.type === 'MAKE_CALL') {
                 const rawNum = data.phoneNumber || (data.telUrl ? data.telUrl.replace(/^tel:/i, '') : '');
                 const cleanNum = rawNum ? rawNum.replace(/[^\d+*#]/g, '') : '';

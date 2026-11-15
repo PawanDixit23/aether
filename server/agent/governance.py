@@ -13,7 +13,8 @@ import hashlib
 from typing import Dict, Any, Tuple, Optional
 from sqlalchemy.orm import Session
 from .state import ActionTier, ToolCall
-from models import AuditLog
+from models import AuditLog, ActionApproval
+from datetime import datetime
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -79,8 +80,8 @@ class PermissionEngine:
 class ActionApprovalManager:
     """
     Manages pending Tier 3 approvals with canonical parameter hashing,
-    single-use consumption, and 10-minute expiration to prevent parameter
-    tampering and replay attacks (AETH-SEC-04).
+    atomic DB-backed single-use consumption, and 10-minute expiration
+    to prevent parameter tampering, multi-worker race conditions, and replay attacks (AETH-P0-03).
     """
     _pending_approvals: Dict[str, Dict[str, Any]] = {}
 
@@ -95,22 +96,50 @@ class ActionApprovalManager:
         tool_name: str,
         params: Dict[str, Any],
         user_email: str,
-        ttl_seconds: int = 600
+        owner_user_id: Optional[str] = None,
+        ttl_seconds: int = 600,
+        db: Optional[Session] = None
     ) -> Dict[str, Any]:
         action_id = f"act_{uuid.uuid4().hex[:16]}"
         param_hash = cls.compute_canonical_hash(tool_name, params)
         now = time.time()
+        expires_at = now + ttl_seconds
+        clean_email = str(user_email).strip().lower()
+        clean_user_id = str(owner_user_id or user_email).strip()
+
+        # In-memory record
         record = {
             "action_id": action_id,
             "tool_name": tool_name,
             "params": params,
             "param_hash": param_hash,
-            "user_email": str(user_email).strip().lower(),
+            "user_email": clean_email,
+            "owner_user_id": clean_user_id,
             "created_at": now,
-            "expires_at": now + ttl_seconds,
+            "expires_at": expires_at,
             "consumed": False
         }
         cls._pending_approvals[action_id] = record
+
+        # Database persistence if DB session provided (AETH-P0-03)
+        if db:
+            try:
+                db_record = ActionApproval(
+                    action_id=action_id,
+                    owner_user_id=clean_user_id,
+                    user_email=clean_email,
+                    tool_name=tool_name,
+                    param_hash=param_hash,
+                    params_json=json.dumps(params, sort_keys=True),
+                    expires_at=expires_at,
+                    consumed=False
+                )
+                db.add(db_record)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                print(f"[ActionApprovalManager DB Save Note] {e}")
+
         cls._prune_expired()
         return {
             "action_id": action_id,
@@ -124,8 +153,57 @@ class ActionApprovalManager:
         action_id: str,
         tool_name: str,
         params: Dict[str, Any],
-        user_email: str
+        user_email: str,
+        owner_user_id: Optional[str] = None,
+        db: Optional[Session] = None
     ) -> Tuple[bool, str]:
+        now = time.time()
+        clean_email = str(user_email).strip().lower()
+        clean_user_id = str(owner_user_id or user_email).strip()
+
+        # 1. Check DB first if DB session is available
+        if db:
+            try:
+                db_record = db.query(ActionApproval).filter(ActionApproval.action_id == action_id).first()
+                if db_record:
+                    if db_record.consumed:
+                        return False, "Approval token has already been used (Replay attack prevented)"
+                    if now > db_record.expires_at:
+                        return False, "Approval request has expired (10-minute TTL)"
+                    if db_record.tool_name != tool_name:
+                        return False, f"Tool mismatch: expected {db_record.tool_name}, got {tool_name}"
+                    
+                    # Ownership verification
+                    if db_record.owner_user_id and db_record.owner_user_id != clean_user_id and db_record.user_email != clean_email:
+                        return False, "User mismatch for this approval token"
+
+                    current_hash = cls.compute_canonical_hash(tool_name, params)
+                    if not hmac.compare_digest(current_hash, db_record.param_hash):
+                        return False, "Parameter tampering detected! Provided parameters do not match approved payload."
+
+                    # Atomic consumption via conditional UPDATE
+                    rows_updated = db.query(ActionApproval).filter(
+                        ActionApproval.action_id == action_id,
+                        ActionApproval.consumed == False
+                    ).update({
+                        ActionApproval.consumed: True,
+                        ActionApproval.consumed_at: datetime.utcnow()
+                    })
+                    db.commit()
+
+                    if rows_updated == 0:
+                        return False, "Approval token has already been consumed by a concurrent request"
+
+                    # Sync local memory if present
+                    if action_id in cls._pending_approvals:
+                        cls._pending_approvals[action_id]["consumed"] = True
+
+                    return True, "Authorized"
+            except Exception as e:
+                db.rollback()
+                print(f"[ActionApprovalManager DB Verify Note] {e}")
+
+        # 2. In-memory check fallback
         record = cls._pending_approvals.get(action_id)
         if not record:
             return False, "Approval request not found or already consumed"
@@ -133,11 +211,11 @@ class ActionApprovalManager:
         if record.get("consumed"):
             return False, "Approval token has already been used (Replay attack prevented)"
 
-        if time.time() > record.get("expires_at", 0):
+        if now > record.get("expires_at", 0):
             cls._pending_approvals.pop(action_id, None)
             return False, "Approval request has expired (10-minute TTL)"
 
-        if record.get("user_email") != str(user_email).strip().lower():
+        if record.get("user_email") != clean_email and record.get("owner_user_id") != clean_user_id:
             return False, "User mismatch for this approval token"
 
         if record.get("tool_name") != tool_name:

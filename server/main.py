@@ -122,16 +122,28 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
 
 try:
     from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
-    from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation, BriefingPreference
+    from models import (
+        Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
+        ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
+        BriefingPreference, ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing
+    )
     from ai_engine import parse_intent_with_llm
 except ImportError:
     try:
         from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
-        from server.models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation, BriefingPreference
+        from server.models import (
+            Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
+            ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
+            BriefingPreference, ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing
+        )
         from server.ai_engine import parse_intent_with_llm
     except ImportError:
         from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
-        from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation, BriefingPreference
+        from .models import (
+            Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
+            ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
+            BriefingPreference, ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing
+        )
         from .ai_engine import parse_intent_with_llm
 
 # Initialize tables & run automated schema migrations
@@ -254,32 +266,14 @@ from security.auth import (
 
 def get_user_email(
     request: Request,
-    x_user_email: Optional[str] = Header(None, alias="X-User-Email"),
     authorization: Optional[str] = Header(None, alias="Authorization"),
-    user_email: Optional[str] = None
-) -> Optional[str]:
+) -> str:
     """
-    Resolves authenticated user email safely (AETH-SEC-01).
-    Strictly verifies Bearer JWT token when provided. Rejects arbitrary header spoofing in production.
+    Resolves verified user email from canonical identity principal (AETH-P0-01).
+    Arbitrary X-User-Email headers and request parameters cannot override identity.
     """
-    # 1. Bearer Token Authentication (Cryptographically verified)
-    if authorization and authorization.startswith("Bearer "):
-        user = get_current_user_identity(request, authorization)
-        return user.email
-
-    # 2. Production Environment Check: If SUPABASE_JWT_SECRET is active, require Bearer token
-    jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
-    is_prod = os.environ.get("ENVIRONMENT", "development").lower() in ["production", "prod"]
-    if jwt_secret or is_prod:
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication required. Please provide a valid Bearer token in Authorization header."
-        )
-
-    # 3. Development / Local offline mode fallback (pinned to default owner)
-    if x_user_email or user_email:
-        return (x_user_email or user_email).strip().lower()
-    return DEFAULT_OWNER_EMAIL
+    user = get_current_user_identity(request, authorization)
+    return user.email
 
 DEFAULT_OWNER_EMAIL = os.environ.get("DEFAULT_USER_EMAIL", "e.pawandixit@gmail.com").strip().lower()
 
@@ -810,9 +804,7 @@ def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
 # ----------------- Autonomous Agent & Quick Capture Engine -----------------
 class AgentRunRequest(BaseModel):
     prompt: str
-    user_email: Optional[str] = None
     language: Optional[str] = "auto"
-    approved_tools: Optional[List[str]] = None
     action_id: Optional[str] = None
     parameters: Optional[Dict[str, Any]] = None
 
@@ -820,22 +812,27 @@ class AgentRunRequest(BaseModel):
 @app.post("/api/agent/approve")
 async def run_agent_workflow(
     req: AgentRunRequest,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
     """
     Executes multi-step autonomous workflows with permission checks, tool loops,
-    canonical parameter hash approvals, and reversible audit logging.
+    canonical parameter hash approvals, and reversible audit logging (AETH-P0-03).
+    Client-controlled approved_tools parameter is removed to prevent approval bypass.
     """
     from agent import AgentOrchestrator
-    eff_email = req.user_email or user_email or "operator@aether.local"
-    orchestrator = AgentOrchestrator(db=db, user_email=eff_email, lang=req.language or "auto")
+    orchestrator = AgentOrchestrator(
+        db=db,
+        user_email=current_user.email,
+        owner_user_id=current_user.id,
+        lang=req.language or "auto"
+    )
     context = {}
     if req.action_id:
         context["action_id"] = req.action_id
     if req.parameters:
         context["parameters"] = req.parameters
-    result_state = await orchestrator.run(req.prompt, context=context, approved_tools=req.approved_tools)
+    result_state = await orchestrator.run(req.prompt, context=context)
     return {
         "status": "completed" if result_state.completed else "partial",
         "requires_approval": result_state.requires_approval,
@@ -2003,11 +2000,15 @@ def pin_chat_session(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not session:
         session = ChatSession(
             id=session_id,
+            owner_user_id=eff_email,
             user_email=eff_email,
             title="Conversation",
             is_pinned=req.is_pinned,
@@ -2016,8 +2017,8 @@ def pin_chat_session(
         )
         db.add(session)
     else:
-        if not session.user_email and eff_email:
-            session.user_email = eff_email
+        if session.user_email and session.user_email.strip().lower() != eff_email:
+            raise HTTPException(status_code=403, detail="Not authorized to modify another user's session")
         session.is_pinned = req.is_pinned
         session.updated_at = datetime.utcnow()
     db.commit()
@@ -2030,11 +2031,15 @@ def set_chat_session_project(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not session:
         session = ChatSession(
             id=session_id,
+            owner_user_id=eff_email,
             user_email=eff_email,
             title="Conversation",
             project=(req.project.strip() if req.project else None),
@@ -2043,8 +2048,8 @@ def set_chat_session_project(
         )
         db.add(session)
     else:
-        if not session.user_email and eff_email:
-            session.user_email = eff_email
+        if session.user_email and session.user_email.strip().lower() != eff_email:
+            raise HTTPException(status_code=403, detail="Not authorized to modify another user's session")
         session.project = (req.project.strip() if req.project else None)
         session.updated_at = datetime.utcnow()
     db.commit()
@@ -2076,8 +2081,10 @@ def delete_chat_session(
         except Exception as msg_del_err:
             print(f"[Delete Session Messages Note] {msg_del_err}")
 
-        session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).first()
+        session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
         if session:
+            if session.user_email and session.user_email.strip().lower() != eff_email:
+                raise HTTPException(status_code=403, detail="Not authorized to delete another user's session")
             db.delete(session)
         db.commit()
         return {"status": "success", "message": "Chat session deleted"}
@@ -2364,9 +2371,12 @@ def create_task(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = (task_in.user_email or user_email or "").strip().lower() or None
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
     data = task_in.dict()
     data["user_email"] = eff_email
+    data["owner_user_id"] = eff_email
     subtasks = data.pop("subtasks", None)
     deps = data.pop("dependency_task_ids", None)
     if deps is not None:
@@ -2386,7 +2396,7 @@ def create_task(
         for st in subtasks:
             st_name = str(st).strip()
             if st_name:
-                db.add(Task(user_email=eff_email, title=st_name, parent_id=task.id, priority=task.priority, status="pending"))
+                db.add(Task(user_email=eff_email, owner_user_id=eff_email, title=st_name, parent_id=task.id, priority=task.priority, status="pending"))
         db.commit()
     return serialize_task(task, db=db)
 
@@ -2398,11 +2408,9 @@ def update_task(
     db: Session = Depends(get_db)
 ):
     eff_email = get_effective_email(user_email)
-    query = db.query(Task).filter(Task.id == task_id)
-    if eff_email:
-        query = query.filter(Task.user_email == eff_email)
-    else:
-        query = query.filter(Task.user_email.is_(None))
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    query = db.query(Task).filter(Task.id == task_id, Task.user_email == eff_email)
     task = query.first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -2440,11 +2448,9 @@ def toggle_task(
     db: Session = Depends(get_db)
 ):
     eff_email = get_effective_email(user_email)
-    query = db.query(Task).filter(Task.id == task_id)
-    if eff_email:
-        query = query.filter(Task.user_email == eff_email)
-    else:
-        query = query.filter(Task.user_email.is_(None))
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    query = db.query(Task).filter(Task.id == task_id, Task.user_email == eff_email)
     task = query.first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -2769,12 +2775,9 @@ def delete_task(
     db: Session = Depends(get_db)
 ):
     eff_email = get_effective_email(user_email)
-    query = db.query(Task).filter(Task.id == task_id)
-    if eff_email:
-        query = query.filter(Task.user_email == eff_email)
-    else:
-        query = query.filter(Task.user_email.is_(None))
-    task = query.first()
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    task = db.query(Task).filter(Task.id == task_id, Task.user_email == eff_email).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     # Delete child subtasks if parent is deleted
@@ -3353,7 +3356,7 @@ def delete_finance_record(
     if not rec:
         raise HTTPException(status_code=404, detail="Financial record not found")
     eff_email = (user_email or "").strip().lower()
-    if rec.user_email and rec.user_email.strip().lower() != eff_email:
+    if not eff_email or not rec.user_email or rec.user_email.strip().lower() != eff_email:
         raise HTTPException(status_code=403, detail="Not authorized to delete this record")
     db.delete(rec)
     db.commit()
@@ -3370,7 +3373,7 @@ def update_finance_record(
     if not rec:
         raise HTTPException(status_code=404, detail="Financial record not found")
     eff_email = (user_email or "").strip().lower()
-    if rec.user_email and rec.user_email.strip().lower() != eff_email:
+    if not eff_email or not rec.user_email or rec.user_email.strip().lower() != eff_email:
         raise HTTPException(status_code=403, detail="Not authorized to edit this record")
     if req.type is not None:
         rec.type = req.type
@@ -3618,12 +3621,10 @@ def update_memory(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(req.user_email or user_email)
-    query = db.query(MemoryItem).filter(MemoryItem.id == item_id)
-    if eff_email:
-        query = query.filter(MemoryItem.user_email == eff_email)
-    else:
-        query = query.filter(MemoryItem.user_email.is_(None))
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    query = db.query(MemoryItem).filter(MemoryItem.id == item_id, MemoryItem.user_email == eff_email)
     item = query.first()
     if not item:
         raise HTTPException(status_code=404, detail="Memory item not found")
@@ -3645,11 +3646,9 @@ def delete_memory(
     db: Session = Depends(get_db)
 ):
     eff_email = get_effective_email(user_email)
-    query = db.query(MemoryItem).filter(MemoryItem.id == item_id)
-    if eff_email:
-        query = query.filter(MemoryItem.user_email == eff_email)
-    else:
-        query = query.filter(MemoryItem.user_email.is_(None))
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    query = db.query(MemoryItem).filter(MemoryItem.id == item_id, MemoryItem.user_email == eff_email)
     item = query.first()
     if not item:
         raise HTTPException(status_code=404, detail="Memory item not found")
@@ -4572,11 +4571,62 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
     }
 
 # ----------------- Telegram Executive Bot Webhook -----------------
+TELEGRAM_PAIRING_OTPS: Dict[str, Dict[str, Any]] = {}
+
+@app.post("/api/telegram/pair-request")
+def request_telegram_pairing(user_email: Optional[str] = Depends(get_user_email)):
+    """Generates a secure 6-digit cryptographic OTP to pair a Telegram chat (AETH-P0-05)."""
+    import secrets
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required to generate pairing code")
+    
+    otp = f"{secrets.randbelow(900000) + 100000}"
+    TELEGRAM_PAIRING_OTPS[otp] = {
+        "user_email": eff_email,
+        "expires_at": time.time() + 600
+    }
+    return {
+        "status": "success",
+        "pairing_code": otp,
+        "expires_in_seconds": 600,
+        "instruction": f"Send the 6-digit code '{otp}' to our Telegram bot to verify and link your account."
+    }
+
 @app.post("/api/telegram/webhook")
 async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
-    """Receives and processes real-time Telegram messages from user to Aether."""
+    """
+    Receives and processes real-time Telegram messages from user to Aether.
+    Enforces Telegram secret token verification and OTP-only secure pairing (AETH-P0-05).
+    """
+    telegram_secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
+    env = os.environ.get("ENVIRONMENT", "development").lower()
+    is_prod = env in ["prod", "production"]
+
+    # 1. Secret-token header verification (Fail-closed in production)
+    if telegram_secret or is_prod:
+        token_header = req.headers.get("X-Telegram-Bot-Api-Secret-Token", "").strip()
+        if not token_header or not hmac.compare_digest(token_header, telegram_secret):
+            raise HTTPException(status_code=403, detail="Invalid or missing Telegram webhook secret token")
+
     try:
         data = await req.json()
+        # 2. Durable deduplication via DB
+        update_id = data.get("update_id")
+        if update_id:
+            event_key = f"tg_{update_id}"
+            existing_event = db.query(ProcessedWebhookEvent).filter(
+                ProcessedWebhookEvent.provider == "telegram",
+                ProcessedWebhookEvent.event_id == event_key
+            ).first()
+            if existing_event:
+                return {"status": "ok", "message": "duplicate update ignored"}
+            try:
+                db.add(ProcessedWebhookEvent(provider="telegram", event_id=event_key))
+                db.commit()
+            except Exception:
+                db.rollback()
+
         message = data.get("message") or data.get("edited_message")
         if not message:
             return {"status": "ignored"}
@@ -4585,58 +4635,81 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
         text = (message.get("text") or "").strip()
         from_user = message.get("from", {})
         first_name = from_user.get("first_name", "Operator")
-
-        # Check paired email from MemoryItem
-        link_mem = db.query(MemoryItem).filter(
-            MemoryItem.category == "telegram_pairing", 
-            MemoryItem.fact.like(f"{chat_id}:%")
-        ).first()
-        user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
-
         bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
-        # Handle pairing command: /start email or /login email
-        if text.startswith("/start") or text.startswith("/login"):
-            parts = text.split(maxsplit=1)
-            if len(parts) > 1 and "@" in parts[1]:
-                target_email = parts[1].strip().lower()
-                if link_mem:
-                    link_mem.fact = f"{chat_id}:{target_email}"
+        # Check verified pairing from UserIntegrationPairing (AETH-P0-05)
+        pairing = db.query(UserIntegrationPairing).filter(
+            UserIntegrationPairing.channel == "telegram",
+            UserIntegrationPairing.channel_user_id == str(chat_id),
+            UserIntegrationPairing.is_active == True
+        ).first()
+
+        # Legacy fallback check in MemoryItem
+        if not pairing:
+            legacy_mem = db.query(MemoryItem).filter(
+                MemoryItem.category == "telegram_pairing",
+                MemoryItem.fact.like(f"{chat_id}:%")
+            ).first()
+            user_email = legacy_mem.fact.split(":", 1)[1].strip() if legacy_mem else None
+        else:
+            user_email = pairing.user_email
+
+        # 3. OTP-Only Pairing Handler (Direct email pairing is eliminated)
+        clean_code = re.sub(r'[^0-9]', '', text)
+        if len(clean_code) == 6 and clean_code in TELEGRAM_PAIRING_OTPS:
+            pairing_info = TELEGRAM_PAIRING_OTPS.pop(clean_code)
+            if time.time() <= pairing_info.get("expires_at", 0):
+                target_email = pairing_info["user_email"]
+                if pairing:
+                    pairing.user_email = target_email
+                    pairing.is_active = True
+                    pairing.updated_at = datetime.utcnow()
                 else:
-                    db.add(MemoryItem(user_email=target_email, category="telegram_pairing", fact=f"{chat_id}:{target_email}"))
+                    db.add(UserIntegrationPairing(
+                        owner_user_id=target_email,
+                        user_email=target_email,
+                        channel="telegram",
+                        channel_user_id=str(chat_id),
+                        is_active=True
+                    ))
                 db.commit()
+
                 welcome_reply = (
                     f"⚡ *Aether Connected!*\n\n"
-                    f"नमस्ते {first_name}! आपका Telegram `{target_email}` से लिंक हो गया है।\n\n"
-                    f"अब आप यहाँ सीधे बोलकर या लिखकर:\n"
-                    f"• *रिमाइंडर*: 'कल सुबह 10 बजे मीटिंग'\n"
-                    f"• *खर्च*: '500 रुपये पेट्रोल में खर्च हुए'\n"
-                    f"• *सवाल*: कोई भी सवाल या जानकारी\n\n"
-                    f"Aether तुरंत आपके ऐप में सिंक कर देगा! 🚀"
+                    f"नमस्ते {first_name}! आपका Telegram अकाउंट सफलतापूर्वक `{target_email}` से लिंक हो गया है।\n\n"
+                    f"अब आप यहाँ बोलकर या लिखकर टास्क, खर्च और सवाल पूछ सकते हैं! 🚀"
                 )
-            else:
-                welcome_reply = (
-                    f"⚡ *Aether Executive Telegram Bot*\n\n"
-                    f"नमस्ते {first_name}! अपने Aether अकाउंट से लिंक करने के लिए नीचे दिए गए फॉर्मेट में कमांड भेजें:\n\n"
-                    f"`/login your-email@gmail.com`\n\n"
-                    f"(अपना सही Aether ईमेल लिखें ताकि आपके टास्क्स और खर्च तुरंत सिंक हो सकें)"
-                )
+                if bot_token:
+                    async with httpx.AsyncClient() as client:
+                        await client.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={
+                            "chat_id": chat_id,
+                            "text": welcome_reply,
+                            "parse_mode": "Markdown"
+                        })
+                return {"status": "paired"}
+
+        # If user tries old insecure /login command, reject and guide to app OTP
+        if text.startswith("/start") or text.startswith("/login"):
+            guide_reply = (
+                f"⚡ *Aether Executive Telegram Bot*\n\n"
+                f"नमस्ते {first_name}! सुरक्षा कारणों से सीधा ईमेल लिंक बंद कर दिया गया है।\n\n"
+                f"कृपया Aether ऐप में जाएँ, 'Pair Telegram' पर क्लिक करके 6-अंकों का सुरक्षित पेयरिंग कोड प्राप्त करें और उसे यहाँ भेजें।"
+            )
             if bot_token:
                 async with httpx.AsyncClient() as client:
                     await client.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={
                         "chat_id": chat_id,
-                        "text": welcome_reply,
+                        "text": guide_reply,
                         "parse_mode": "Markdown"
                     })
-            return {"status": "paired"}
+            return {"status": "guide_sent"}
 
         if not user_email:
-            # Guide user to pair first
             if bot_token:
                 async with httpx.AsyncClient() as client:
                     await client.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={
                         "chat_id": chat_id,
-                        "text": "⚠️ *खाता लिंक नहीं है*\n\nकृपया पहले अपना Aether ईमेल भेजें:\n`/login your-email@gmail.com`",
+                        "text": "⚠️ *खाता लिंक नहीं है*\n\nकृपया Aether ऐप से 6-अंकों का पेयरिंग कोड जनरेट करके यहाँ भेजें।",
                         "parse_mode": "Markdown"
                     })
             return {"status": "unpaired"}
@@ -5124,16 +5197,16 @@ PAIRED_PHONE_NUMBERS: Dict[str, str] = {} # { phone_clean: user_email }
 
 @app.post("/api/whatsapp/pair-request")
 def request_phone_pairing(user_email: Optional[str] = Depends(get_user_email)):
-    """Generates a short-lived 6-digit OTP to safely pair a WhatsApp number without identity spoofing."""
-    import random
+    """Generates a cryptographically secure 6-digit OTP to pair a WhatsApp number (AETH-P0-05)."""
+    import secrets
     eff_email = get_effective_email(user_email)
     if not eff_email:
         raise HTTPException(status_code=401, detail="Authentication required to generate pairing code")
     
-    otp = f"{random.randint(100000, 999999)}"
+    otp = f"{secrets.randbelow(900000) + 100000}"
     PHONE_PAIRING_OTPS[otp] = {
         "user_email": eff_email,
-        "expires_at": time.time() + 600 # 10 minute expiration
+        "expires_at": time.time() + 600  # 10 minute expiration
     }
     return {
         "status": "success",
@@ -5146,13 +5219,16 @@ def request_phone_pairing(user_email: Optional[str] = Depends(get_user_email)):
 async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
     """
     Receives and processes incoming WhatsApp messages from Meta Cloud API.
-    Enforces HMAC-SHA256 signature verification (AETH-SEC-06).
+    Enforces HMAC-SHA256 signature verification, durable DB deduplication,
+    and OTP-only pairing (AETH-P0-05). Direct email pairing is eliminated.
     """
     whatsapp_secret = os.environ.get("WHATSAPP_APP_SECRET", "").strip()
+    env = os.environ.get("ENVIRONMENT", "development").lower()
+    is_prod = env in ["prod", "production"]
     raw_body = await req.body()
 
-    # Cryptographic signature verification against Meta app secret
-    if whatsapp_secret:
+    # 1. Cryptographic signature verification against Meta app secret (Mandatory in production)
+    if whatsapp_secret or is_prod:
         hub_sig = req.headers.get("X-Hub-Signature-256", "").strip()
         if not hub_sig or not hub_sig.startswith("sha256="):
             raise HTTPException(status_code=403, detail="Missing or invalid X-Hub-Signature-256 header")
@@ -5191,14 +5267,21 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
 
         msg = messages[0]
         msg_id = msg.get("id")
+
+        # 2. Durable Deduplication via ProcessedWebhookEvent table
         if msg_id:
-            if msg_id in PROCESSED_WABA_MSG_IDS:
+            existing_event = db.query(ProcessedWebhookEvent).filter(
+                ProcessedWebhookEvent.provider == "whatsapp",
+                ProcessedWebhookEvent.event_id == msg_id
+            ).first()
+            if existing_event:
                 print(f"[WhatsApp Webhook] Duplicate message received ({msg_id}) — ignoring to prevent duplicate response.")
                 return {"status": "ok", "message": "duplicate ignored"}
-            PROCESSED_WABA_MSG_IDS.add(msg_id)
-            if len(PROCESSED_WABA_MSG_IDS) > 2000:
-                # Keep cache manageable
-                PROCESSED_WABA_MSG_IDS.pop()
+            try:
+                db.add(ProcessedWebhookEvent(provider="whatsapp", event_id=msg_id))
+                db.commit()
+            except Exception:
+                db.rollback()
 
         sender = msg.get("from")  # e.g., '919876543210'
         msg_type = msg.get("type")
@@ -5209,38 +5292,79 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         else:
             user_text = "Hello Aether"
 
-        # Check if message is a 6-digit OTP for secure pairing (AETH-SEC-06)
+        wa_token = os.environ.get("WHATSAPP_TOKEN", "").strip()
+        wa_phone_id = os.environ.get("WHATSAPP_PHONE_ID", "").strip()
+
+        # 3. Check if message is a 6-digit OTP for secure pairing (AETH-P0-05)
         clean_code = re.sub(r'[^0-9]', '', user_text)
         if len(clean_code) == 6 and clean_code in PHONE_PAIRING_OTPS:
-            pairing_info = PHONE_PAIRING_OTPS[clean_code]
+            pairing_info = PHONE_PAIRING_OTPS.pop(clean_code)
             if time.time() <= pairing_info.get("expires_at", 0):
                 paired_user_email = pairing_info["user_email"]
                 PAIRED_PHONE_NUMBERS[sender] = paired_user_email
-                PHONE_PAIRING_OTPS.pop(clean_code, None)
-                try:
-                    mem = MemoryItem(
+
+                # Persist verified pairing in UserIntegrationPairing table
+                existing = db.query(UserIntegrationPairing).filter(
+                    UserIntegrationPairing.channel == "whatsapp",
+                    UserIntegrationPairing.channel_user_id == str(sender)
+                ).first()
+                if existing:
+                    existing.owner_user_id = paired_user_email
+                    existing.user_email = paired_user_email
+                    existing.is_active = True
+                    existing.updated_at = datetime.utcnow()
+                else:
+                    db.add(UserIntegrationPairing(
+                        owner_user_id=paired_user_email,
                         user_email=paired_user_email,
-                        category="preference",
-                        fact=f"WhatsApp phone +{sender} securely paired with user {paired_user_email}",
-                        confidence=1.0
-                    )
-                    db.add(mem)
-                    db.commit()
-                except Exception:
-                    pass
+                        channel="whatsapp",
+                        channel_user_id=str(sender),
+                        is_active=True
+                    ))
+                db.commit()
+
                 try:
-                    send_whatsapp_message(
-                        to_phone=sender,
-                        message_text=f"✅ Security Verified! Your phone (+{sender}) is now securely linked to your Aether account ({paired_user_email})."
+                    await _send_whatsapp_message(
+                        sender,
+                        f"✅ Security Verified! Your phone (+{sender}) is now securely linked to your Aether account ({paired_user_email}).",
+                        wa_phone_id,
+                        wa_token
                     )
                 except Exception:
                     pass
                 return {"status": "ok", "message": "phone successfully paired"}
 
+        # 4. Check verified pairing
+        verified_pairing = db.query(UserIntegrationPairing).filter(
+            UserIntegrationPairing.channel == "whatsapp",
+            UserIntegrationPairing.channel_user_id == str(sender),
+            UserIntegrationPairing.is_active == True
+        ).first()
+
+        user_email = verified_pairing.user_email if verified_pairing else None
+        if not user_email:
+            # Fallback legacy check
+            link_mem = db.query(MemoryItem).filter(
+                MemoryItem.category == "whatsapp_pairing",
+                MemoryItem.fact.like(f"{sender}:%")
+            ).first()
+            user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
+
+        # 5. Insecure email commands are rejected and guided to OTP
+        if user_text.lower().startswith("/login") or user_text.lower().startswith("/start"):
+            reply_text = (
+                f"⚡ *Aether WhatsApp Executive*\n\n"
+                f"सुरक्षा कारणों से सीधा ईमेल लिंक बंद कर दिया गया है।\n\n"
+                f"कृपया Aether ऐप में जाएँ, 'Pair WhatsApp' पर क्लिक करके 6-अंकों का सुरक्षित पेयरिंग कोड प्राप्त करें और उसे यहाँ भेजें।"
+            )
+            await _send_whatsapp_message(sender, reply_text, wa_phone_id, wa_token)
+            return {"status": "guide_sent"}
+
         # Record inbound message in WhatsAppMessage table for In-App Live Messenger
         try:
             inbound_entry = WhatsAppMessage(
-                user_email=user_email or "e.pawandixit@gmail.com",
+                user_email=user_email or "unpaired_contact",
+                owner_user_id=verified_pairing.owner_user_id if verified_pairing else None,
                 direction="inbound",
                 phone_number=sender,
                 sender_name=f"+{sender}",
@@ -5254,75 +5378,24 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         except Exception as e_in:
             print(f"[WhatsApp Inbound Save Error] {e_in}")
 
-        # Check paired email from MemoryItem
-        link_mem = db.query(MemoryItem).filter(
-            MemoryItem.category == "whatsapp_pairing",
-            MemoryItem.fact.like(f"{sender}:%")
-        ).first()
-        user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
-
-        wa_token = os.environ.get("WHATSAPP_TOKEN", "").strip()
-        wa_phone_id = os.environ.get("WHATSAPP_PHONE_ID", "").strip()
-
-        # Pairing command: /login user@gmail.com
-        if user_text.lower().startswith("/login") or user_text.lower().startswith("/start") or ("@" in user_text and len(user_text.split()) == 1):
-            parts = user_text.split()
-            target_email = parts[-1].strip().lower()
-            if "@" in target_email:
-                if link_mem:
-                    link_mem.fact = f"{sender}:{target_email}"
-                else:
-                    db.add(MemoryItem(user_email=target_email, category="whatsapp_pairing", fact=f"{sender}:{target_email}"))
-                db.commit()
-                reply_text = (
-                    f"⚡ *Aether Connected!*\n\n"
-                    f"नमस्ते! आपका WhatsApp नंबर `{target_email}` से लिंक हो गया है।\n\n"
-                    f"अब आप यहाँ सीधे बोलकर या लिखकर:\n"
-                    f"• *रिमाइंडर*: 'कल सुबह 10 बजे मीटिंग'\n"
-                    f"• *खर्च*: '500 रुपये पेट्रोल में खर्च हुए'\n"
-                    f"• *सवाल*: कोई भी जानकारी या सवाल\n\n"
-                    f"Aether तुरंत आपके ऐप में सिंक कर देगा! 🚀"
-                )
-                try:
-                    db.add(ChatMessage(user_email=target_email, role="user", content=f"📱 {user_text}", action_type="query"))
-                    db.add(ChatMessage(user_email=target_email, role="aether", content=reply_text, action_type="query"))
-                    db.commit()
-                except Exception:
-                    pass
-            else:
-                reply_text = (
-                    f"⚡ *Aether WhatsApp Executive*\n\n"
-                    f"अपने Aether खाते से लिंक करने के लिए नीचे दिए गए फॉर्मेट में अपना ईमेल भेजें:\n\n"
-                    f"`/login your-email@gmail.com`"
-                )
-            await _send_whatsapp_message(sender, reply_text, wa_phone_id, wa_token)
-            return {"status": "paired"}
-
         if not user_email:
-            # SENDER IS AN EXTERNAL CONTACT (Friend, Client, Colleague)
-            # Find the primary operator email (Pawan Dixit)
-            operator_mem = db.query(MemoryItem).filter(MemoryItem.category == "whatsapp_pairing").first()
-            operator_email = operator_mem.fact.split(":", 1)[1].strip() if operator_mem else "e.pawandixit@gmail.com"
-            operator_phone = operator_mem.fact.split(":", 1)[0].strip() if operator_mem else None
-            
-            operator_context = build_context(db, user_email=operator_email)
+            # SENDER IS AN UNPAIRED EXTERNAL CONTACT (Friend, Client, Colleague)
+            # AETH-P0-05: NEVER expose personal tasks, finances, or memories of operator to an unpaired sender!
             safe_context = {
-                "tasks": operator_context.get("tasks", []),
-                "user_name": "Pawan Dixit"
+                "tasks": [],
+                "user_name": "Aether Assistant"
             }
-            
             from ai_engine import generate_external_contact_reply
             result = await generate_external_contact_reply(
                 sender_identifier=sender,
                 message_text=user_text,
-                operator_name="Pawan Dixit",
+                operator_name="Aether Assistant",
                 operator_context=safe_context,
                 language="auto"
             )
-            reply_text = result.get("reply", "")
-            
-            # Send polite executive reply back to the friend
-            await _send_whatsapp_message(sender, reply_text, wa_phone_id, wa_token)
+            reply = result.get("reply", "नमस्ते! मुझे आपका संदेश प्राप्त हुआ है।")
+            await _send_whatsapp_message(sender, reply, wa_phone_id, wa_token)
+            return {"status": "processed", "type": "external_contact"}
             
             # Record notification & follow-up task for Pawan!
             try:

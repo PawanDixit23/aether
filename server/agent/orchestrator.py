@@ -16,18 +16,24 @@ from .tools import ToolRegistry
 
 
 class AgentOrchestrator:
-    """Multi-step Autonomous Agent Orchestrator."""
+    """Multi-step Autonomous Agent Orchestrator (AETH-P0-03: No client-side approval bypass)."""
 
-    def __init__(self, db: Session, user_email: str = "operator@aether.local", lang: str = "auto"):
+    def __init__(
+        self,
+        db: Session,
+        user_email: str = "operator@aether.local",
+        owner_user_id: Optional[str] = None,
+        lang: str = "auto"
+    ):
         self.db = db
         self.user_email = user_email
+        self.owner_user_id = str(owner_user_id or user_email).strip()
         self.lang = lang
 
     async def run(
         self,
         user_prompt: str,
-        context: Optional[Dict[str, Any]] = None,
-        approved_tools: Optional[List[str]] = None
+        context: Optional[Dict[str, Any]] = None
     ) -> AgentState:
         state = AgentState(
             user_msg=user_prompt,
@@ -38,7 +44,6 @@ class AgentOrchestrator:
 
         # 1. Multi-Step Plan Decomposition
         state.plan = self._decompose_plan(user_prompt)
-        approved_set = set(approved_tools or [])
 
         # 2. Execution Cycle across Plan Steps
         messages = []
@@ -63,7 +68,7 @@ class AgentOrchestrator:
                 messages.append(f"⛔ Action Denied: Tool '{tool_name}' is unregistered or prohibited.")
                 continue
 
-            # Governance: Action Approval Manager Check (AETH-SEC-04: Approval Tampering Prevention)
+            # Governance: Action Approval Manager Check (AETH-P0-03: Bind AI approval to exact action)
             if tier == ActionTier.TIER_3_CRITICAL:
                 approval_id = (context or {}).get("action_id") or (context or {}).get("approval_id")
                 is_authorized = False
@@ -72,17 +77,21 @@ class AgentOrchestrator:
                         action_id=approval_id,
                         tool_name=tool_name,
                         params=params,
-                        user_email=self.user_email
+                        user_email=self.user_email,
+                        owner_user_id=self.owner_user_id,
+                        db=self.db
                     )
                     is_authorized = is_auth
                     if not is_auth:
                         messages.append(f"⚠️ Authorization check failed for {tool_name}: {auth_msg}")
 
-                if not is_authorized and tool_name not in approved_set:
+                if not is_authorized:
                     appr_req = ActionApprovalManager.create_approval_request(
                         tool_name=tool_name,
                         params=params,
-                        user_email=self.user_email
+                        user_email=self.user_email,
+                        owner_user_id=self.owner_user_id,
+                        db=self.db
                     )
                     state.requires_approval = True
                     state.approval_prompt = (
@@ -151,6 +160,15 @@ class AgentOrchestrator:
     def _resolve_tool_for_step(self, step_text: str, full_prompt: str, context: Optional[Dict[str, Any]]) -> (Optional[str], Dict[str, Any]):
         """Resolves specific tool and parameters for a plan step."""
         text_lower = step_text.lower()
+
+        # 0. Tier 3 Critical / Destructive Actions (AETH-P0-03)
+        if any(w in text_lower for w in ["delete all tasks", "delete all my tasks", "delete task", "saare task delete"]):
+            return "delete_all_tasks", {}
+
+        if any(w in text_lower for w in ["make payment", "transfer money", "send money", "rupaye transfer"]):
+            m = re.search(r'(?:₹|rs\.?|inr)?\s*(\d+(?:,\d+)*(?:\.\d{1,2})?)', text_lower)
+            amt = float(m.group(1).replace(",", "")) if m else 1000.0
+            return "make_payment", {"amount": amt, "recipient": "Vendor"}
 
         # 1. Finance: Expense / Balance
         if any(w in text_lower for w in ["spent", "kharch", "paid", "expense", "debit", "rupaye diye"]):

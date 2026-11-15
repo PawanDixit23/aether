@@ -178,4 +178,53 @@ class BriefingPreference(Base):
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ActionApproval(Base):
+    """
+    Durable, DB-persisted action approvals for high-impact AI tool execution (AETH-P0-03).
+    Ensures approvals survive server restarts, worker crashes, and prevents replay attacks.
+    """
+    __tablename__ = "action_approvals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    action_id = Column(String, unique=True, index=True, nullable=False)
+    owner_user_id = Column(String, index=True, nullable=False)
+    user_email = Column(String, index=True, nullable=True)
+    tool_name = Column(String, nullable=False)
+    param_hash = Column(String, nullable=False)
+    params_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(Float, nullable=False)
+    consumed = Column(Boolean, default=False, nullable=False)
+    consumed_at = Column(DateTime, nullable=True)
+
+
+class ProcessedWebhookEvent(Base):
+    """
+    Durable DB-persisted webhook deduplication across restarts and workers (AETH-P0-05).
+    """
+    __tablename__ = "processed_webhook_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider = Column(String, index=True, nullable=False)  # "whatsapp", "telegram"
+    event_id = Column(String, unique=True, index=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UserIntegrationPairing(Base):
+    """
+    Cryptographically verified messaging channel pairing (AETH-P0-05).
+    """
+    __tablename__ = "user_integration_pairings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(String, index=True, nullable=False)
+    user_email = Column(String, index=True, nullable=True)
+    channel = Column(String, index=True, nullable=False)  # "telegram", "whatsapp"
+    channel_user_id = Column(String, index=True, nullable=False)  # chat_id or phone
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+
 

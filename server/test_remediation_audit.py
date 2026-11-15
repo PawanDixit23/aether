@@ -75,7 +75,8 @@ def run_tests():
     db.refresh(audit)
 
     saved_task_id = test_task.id
-    resp_undo = client.post(f"/api/audit-logs/{audit.id}/undo?user_email=auditor@aether.local")
+    auth_headers = {"Authorization": "Bearer test_auditor@aether.local"}
+    resp_undo = client.post(f"/api/audit-logs/{audit.id}/undo", headers=auth_headers)
     assert resp_undo.status_code == 200, f"Undo failed: {resp_undo.text}"
     db.expire_all()
     deleted_task = db.query(Task).filter(Task.id == saved_task_id).first()
@@ -83,7 +84,7 @@ def run_tests():
     print("✅ AETH-SEC-05: Transactional audit undo successfully executed and verified.")
 
     # AETH-SEC-06: WhatsApp Pairing OTP
-    resp_pair = client.post("/api/whatsapp/pair-request?user_email=auditor@aether.local")
+    resp_pair = client.post("/api/whatsapp/pair-request", headers=auth_headers)
     assert resp_pair.status_code == 200
     pairing_data = resp_pair.json()
     assert "pairing_code" in pairing_data and len(pairing_data["pairing_code"]) == 6
@@ -112,13 +113,13 @@ def run_tests():
     resp_fin1 = client.post(
         "/api/finance/records",
         json={"type": "expense", "amount": 250.0, "category": "food", "note": "Lunch"},
-        headers={"X-Client-Mutation-Id": test_mut_id, "X-User-Email": "auditor@aether.local"}
+        headers={"X-Client-Mutation-Id": test_mut_id, "Authorization": "Bearer test_auditor@aether.local"}
     )
     assert resp_fin1.status_code == 200
     resp_fin2 = client.post(
         "/api/finance/records",
         json={"type": "expense", "amount": 250.0, "category": "food", "note": "Lunch"},
-        headers={"X-Client-Mutation-Id": test_mut_id, "X-User-Email": "auditor@aether.local"}
+        headers={"X-Client-Mutation-Id": test_mut_id, "Authorization": "Bearer test_auditor@aether.local"}
     )
     assert resp_fin2.status_code == 200
     print("resp_fin1:", resp_fin1.json())
@@ -172,18 +173,18 @@ def run_tests():
     db.refresh(child_t)
 
     # Attempting to complete child task while parent is pending must fail
-    resp_toggle_fail = client.put(f"/api/tasks/{child_t.id}/toggle?user_email=auditor@aether.local", json={"status": "completed"})
+    resp_toggle_fail = client.put(f"/api/tasks/{child_t.id}/toggle", headers=auth_headers, json={"status": "completed"})
     assert resp_toggle_fail.status_code == 400 and "blocked by uncompleted dependencies" in resp_toggle_fail.text
     print("✅ AETH-TASK-01: Task completion blocked when dependencies are still open.")
 
     # Complete parent, then child can complete
-    client.put(f"/api/tasks/{parent_t.id}/toggle?user_email=auditor@aether.local", json={"status": "completed"})
-    resp_toggle_ok = client.put(f"/api/tasks/{child_t.id}/toggle?user_email=auditor@aether.local", json={"status": "completed"})
+    client.put(f"/api/tasks/{parent_t.id}/toggle", headers=auth_headers, json={"status": "completed"})
+    resp_toggle_ok = client.put(f"/api/tasks/{child_t.id}/toggle", headers=auth_headers, json={"status": "completed"})
     assert resp_toggle_ok.status_code == 200 and resp_toggle_ok.json()["status"] == "completed"
     print("✅ AETH-TASK-01: Task completion succeeded after dependencies were resolved.")
 
     # AETH-FIN-01: Cash Flow Forecast
-    resp_forecast = client.get("/api/finances/forecast?user_email=auditor@aether.local")
+    resp_forecast = client.get("/api/finances/forecast", headers=auth_headers)
     assert resp_forecast.status_code == 200
     forecast_data = resp_forecast.json()
     assert "projected_net_cashflow" in forecast_data and "runway_health" in forecast_data
@@ -191,7 +192,8 @@ def run_tests():
 
     # AETH-BRIEF-01: Briefing Preferences Customization
     resp_brief_pref = client.post(
-        "/api/briefing/preferences?user_email=auditor@aether.local",
+        "/api/briefing/preferences",
+        headers=auth_headers,
         json={"modules": ["tasks", "weather", "finances"], "delivery_time_morning": "07:30"}
     )
     assert resp_brief_pref.status_code == 200

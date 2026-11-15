@@ -12,9 +12,10 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 });
 
 /**
- * Returns authorization headers with current Supabase Bearer JWT token (AETH-SEC-01 & AETH-SEC-08)
+ * Returns authorization headers with current Supabase Bearer JWT token (AETH-P0-01)
+ * Throws or returns typed headers; rejects silent unauthenticated mutations when requireAuth is true.
  */
-export async function getAuthHeaders() {
+export async function getAuthHeaders(options = {}) {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (session && session.access_token) {
@@ -25,6 +26,9 @@ export async function getAuthHeaders() {
     }
   } catch (err) {
     console.warn('[getAuthHeaders error]', err);
+  }
+  if (options.requireAuth) {
+    throw new Error('Authentication required: No active session');
   }
   return { 'Content-Type': 'application/json' };
 }
