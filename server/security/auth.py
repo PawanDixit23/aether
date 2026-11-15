@@ -59,6 +59,7 @@ def _decode_jwt_unverified(token: str) -> Optional[Dict[str, Any]]:
 
 UUID_REGEX = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 
+
 def _supabase_jwks_url() -> str:
     """Resolve Supabase JWKS endpoint, allowing an explicit deployment override."""
     configured = os.environ.get("SUPABASE_JWKS_URL", "").strip()
@@ -339,6 +340,7 @@ def validate_security_config_at_startup():
         raise RuntimeError("FATAL AETHER STARTUP FAILURE: Critical production security configuration missing:\n" + "\n".join(f"  • {e}" for e in errors))
 
 , re.IGNORECASE)
+
 logger = logging.getLogger(__name__)
 
 
@@ -353,6 +355,7 @@ def _log_jwt_diagnostic(reason: str, algorithm: Optional[str] = None, kid_presen
         kid_present,
         exception_type or "none",
     )
+
 
 
 def _supabase_jwks_url() -> str:
