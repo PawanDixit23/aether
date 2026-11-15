@@ -463,6 +463,54 @@ def test_p0_05_messaging_webhooks():
     assert retired_sync.status_code == 410, (
         "Legacy WABA sync endpoint must be retired; pairing must use authenticated OTP flow"
     )
+
+    # Production webhooks must not accept HMACs computed with an empty/missing provider secret.
+    saved_env = {
+        key: os.environ.get(key)
+        for key in ("ENVIRONMENT", "WHATSAPP_APP_SECRET", "TWILIO_AUTH_TOKEN", "TELEGRAM_WEBHOOK_SECRET")
+    }
+    try:
+        os.environ["ENVIRONMENT"] = "production"
+        for key in ("WHATSAPP_APP_SECRET", "TWILIO_AUTH_TOKEN", "TELEGRAM_WEBHOOK_SECRET"):
+            os.environ.pop(key, None)
+
+        missing_tg_secret = client.post("/api/telegram/webhook", json={"update_id": 900001, "message": {"chat": {"id": 1}, "text": "hello"}})
+        assert missing_tg_secret.status_code == 403, "Telegram webhook must reject requests without its secret token"
+
+        missing_wa_secret = client.post(
+            "/api/whatsapp/webhook",
+            json={"entry": [{"changes": [{"value": {"messages": [{"id": "wamid_missing_secret", "from": "919999999999", "type": "text", "text": {"body": "hello"}}]}}]}]},
+        )
+        assert missing_wa_secret.status_code == 503, "WhatsApp webhook must fail closed when its app secret is absent"
+
+        missing_twilio_secret = client.post(
+            "/api/whatsapp/twilio",
+            data={"MessageSid": "SM_missing_secret", "From": "whatsapp:+919999999999", "Body": "hello"},
+        )
+        assert missing_twilio_secret.status_code == 503, "Twilio webhook must fail closed when its auth token is absent"
+    finally:
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    # All providers must supply stable event IDs; otherwise replay protection is impossible.
+    missing_tg_event_id = client.post("/api/telegram/webhook", json={"message": {"chat": {"id": 1}, "text": "hello"}})
+    assert missing_tg_event_id.status_code == 400, "Telegram updates without update_id must be rejected"
+
+    missing_wa_event_id = client.post(
+        "/api/whatsapp/webhook",
+        json={"entry": [{"changes": [{"value": {"messages": [{"from": "919999999999", "type": "text", "text": {"body": "hello"}}]}}]}]},
+    )
+    assert missing_wa_event_id.status_code == 400, "WhatsApp messages without provider message ID must be rejected"
+
+    missing_twilio_event_id = client.post(
+        "/api/whatsapp/twilio",
+        data={"From": "whatsapp:+919999999999", "Body": "hello"},
+    )
+    assert missing_twilio_event_id.status_code == 400, "Twilio messages without MessageSid must be rejected"
+    print("✅ P0-05: Missing webhook secrets and missing provider event IDs fail closed.")
     db = SessionLocal()
     headers_a = {"Authorization": "Bearer test_user_a@tenant.com"}
 
