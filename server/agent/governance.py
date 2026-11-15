@@ -195,10 +195,13 @@ class ActionApprovalManager:
                     ActionApproval.consumed: True,
                     ActionApproval.consumed_at: datetime.utcnow()
                 }, synchronize_session=False)
-                # The caller owns the SQLAlchemy transaction. Do not commit here:
-                # verify_and_consume may run inside an explicit transaction context,
-                # and committing it would close the caller's transaction prematurely.
                 if rows_updated > 0:
+                    # Persist the one-time consume before any privileged tool executes.
+                    # Without this commit, get_db() closes the request session and rolls
+                    # the UPDATE back, allowing the same approval token to be replayed.
+                    # This method is the transaction boundary for this security-critical
+                    # compare-and-set operation; callers must not wrap it in db.begin().
+                    db.commit()
                     return True, "Authorized"
 
                 # If update matched 0 rows, check specific reason
