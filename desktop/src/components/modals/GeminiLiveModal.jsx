@@ -430,6 +430,11 @@ export default function GeminiLiveModal({
       const autoLang = isDevanagari ? 'hi' : (isHinglish ? 'hinglish' : 'en');
 
       let data = null;
+      const liveAbortController = new AbortController();
+      const liveTimeoutId = setTimeout(() => {
+        try { liveAbortController.abort('timeout'); } catch (e) {}
+      }, 180000); // 3-minute (180s) watchdog
+
       try {
         const resp = await fetch(chatEndpoint, {
           method: 'POST',
@@ -442,7 +447,8 @@ export default function GeminiLiveModal({
             user_email: userEmail,
             lang: autoLang,
             live_voice: true
-          })
+          }),
+          signal: liveAbortController.signal
         });
         if (resp.ok) {
           data = await resp.json();
@@ -451,23 +457,29 @@ export default function GeminiLiveModal({
         console.warn('Live chat primary endpoint error, trying fallback', e);
       }
 
-      if (!data) {
-        const respFallback = await fetch(fallbackEndpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(userEmail ? { 'X-User-Email': userEmail } : {})
-          },
-          body: JSON.stringify({
-            input_text: cleanPrompt,
-            user_email: userEmail,
-            language: autoLang
-          })
-        });
-        if (respFallback.ok) {
-          data = await respFallback.json();
+      if (!data && !liveAbortController.signal.aborted) {
+        try {
+          const respFallback = await fetch(fallbackEndpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(userEmail ? { 'X-User-Email': userEmail } : {})
+            },
+            body: JSON.stringify({
+              input_text: cleanPrompt,
+              user_email: userEmail,
+              language: autoLang
+            }),
+            signal: liveAbortController.signal
+          });
+          if (respFallback.ok) {
+            data = await respFallback.json();
+          }
+        } catch (e) {
+          console.warn('Live chat fallback endpoint error', e);
         }
       }
+      clearTimeout(liveTimeoutId);
 
       if (!isSessionActiveRef.current) {
         isDispatchingRef.current = false;

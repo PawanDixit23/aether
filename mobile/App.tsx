@@ -183,8 +183,8 @@ export default function App() {
       timer = setInterval(() => {
         setLoadingSeconds((prev) => {
           const next = prev + 1;
-          // If server takes more than 45 seconds to respond (Render free tier cold hang)
-          if (next >= 45) {
+          // If server takes more than 180 seconds (3 minutes) to respond (Render free tier cold hang)
+          if (next >= 180) {
             setErrorDetails('TIMED_OUT: Cloud server cold start taking longer than usual');
             setHasError(true);
             setIsLoading(false);

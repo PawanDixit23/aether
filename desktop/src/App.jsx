@@ -4576,7 +4576,7 @@ export default function App() {
       if (controller && !controller.signal.aborted) {
         try { controller.abort('timeout'); } catch (e) {}
       }
-    }, 45000); // 45-second watchdog so prompts never hang indefinitely
+    }, 180000); // 180-second (3-minute) watchdog so prompts never hang indefinitely
 
     try {
       const fullPrompt = activeReplyContext
@@ -4800,7 +4800,7 @@ export default function App() {
           id: `stopped-${Date.now()}`,
           role: 'assistant',
           content: isTimeout 
-            ? "Request timed out (server took longer than 45s). Please try again or rephrase your request. ⏱️"
+            ? "Request timed out (server took longer than 3 minutes / 180s). Please try again or rephrase your request. ⏱️"
             : "Stopped by user ⏹️",
           created_at: new Date().toISOString()
         }]);
