@@ -119,3 +119,21 @@ class TaskDateCompletion(Base):
     completed = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class WhatsAppMessage(Base):
+    __tablename__ = "whatsapp_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, index=True, nullable=True)
+    direction = Column(String, default="outbound")  # "outbound" or "inbound"
+    phone_number = Column(String, index=True, nullable=False)
+    sender_name = Column(String, nullable=True)
+    message_text = Column(Text, nullable=True)
+    attachment_url = Column(Text, nullable=True)
+    attachment_name = Column(String, nullable=True)
+    attachment_type = Column(String, nullable=True) # "image", "document", etc.
+    status = Column(String, default="delivered")    # "sent", "delivered", "read", "received", "failed"
+    waba_message_id = Column(String, nullable=True, index=True)
+    activity_data = Column(Text, nullable=True)     # JSON array of { event, timestamp, note }
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+

@@ -27,7 +27,15 @@ import {
   MessageCircle,
   Eye,
   Download,
-  Plus
+  Plus,
+  Paperclip,
+  CheckCheck,
+  Smartphone,
+  ChevronRight,
+  Info,
+  Trash2,
+  File,
+  CornerDownLeft
 } from 'lucide-react';
 
 const SOCIAL_PLATFORMS = [
@@ -57,7 +65,8 @@ export const SocialMediaModal = ({
   API_BASE,
   onSendToChat
 }) => {
-  const [activeTab, setActiveTab] = useState('composer'); // 'composer' | 'ghostwriter' | 'video_lab' | 'engagement'
+  // Tabs: 'composer' | 'ghostwriter' | 'video_lab' | 'engagement' | 'whatsapp_hub'
+  const [activeTab, setActiveTab] = useState('composer');
   const [selectedPlatform, setSelectedPlatform] = useState('all');
   const [content, setContent] = useState('');
   const [isAdapting, setIsAdapting] = useState(false);
@@ -99,27 +108,48 @@ export const SocialMediaModal = ({
     url: ''
   });
 
-  // Load initial ghostwriter thought & engagement posts
+  // 6. Direct WhatsApp In-App Messenger & Activity State
+  const [whatsappMessages, setWhatsappMessages] = useState([]);
+  const [whatsappStats, setWhatsappStats] = useState({ total_sent: 0, total_received: 0, delivery_rate: '100%', active_contacts: 1 });
+  const [isLoadingWhatsApp, setIsLoadingWhatsApp] = useState(false);
+  const [isSendingWhatsApp, setIsSendingWhatsApp] = useState(false);
+  const [whatsappRecipient, setWhatsappRecipient] = useState('918741838653');
+  const [whatsappText, setWhatsappText] = useState('');
+  const [whatsappAttachment, setWhatsappAttachment] = useState(null); // { url, name, type }
+  const [activeActivityMessage, setActiveActivityMessage] = useState(null);
+  const fileInputRef = useRef(null);
+  const chatMessagesEndRef = useRef(null);
+
+  // Auto-fetch data on tab switch
   useEffect(() => {
     if (isOpen) {
       if (activeTab === 'ghostwriter' && !ghostwriterThought) {
         fetchGhostwriterThought();
       } else if (activeTab === 'engagement') {
         fetchEngagementPosts();
+      } else if (activeTab === 'whatsapp_hub') {
+        fetchWhatsAppMessages();
       }
     }
   }, [isOpen, activeTab]);
 
-  // Redraw Canvas whenever Card Modal or its settings change
+  // Redraw Canvas when card modal or theme changes
   useEffect(() => {
     if (showCardModal && canvasRef.current) {
       drawQuoteCard();
     }
   }, [showCardModal, cardTheme, content, authorName]);
 
+  // Scroll to bottom of WhatsApp chat on new messages
+  useEffect(() => {
+    if (activeTab === 'whatsapp_hub' && chatMessagesEndRef.current) {
+      chatMessagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [whatsappMessages, activeTab]);
+
   if (!isOpen) return null;
 
-  // --- API Handlers ---
+  // --- API Handlers: Viral Hooks & Social Adapt ---
   const handleAdaptPost = async () => {
     if (!content.trim()) {
       showToast?.('Please write some content first!', 'warning');
@@ -183,7 +213,6 @@ export const SocialMediaModal = ({
   const applyHookToContent = (hookText) => {
     if (!hookText) return;
     const lines = content.split('\n');
-    // Replace first line or prepend
     const newContent = `${hookText}\n\n${lines.length > 1 ? lines.slice(1).join('\n') : content}`;
     setContent(newContent);
     showToast?.('Viral hook applied to top of your post!', 'success');
@@ -312,6 +341,121 @@ export const SocialMediaModal = ({
     }
   };
 
+  // --- WHATSAPP IN-APP MESSENGER & ACTIVITY API HANDLERS ---
+  const fetchWhatsAppMessages = async () => {
+    setIsLoadingWhatsApp(true);
+    try {
+      const resp = await fetch(`${API_BASE}/whatsapp/messages?user_email=${encodeURIComponent(userEmail || '')}`);
+      const data = await resp.json();
+      if (data.status === 'success') {
+        setWhatsappMessages(data.messages || []);
+        if (data.stats) setWhatsappStats(data.stats);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoadingWhatsApp(false);
+    }
+  };
+
+  const handleSendWhatsAppMessage = async () => {
+    if (!whatsappText.trim() && !whatsappAttachment) {
+      showToast?.('Please enter a message or select an attachment!', 'warning');
+      return;
+    }
+    setIsSendingWhatsApp(true);
+    try {
+      const resp = await fetch(`${API_BASE}/whatsapp/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to_phone: whatsappRecipient,
+          message: whatsappText.trim(),
+          attachment_url: whatsappAttachment?.url || null,
+          attachment_name: whatsappAttachment?.name || null,
+          attachment_type: whatsappAttachment?.type || 'image',
+          user_email: userEmail
+        })
+      });
+      const data = await resp.json();
+      if (data.status === 'success' && data.message) {
+        setWhatsappMessages(prev => [...prev, data.message]);
+        setWhatsappText('');
+        setWhatsappAttachment(null);
+        showToast?.('WhatsApp message & attachment dispatched!', 'success');
+        fetchWhatsAppMessages();
+      }
+    } catch (e) {
+      console.error(e);
+      showToast?.('Error sending WhatsApp message.', 'error');
+    } finally {
+      setIsSendingWhatsApp(false);
+    }
+  };
+
+  const handleSimulateIncomingWhatsApp = async () => {
+    try {
+      const sampleReplies = [
+        "Received the attachment! Very clean layout and summary.",
+        "Thanks Pawan, I reviewed the report. Let us schedule the review call.",
+        "Looks good! Can you also share the budget breakdown?",
+        "Awesome! The automation workflows are working perfectly."
+      ];
+      const randomMsg = sampleReplies[Math.floor(Math.random() * sampleReplies.length)];
+      const resp = await fetch(`${API_BASE}/whatsapp/simulate-incoming`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from_phone: whatsappRecipient || '918741838653',
+          sender_name: 'Client / Contact',
+          message: randomMsg,
+          user_email: userEmail
+        })
+      });
+      const data = await resp.json();
+      if (data.status === 'success' && data.message) {
+        setWhatsappMessages(prev => [...prev, data.message]);
+        showToast?.('Incoming WhatsApp message received inside Aether!', 'info');
+        fetchWhatsAppMessages();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const isImg = file.type.startsWith('image/');
+    const reader = new FileReader();
+    reader.onload = () => {
+      setWhatsappAttachment({
+        url: reader.result,
+        name: file.name,
+        type: isImg ? 'image' : 'document'
+      });
+      showToast?.(`Attached: ${file.name}`, 'success');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const attachCurrentQuoteCard = () => {
+    if (!canvasRef.current) {
+      // Draw temporary
+      drawQuoteCard();
+    }
+    if (canvasRef.current) {
+      const dataUrl = canvasRef.current.toDataURL('image/png');
+      setWhatsappAttachment({
+        url: dataUrl,
+        name: `Aether_Quote_${Date.now()}.png`,
+        type: 'image'
+      });
+      setActiveTab('whatsapp_hub');
+      showToast?.('Visual Quote Card attached to WhatsApp message!', 'success');
+    }
+  };
+
   // --- HTML5 Canvas Visual Card Generator ---
   const drawQuoteCard = () => {
     const canvas = canvasRef.current;
@@ -347,7 +491,6 @@ export const SocialMediaModal = ({
     ctx.font = 'bold 30px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto';
     ctx.fillText('ÆTHER EXECUTIVE INTELLIGENCE', 100, 140);
 
-    // Subtle line below header
     ctx.strokeStyle = `${theme.accent}55`;
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -360,9 +503,7 @@ export const SocialMediaModal = ({
     ctx.font = 'bold 160px Georgia, serif';
     ctx.fillText('“', 90, 320);
 
-    // Text Wrap calculation
     const rawQuote = content.trim() || 'Speed of execution compounds faster than perfect analysis. Build repeatable systems today.';
-    // Take first 280 characters for optimal card visual punch
     const quote = rawQuote.length > 280 ? rawQuote.slice(0, 277) + '...' : rawQuote;
 
     ctx.fillStyle = theme.text;
@@ -416,7 +557,6 @@ export const SocialMediaModal = ({
     showToast?.('Visual quote card downloaded (1080x1080 PNG)!', 'success');
   };
 
-  // Copy helper
   const copyToClipboard = (text, key) => {
     navigator.clipboard.writeText(text);
     setCopiedKey(key);
@@ -424,12 +564,17 @@ export const SocialMediaModal = ({
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  // Direct Social Share Intents
   const openPlatformShare = (platform, text) => {
+    if (platform === 'whatsapp') {
+      // Direct in-app WhatsApp Hub trigger
+      setWhatsappText(text);
+      setActiveTab('whatsapp_hub');
+      showToast?.('Loaded into WhatsApp In-App Messenger!', 'success');
+      return;
+    }
     const encoded = encodeURIComponent(text);
     let url = '';
-    if (platform === 'whatsapp') url = `https://api.whatsapp.com/send?text=${encoded}`;
-    else if (platform === 'telegram') url = `https://t.me/share/url?url=${encodeURIComponent('https://aether.ai')}&text=${encoded}`;
+    if (platform === 'telegram') url = `https://t.me/share/url?url=${encodeURIComponent('https://aether.ai')}&text=${encoded}`;
     else if (platform === 'x') url = `https://twitter.com/intent/tweet?text=${encoded}`;
     else if (platform === 'linkedin') url = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent('https://aether.ai')}`;
     else if (platform === 'facebook') url = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent('https://aether.ai')}&quote=${encoded}`;
@@ -457,8 +602,8 @@ export const SocialMediaModal = ({
     }}>
       <div style={{
         width: '100%',
-        maxWidth: '920px',
-        maxHeight: '90vh',
+        maxWidth: '960px',
+        maxHeight: '92vh',
         background: '#090d16',
         border: '1px solid rgba(56, 189, 248, 0.25)',
         borderRadius: '24px',
@@ -482,20 +627,20 @@ export const SocialMediaModal = ({
               width: '42px',
               height: '42px',
               borderRadius: '12px',
-              background: 'linear-gradient(135deg, #38bdf8 0%, #2563eb 100%)',
+              background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              boxShadow: '0 4px 16px rgba(56, 189, 248, 0.35)'
+              boxShadow: '0 4px 16px rgba(34, 197, 94, 0.35)'
             }}>
-              <Share2 size={22} color="#ffffff" />
+              <MessageSquare size={22} color="#ffffff" />
             </div>
             <div>
               <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, letterSpacing: '-0.01em' }}>
-                Social Media Command & Impact Hub
+                Social Command & WhatsApp Live Hub
               </h2>
               <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8' }}>
-                Viral Hook Enhancer • Visual Quote Maker • Executive Ghostwriter • Video Repurposer
+                Direct WhatsApp In-App Messenger • Attachments & Activity • Viral Hooks • Visual Cards
               </p>
             </div>
           </div>
@@ -529,6 +674,7 @@ export const SocialMediaModal = ({
           overflowX: 'auto'
         }}>
           {[
+            { id: 'whatsapp_hub', label: '🟢 WhatsApp In-App Messenger & Activity', icon: MessageSquare, badge: 'Direct' },
             { id: 'composer', label: '✍️ Post Composer & Viral Engine', icon: Sparkles },
             { id: 'ghostwriter', label: '🧠 Executive Ghostwriter', icon: Zap },
             { id: 'video_lab', label: '🎬 YouTube Repurposer', icon: Video },
@@ -543,24 +689,401 @@ export const SocialMediaModal = ({
                 gap: '8px',
                 padding: '8px 16px',
                 borderRadius: '999px',
-                fontSize: '0.85rem',
+                fontSize: '0.84rem',
                 fontWeight: activeTab === tab.id ? 700 : 500,
                 color: activeTab === tab.id ? '#ffffff' : '#94a3b8',
-                background: activeTab === tab.id ? 'rgba(56, 189, 248, 0.22)' : 'transparent',
-                border: activeTab === tab.id ? '1px solid rgba(56, 189, 248, 0.5)' : '1px solid transparent',
+                background: activeTab === tab.id 
+                  ? (tab.id === 'whatsapp_hub' ? 'rgba(34, 197, 94, 0.22)' : 'rgba(56, 189, 248, 0.22)')
+                  : 'transparent',
+                border: activeTab === tab.id 
+                  ? (tab.id === 'whatsapp_hub' ? '1px solid rgba(34, 197, 94, 0.6)' : '1px solid rgba(56, 189, 248, 0.5)')
+                  : '1px solid transparent',
                 cursor: 'pointer',
                 transition: 'all 0.18s ease',
                 whiteSpace: 'nowrap'
               }}
             >
-              <tab.icon size={15} color={activeTab === tab.id ? '#38bdf8' : '#64748b'} />
+              <tab.icon size={15} color={activeTab === tab.id ? (tab.id === 'whatsapp_hub' ? '#4ade80' : '#38bdf8') : '#64748b'} />
               <span>{tab.label}</span>
             </button>
           ))}
         </div>
 
+        {/* Hidden File Input for Attachments */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,.pdf,.doc,.docx,.txt"
+          onChange={handleFileUpload}
+          style={{ display: 'none' }}
+        />
+
         {/* Body Content Area */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+          
+          {/* TAB 0: WHATSAPP DIRECT IN-APP MESSENGER & ACTIVITY */}
+          {activeTab === 'whatsapp_hub' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {/* WhatsApp KPIs Banner */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
+                <div style={{ background: '#040711', border: '1px solid rgba(34, 197, 94, 0.3)', borderRadius: '14px', padding: '12px' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#4ade80', fontWeight: 700, textTransform: 'uppercase' }}>Dispatched via Aether</span>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#f8fafc', marginTop: '4px' }}>
+                    {whatsappStats.total_sent} Outbound
+                  </div>
+                </div>
+
+                <div style={{ background: '#040711', border: '1px solid rgba(56, 189, 248, 0.3)', borderRadius: '14px', padding: '12px' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#38bdf8', fontWeight: 700, textTransform: 'uppercase' }}>Inbound Received</span>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#f8fafc', marginTop: '4px' }}>
+                    {whatsappStats.total_received} Inbound
+                  </div>
+                </div>
+
+                <div style={{ background: '#040711', border: '1px solid rgba(168, 85, 247, 0.3)', borderRadius: '14px', padding: '12px' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#c084fc', fontWeight: 700, textTransform: 'uppercase' }}>Delivery Rate</span>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#f8fafc', marginTop: '4px' }}>
+                    {whatsappStats.delivery_rate || '100%'}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px' }}>
+                  <button
+                    onClick={handleSimulateIncomingWhatsApp}
+                    style={{
+                      padding: '8px 12px',
+                      borderRadius: '10px',
+                      background: 'rgba(56, 189, 248, 0.15)',
+                      border: '1px solid rgba(56, 189, 248, 0.4)',
+                      color: '#38bdf8',
+                      fontSize: '0.78rem',
+                      fontWeight: 700,
+                      cursor: 'pointer'
+                    }}
+                    title="Simulate client WhatsApp message to test receiving in Aether"
+                  >
+                    + Test Inbound Message
+                  </button>
+                  <button
+                    onClick={fetchWhatsAppMessages}
+                    style={{
+                      padding: '8px 12px',
+                      borderRadius: '10px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      color: '#cbd5e1',
+                      fontSize: '0.78rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <RefreshCw size={14} className={isLoadingWhatsApp ? 'animate-spin' : ''} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Chat Thread Container */}
+              <div style={{
+                background: '#040711',
+                border: '1.5px solid rgba(34, 197, 94, 0.3)',
+                borderRadius: '18px',
+                height: '420px',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden'
+              }}>
+                {/* Chat Top Bar */}
+                <div style={{
+                  padding: '12px 16px',
+                  background: 'rgba(34, 197, 94, 0.1)',
+                  borderBottom: '1px solid rgba(34, 197, 94, 0.2)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      background: '#16a34a',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#ffffff',
+                      fontWeight: 700
+                    }}>
+                      WA
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.88rem', fontWeight: 800, color: '#f8fafc' }}>
+                        +{whatsappRecipient} (Target Recipient)
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: '#4ade80', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#4ade80' }} />
+                        <span>Connected via Meta Cloud API Gateway</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Recipient Number Switcher */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Send To:</span>
+                    <input
+                      type="text"
+                      value={whatsappRecipient}
+                      onChange={(e) => setWhatsappRecipient(e.target.value.replace(/[^0-9]/g, ''))}
+                      placeholder="e.g. 918741838653"
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: '8px',
+                        background: '#080c16',
+                        border: '1px solid rgba(255, 255, 255, 0.15)',
+                        color: '#f8fafc',
+                        fontSize: '0.78rem',
+                        width: '130px'
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Messages Scroll Area */}
+                <div style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  padding: '16px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px'
+                }}>
+                  {whatsappMessages.map((msg, index) => {
+                    const isOutbound = msg.direction === 'outbound';
+                    return (
+                      <div
+                        key={msg.id || index}
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: isOutbound ? 'flex-end' : 'flex-start',
+                          maxWidth: '75%',
+                          alignSelf: isOutbound ? 'flex-end' : 'flex-start'
+                        }}
+                      >
+                        <div style={{
+                          background: isOutbound ? 'linear-gradient(135deg, #064e3b 0%, #052e16 100%)' : '#0f172a',
+                          border: isOutbound ? '1px solid rgba(34, 197, 94, 0.4)' : '1px solid rgba(255, 255, 255, 0.1)',
+                          borderRadius: isOutbound ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                          padding: '12px 14px',
+                          color: '#f8fafc',
+                          boxShadow: '0 4px 14px rgba(0,0,0,0.3)',
+                          position: 'relative'
+                        }}>
+                          {/* Sender name for inbound */}
+                          {!isOutbound && (
+                            <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#38bdf8', marginBottom: '4px' }}>
+                              {msg.sender_name || `+${msg.phone_number}`}
+                            </div>
+                          )}
+
+                          {/* Attachment Display */}
+                          {msg.attachment_url && (
+                            <div style={{ marginBottom: '8px', borderRadius: '10px', overflow: 'hidden', border: '1px solid rgba(255, 255, 255, 0.15)' }}>
+                              {msg.attachment_type === 'image' || msg.attachment_url.startsWith('data:image') ? (
+                                <img
+                                  src={msg.attachment_url}
+                                  alt={msg.attachment_name || 'Attachment'}
+                                  style={{ maxWidth: '100%', maxHeight: '180px', display: 'block', objectFit: 'cover' }}
+                                />
+                              ) : (
+                                <div style={{ padding: '8px 12px', background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <File size={20} color="#38bdf8" />
+                                  <span style={{ fontSize: '0.8rem', color: '#f8fafc' }}>{msg.attachment_name || 'Document'}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Message Body */}
+                          <p style={{ margin: 0, fontSize: '0.88rem', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>
+                            {msg.message_text}
+                          </p>
+
+                          {/* Time & Delivery Checkmark */}
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'flex-end',
+                            gap: '4px',
+                            marginTop: '6px',
+                            fontSize: '0.68rem',
+                            color: '#94a3b8'
+                          }}>
+                            <span>
+                              {msg.created_at ? new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                            </span>
+                            {isOutbound && (
+                              <span style={{ color: msg.status === 'read' ? '#38bdf8' : '#4ade80' }}>
+                                {msg.status === 'read' ? <CheckCheck size={14} color="#38bdf8" /> : <CheckCheck size={14} color="#4ade80" />}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Activity Inspector Trigger Pill */}
+                        <button
+                          onClick={() => setActiveActivityMessage(msg)}
+                          style={{
+                            marginTop: '4px',
+                            background: 'none',
+                            border: 'none',
+                            color: '#94a3b8',
+                            fontSize: '0.68rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '3px'
+                          }}
+                        >
+                          <Info size={11} />
+                          <span>View Post Activity & Timeline</span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <div ref={chatMessagesEndRef} />
+                </div>
+
+                {/* Attachment Preview (if any selected) */}
+                {whatsappAttachment && (
+                  <div style={{
+                    padding: '8px 16px',
+                    background: 'rgba(34, 197, 94, 0.1)',
+                    borderTop: '1px solid rgba(34, 197, 94, 0.2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Paperclip size={14} color="#4ade80" />
+                      <span style={{ fontSize: '0.78rem', color: '#4ade80', fontWeight: 600 }}>
+                        Attached: {whatsappAttachment.name}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setWhatsappAttachment(null)}
+                      style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer' }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                )}
+
+                {/* Message Composer & Action Bar */}
+                <div style={{
+                  padding: '12px 16px',
+                  background: 'rgba(15, 23, 42, 0.7)',
+                  borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  {/* Attach File Button */}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Attach Image or Document"
+                    style={{
+                      width: '38px',
+                      height: '38px',
+                      borderRadius: '10px',
+                      background: 'rgba(255, 255, 255, 0.06)',
+                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      color: '#cbd5e1',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0
+                    }}
+                  >
+                    <Paperclip size={18} />
+                  </button>
+
+                  {/* Attach Generated Quote Card */}
+                  <button
+                    onClick={attachCurrentQuoteCard}
+                    title="Attach 1080x1080 Visual Card"
+                    style={{
+                      padding: '0 10px',
+                      height: '38px',
+                      borderRadius: '10px',
+                      background: 'rgba(168, 85, 247, 0.15)',
+                      border: '1px solid rgba(168, 85, 247, 0.4)',
+                      color: '#c084fc',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      fontSize: '0.74rem',
+                      fontWeight: 700,
+                      flexShrink: 0
+                    }}
+                  >
+                    <Image size={15} />
+                    <span>Attach Card</span>
+                  </button>
+
+                  {/* Input field */}
+                  <input
+                    type="text"
+                    value={whatsappText}
+                    onChange={(e) => setWhatsappText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendWhatsAppMessage();
+                      }
+                    }}
+                    placeholder="Type WhatsApp message or post to send directly..."
+                    style={{
+                      flex: 1,
+                      padding: '10px 14px',
+                      borderRadius: '12px',
+                      background: '#040711',
+                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      color: '#f8fafc',
+                      fontSize: '0.88rem',
+                      outline: 'none'
+                    }}
+                  />
+
+                  {/* Send Button */}
+                  <button
+                    onClick={handleSendWhatsAppMessage}
+                    disabled={isSendingWhatsApp || (!whatsappText.trim() && !whatsappAttachment)}
+                    style={{
+                      padding: '0 18px',
+                      height: '38px',
+                      borderRadius: '12px',
+                      background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                      border: 'none',
+                      color: '#ffffff',
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      cursor: (isSendingWhatsApp || (!whatsappText.trim() && !whatsappAttachment)) ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      opacity: (isSendingWhatsApp || (!whatsappText.trim() && !whatsappAttachment)) ? 0.6 : 1,
+                      flexShrink: 0
+                    }}
+                  >
+                    <Send size={15} />
+                    <span>{isSendingWhatsApp ? 'Sending...' : 'Send'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* TAB 1: COMPOSER & VIRAL ENGINE */}
           {activeTab === 'composer' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -627,7 +1150,7 @@ export const SocialMediaModal = ({
                 </div>
               </div>
 
-              {/* Action Buttons Row: Hooks, Visual Card, Adapt */}
+              {/* Action Buttons Row: Hooks, Visual Card, WhatsApp Direct, Adapt */}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                 <button
                   onClick={handleAnalyzeViralHooks}
@@ -672,6 +1195,32 @@ export const SocialMediaModal = ({
                 >
                   <Image size={16} />
                   <span>🎨 1-Click Visual Social Card (1080x1080)</span>
+                </button>
+
+                {/* Direct WhatsApp Send Trigger from Composer */}
+                <button
+                  onClick={() => {
+                    setWhatsappText(content);
+                    setActiveTab('whatsapp_hub');
+                    showToast?.('Draft transferred to WhatsApp In-App Messenger!', 'info');
+                  }}
+                  disabled={!content.trim()}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '9px 18px',
+                    borderRadius: '12px',
+                    background: 'rgba(34, 197, 94, 0.15)',
+                    border: '1.5px solid rgba(34, 197, 94, 0.5)',
+                    color: '#4ade80',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    cursor: !content.trim() ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  <MessageSquare size={16} />
+                  <span>🟢 Send via WhatsApp (In-App)</span>
                 </button>
 
                 <button
@@ -722,7 +1271,6 @@ export const SocialMediaModal = ({
                     </span>
                   </div>
 
-                  {/* 3 High-converting hooks */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '10px' }}>
                     {viralAnalysis.hooks && Object.entries(viralAnalysis.hooks).map(([type, hook]) => (
                       <div
@@ -862,7 +1410,7 @@ export const SocialMediaModal = ({
                                 gap: '4px'
                               }}
                             >
-                              <span>Direct Launch</span>
+                              <span>{plat === 'whatsapp' ? 'In-App Messenger' : 'Direct Launch'}</span>
                               <ExternalLink size={13} />
                             </button>
                           </div>
@@ -919,7 +1467,6 @@ export const SocialMediaModal = ({
 
               {ghostwriterThought ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  {/* Topic & Hook */}
                   <div style={{ background: '#040711', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '16px', padding: '16px' }}>
                     <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#38bdf8', textTransform: 'uppercase' }}>
                       Topic: {ghostwriterThought.topic}
@@ -932,7 +1479,6 @@ export const SocialMediaModal = ({
                     </p>
                   </div>
 
-                  {/* LinkedIn Format */}
                   {ghostwriterThought.linkedin_post && (
                     <div style={{ background: '#040711', border: '1.5px solid rgba(10, 102, 194, 0.4)', borderRadius: '16px', padding: '16px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
@@ -959,7 +1505,6 @@ export const SocialMediaModal = ({
                     </div>
                   )}
 
-                  {/* Tweet Format */}
                   {ghostwriterThought.tweet && (
                     <div style={{ background: '#040711', border: '1.5px solid rgba(248, 250, 252, 0.3)', borderRadius: '16px', padding: '16px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
@@ -1037,7 +1582,6 @@ export const SocialMediaModal = ({
                 </button>
               </div>
 
-              {/* Video Summary Box */}
               {videoSummary && (
                 <div style={{
                   background: '#040711',
@@ -1075,10 +1619,8 @@ export const SocialMediaModal = ({
                 </div>
               )}
 
-              {/* Repurposed Thread & Reel Output */}
               {repurposedResult && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
-                  {/* 5-Tweet Thread */}
                   <div style={{
                     background: '#040711',
                     border: '1.5px solid rgba(56, 189, 248, 0.4)',
@@ -1112,7 +1654,6 @@ export const SocialMediaModal = ({
                     </div>
                   </div>
 
-                  {/* 30-Second Reel Script */}
                   <div style={{
                     background: '#040711',
                     border: '1.5px solid rgba(225, 48, 108, 0.4)',
@@ -1165,7 +1706,6 @@ export const SocialMediaModal = ({
           {/* TAB 4: ENGAGEMENT & COMMENTS HUB */}
           {activeTab === 'engagement' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {/* Aggregated KPIs */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
                 <div style={{ background: '#040711', border: '1px solid rgba(56, 189, 248, 0.25)', borderRadius: '14px', padding: '14px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#38bdf8' }}>
@@ -1198,7 +1738,6 @@ export const SocialMediaModal = ({
                 </div>
               </div>
 
-              {/* Action row to Track Live Post */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontWeight: 800, fontSize: '0.95rem', color: '#f8fafc' }}>
                   Live Tracked Content & Audience Feedback
@@ -1224,7 +1763,6 @@ export const SocialMediaModal = ({
                 </button>
               </div>
 
-              {/* Tracked Posts Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
                 {engagementPosts.map((post, idx) => {
                   const plat = SOCIAL_PLATFORMS.find(p => p.id === post.platform) || { name: post.platform, icon: '📱', color: '#38bdf8' };
@@ -1357,7 +1895,6 @@ export const SocialMediaModal = ({
               </button>
             </div>
 
-            {/* Canvas Preview Container */}
             <div style={{
               width: '100%',
               maxWidth: '380px',
@@ -1374,7 +1911,6 @@ export const SocialMediaModal = ({
               />
             </div>
 
-            {/* Controls: Theme & Author */}
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', gap: '6px' }}>
                 {CARD_THEMES.map(t => (
@@ -1414,34 +1950,178 @@ export const SocialMediaModal = ({
               />
             </div>
 
-            {/* Download CTA Button */}
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={handleDownloadCard}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)',
+                  border: 'none',
+                  color: '#ffffff',
+                  fontWeight: 800,
+                  fontSize: '0.90rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 18px rgba(168, 85, 247, 0.4)'
+                }}
+              >
+                <Download size={18} />
+                <span>Download PNG</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  attachCurrentQuoteCard();
+                  setShowCardModal(false);
+                }}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                  border: 'none',
+                  color: '#ffffff',
+                  fontWeight: 800,
+                  fontSize: '0.90rem',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 18px rgba(34, 197, 94, 0.4)'
+                }}
+              >
+                <MessageSquare size={18} />
+                <span>Send via WhatsApp</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- MODAL 2: MESSAGE ACTIVITY & TIMELINE INSPECTOR --- */}
+      {activeActivityMessage && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 100000,
+          background: 'rgba(0, 0, 0, 0.88)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '16px'
+        }}>
+          <div style={{
+            background: '#090d16',
+            border: '1.5px solid rgba(56, 189, 248, 0.4)',
+            borderRadius: '20px',
+            width: '100%',
+            maxWidth: '520px',
+            padding: '20px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px',
+            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.9)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Clock size={20} color="#38bdf8" />
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#f8fafc' }}>
+                  Post Delivery & Activity Inspector
+                </h3>
+              </div>
+              <button
+                onClick={() => setActiveActivityMessage(null)}
+                style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Post Summary Preview */}
+            <div style={{
+              background: '#040711',
+              borderRadius: '12px',
+              padding: '12px',
+              border: '1px solid rgba(255, 255, 255, 0.08)'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', color: '#94a3b8', marginBottom: '6px' }}>
+                <span>Recipient: +{activeActivityMessage.phone_number}</span>
+                <span style={{ textTransform: 'uppercase', color: activeActivityMessage.status === 'read' ? '#38bdf8' : '#4ade80', fontWeight: 700 }}>
+                  Status: {activeActivityMessage.status}
+                </span>
+              </div>
+              <p style={{ margin: 0, fontSize: '0.86rem', color: '#f8fafc', lineHeight: '1.4' }}>
+                "{activeActivityMessage.message_text || (activeActivityMessage.attachment_name ? `Attachment: ${activeActivityMessage.attachment_name}` : 'Post Content')}"
+              </p>
+            </div>
+
+            {/* Event Timeline */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <h4 style={{ margin: 0, fontSize: '0.84rem', fontWeight: 800, color: '#38bdf8', textTransform: 'uppercase' }}>
+                Activity Lifecycle Timeline
+              </h4>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {(activeActivityMessage.activity && activeActivityMessage.activity.length > 0 ? activeActivityMessage.activity : [
+                  { event: 'created', time: activeActivityMessage.created_at, note: 'Composed & queued in Aether' },
+                  { event: 'dispatched', time: activeActivityMessage.created_at, note: 'Dispatched to Meta WhatsApp Cloud Gateway' },
+                  { event: 'delivered', time: activeActivityMessage.created_at, note: 'Delivered to recipient with double tick' },
+                  { event: 'read', time: activeActivityMessage.created_at, note: 'Read by recipient with blue tick' }
+                ]).map((act, i) => (
+                  <div key={i} style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                    <div style={{
+                      width: '24px',
+                      height: '24px',
+                      borderRadius: '50%',
+                      background: 'rgba(34, 197, 94, 0.2)',
+                      border: '1px solid #22c55e',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0
+                    }}>
+                      <Check size={12} color="#4ade80" />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#f8fafc', textTransform: 'capitalize' }}>
+                        {act.event || 'Activity Logged'}
+                      </div>
+                      <div style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
+                        {act.note || act.timestamp || act.time}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <button
-              onClick={handleDownloadCard}
+              onClick={() => setActiveActivityMessage(null)}
               style={{
                 width: '100%',
-                padding: '12px',
-                borderRadius: '12px',
-                background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)',
+                padding: '10px',
+                borderRadius: '10px',
+                background: 'rgba(255, 255, 255, 0.08)',
                 border: 'none',
-                color: '#ffffff',
-                fontWeight: 800,
-                fontSize: '0.92rem',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                boxShadow: '0 4px 18px rgba(168, 85, 247, 0.4)'
+                color: '#f8fafc',
+                fontWeight: 700,
+                fontSize: '0.84rem',
+                cursor: 'pointer'
               }}
             >
-              <Download size={18} />
-              <span>Download 1080x1080 PNG (0 KB APK Growth)</span>
+              Close Activity
             </button>
           </div>
         </div>
       )}
 
-      {/* --- MODAL 2: TRACK NEW LIVE POST --- */}
+      {/* --- MODAL 3: TRACK NEW LIVE POST --- */}
       {showTrackModal && (
         <div style={{
           position: 'fixed',
