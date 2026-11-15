@@ -27,6 +27,10 @@ class AgentOrchestrator:
     ):
         self.db = db
         self.user_email = user_email
+        env = os.environ.get("ENVIRONMENT", "production").lower()
+        is_prod = env in ["prod", "production"]
+        if is_prod and (not owner_user_id or "@" in str(owner_user_id)):
+            raise ValueError("AETH-P0-03: Immutable authenticated UUID is required for owner_user_id in production")
         self.owner_user_id = str(owner_user_id or user_email).strip()
         self.lang = lang
 

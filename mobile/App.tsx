@@ -33,11 +33,8 @@ Notifications.setNotificationHandler({
 const AETHER_URL = process.env.EXPO_PUBLIC_AETHER_URL || 'https://aether-kjrj.onrender.com';
 
 // Strict Trusted Origins and Bridge Actions (AETH-P0-04)
-const ALLOWED_ORIGIN_HOSTS = new Set([
+const PROD_TRUSTED_HOSTS = new Set([
   'aether-kjrj.onrender.com',
-  'localhost',
-  '127.0.0.1',
-  '10.0.2.2',
   'accounts.google.com',
   'dwyiledlboolxywizkbm.supabase.co'
 ]);
@@ -46,7 +43,24 @@ function isTrustedOrigin(urlStr?: string): boolean {
   if (!urlStr) return false;
   try {
     const parsed = new URL(urlStr);
-    return ALLOWED_ORIGIN_HOSTS.has(parsed.hostname.toLowerCase());
+    const host = parsed.hostname.toLowerCase();
+    const protocol = parsed.protocol.toLowerCase();
+    const port = parsed.port;
+
+    // Disallow userinfo / embedded credentials in URL
+    if (parsed.username || parsed.password) return false;
+
+    // Production origins: must be HTTPS on port 443 (or standard default empty port)
+    if (PROD_TRUSTED_HOSTS.has(host)) {
+      return protocol === 'https:' && (port === '' || port === '443');
+    }
+
+    // Local development origins strictly allowed only during development builds
+    if (__DEV__ && (host === 'localhost' || host === '127.0.0.1' || host === '10.0.2.2')) {
+      return protocol === 'http:' || protocol === 'https:';
+    }
+
+    return false;
   } catch {
     return false;
   }
@@ -463,6 +477,13 @@ export default function App() {
           }}
           onMessage={async (event) => {
             try {
+              // Validate that the message originated from a trusted origin (AETH-P0-04)
+              const senderUrl = event.nativeEvent.url;
+              if (senderUrl && !isTrustedOrigin(senderUrl)) {
+                console.warn('[WebView Bridge] Dropping bridge message from untrusted frame/origin:', senderUrl);
+                return;
+              }
+
               const rawData = event.nativeEvent.data;
               if (!rawData || rawData.length > 65536) {
                 console.warn('[WebView Bridge] Dropping empty or oversized message (>64KB)');

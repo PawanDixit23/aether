@@ -8,6 +8,7 @@ import os
 import re
 import json
 import time
+import math
 import base64
 import hmac
 import hashlib
@@ -107,19 +108,24 @@ def verify_supabase_jwt(
     if not sub or not UUID_REGEX.match(str(sub).strip()):
         return None
 
-    # Mandatory numeric 'exp' claim with 30s clock skew tolerance
+    # Mandatory numeric 'exp' claim with finite number validation and 30s clock skew tolerance
     exp = payload.get("exp")
-    if exp is None:
+    if exp is None or not isinstance(exp, (int, float)) or not math.isfinite(exp) or math.isnan(exp):
         return None
     try:
-        if now > (float(exp) + 30):
+        exp_f = float(exp)
+        if now > (exp_f + 30):
             return None  # Token expired
+        if exp_f > (now + 365 * 86400):
+            return None  # Unrealistic far-future token (> 1 year)
     except (ValueError, TypeError):
         return None
 
-    # Optional 'nbf' (not-before) claim
+    # Optional 'nbf' (not-before) claim with finite number validation
     nbf = payload.get("nbf")
     if nbf is not None:
+        if not isinstance(nbf, (int, float)) or not math.isfinite(nbf) or math.isnan(nbf):
+            return None
         try:
             if now < (float(nbf) - 30):
                 return None  # Token not yet valid
@@ -129,7 +135,7 @@ def verify_supabase_jwt(
     # Issuer validation ('iss')
     if expected_iss:
         token_iss = payload.get("iss")
-        if not token_iss or token_iss.rstrip("/") != expected_iss.rstrip("/"):
+        if not token_iss or str(token_iss).strip().rstrip("/") != str(expected_iss).strip().rstrip("/"):
             return None
 
     # Audience validation ('aud')
@@ -163,6 +169,16 @@ def get_current_user_identity(
     is_production = env in ["prod", "production"]
     
     expected_iss = os.environ.get("SUPABASE_JWT_ISSUER", "").strip() or None
+    if is_production and not expected_iss:
+        supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+        if supabase_url:
+            expected_iss = f"{supabase_url.rstrip('/')}/auth/v1"
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Production authentication configuration missing (SUPABASE_JWT_ISSUER or SUPABASE_URL required)"
+            )
+
     expected_aud = os.environ.get("SUPABASE_JWT_AUDIENCE", "authenticated").strip() or "authenticated"
 
     if authorization and authorization.startswith("Bearer "):
@@ -263,3 +279,37 @@ def get_optional_user_identity(
         return get_current_user_identity(request, authorization)
     except HTTPException:
         return None
+
+
+def validate_security_config_at_startup():
+    """
+    Validates critical security configuration at application startup (AETH-P0-01 & AETH-P0-05).
+    Fails fast with fatal RuntimeError if production environment lacks mandatory JWT or webhook secrets.
+    """
+    env = os.environ.get("ENVIRONMENT", "production").lower()
+    is_prod = env in ["prod", "production"]
+    if not is_prod:
+        return
+
+    errors = []
+    jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
+    if not jwt_secret:
+        errors.append("SUPABASE_JWT_SECRET is required in production.")
+
+    jwt_iss = os.environ.get("SUPABASE_JWT_ISSUER", "").strip()
+    supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+    if not jwt_iss and not supabase_url:
+        errors.append("SUPABASE_JWT_ISSUER (or SUPABASE_URL) is required in production.")
+
+    # Validate webhook secrets if enabled in production
+    if os.environ.get("ENABLE_TELEGRAM", "").lower() in ["true", "1", "yes"] or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip():
+        if not os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip():
+            errors.append("TELEGRAM_WEBHOOK_SECRET is required when Telegram integration is active in production.")
+
+    if os.environ.get("ENABLE_WHATSAPP", "").lower() in ["true", "1", "yes"] or os.environ.get("WHATSAPP_TOKEN", "").strip():
+        if not os.environ.get("WHATSAPP_APP_SECRET", "").strip():
+            errors.append("WHATSAPP_APP_SECRET is required when Meta WhatsApp integration is active in production.")
+
+    if errors:
+        raise RuntimeError("FATAL AETHER STARTUP FAILURE: Critical production security configuration missing:\n" + "\n".join(f"  • {e}" for e in errors))
+

@@ -130,6 +130,7 @@ class TaskDateCompletion(Base):
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, index=True, nullable=False)
     user_email = Column(String, index=True, nullable=False)
+    owner_user_id = Column(String, index=True, nullable=True)
     date_str = Column(String, index=True, nullable=False)  # "YYYY-MM-DD"
     completed = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)

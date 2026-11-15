@@ -5,6 +5,7 @@ Based on AETHER_RECOMMENDED_ARCHITECTURE.md (Section 3.1 & Guardrails)
 Fulfills AETH-SEC-03 (Denial by Default) and AETH-SEC-04 (Action Approval Tampering Prevention)
 """
 
+import os
 import json
 import uuid
 import time
@@ -110,6 +111,11 @@ class ActionApprovalManager:
         clean_user_id = str(owner_user_id or user_email).strip()
 
         # Database persistence is mandatory for fail-closed security (AETH-P0-03)
+        env = os.environ.get("ENVIRONMENT", "production").lower()
+        is_prod = env in ["prod", "production"]
+        if not db and is_prod:
+            raise RuntimeError("Database session required to create durable action approval in production")
+
         if db:
             db_record = ActionApproval(
                 action_id=action_id,
@@ -197,7 +203,12 @@ class ActionApprovalManager:
                 db.rollback()
                 return False, f"Database error during approval verification: {e}"
 
-        # 2. In-memory check only when db is explicitly None (lightweight standalone test)
+        # 2. In-memory check strictly forbidden in production (AETH-P0-03)
+        env = os.environ.get("ENVIRONMENT", "production").lower()
+        if env in ["prod", "production"]:
+            return False, "Database session required for critical action authorization in production (Fail Closed)"
+
+        # Standalone test/dev fallback only when explicitly not in production
         record = cls._pending_approvals.get(action_id)
         if not record:
             return False, "Approval request not found or already consumed"

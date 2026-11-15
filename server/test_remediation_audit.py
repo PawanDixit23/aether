@@ -59,13 +59,18 @@ def run_tests():
     print("✅ AETH-SEC-04: Legitimate approval consumed and replay attack blocked.")
 
     # AETH-SEC-05: Transactional Audit Undo
-    test_task = Task(user_email="auditor@aether.local", title="Undoable Task", status="pending")
+    auditor_ident = "auditor@aether.local"
+    auditor_uuid = hashlib.md5(auditor_ident.encode()).hexdigest()
+    auditor_uuid = f"{auditor_uuid[:8]}-{auditor_uuid[8:12]}-{auditor_uuid[12:16]}-{auditor_uuid[16:20]}-{auditor_uuid[20:32]}"
+
+    test_task = Task(user_email="auditor@aether.local", owner_user_id=auditor_uuid, title="Undoable Task", status="pending")
     db.add(test_task)
     db.commit()
     db.refresh(test_task)
 
     audit = AuditLog(
         user_email="auditor@aether.local",
+        owner_user_id=auditor_uuid,
         action_type="agent_create_task",
         details="Created test task",
         confidence_score=1.0,
@@ -158,13 +163,14 @@ def run_tests():
     print("\n--- Testing Epic 5: Product & UI Features ---")
 
     # AETH-TASK-01: Sub-tasks & Dependency Blocking
-    parent_t = Task(user_email="auditor@aether.local", title="Prerequisite Step 1", status="pending")
+    parent_t = Task(user_email="auditor@aether.local", owner_user_id=auditor_uuid, title="Prerequisite Step 1", status="pending")
     db.add(parent_t)
     db.commit()
     db.refresh(parent_t)
 
     child_t = Task(
         user_email="auditor@aether.local",
+        owner_user_id=auditor_uuid,
         title="Dependent Step 2",
         status="pending",
         dependency_task_ids=json.dumps([parent_t.id])

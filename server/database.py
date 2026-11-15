@@ -93,6 +93,7 @@ def ensure_schema_migrations():
         "ALTER TABLE chat_sessions ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE chat_messages ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE whatsapp_messages ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE task_date_completions ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE tasks ADD COLUMN dependency_task_ids TEXT DEFAULT '[]'",
         "ALTER TABLE chat_messages ADD COLUMN importance FLOAT DEFAULT 1.0",
         "ALTER TABLE chat_messages ADD COLUMN last_accessed_at TIMESTAMP",
@@ -123,3 +124,65 @@ def ensure_schema_migrations():
             err_str = str(e).lower()
             if "already exists" not in err_str and "duplicate column" not in err_str and "canceled" not in err_str:
                 print(f"[Postgres Migration Note] {stmt}: {e}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # AETH-P0-02: Deterministic UUID Backfill for Pre-Migration Legacy Records
+    # ─────────────────────────────────────────────────────────────────────────
+    tenant_tables = [
+        "tasks", "financial_records", "memory_vault", "chat_sessions", 
+        "chat_messages", "audit_logs"
+    ]
+    for tbl in tenant_tables:
+        try:
+            with engine.connect() as conn:
+                if is_pg:
+                    # PostgreSQL: backfill deterministic UUID from user_email using md5
+                    conn.execute(text(f"""
+                        UPDATE {tbl}
+                        SET owner_user_id = md5(lower(trim(user_email)))::uuid::text
+                        WHERE owner_user_id IS NULL AND user_email IS NOT NULL AND trim(user_email) != '';
+                    """))
+                else:
+                    # SQLite: backfill deterministic UUID string from user_email
+                    rows = conn.execute(text(f"""
+                        SELECT id, user_email FROM {tbl} 
+                        WHERE owner_user_id IS NULL AND user_email IS NOT NULL AND trim(user_email) != ''
+                    """)).fetchall()
+                    for r_id, u_email in rows:
+                        import hashlib
+                        m = hashlib.md5(u_email.strip().lower().encode()).hexdigest()
+                        det_uuid = f"{m[:8]}-{m[8:12]}-{m[12:16]}-{m[16:20]}-{m[20:32]}"
+                        conn.execute(text(f"UPDATE {tbl} SET owner_user_id = :uuid WHERE id = :id"), {"uuid": det_uuid, "id": r_id})
+                conn.commit()
+        except Exception as e:
+            print(f"[UUID Migration Note] {tbl}: {e}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # AETH-P0-02: PostgreSQL Row-Level Security (RLS) Enforcement
+    # ─────────────────────────────────────────────────────────────────────────
+    if is_pg:
+        rls_tables = [
+            "tasks", "financial_records", "memory_vault", "chat_sessions",
+            "chat_messages", "audit_logs", "action_approvals", "user_integration_pairings"
+        ]
+        for t in rls_tables:
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY;"))
+                    conn.execute(text(f"""
+                        DO $$
+                        BEGIN
+                            IF NOT EXISTS (
+                                SELECT 1 FROM pg_policies WHERE tablename = '{t}' AND policyname = '{t}_tenant_isolation'
+                            ) THEN
+                                CREATE POLICY {t}_tenant_isolation ON {t}
+                                    FOR ALL
+                                    USING (owner_user_id = current_setting('request.jwt.claim.sub', true))
+                                    WITH CHECK (owner_user_id = current_setting('request.jwt.claim.sub', true));
+                            END IF;
+                        END $$;
+                    """))
+                    conn.commit()
+            except Exception as e:
+                print(f"[RLS Migration Note] {t}: {e}")
+

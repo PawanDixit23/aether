@@ -155,6 +155,16 @@ except ImportError:
 Base.metadata.create_all(bind=engine)
 ensure_schema_migrations()
 
+from security.auth import validate_security_config_at_startup
+try:
+    validate_security_config_at_startup()
+except RuntimeError as e:
+    # If production environment lacks critical security secrets, fail startup fast
+    import sys
+    print(f"[SECURITY STARTUP ERROR] {e}", file=sys.stderr)
+    if os.environ.get("ENVIRONMENT", "production").lower() in ["prod", "production"]:
+        raise
+
 app = FastAPI(
     title="Aether Executive Core API",
     version="2.0.0",
@@ -283,13 +293,13 @@ def get_user_email(
 
 def tenant_filter(model, current_user: UserIdentity):
     """
-    Returns SQLAlchemy filter condition enforcing tenant isolation by immutable UUID (AETH-P0-02),
-    with safe fallback to user_email for pre-migration legacy records where owner_user_id is NULL.
+    Enforces strict immutable UUID ownership on all tenant-owned rows (AETH-P0-02).
     """
-    return (
-        (model.owner_user_id == current_user.id) |
-        ((model.owner_user_id == None) & (model.user_email == current_user.email))
-    )
+    if hasattr(model, "owner_user_id"):
+        return model.owner_user_id == current_user.id
+    if hasattr(model, "user_email"):
+        return model.user_email == current_user.email
+    return True
 
 DEFAULT_OWNER_EMAIL = os.environ.get("DEFAULT_USER_EMAIL", "e.pawandixit@gmail.com").strip().lower()
 
@@ -552,8 +562,8 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
             "user_city": "Jaipur"
         }
     if owner_user_id:
-        tasks = db.query(Task).filter(((Task.owner_user_id == owner_user_id) | ((Task.owner_user_id == None) & (Task.user_email == user_email))), Task.status == "pending").all()
-        records = db.query(FinancialRecord).filter((FinancialRecord.owner_user_id == owner_user_id) | ((FinancialRecord.owner_user_id == None) & (FinancialRecord.user_email == user_email))).all()
+        tasks = db.query(Task).filter(Task.owner_user_id == owner_user_id, Task.status == "pending").all()
+        records = db.query(FinancialRecord).filter(FinancialRecord.owner_user_id == owner_user_id).all()
     else:
         tasks = db.query(Task).filter(Task.user_email == user_email, Task.status == "pending").all()
         records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).all()
@@ -565,15 +575,24 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
             from memory import HybridMemoryProvider
             recalled = HybridMemoryProvider.recall_context(prompt_query, user_email, db, limit=12)
             recalled_facts = set(recalled.get("relevant_facts", []))
-            all_mem_objs = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
+            if owner_user_id:
+                all_mem_objs = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
+            else:
+                all_mem_objs = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
             # Prioritize recalled items first
             recalled_mems = [m for m in all_mem_objs if m.fact in recalled_facts]
             remaining_mems = [m for m in all_mem_objs if m.fact not in recalled_facts]
             memories = recalled_mems + remaining_mems[:15]
         except Exception:
-            memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
+            if owner_user_id:
+                memories = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
+            else:
+                memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
     else:
-        memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
+        if owner_user_id:
+            memories = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
+        else:
+            memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
 
     # Fetch last 40 messages (20+ turns) for comprehensive conversational memory across prompts!
     try:
@@ -700,14 +719,8 @@ def record_user_login(req: AuthRecordRequest, db: Session = Depends(get_db)):
     """Log user authentication in local audit log and claim legacy unassigned tenant data."""
     email = req.email.strip().lower()
     try:
-        # Migrate any previously unassigned records ONLY if primary environment owner
-        if is_owner_email(email):
-            db.query(Task).filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai")).update({Task.user_email: email})
-            db.query(FinancialRecord).filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == "") | (FinancialRecord.user_email == "operator@aether.ai")).update({FinancialRecord.user_email: email})
-            db.query(MemoryItem).filter((MemoryItem.user_email == None) | (MemoryItem.user_email == "") | (MemoryItem.user_email == "operator@aether.ai")).update({MemoryItem.user_email: email})
-            db.query(ChatMessage).filter((ChatMessage.user_email == None) | (ChatMessage.user_email == "") | (ChatMessage.user_email == "operator@aether.ai")).update({ChatMessage.user_email: email})
-            db.query(AuditLog).filter((AuditLog.user_email == None) | (AuditLog.user_email == "") | (AuditLog.user_email == "operator@aether.ai")).update({AuditLog.user_email: email})
-            db.commit()
+        # Auto-claim removed for strict tenant isolation (AETH-P0-02).
+        pass
     except Exception as e:
         print(f"[Record Login Auto-claim Note] {e}")
 
@@ -726,16 +739,17 @@ def record_user_login(req: AuthRecordRequest, db: Session = Depends(get_db)):
 
 # ----------------- Client Sync & Resilience Engine -----------------
 @app.post("/api/sync/backup")
-def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
-    """Intelligently restore and merge client persistent cache into the database with zero duplication."""
-    email = req.user_email.strip().lower()
-    if not email:
-        return {"status": "skipped", "message": "No email provided"}
-    
+def client_backup_sync(
+    req: ClientSyncBackup, 
+    current_user: UserIdentity = Depends(get_current_user_identity),
+    db: Session = Depends(get_db)
+):
+    """Intelligently restore and merge client persistent cache into the database with zero duplication (AETH-P0-02)."""
+    email = current_user.email
     restored_counts = {"tasks": 0, "memories": 0, "finances": 0}
     
     # Existing task titles for this user to avoid duplicate insertions
-    existing_tasks = db.query(Task).filter(Task.user_email == email).all()
+    existing_tasks = db.query(Task).filter(tenant_filter(Task, current_user)).all()
     existing_titles = {t.title.strip().lower() for t in existing_tasks if t.title}
     
     if req.tasks:
@@ -763,6 +777,7 @@ def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
 
                 db.add(Task(
                     user_email=email,
+                    owner_user_id=current_user.id,
                     title=title,
                     priority=t.get("priority", "medium"),
                     status=t.get("status", "pending"),
@@ -781,7 +796,7 @@ def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
         db.commit()
 
     # Existing memories for this user
-    existing_mems = db.query(MemoryItem).filter(MemoryItem.user_email == email).all()
+    existing_mems = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user)).all()
     existing_facts = {m.fact.strip().lower() for m in existing_mems if m.fact}
     if req.memories:
         for m in req.memories:
@@ -791,6 +806,7 @@ def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
                     continue
 
                 db.add(MemoryItem(
+                    owner_user_id=current_user.id,
                     user_email=email,
                     category=m.get("category", "preference"),
                     fact=fact_text
@@ -802,11 +818,12 @@ def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
         db.commit()
 
     # Restore finances if DB has zero for this user
-    existing_fin = db.query(FinancialRecord).filter(FinancialRecord.user_email == email).count()
+    existing_fin = db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user)).count()
     if existing_fin == 0 and req.finances:
         for f in req.finances:
             try:
                 db.add(FinancialRecord(
+                    owner_user_id=current_user.id,
                     user_email=email,
                     type=f.get("type", "expense"),
                     category=f.get("category", "general"),
@@ -894,13 +911,12 @@ def create_calendar_event(
 
 @app.get("/api/calendar/events")
 def get_calendar_events(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Retrieves upcoming calendar-bound tasks and events for the active user."""
-    eff_email = user_email or "operator@aether.local"
+    """Retrieves upcoming calendar-bound tasks and events for the active user (AETH-P0-02)."""
     tasks = db.query(Task).filter(
-        Task.user_email == eff_email,
+        tenant_filter(Task, current_user),
         Task.status == "pending"
     ).order_by(Task.due_date.asc()).limit(20).all()
     from calendar_sync import GoogleCalendarService
@@ -924,12 +940,12 @@ def get_calendar_events(
 @app.post("/api/action/quick-capture")
 async def quick_capture(
     req: QuickCaptureRequest, 
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Core Smart Action Engine with Multi-Tenant Isolation & Conversational History."""
+    """Core Smart Action Engine with Multi-Tenant Isolation & Conversational History (AETH-P0-02)."""
     try:
-        return await _execute_quick_capture(req, user_email, db)
+        return await _execute_quick_capture(req, current_user, db)
     except HTTPException:
         raise
     except Exception as exc:
@@ -952,16 +968,18 @@ async def quick_capture(
 
 async def _execute_quick_capture(
     req: QuickCaptureRequest, 
-    user_email: Optional[str],
+    current_user: UserIdentity,
     db: Session
 ):
+    user_email = current_user.email
+    owner_user_id = current_user.id
     user_msg = (req.input_text or "").strip()
     if not user_msg and not req.image_data:
         raise HTTPException(status_code=400, detail="Empty input")
     if not user_msg and req.image_data:
         user_msg = "कृपया इस फ़ोटो का विश्लेषण करें (यदि यह बिल/रसीद/खर्च है तो राशि और विवरण दर्ज करें, अन्यथा सामान्य जानकारी दें)।"
 
-    eff_email = (req.user_email or user_email or "").strip().lower() or None
+    eff_email = current_user.email
     active_session_id = (req.session_id or "").strip() or "default"
     is_temporary = active_session_id.startswith("temp_") or active_session_id == "temporary"
 
@@ -2235,19 +2253,15 @@ def auto_advance_recurring_tasks(db: Session, user_email: Optional[str] = None):
 
 @app.get("/api/reminders/due")
 def get_due_reminders(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Fetch pending tasks whose reminder time has just arrived (within active window) and have not been alerted yet."""
-    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
-    if not eff_email:
-        return []
-
-    auto_advance_recurring_tasks(db, eff_email)
+    """Fetch pending tasks whose reminder time has just arrived for verified user (AETH-P0-02)."""
+    auto_advance_recurring_tasks(db, current_user.email)
 
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     tasks = db.query(Task).filter(
-        Task.user_email == eff_email,
+        tenant_filter(Task, current_user),
         Task.status == "pending",
         Task.notified == False
     ).all()
@@ -2280,14 +2294,11 @@ def get_due_reminders(
 @app.post("/api/reminders/{task_id}/ack")
 def acknowledge_reminder(
     task_id: int, 
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Acknowledge reminder so it won't repeatedly alert. Preserves today's date so task remains visible in today's agenda."""
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    query = db.query(Task).filter(Task.id == task_id, Task.user_email == eff_email)
+    """Acknowledge reminder for verified user (AETH-P0-02)."""
+    query = db.query(Task).filter(Task.id == task_id, tenant_filter(Task, current_user))
     task = query.first()
     if task:
         task.notified = True
@@ -2316,7 +2327,7 @@ def serialize_task(t: Task, db: Optional[Session] = None) -> dict:
         "subtasks": []
     }
     if db:
-        subs = db.query(Task).filter(Task.parent_id == t.id).order_by(Task.id.asc()).all()
+        subs = db.query(Task).filter(Task.parent_id == t.id, Task.owner_user_id == t.owner_user_id).order_by(Task.id.asc()).all()
         if subs:
             res["subtasks"] = [serialize_task(st) for st in subs]
     return res
@@ -2366,8 +2377,18 @@ def create_task(
     data["user_email"] = eff_email
     data["owner_user_id"] = current_user.id
     subtasks = data.pop("subtasks", None)
+    
+    # Enforce strict multi-tenant boundary on parent_id
+    if data.get("parent_id"):
+        parent_task = db.query(Task).filter(Task.id == data["parent_id"], tenant_filter(Task, current_user)).first()
+        if not parent_task:
+            raise HTTPException(status_code=403, detail="Parent task not found or access denied")
+
     deps = data.pop("dependency_task_ids", None)
     if deps is not None:
+        for dep_id in deps:
+            if not db.query(Task).filter(Task.id == dep_id, tenant_filter(Task, current_user)).first():
+                raise HTTPException(status_code=403, detail=f"Dependency task {dep_id} not found or access denied")
         data["dependency_task_ids"] = json.dumps(deps)
     task = Task(**data)
     if task.reminder_time:
@@ -2414,6 +2435,9 @@ def update_task(
     if req.recurrence is not None:
         task.recurrence = req.recurrence
     if req.dependency_task_ids is not None:
+        for dep_id in req.dependency_task_ids:
+            if not db.query(Task).filter(Task.id == dep_id, tenant_filter(Task, current_user)).first():
+                raise HTTPException(status_code=403, detail=f"Dependency task {dep_id} not found or access denied")
         task.dependency_task_ids = json.dumps(req.dependency_task_ids)
     if req.status is not None:
         task.status = req.status
@@ -2507,16 +2531,16 @@ def toggle_task(
     
     # If this task is a subtask, update parent task progress
     if getattr(task, "parent_id", None):
-        parent = db.query(Task).filter(Task.id == task.parent_id).first()
+        parent = db.query(Task).filter(Task.id == task.parent_id, tenant_filter(Task, current_user)).first()
         if parent:
-            all_subs = db.query(Task).filter(Task.parent_id == parent.id).all()
+            all_subs = db.query(Task).filter(Task.parent_id == parent.id, tenant_filter(Task, current_user)).all()
             if all(s.status == "completed" for s in all_subs):
                 parent.status = "completed"
             else:
                 parent.status = "pending"
                 
     # If this task is a parent task, toggle all child subtasks to match
-    subs = db.query(Task).filter(Task.parent_id == task.id).all()
+    subs = db.query(Task).filter(Task.parent_id == task.id, tenant_filter(Task, current_user)).all()
     if subs:
         for s in subs:
             s.status = new_status
@@ -3589,11 +3613,11 @@ _BRIEFING_CACHE_TTL = 5 * 60  # 5 minutes
 
 @app.get("/api/briefing")
 def get_executive_briefing(
-    user_email: Optional[str] = Depends(get_user_email),
     user_name: Optional[str] = "Operator",
     lat: Optional[str] = None,
     lon: Optional[str] = None,
     city: Optional[str] = None,
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
     global _BRIEFING_CACHE
@@ -3612,29 +3636,16 @@ def get_executive_briefing(
             parsed_lon = None
 
     loc_key = f"{round(parsed_lat, 2) if parsed_lat else ''}_{round(parsed_lon, 2) if parsed_lon else ''}_{(city or '').strip().lower()}"
-    _cache_key = f"{user_email or 'guest'}_{loc_key}"
+    _cache_key = f"{current_user.id}_{loc_key}"
     _cached = _BRIEFING_CACHE.get(_cache_key)
     if _cached and (_briefing_time.time() - _cached["ts"] < _BRIEFING_CACHE_TTL):
         return _cached["data"]
 
-    eff_email = get_effective_email(user_email)
-    if is_owner_email(eff_email):
-        tasks = db.query(Task).filter(
-            (Task.user_email == eff_email) |
-            (Task.user_email == None) |
-            (Task.user_email == "operator@aether.local") |
-            (Task.user_email == "test@example.com"),
-            Task.status == "pending"
-        ).all()
-        memories = db.query(MemoryItem).filter(
-            (MemoryItem.user_email == eff_email) |
-            (MemoryItem.user_email == None)
-        ).limit(5).all()
-    else:
-        tasks = db.query(Task).filter(Task.user_email == eff_email, Task.status == "pending").all()
-        memories = db.query(MemoryItem).filter(MemoryItem.user_email == eff_email).limit(5).all()
+    eff_email = current_user.email
+    tasks = db.query(Task).filter(tenant_filter(Task, current_user), Task.status == "pending").all()
+    memories = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user)).limit(5).all()
     urgent_tasks = [t for t in tasks if t.priority in ["high", "urgent"]]
-    finance = get_finance_summary(user_email=eff_email, db=db)
+    finance = get_finance_summary(current_user=current_user, db=db)
 
     now = datetime.now()
     hour = now.hour
@@ -3737,11 +3748,11 @@ def get_location_city_guide(
 # ----------------- 2-Minute Executive Audio Briefing -----------------
 @app.get("/api/briefing/executive")
 def get_executive_audio_briefing(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Generates an articulate, crisp 90-second executive audio briefing."""
-    eff_email = (user_email or "").strip().lower() or None
+    """Generates an articulate, crisp 90-second executive audio briefing (AETH-P0-02)."""
+    eff_email = current_user.email
     now = datetime.now()
     today_date = now.date()
     
@@ -3757,11 +3768,7 @@ def get_executive_audio_briefing(
     
     # 2. Today's pending tasks & reminders
     auto_advance_recurring_tasks(db, eff_email)
-    task_query = db.query(Task).filter(Task.status == "pending", (Task.parent_id == None) | (Task.parent_id == 0))
-    if eff_email:
-        task_query = task_query.filter(Task.user_email == eff_email)
-    else:
-        task_query = task_query.filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai"))
+    task_query = db.query(Task).filter(tenant_filter(Task, current_user), Task.status == "pending", (Task.parent_id == None) | (Task.parent_id == 0))
     
     all_pending = task_query.all()
     today_tasks = []
@@ -4134,14 +4141,13 @@ def subscribe_push(req: PushSubscribeRequest, db: Session = Depends(get_db)):
     return {"status": "subscribed", "user": email, "total_subscriptions": len(_push_subscriptions[email])}
 
 @app.post("/api/push/test")
-def send_test_push(user_email: str, db: Session = Depends(get_db)):
-    """Send an immediate test VAPID push notification strictly to the verified requesting user's devices."""
-    email = (user_email or "").strip().lower()
-    if not email or "@" not in email:
-        raise HTTPException(status_code=400, detail="Valid user email required for targeted test push")
-    
-    # Reload from DB strictly for this email
-    db_subs = db.query(PushSubscription).filter(PushSubscription.user_email == email).all()
+def send_test_push(
+    current_user: UserIdentity = Depends(get_current_user_identity),
+    db: Session = Depends(get_db)
+):
+    """Send an immediate test VAPID push notification strictly to the verified requesting user's devices (AETH-P0-02)."""
+    email = current_user.email
+    db_subs = db.query(PushSubscription).filter(tenant_filter(PushSubscription, current_user)).all()
     if db_subs:
         _push_subscriptions[email] = [
             {"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}}
@@ -4169,9 +4175,13 @@ def send_test_push(user_email: str, db: Session = Depends(get_db)):
     return {"status": "success", "sent": sent, "total": len(subs), "errors": errors}
 
 @app.delete("/api/push/subscribe")
-def unsubscribe_push(user_email: str, endpoint: str, db: Session = Depends(get_db)):
-    """Push subscription हटाएं (logout पर)।"""
-    email = user_email.strip().lower()
+def unsubscribe_push(
+    endpoint: str,
+    current_user: UserIdentity = Depends(get_current_user_identity),
+    db: Session = Depends(get_db)
+):
+    """Push subscription हटाएं (logout पर) (AETH-P0-02)."""
+    email = current_user.email
     if email in _push_subscriptions:
         _push_subscriptions[email] = [
             s for s in _push_subscriptions[email]
@@ -4180,7 +4190,7 @@ def unsubscribe_push(user_email: str, endpoint: str, db: Session = Depends(get_d
     try:
         db.query(PushSubscription).filter(
             PushSubscription.endpoint == endpoint,
-            PushSubscription.user_email == email
+            tenant_filter(PushSubscription, current_user)
         ).delete()
         db.commit()
     except Exception as dbe:
@@ -4532,21 +4542,18 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
 
     try:
         data = await req.json()
-        # 2. Durable deduplication via DB
+        # 2. Atomic Durable deduplication via DB (AETH-P0-05)
         update_id = data.get("update_id")
         if update_id:
             event_key = f"tg_{update_id}"
-            existing_event = db.query(ProcessedWebhookEvent).filter(
-                ProcessedWebhookEvent.provider == "telegram",
-                ProcessedWebhookEvent.event_id == event_key
-            ).first()
-            if existing_event:
-                return {"status": "ok", "message": "duplicate update ignored"}
             try:
-                db.add(ProcessedWebhookEvent(provider="telegram", event_id=event_key))
+                with db.begin_nested():
+                    db.add(ProcessedWebhookEvent(provider="telegram", event_id=event_key))
+                    db.flush()
                 db.commit()
             except Exception:
                 db.rollback()
+                return {"status": "ok", "message": "duplicate update ignored"}
 
         message = data.get("message") or data.get("edited_message")
         if not message:
@@ -4567,19 +4574,29 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
         user_email = pairing.user_email if pairing else None
         owner_id = pairing.owner_user_id if pairing else None
 
-        # 3. OTP-Only Pairing Handler via DB ChannelPairingChallenge (AETH-P0-05)
+        # 3. Atomic OTP-Only Pairing Handler via DB ChannelPairingChallenge (AETH-P0-05)
         clean_code = re.sub(r'[^0-9]', '', text)
         if len(clean_code) == 6:
             code_hash = hashlib.sha256(clean_code.encode()).hexdigest()
             now_ts = time.time()
-            challenge = db.query(ChannelPairingChallenge).filter(
+            # Atomic conditional consumption enforcing max 5 attempts
+            rows_updated = db.query(ChannelPairingChallenge).filter(
                 ChannelPairingChallenge.otp_hash == code_hash,
                 ChannelPairingChallenge.channel == "telegram",
                 ChannelPairingChallenge.consumed == False,
-                ChannelPairingChallenge.expires_at >= now_ts
-            ).first()
-            if challenge:
-                challenge.consumed = True
+                ChannelPairingChallenge.expires_at >= now_ts,
+                ChannelPairingChallenge.attempts < 5
+            ).update({
+                ChannelPairingChallenge.consumed: True,
+                ChannelPairingChallenge.attempts: ChannelPairingChallenge.attempts + 1
+            }, synchronize_session=False)
+            db.commit()
+
+            if rows_updated > 0:
+                challenge = db.query(ChannelPairingChallenge).filter(
+                    ChannelPairingChallenge.otp_hash == code_hash,
+                    ChannelPairingChallenge.channel == "telegram"
+                ).first()
                 target_email = challenge.user_email
                 target_owner = challenge.owner_user_id
                 if pairing:
@@ -5201,20 +5218,17 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         msg = messages[0]
         msg_id = msg.get("id")
 
-        # 2. Durable Deduplication via ProcessedWebhookEvent table
+        # 2. Atomic Deduplication via ProcessedWebhookEvent table (AETH-P0-05)
         if msg_id:
-            existing_event = db.query(ProcessedWebhookEvent).filter(
-                ProcessedWebhookEvent.provider == "whatsapp",
-                ProcessedWebhookEvent.event_id == msg_id
-            ).first()
-            if existing_event:
-                print(f"[WhatsApp Webhook] Duplicate message received ({msg_id}) — ignoring to prevent duplicate response.")
-                return {"status": "ok", "message": "duplicate ignored"}
             try:
-                db.add(ProcessedWebhookEvent(provider="whatsapp", event_id=msg_id))
+                with db.begin_nested():
+                    db.add(ProcessedWebhookEvent(provider="whatsapp", event_id=msg_id))
+                    db.flush()
                 db.commit()
             except Exception:
                 db.rollback()
+                print(f"[WhatsApp Webhook] Duplicate message received ({msg_id}) — ignoring to prevent duplicate response.")
+                return {"status": "ok", "message": "duplicate ignored"}
 
         sender = msg.get("from")  # e.g., '919876543210'
         msg_type = msg.get("type")
@@ -5228,19 +5242,28 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         wa_token = os.environ.get("WHATSAPP_TOKEN", "").strip()
         wa_phone_id = os.environ.get("WHATSAPP_PHONE_ID", "").strip()
 
-        # 3. Check if message is a 6-digit OTP for secure pairing via ChannelPairingChallenge (AETH-P0-05)
+        # 3. Atomic OTP consumption via ChannelPairingChallenge (AETH-P0-05)
         clean_code = re.sub(r'[^0-9]', '', user_text)
         if len(clean_code) == 6:
             code_hash = hashlib.sha256(clean_code.encode()).hexdigest()
             now_ts = time.time()
-            challenge = db.query(ChannelPairingChallenge).filter(
+            rows_updated = db.query(ChannelPairingChallenge).filter(
                 ChannelPairingChallenge.otp_hash == code_hash,
                 ChannelPairingChallenge.channel == "whatsapp",
                 ChannelPairingChallenge.consumed == False,
-                ChannelPairingChallenge.expires_at >= now_ts
-            ).first()
-            if challenge:
-                challenge.consumed = True
+                ChannelPairingChallenge.expires_at >= now_ts,
+                ChannelPairingChallenge.attempts < 5
+            ).update({
+                ChannelPairingChallenge.consumed: True,
+                ChannelPairingChallenge.attempts: ChannelPairingChallenge.attempts + 1
+            }, synchronize_session=False)
+            db.commit()
+
+            if rows_updated > 0:
+                challenge = db.query(ChannelPairingChallenge).filter(
+                    ChannelPairingChallenge.otp_hash == code_hash,
+                    ChannelPairingChallenge.channel == "whatsapp"
+                ).first()
                 paired_user_email = challenge.user_email
                 paired_owner_id = challenge.owner_user_id
 
@@ -5531,19 +5554,28 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
         ).first()
         user_email = pairing.user_email if pairing else None
 
-        # Check 6-digit OTP pairing
+        # Check 6-digit OTP pairing atomically (AETH-P0-05)
         clean_code = re.sub(r'[^0-9]', '', body)
         if len(clean_code) == 6:
             code_hash = hashlib.sha256(clean_code.encode()).hexdigest()
             now_ts = time.time()
-            challenge = db.query(ChannelPairingChallenge).filter(
+            rows_updated = db.query(ChannelPairingChallenge).filter(
                 ChannelPairingChallenge.otp_hash == code_hash,
                 ChannelPairingChallenge.channel == "whatsapp",
                 ChannelPairingChallenge.consumed == False,
-                ChannelPairingChallenge.expires_at >= now_ts
-            ).first()
-            if challenge:
-                challenge.consumed = True
+                ChannelPairingChallenge.expires_at >= now_ts,
+                ChannelPairingChallenge.attempts < 5
+            ).update({
+                ChannelPairingChallenge.consumed: True,
+                ChannelPairingChallenge.attempts: ChannelPairingChallenge.attempts + 1
+            }, synchronize_session=False)
+            db.commit()
+
+            if rows_updated > 0:
+                challenge = db.query(ChannelPairingChallenge).filter(
+                    ChannelPairingChallenge.otp_hash == code_hash,
+                    ChannelPairingChallenge.channel == "whatsapp"
+                ).first()
                 target_email = challenge.user_email
                 target_owner = challenge.owner_user_id
                 if pairing:
@@ -5888,22 +5920,13 @@ async def ask_personal_document(
 
 @app.get("/api/digest/weekly")
 def get_weekly_digest(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Returns a 7-day life & spend digest for the authenticated user."""
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        return {
-            "weekly_expense": 0,
-            "top_category": "none",
-            "tasks_completed": 0,
-            "tasks_pending": 0,
-            "summary": "Sign in to see your weekly digest."
-        }
+    """Returns a 7-day life & spend digest for the authenticated user (AETH-P0-02)."""
     since = datetime.utcnow() - timedelta(days=7)
     expenses = db.query(FinancialRecord).filter(
-        FinancialRecord.user_email == eff_email,
+        tenant_filter(FinancialRecord, current_user),
         FinancialRecord.type == "expense",
         FinancialRecord.date >= since
     ).all()
@@ -5914,7 +5937,7 @@ def get_weekly_digest(
         cat_totals[c] = cat_totals.get(c, 0.0) + float(e.amount or 0)
     top_category = max(cat_totals, key=cat_totals.get) if cat_totals else "none"
 
-    all_tasks = db.query(Task).filter(Task.user_email == eff_email).all()
+    all_tasks = db.query(Task).filter(tenant_filter(Task, current_user)).all()
     tasks_completed = sum(1 for t in all_tasks if t.is_completed)
     tasks_pending = sum(1 for t in all_tasks if not t.is_completed)
 
@@ -6303,12 +6326,11 @@ class SocialEngagementTrackRequest(BaseModel):
 
 @app.get("/api/social/engagement")
 def get_social_engagement_posts(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
     items = db.query(MemoryItem).filter(
-        MemoryItem.user_email == eff_email,
+        tenant_filter(MemoryItem, current_user),
         MemoryItem.category == "social_post_engagement"
     ).order_by(MemoryItem.created_at.desc()).limit(20).all()
 
