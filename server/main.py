@@ -5041,6 +5041,9 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
                     "parse_mode": "Markdown"
                 })
         return {"status": "ok"}
+    except HTTPException:
+        webhook_success = False
+        raise
     except Exception as e:
         webhook_success = False
         print(f"[Telegram Webhook Error] {e}")
@@ -5908,6 +5911,9 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
 
         await _send_whatsapp_message(sender, reply_text, wa_phone_id, wa_token)
         return {"status": "ok"}
+    except HTTPException:
+        webhook_success = False
+        raise
     except Exception as e:
         webhook_success = False
         print(f"[WhatsApp Webhook Error] {e}")
