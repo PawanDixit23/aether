@@ -458,6 +458,11 @@ def test_p0_04_android_webview():
 
 def test_p0_05_messaging_webhooks():
     print("\n--- Testing P0-05: Webhook Security, Atomic Deduplication & OTP Pairing ---")
+    # The legacy GET setup route must not auto-pair a hard-coded identity or send a live message.
+    retired_sync = client.get("/api/whatsapp/sync-waba")
+    assert retired_sync.status_code == 410, (
+        "Legacy WABA sync endpoint must be retired; pairing must use authenticated OTP flow"
+    )
     db = SessionLocal()
     headers_a = {"Authorization": "Bearer test_user_a@tenant.com"}
 
