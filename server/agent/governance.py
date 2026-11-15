@@ -220,8 +220,10 @@ class ActionApprovalManager:
                     return False, "Parameter tampering detected! Provided parameters do not match approved payload."
                 return False, "Approval token consumption rejected"
             except Exception as e:
-                # Leave rollback/transaction cleanup to the caller. If the DB transaction
-                # is invalidated by the error, the caller's transaction context will roll it back.
+                # A failed SQL statement leaves the SQLAlchemy transaction unusable.
+                # Roll it back before returning so the caller can safely fail closed
+                # or create a fresh pending approval in the same request session.
+                db.rollback()
                 return False, f"Database error during approval verification: {e}"
 
         # 2. In-memory check strictly forbidden in production (AETH-P0-03)
