@@ -956,7 +956,7 @@ export default function GeminiLiveModal({
               overflowY: 'auto',
               display: 'flex',
               flexDirection: 'column',
-              justifyContent: (sessionState === 'speaking' || sessionState === 'thinking' || (transcript && transcript.length > 70)) ? 'flex-start' : 'center',
+              justifyContent: (sessionState === 'speaking' || (transcript && transcript.length > 70)) ? 'flex-start' : 'center',
               boxShadow: sessionState === 'thinking' ? '0 12px 36px rgba(245, 158, 11, 0.15)' : '0 12px 36px rgba(0, 0, 0, 0.7)',
               scrollbarWidth: 'thin',
               scrollbarColor: 'rgba(56, 189, 248, 0.35) transparent',
@@ -990,46 +990,10 @@ export default function GeminiLiveModal({
                     }} />
                   )}
                 </div>
-              ) : sessionState === 'thinking' ? (
-                <div style={{ width: '100%' }}>
-                  {transcript && (
-                    <div style={{ color: '#cbd5e1', marginBottom: '12px', fontSize: '0.96rem', fontStyle: 'italic' }}>
-                      "{transcript}"
-                    </div>
-                  )}
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    padding: '10px 14px',
-                    borderRadius: '14px',
-                    background: 'rgba(245, 158, 11, 0.08)',
-                    border: '1px solid rgba(245, 158, 11, 0.25)',
-                    color: '#fbbf24',
-                    boxShadow: '0 4px 16px rgba(0,0,0,0.2)'
-                  }}>
-                    <span style={{ fontSize: '1.15rem', animation: 'livePulse 1.5s infinite' }}>
-                      {currentThinking.emoji}
-                    </span>
-                    <span
-                      key={`card-think-${thinkingPhaseIndex}`}
-                      style={{
-                        fontSize: '0.88rem',
-                        fontWeight: 600,
-                        animation: 'fadeInThinking 0.25s ease'
-                      }}
-                    >
-                      {currentThinking.text}
-                    </span>
-                    {thinkingElapsed > 0 && (
-                      <span style={{ fontSize: '0.75rem', color: '#fde68a', marginLeft: 'auto', fontWeight: 600 }}>
-                        {thinkingElapsed}s
-                      </span>
-                    )}
-                  </div>
-                </div>
               ) : transcript ? (
-                <span style={{ color: '#f1f5f9' }}>"{transcript}"</span>
+                <span style={{ color: '#f1f5f9', fontStyle: sessionState === 'thinking' ? 'italic' : 'normal' }}>
+                  "{transcript}"
+                </span>
               ) : (
                 <span style={{ color: '#64748b' }}>
                   सुन रहा हूँ... आप सीधे बोलें जैसे "आज के टास्क बताओ" या "रोहित को कॉल करो"
