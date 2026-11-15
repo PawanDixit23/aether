@@ -200,8 +200,8 @@ def test_postgres_rls_suite():
             aa_tmp = ActionApproval(
                 owner_user_id=user_a, user_email="usera@example.com",
                 action_id=str(uuid.uuid4()), tool_name="delete_all_data",
-                params_hash="deadbeef", params_json="{}",
-                status="pending", created_at=datetime.utcnow()
+                param_hash="deadbeef", params_json="{}",
+                expires_at=time.time() + 600, consumed=False, created_at=datetime.utcnow()
             )
             sess.add(aa_tmp)
 
@@ -372,7 +372,7 @@ def test_postgres_rls_suite():
         with sess.begin():
             set_db_rls_context(sess, user_a)
             action_info = ActionApprovalManager.create_approval_request(
-                tool_name="execute_wire_transfer",
+                tool_name="transfer_money",
                 params=test_params,
                 user_email="usera@example.com",
                 owner_user_id=user_a,
@@ -480,14 +480,15 @@ def test_postgres_rls_suite():
 
             # Create a real approval, then verify it gates execution
             test_params = {"amount": 50000, "to": "external_account"}
-            approval_id = ActionApprovalManager.create_approval_request(
+            approval_result = ActionApprovalManager.create_approval_request(
                 tool_name="execute_wire_transfer",
                 params=test_params,
                 user_email="usera@example.com",
                 owner_user_id=user_a,
                 db=orch_db_sess
             )
-            assert approval_id, "ActionApprovalManager failed to create approval request"
+            assert approval_result and approval_result.get("action_id"), "ActionApprovalManager failed to create approval request"
+            approval_id = approval_result["action_id"]
             print(f"✅ P0-03: Approval request created (action_id={approval_id})")
 
             # Verify that the approval was recorded in the DB under RLS
@@ -496,7 +497,7 @@ def test_postgres_rls_suite():
                 ActionApproval.owner_user_id == user_a
             ).first()
             assert stored is not None, "Approval not persisted in DB under RLS context!"
-            assert stored.status == "pending", f"Expected pending, got: {stored.status}"
+            assert not stored.consumed, "Expected newly created approval to be unconsumed"
             print(f"✅ P0-03: Approval persisted in DB (status=pending, owner={stored.owner_user_id})")
 
             # User B cannot see or consume User A's approval
