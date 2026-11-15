@@ -28,17 +28,22 @@ engine = create_engine(
 )
 
 # Concurrency & Reliability Hardening for SQLite:
-# WAL (Write-Ahead Logging) allows simultaneous reads and writes without blocking.
-# busy_timeout=5000 prevents any 'database is locked' errors under high load.
+# Configure WAL once per process. Re-running PRAGMA journal_mode=WAL on every
+# newly opened connection can itself contend for SQLite's schema/database lock
+# when another session has an active transaction (notably TestClient + worker sessions).
+# Per-connection settings remain in the connect hook.
 if DATABASE_URL.startswith("sqlite"):
-    from sqlalchemy import event
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA busy_timeout=15000")
         cursor.close()
+
+    # journal_mode is persistent for the database file; set it once during engine
+    # initialization rather than attempting to change it on every connection.
+    with engine.connect() as sqlite_connection:
+        sqlite_connection.exec_driver_sql("PRAGMA journal_mode=WAL")
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 @event.listens_for(SessionLocal, "after_begin")
