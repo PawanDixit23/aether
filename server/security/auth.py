@@ -9,6 +9,7 @@ import re
 import time
 import math
 import hashlib
+from functools import lru_cache
 from typing import Optional, Dict, Any
 import jwt
 from jwt import PyJWKClient
@@ -55,6 +56,12 @@ def _supabase_jwks_url() -> str:
     return f"{supabase_url}/auth/v1/.well-known/jwks.json"
 
 
+@lru_cache(maxsize=4)
+def _get_jwks_client(url: str) -> PyJWKClient:
+    """Reuse the JWKS client so its key-set cache is effective across requests."""
+    return PyJWKClient(url, cache_jwk_set=True, cache_keys=True, timeout=5)
+
+
 def verify_supabase_jwt(
     token: str,
     jwt_secret: str,
@@ -72,12 +79,7 @@ def verify_supabase_jwt(
         algorithm = header.get("alg")
 
         if algorithm == "ES256":
-            jwks_client = PyJWKClient(
-                jwks_url or _supabase_jwks_url(),
-                cache_jwk_set=True,
-                cache_keys=True,
-                timeout=5
-            )
+            jwks_client = _get_jwks_client(jwks_url or _supabase_jwks_url())
             signing_key = jwks_client.get_signing_key_from_jwt(token)
             verification_key = signing_key.key
             allowed_algorithms = ["ES256"]
