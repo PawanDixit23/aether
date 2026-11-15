@@ -58,6 +58,19 @@ def ensure_schema_migrations():
     except Exception as e:
         print(f"[Schema Migration Warning] create_all error: {e}")
 
+    # Inspect existing columns to skip unnecessary ALTER TABLE locks on PostgreSQL
+    table_columns = {}
+    try:
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
+        for tbl in inspector.get_table_names():
+            try:
+                table_columns[tbl.lower()] = {c["name"].lower() for c in inspector.get_columns(tbl)}
+            except Exception:
+                table_columns[tbl.lower()] = set()
+    except Exception as e:
+        table_columns = {}
+
     migration_statements = [
         "ALTER TABLE tasks ADD COLUMN user_email VARCHAR",
         "ALTER TABLE financial_records ADD COLUMN user_email VARCHAR",
@@ -83,8 +96,6 @@ def ensure_schema_migrations():
         "ALTER TABLE tasks ADD COLUMN dependency_task_ids TEXT DEFAULT '[]'",
         "ALTER TABLE chat_messages ADD COLUMN importance FLOAT DEFAULT 1.0",
         "ALTER TABLE chat_messages ADD COLUMN last_accessed_at TIMESTAMP",
-        "ALTER TABLE chat_messages ADD COLUMN owner_user_id VARCHAR",
-        "ALTER TABLE chat_messages ADD COLUMN embedding TEXT",
         "ALTER TABLE financial_records ADD COLUMN is_recurring BOOLEAN DEFAULT FALSE",
         "ALTER TABLE financial_records ADD COLUMN recurrence_interval VARCHAR",
         "ALTER TABLE financial_records ADD COLUMN next_due_date TIMESTAMP",
@@ -94,6 +105,13 @@ def ensure_schema_migrations():
     ]
 
     for stmt in migration_statements:
+        parts = stmt.split()
+        if len(parts) >= 6:
+            tbl = parts[2].lower()
+            col = parts[5].lower()
+            if tbl in table_columns and col in table_columns[tbl]:
+                continue  # Column already exists: skip ALTER TABLE to prevent lock contention
+
         try:
             with engine.connect() as conn:
                 target_sql = stmt
@@ -102,5 +120,6 @@ def ensure_schema_migrations():
                 conn.execute(text(target_sql))
                 conn.commit()
         except Exception as e:
-            if is_pg and "already exists" not in str(e).lower() and "duplicate column" not in str(e).lower():
+            err_str = str(e).lower()
+            if "already exists" not in err_str and "duplicate column" not in err_str and "canceled" not in err_str:
                 print(f"[Postgres Migration Note] {stmt}: {e}")
