@@ -77,6 +77,20 @@ class AgentOrchestrator:
                 approval_id = (context or {}).get("action_id") or (context or {}).get("approval_id")
                 is_authorized = False
                 if approval_id:
+                    # Bind execution parameters directly to the immutable canonical approval record (AETH-P0-03)
+                    if self.db:
+                        from models import ActionApproval
+                        db_appr = self.db.query(ActionApproval).filter(
+                            ActionApproval.action_id == approval_id,
+                            ActionApproval.owner_user_id == self.owner_user_id
+                        ).first()
+                        if db_appr and db_appr.params_json:
+                            try:
+                                canonical_params = json.loads(db_appr.params_json)
+                                params = canonical_params
+                                tool_call.parameters = canonical_params
+                            except Exception:
+                                pass
                     is_auth, auth_msg = ActionApprovalManager.verify_and_consume(
                         action_id=approval_id,
                         tool_name=tool_name,

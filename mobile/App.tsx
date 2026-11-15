@@ -89,6 +89,7 @@ const ALLOWED_BRIDGE_ACTIONS = new Set([
 
 export default function App() {
   const webViewRef = useRef<WebView>(null);
+  const currentTopUrlRef = useRef<string>(AETHER_URL);
   const [canGoBack, setCanGoBack] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -325,12 +326,20 @@ export default function App() {
           geolocationEnabled={true}
           allowsInlineMediaPlayback={true}
           mediaPlaybackRequiresUserAction={false}
-          mediaCapturePermissionGrantType="grant"
+          mediaCapturePermissionGrantType="prompt"
           {...({
             onPermissionRequest: (event: any) => {
               // Deny if origin is missing or untrusted (AETH-P0-04)
               if (event?.origin && isTrustedOrigin(event.origin)) {
-                event?.grant?.(event.resources);
+                const requested = Array.isArray(event.resources) ? event.resources : [];
+                const allowed = requested.filter((r: string) => 
+                  r === 'android.webkit.resource.AUDIO_CAPTURE' || r === 'android.webkit.resource.VIDEO_CAPTURE'
+                );
+                if (allowed.length > 0) {
+                  event?.grant?.(allowed);
+                } else {
+                  event?.deny?.();
+                }
               } else {
                 event?.deny?.();
               }
@@ -372,10 +381,17 @@ export default function App() {
               return false; // Deny arbitrary untrusted 3rd party iframes
             }
 
-            // 2. Allow embedded YouTube players and media to load smoothly inside the WebView
-            if (url.includes('/embed/') || url.includes('youtube.com/embed')) {
-              return true;
-            }
+            // 2. Allow embedded YouTube players and media to load smoothly inside the WebView (Strict Origin & Path)
+            try {
+              const parsed = new URL(url);
+              if (
+                parsed.protocol === 'https:' &&
+                (parsed.hostname === 'www.youtube.com' || parsed.hostname === 'www.youtube-nocookie.com') &&
+                parsed.pathname.startsWith('/embed/')
+              ) {
+                return true;
+              }
+            } catch {}
 
             // 3. Open native Phone Dialer, SMS, and Mail externally without breaking the WebView session
             if (url.startsWith('tel:')) {
@@ -459,25 +475,36 @@ export default function App() {
               Linking.openURL(url).catch(() => {});
               return false;
             }
-            }
 
             // If OAuth provider falls back to localhost redirect, redirect back to cloud AETHER_URL with token intact
             if (url.includes('access_token') && (url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1'))) {
               const hashIndex = url.indexOf('#');
               if (hashIndex !== -1) {
-                const targetUrl = `${AETHER_URL}/${url.substring(hashIndex)}`;
-                webViewRef.current?.injectJavaScript(`window.location.href = "${targetUrl}";`);
-                return false;
+                const targetFragment = url.substring(hashIndex);
+                // Strict validation: fragment must only contain alphanumeric, URL-safe characters
+                if (/^#[a-zA-Z0-9_=&-]+$/.test(targetFragment)) {
+                  const targetUrl = `${AETHER_URL}/${targetFragment}`;
+                  const safeTargetUrl = JSON.stringify(targetUrl);
+                  webViewRef.current?.injectJavaScript(`window.location.href = ${safeTargetUrl}; true;`);
+                  return false;
+                }
               }
             }
             return true;
           }}
           onNavigationStateChange={(navState) => {
             setCanGoBack(navState.canGoBack);
+            if (navState.url) {
+              currentTopUrlRef.current = navState.url;
+            }
           }}
           onMessage={async (event) => {
             try {
-              // Validate that the message originated from a trusted origin (AETH-P0-04)
+              // Validate that both top-level frame and sender originated from trusted origin (AETH-P0-04)
+              if (!isTrustedOrigin(currentTopUrlRef.current)) {
+                console.warn('[WebView Bridge] Dropping bridge message: top-level frame is untrusted:', currentTopUrlRef.current);
+                return;
+              }
               const senderUrl = event.nativeEvent.url;
               if (senderUrl && !isTrustedOrigin(senderUrl)) {
                 console.warn('[WebView Bridge] Dropping bridge message from untrusted frame/origin:', senderUrl);

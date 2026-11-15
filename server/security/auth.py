@@ -211,8 +211,10 @@ def get_current_user_identity(
                 detail="Production authentication configuration missing (SUPABASE_JWT_SECRET required)"
             )
 
-        # 2. Local Dev/Test Mode ONLY (Strictly forbidden in production)
-        if not is_production:
+        # 2. Local Dev/Test Mode ONLY with explicit ENABLE_INSECURE_DEV_AUTH guard (AETH-P0-01)
+        # An accidental ENVIRONMENT=dev in production CANNOT enable unverified token paths!
+        allow_insecure_dev = os.environ.get("ENABLE_INSECURE_DEV_AUTH", "").lower() in ["true", "1", "yes"]
+        if not is_production and allow_insecure_dev:
             payload = _decode_jwt_unverified(token)
             if payload and payload.get("sub"):
                 sub = str(payload.get("sub")).strip()
@@ -242,11 +244,12 @@ def get_current_user_identity(
                     role="authenticated"
                 )
 
-        raise HTTPException(status_code=401, detail="Malformed Bearer token")
+        raise HTTPException(status_code=401, detail="Malformed or unverified Bearer token")
 
-    # Local development fallback only when explicitly in local/dev/test mode AND NOT production
+    # Local development fallback only when explicitly in local/dev/test mode AND explicit insecure flag
     is_dev = env in ["dev", "development", "local", "test"]
-    if is_dev and not is_production and not jwt_secret:
+    allow_insecure_dev = os.environ.get("ENABLE_INSECURE_DEV_AUTH", "").lower() in ["true", "1", "yes"]
+    if is_dev and not is_production and not jwt_secret and allow_insecure_dev:
         return UserIdentity(
             user_id="00000000-0000-0000-0000-000000000001",
             email=default_dev_email,
@@ -309,6 +312,10 @@ def validate_security_config_at_startup():
     if os.environ.get("ENABLE_WHATSAPP", "").lower() in ["true", "1", "yes"] or os.environ.get("WHATSAPP_TOKEN", "").strip():
         if not os.environ.get("WHATSAPP_APP_SECRET", "").strip():
             errors.append("WHATSAPP_APP_SECRET is required when Meta WhatsApp integration is active in production.")
+
+    if os.environ.get("ENABLE_TWILIO", "").lower() in ["true", "1", "yes"] or os.environ.get("TWILIO_ACCOUNT_SID", "").strip():
+        if not os.environ.get("TWILIO_AUTH_TOKEN", "").strip():
+            errors.append("TWILIO_AUTH_TOKEN is required when Twilio integration is active in production.")
 
     if errors:
         raise RuntimeError("FATAL AETHER STARTUP FAILURE: Critical production security configuration missing:\n" + "\n".join(f"  • {e}" for e in errors))

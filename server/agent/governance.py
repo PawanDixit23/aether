@@ -6,6 +6,7 @@ Fulfills AETH-SEC-03 (Denial by Default) and AETH-SEC-04 (Action Approval Tamper
 """
 
 import os
+import re
 import json
 import uuid
 import time
@@ -16,6 +17,8 @@ from sqlalchemy.orm import Session
 from .state import ActionTier, ToolCall
 from models import AuditLog, ActionApproval
 from datetime import datetime
+
+UUID_REGEX = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -108,11 +111,17 @@ class ActionApprovalManager:
         now = time.time()
         expires_at = now + ttl_seconds
         clean_email = str(user_email).strip().lower()
-        clean_user_id = str(owner_user_id or user_email).strip()
 
-        # Database persistence is mandatory for fail-closed security (AETH-P0-03)
+        # Database persistence and strict UUID ownership are mandatory for fail-closed security (AETH-P0-03)
         env = os.environ.get("ENVIRONMENT", "production").lower()
         is_prod = env in ["prod", "production"]
+        if is_prod:
+            if not owner_user_id or not UUID_REGEX.match(str(owner_user_id).strip()):
+                raise RuntimeError("Valid immutable owner UUID is required to create action approval in production")
+            clean_user_id = str(owner_user_id).strip()
+        else:
+            clean_user_id = str(owner_user_id or user_email).strip()
+
         if not db and is_prod:
             raise RuntimeError("Database session required to create durable action approval in production")
 
@@ -161,7 +170,14 @@ class ActionApprovalManager:
     ) -> Tuple[bool, str]:
         now = time.time()
         clean_email = str(user_email).strip().lower()
-        clean_user_id = str(owner_user_id or user_email).strip()
+        env = os.environ.get("ENVIRONMENT", "production").lower()
+        is_prod = env in ["prod", "production"]
+        if is_prod:
+            if not owner_user_id or not UUID_REGEX.match(str(owner_user_id).strip()):
+                return False, "Valid immutable owner UUID is required for action authorization in production"
+            clean_user_id = str(owner_user_id).strip()
+        else:
+            clean_user_id = str(owner_user_id or user_email).strip()
         current_hash = cls.compute_canonical_hash(tool_name, params)
 
         # 1. DB-backed atomic consumption (AETH-P0-03)

@@ -5,6 +5,7 @@ Tests all Acceptance Criteria from the Remediation Plan across Epics 1, 2, 3, 4,
 
 import os
 os.environ["ENVIRONMENT"] = "test"
+os.environ["ENABLE_INSECURE_DEV_AUTH"] = "true"
 import json
 import uuid
 import hashlib

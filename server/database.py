@@ -1,7 +1,7 @@
 import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 
 # Support persistent cloud PostgreSQL (Supabase / Render / Neon) or local SQLite
 DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
@@ -94,6 +94,8 @@ def ensure_schema_migrations():
         "ALTER TABLE chat_messages ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE whatsapp_messages ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE task_date_completions ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE push_subscriptions ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE scheduled_jobs ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE tasks ADD COLUMN dependency_task_ids TEXT DEFAULT '[]'",
         "ALTER TABLE chat_messages ADD COLUMN importance FLOAT DEFAULT 1.0",
         "ALTER TABLE chat_messages ADD COLUMN last_accessed_at TIMESTAMP",
@@ -126,49 +128,48 @@ def ensure_schema_migrations():
                 print(f"[Postgres Migration Note] {stmt}: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # AETH-P0-02: Deterministic UUID Backfill for Pre-Migration Legacy Records
+    # AETH-P0-02: Trusted Supabase Auth Identity Mapping & Quarantining
     # ─────────────────────────────────────────────────────────────────────────
     tenant_tables = [
         "tasks", "financial_records", "memory_vault", "chat_sessions", 
-        "chat_messages", "audit_logs"
+        "chat_messages", "audit_logs", "push_subscriptions", "scheduled_jobs"
     ]
     for tbl in tenant_tables:
         try:
             with engine.connect() as conn:
                 if is_pg:
-                    # PostgreSQL: backfill deterministic UUID from user_email using md5
+                    # Map legacy rows only if matching authentic auth.users subject exists
                     conn.execute(text(f"""
-                        UPDATE {tbl}
-                        SET owner_user_id = md5(lower(trim(user_email)))::uuid::text
-                        WHERE owner_user_id IS NULL AND user_email IS NOT NULL AND trim(user_email) != '';
+                        DO $$
+                        BEGIN
+                            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'auth' AND table_name = 'users') THEN
+                                UPDATE {tbl}
+                                SET owner_user_id = u.id::text
+                                FROM auth.users u
+                                WHERE {tbl}.owner_user_id IS NULL
+                                  AND {tbl}.user_email IS NOT NULL
+                                  AND lower(trim({tbl}.user_email)) = lower(trim(u.email));
+                            END IF;
+                        END $$;
                     """))
-                else:
-                    # SQLite: backfill deterministic UUID string from user_email
-                    rows = conn.execute(text(f"""
-                        SELECT id, user_email FROM {tbl} 
-                        WHERE owner_user_id IS NULL AND user_email IS NOT NULL AND trim(user_email) != ''
-                    """)).fetchall()
-                    for r_id, u_email in rows:
-                        import hashlib
-                        m = hashlib.md5(u_email.strip().lower().encode()).hexdigest()
-                        det_uuid = f"{m[:8]}-{m[8:12]}-{m[12:16]}-{m[16:20]}-{m[20:32]}"
-                        conn.execute(text(f"UPDATE {tbl} SET owner_user_id = :uuid WHERE id = :id"), {"uuid": det_uuid, "id": r_id})
-                conn.commit()
+                    conn.commit()
         except Exception as e:
-            print(f"[UUID Migration Note] {tbl}: {e}")
+            print(f"[Trusted Identity Mapping Note] {tbl}: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # AETH-P0-02: PostgreSQL Row-Level Security (RLS) Enforcement
+    # AETH-P0-02: PostgreSQL Row-Level Security (RLS) & Force Enforcement
     # ─────────────────────────────────────────────────────────────────────────
     if is_pg:
         rls_tables = [
             "tasks", "financial_records", "memory_vault", "chat_sessions",
-            "chat_messages", "audit_logs", "action_approvals", "user_integration_pairings"
+            "chat_messages", "audit_logs", "action_approvals", "user_integration_pairings",
+            "push_subscriptions", "scheduled_jobs", "whatsapp_messages"
         ]
         for t in rls_tables:
             try:
                 with engine.connect() as conn:
                     conn.execute(text(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY;"))
+                    conn.execute(text(f"ALTER TABLE {t} FORCE ROW LEVEL SECURITY;"))
                     conn.execute(text(f"""
                         DO $$
                         BEGIN
@@ -185,4 +186,19 @@ def ensure_schema_migrations():
                     conn.commit()
             except Exception as e:
                 print(f"[RLS Migration Note] {t}: {e}")
+
+
+def set_db_rls_context(db: Session, user_id: str):
+    """
+    Sets transaction-local PostgreSQL RLS context from verified authenticated UUID (AETH-P0-02).
+    Ensures current_setting('request.jwt.claim.sub', true) matches verified user_id in all queries.
+    """
+    if not user_id:
+        return
+    try:
+        is_pg = "postgres" in str(engine.url).lower()
+        if is_pg:
+            db.execute(text("SET LOCAL request.jwt.claim.sub = :sub"), {"sub": str(user_id).strip()})
+    except Exception as e:
+        print(f"[RLS Context Warning] Failed to set request.jwt.claim.sub: {e}")
 

@@ -104,6 +104,7 @@ class PushSubscription(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=False)
+    owner_user_id = Column(String, index=True, nullable=True)
     endpoint = Column(Text, nullable=False)
     p256dh = Column(Text, nullable=False)
     auth = Column(Text, nullable=False)
@@ -114,6 +115,7 @@ class ScheduledJob(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String, index=True, nullable=True)
     job_type = Column(String, nullable=False)   # e.g. "reminder", "task_notify", "whatsapp_digest"
     idempotency_key = Column(String, index=True, nullable=True)
     payload = Column(Text, nullable=True)       # JSON string

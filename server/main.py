@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 import httpx
 import re
 import traceback
@@ -294,12 +295,13 @@ def get_user_email(
 def tenant_filter(model, current_user: UserIdentity):
     """
     Enforces strict immutable UUID ownership on all tenant-owned rows (AETH-P0-02).
+    Never falls back to email. Fails closed if model lacks owner_user_id.
     """
     if hasattr(model, "owner_user_id"):
         return model.owner_user_id == current_user.id
-    if hasattr(model, "user_email"):
-        return model.user_email == current_user.email
-    return True
+    # Fail closed: never silently return True or fall back to email
+    import sqlalchemy.sql
+    return sqlalchemy.sql.false()
 
 DEFAULT_OWNER_EMAIL = os.environ.get("DEFAULT_USER_EMAIL", "e.pawandixit@gmail.com").strip().lower()
 
@@ -565,40 +567,37 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
         tasks = db.query(Task).filter(Task.owner_user_id == owner_user_id, Task.status == "pending").all()
         records = db.query(FinancialRecord).filter(FinancialRecord.owner_user_id == owner_user_id).all()
     else:
-        tasks = db.query(Task).filter(Task.user_email == user_email, Task.status == "pending").all()
-        records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).all()
+        tasks = []
+        records = []
 
     # Hybrid Memory Retrieval: rank & surface relevant facts/contacts matching the prompt
     recalled_mems = []
-    if prompt_query:
+    if prompt_query and owner_user_id:
         try:
             from memory import HybridMemoryProvider
-            recalled = HybridMemoryProvider.recall_context(prompt_query, user_email, db, limit=12)
+            recalled = HybridMemoryProvider.recall_context(prompt_query, user_email or owner_user_id, db, limit=12)
             recalled_facts = set(recalled.get("relevant_facts", []))
-            if owner_user_id:
-                all_mem_objs = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
-            else:
-                all_mem_objs = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
+            all_mem_objs = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
             # Prioritize recalled items first
             recalled_mems = [m for m in all_mem_objs if m.fact in recalled_facts]
             remaining_mems = [m for m in all_mem_objs if m.fact not in recalled_facts]
             memories = recalled_mems + remaining_mems[:15]
         except Exception:
-            if owner_user_id:
-                memories = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
-            else:
-                memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
-    else:
-        if owner_user_id:
             memories = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
-        else:
-            memories = db.query(MemoryItem).filter(MemoryItem.user_email == user_email).all()
+    elif owner_user_id:
+        memories = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
+    else:
+        memories = []
 
-    # Fetch last 40 messages (20+ turns) for comprehensive conversational memory across prompts!
+    # Fetch last 40 messages for comprehensive conversational memory strictly scoped to owner UUID
     try:
         chat_q = db.query(ChatMessage)
-        if user_email:
-            chat_q = chat_q.filter(ChatMessage.user_email == user_email)
+        if owner_user_id:
+            chat_q = chat_q.filter(ChatMessage.owner_user_id == owner_user_id)
+        elif session_id:
+            chat_q = chat_q.filter(ChatMessage.session_id == session_id)
+        else:
+            chat_q = chat_q.filter(sqlalchemy.sql.false())
         if session_id:
             chat_q = chat_q.filter(ChatMessage.session_id == session_id)
         if exclude_chat_id:
@@ -1905,7 +1904,7 @@ def get_chat_sessions(
             first_msg = (
                 db.query(ChatMessage)
                 .filter(
-                    ChatMessage.user_email == eff_email, 
+                    tenant_filter(ChatMessage, current_user), 
                     ChatMessage.role == "user",
                     (ChatMessage.session_id == None) | (ChatMessage.session_id == "")
                 )
@@ -1917,7 +1916,8 @@ def get_chat_sessions(
                 legacy_title = (raw_title[:36] + ("..." if len(raw_title) > 36 else "")) if raw_title else "Previous Conversation"
                 default_session = ChatSession(
                     id="default",
-                    user_email=eff_email,
+                    user_email=current_user.email,
+                    owner_user_id=current_user.id,
                     title=legacy_title,
                     created_at=datetime.utcnow(),
                     updated_at=datetime.utcnow()
@@ -1925,7 +1925,7 @@ def get_chat_sessions(
                 db.add(default_session)
                 try:
                     db.query(ChatMessage).filter(
-                        ChatMessage.user_email == eff_email, 
+                        tenant_filter(ChatMessage, current_user), 
                         (ChatMessage.session_id == None) | (ChatMessage.session_id == "")
                     ).update({"session_id": "default"}, synchronize_session=False)
                 except Exception:
@@ -4100,22 +4100,18 @@ def get_vapid_public_key():
     return {"publicKey": VAPID_PUBLIC_KEY}
 
 @app.post("/api/push/subscribe")
-def subscribe_push(req: PushSubscribeRequest, db: Session = Depends(get_db)):
-    """Browser push subscription server पर store करें (Strict User Isolation)."""
-    email = (req.user_email or "").strip().lower()
-    if not email or "@" not in email:
-        raise HTTPException(status_code=400, detail="Valid user email required to register push subscription")
+def subscribe_push(
+    req: PushSubscribeRequest,
+    current_user: UserIdentity = Depends(get_current_user_identity),
+    db: Session = Depends(get_db)
+):
+    """Browser push subscription server पर store करें (Strict UUID User Isolation)."""
+    email = current_user.email
+    owner_id = current_user.id
     if not req.subscription or not req.subscription.get("endpoint"):
         raise HTTPException(status_code=400, detail="Valid subscription object required")
     
-    # 1. Update in-memory cache strictly for this email
-    if email not in _push_subscriptions:
-        _push_subscriptions[email] = []
     endpoint = req.subscription.get("endpoint", "")
-    _push_subscriptions[email] = [s for s in _push_subscriptions[email] if s.get("endpoint") != endpoint]
-    _push_subscriptions[email].append(req.subscription)
-    
-    # 2. Persist to Database table so subscriptions survive cold container sleep & restart
     try:
         keys = req.subscription.get("keys", {})
         p256dh = keys.get("p256dh", "")
@@ -4123,11 +4119,13 @@ def subscribe_push(req: PushSubscribeRequest, db: Session = Depends(get_db)):
         existing = db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint).first()
         if existing:
             existing.user_email = email
+            existing.owner_user_id = owner_id
             existing.p256dh = p256dh
             existing.auth = auth
         else:
             new_sub = PushSubscription(
                 user_email=email,
+                owner_user_id=owner_id,
                 endpoint=endpoint,
                 p256dh=p256dh,
                 auth=auth
@@ -4137,8 +4135,7 @@ def subscribe_push(req: PushSubscribeRequest, db: Session = Depends(get_db)):
     except Exception as dbe:
         print(f"[PushSubscribe DB Error] {dbe}")
     
-    print(f"[WebPush] ✅ Subscription saved in DB & Memory strictly for {email}")
-    return {"status": "subscribed", "user": email, "total_subscriptions": len(_push_subscriptions[email])}
+    return {"status": "subscribed", "user": email, "owner_id": owner_id}
 
 @app.post("/api/push/test")
 def send_test_push(
@@ -4318,17 +4315,18 @@ def _run_push_check_internal(db: Session):
     pushed_count = 0
     errors = []
 
-    # 1. Database से सभी active subscriptions reload करें
+    # 1. Database से सभी active subscriptions reload करें grouped strictly by owner_user_id (AETH-P0-02)
+    subs_by_owner: Dict[str, List[dict]] = {}
     try:
         db_subs = db.query(PushSubscription).all()
         for s in db_subs:
-            em = (s.user_email or "").strip().lower()
-            if not em:
+            oid = (s.owner_user_id or "").strip()
+            if not oid:
                 continue
-            if em not in _push_subscriptions:
-                _push_subscriptions[em] = []
-            if not any(sub.get("endpoint") == s.endpoint for sub in _push_subscriptions[em]):
-                _push_subscriptions[em].append({
+            if oid not in subs_by_owner:
+                subs_by_owner[oid] = []
+            if not any(sub.get("endpoint") == s.endpoint for sub in subs_by_owner[oid]):
+                subs_by_owner[oid].append({
                     "endpoint": s.endpoint,
                     "keys": {
                         "p256dh": s.p256dh,
@@ -4338,13 +4336,13 @@ def _run_push_check_internal(db: Session):
     except Exception as dbe:
         print(f"[PushCheck DB Load Error] {dbe}")
 
-    # 2. सभी subscribed users के लिए strictly isolated check करें
-    for email, subscriptions in list(_push_subscriptions.items()):
-        if not subscriptions or not email:
+    # 2. सभी subscribed users के लिए strictly isolated owner UUID check करें
+    for owner_id, subscriptions in list(subs_by_owner.items()):
+        if not subscriptions or not owner_id:
             continue
         try:
             tasks = db.query(Task).filter(
-                Task.user_email == email,
+                Task.owner_user_id == owner_id,
                 Task.status == "pending",
                 Task.notified == False
             ).all()
@@ -4371,7 +4369,7 @@ def _run_push_check_internal(db: Session):
                     try:
                         db.query(PushSubscription).filter(PushSubscription.endpoint.in_(expired_endpoints)).delete(synchronize_session=False)
                         db.commit()
-                        _push_subscriptions[email] = [s for s in _push_subscriptions[email] if s.get("endpoint") not in expired_endpoints]
+                        subs_by_owner[owner_id] = [s for s in subs_by_owner[owner_id] if s.get("endpoint") not in expired_endpoints]
                     except Exception:
                         pass
 
@@ -4379,9 +4377,9 @@ def _run_push_check_internal(db: Session):
                     task.notified = True
                     db.commit()
                 else:
-                    errors.append(f"Push delivery failed for task {task.id} (user {email}).")
+                    errors.append(f"Push delivery failed for task {task.id} (owner {owner_id}).")
         except Exception as e:
-            errors.append(f"Error for {email}: {str(e)[:100]}")
+            errors.append(f"Error for {owner_id}: {str(e)[:100]}")
             print(f"[PushCheck Error] {email}: {e}")
 
     return {"status": "ok", "pushed": pushed_count, "errors": errors}
@@ -4628,6 +4626,23 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
                             "parse_mode": "Markdown"
                         })
                 return {"status": "paired"}
+            else:
+                # Increment attempts on active challenge for telegram to enforce 5-guess lockout (AETH-P0-05)
+                db.query(ChannelPairingChallenge).filter(
+                    ChannelPairingChallenge.channel == "telegram",
+                    ChannelPairingChallenge.consumed == False,
+                    ChannelPairingChallenge.expires_at >= now_ts
+                ).update({
+                    ChannelPairingChallenge.attempts: ChannelPairingChallenge.attempts + 1
+                }, synchronize_session=False)
+                # Expire any challenges that have reached 5 attempts
+                db.query(ChannelPairingChallenge).filter(
+                    ChannelPairingChallenge.channel == "telegram",
+                    ChannelPairingChallenge.attempts >= 5
+                ).update({
+                    ChannelPairingChallenge.consumed: True
+                }, synchronize_session=False)
+                db.commit()
 
         # If user tries old insecure /login command, reject and guide to app OTP
         if text.startswith("/start") or text.startswith("/login"):
@@ -4676,6 +4691,7 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
         if action == "task":
             t = Task(
                 user_email=user_email,
+                owner_user_id=owner_id,
                 title=data_inner.get("title", text),
                 priority=data_inner.get("priority", "medium"),
                 reminder_time=data_inner.get("reminder_time"),
@@ -4688,12 +4704,13 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
             if subs and isinstance(subs, list):
                 for st in subs:
                     if str(st).strip():
-                        db.add(Task(user_email=user_email, title=str(st).strip(), parent_id=t.id, status="pending"))
+                        db.add(Task(user_email=user_email, owner_user_id=owner_id, title=str(st).strip(), parent_id=t.id, status="pending"))
                 db.commit()
             reply_text = f"⏰ *टास्क दर्ज किया गया!*\n\n• **कार्य**: {t.title}\n• **समय**: {t.reminder_time or 'Anytime'}\n• **प्राथमिकता**: {t.priority.upper()}"
         elif action == "expense":
             rec = FinancialRecord(
                 user_email=user_email,
+                owner_user_id=owner_id,
                 type="expense",
                 category=data_inner.get("category", "general"),
                 amount=data_inner.get("amount", 0.0),
@@ -4895,13 +4912,12 @@ class WhatsAppSimulateIncomingRequest(BaseModel):
 
 @app.get("/api/whatsapp/messages")
 def get_whatsapp_messages(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     phone: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Fetches all WhatsApp sent and received messages with delivery/activity timeline."""
-    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
-    query = db.query(WhatsAppMessage)
+    """Fetches WhatsApp messages with strict UUID tenant isolation (AETH-P0-02)."""
+    query = db.query(WhatsAppMessage).filter(tenant_filter(WhatsAppMessage, current_user))
     if phone:
         clean_phone = re.sub(r'[^0-9]', '', phone)
         query = query.filter(WhatsAppMessage.phone_number.like(f"%{clean_phone[-10:]}%"))
@@ -4912,7 +4928,8 @@ def get_whatsapp_messages(
         now = datetime.utcnow()
         default_phone = "918741838653"
         seed1 = WhatsAppMessage(
-            user_email=eff_email,
+            user_email=current_user.email,
+            owner_user_id=current_user.id,
             direction="outbound",
             phone_number=default_phone,
             sender_name="Pawan Dixit (Aether)",
@@ -4926,7 +4943,8 @@ def get_whatsapp_messages(
             ])
         )
         seed2 = WhatsAppMessage(
-            user_email=eff_email,
+            user_email=current_user.email,
+            owner_user_id=current_user.id,
             direction="inbound",
             phone_number=default_phone,
             sender_name="Rohit Sharma",
@@ -4938,7 +4956,8 @@ def get_whatsapp_messages(
             ])
         )
         seed3 = WhatsAppMessage(
-            user_email=eff_email,
+            user_email=current_user.email,
+            owner_user_id=current_user.id,
             direction="outbound",
             phone_number=default_phone,
             sender_name="Pawan Dixit (Aether)",
@@ -5297,6 +5316,23 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
                 except Exception:
                     pass
                 return {"status": "ok", "message": "phone successfully paired"}
+            else:
+                # Increment failed attempts on active challenge for whatsapp to enforce 5-guess lockout (AETH-P0-05)
+                db.query(ChannelPairingChallenge).filter(
+                    ChannelPairingChallenge.channel == "whatsapp",
+                    ChannelPairingChallenge.consumed == False,
+                    ChannelPairingChallenge.expires_at >= now_ts
+                ).update({
+                    ChannelPairingChallenge.attempts: ChannelPairingChallenge.attempts + 1
+                }, synchronize_session=False)
+                # Expire any challenges that have reached 5 attempts
+                db.query(ChannelPairingChallenge).filter(
+                    ChannelPairingChallenge.channel == "whatsapp",
+                    ChannelPairingChallenge.attempts >= 5
+                ).update({
+                    ChannelPairingChallenge.consumed: True
+                }, synchronize_session=False)
+                db.commit()
 
         # 4. Check verified pairing strictly from UserIntegrationPairing (AETH-P0-05)
         verified_pairing = db.query(UserIntegrationPairing).filter(
@@ -5306,6 +5342,7 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         ).first()
 
         user_email = verified_pairing.user_email if verified_pairing else None
+        owner_id = verified_pairing.owner_user_id if verified_pairing else None
 
         # 5. Insecure email commands are rejected and guided to OTP
         if user_text.lower().startswith("/login") or user_text.lower().startswith("/start"):
@@ -5386,7 +5423,7 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             return {"status": "external_reply_sent"}
 
         # Process through Aether AI engine
-        context = build_context(db, user_email=user_email)
+        context = build_context(db, user_email=user_email, owner_user_id=owner_id)
         try:
             from ai_engine import parse_intent_with_llm
         except ImportError:
@@ -5413,6 +5450,7 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
                     if title:
                         t = Task(
                             user_email=user_email,
+                            owner_user_id=owner_id,
                             title=title,
                             priority=item.get("priority", "medium"),
                             reminder_time=item.get("reminder_time"),
@@ -5426,6 +5464,7 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             else:
                 t = Task(
                     user_email=user_email,
+                    owner_user_id=owner_id,
                     title=data_inner.get("title", user_text),
                     priority=data_inner.get("priority", "medium"),
                     reminder_time=data_inner.get("reminder_time"),
@@ -5438,13 +5477,14 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
                 if subs and isinstance(subs, list):
                     for st in subs:
                         if str(st).strip():
-                            db.add(Task(user_email=user_email, title=str(st).strip(), parent_id=t.id, status="pending"))
+                            db.add(Task(user_email=user_email, owner_user_id=owner_id, title=str(st).strip(), parent_id=t.id, status="pending"))
                     db.commit()
                 reply_text = f"⏰ *टास्क दर्ज किया गया!*\n\n• *कार्य*: {t.title}\n• *समय*: {t.reminder_time or 'Anytime'}\n• *प्राथमिकता*: {t.priority.upper()}"
         elif action in ["expense", "income"]:
             rec_type = "expense" if action == "expense" else "income"
             rec = FinancialRecord(
                 user_email=user_email,
+                owner_user_id=owner_id,
                 type=rec_type,
                 category=data_inner.get("category", "general"),
                 amount=data_inner.get("amount", 0.0),
@@ -5459,7 +5499,7 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
                 # Check Monthly Category Budget Alert
                 month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
                 cat_spend = db.query(func.sum(FinancialRecord.amount)).filter(
-                    FinancialRecord.user_email == user_email,
+                    FinancialRecord.owner_user_id == owner_id,
                     FinancialRecord.type == "expense",
                     FinancialRecord.category == rec.category,
                     FinancialRecord.date >= month_start
@@ -5506,8 +5546,8 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
 
         # Record WhatsApp conversation into unified Chat History for Aether App
         try:
-            db.add(ChatMessage(user_email=user_email, role="user", content=f"📱 {user_text}", action_type=action))
-            db.add(ChatMessage(user_email=user_email, role="aether", content=reply_text, action_type=action, action_data=json.dumps(data_inner) if data_inner else None))
+            db.add(ChatMessage(user_email=user_email, owner_user_id=owner_id, role="user", content=f"📱 {user_text}", action_type=action))
+            db.add(ChatMessage(user_email=user_email, owner_user_id=owner_id, role="aether", content=reply_text, action_type=action, action_data=json.dumps(data_inner) if data_inner else None))
             db.commit()
         except Exception as e_chat:
             print(f"[WhatsApp ChatMessage Sync Error] {e_chat}")
@@ -5529,17 +5569,43 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
     form = await req.form()
     form_dict = {k: str(v) for k, v in form.items()}
 
-    # Cryptographic Twilio signature verification (AETH-P0-05)
+    # Cryptographic Twilio signature verification with reverse-proxy canonical URL (AETH-P0-05)
     if twilio_auth_token or is_prod:
         sig_header = req.headers.get("X-Twilio-Signature", "").strip()
         if not sig_header:
             raise HTTPException(status_code=403, detail="Missing X-Twilio-Signature header")
-        s = str(req.url)
+
+        proto = req.headers.get("X-Forwarded-Proto", req.url.scheme)
+        host = req.headers.get("X-Forwarded-Host", req.url.netloc)
+        canonical_url = f"{proto}://{host}{req.url.path}"
+
+        s = canonical_url
         for k in sorted(form_dict.keys()):
             s += k + form_dict[k]
         computed_sig = base64.b64encode(hmac.new(twilio_auth_token.encode("utf-8"), s.encode("utf-8"), hashlib.sha1).digest()).decode("utf-8")
+
         if not hmac.compare_digest(sig_header, computed_sig):
-            raise HTTPException(status_code=403, detail="Twilio webhook signature verification failed")
+            s_raw = str(req.url)
+            for k in sorted(form_dict.keys()):
+                s_raw += k + form_dict[k]
+            computed_raw = base64.b64encode(hmac.new(twilio_auth_token.encode("utf-8"), s_raw.encode("utf-8"), hashlib.sha1).digest()).decode("utf-8")
+            if not hmac.compare_digest(sig_header, computed_raw):
+                raise HTTPException(status_code=403, detail="Twilio webhook signature verification failed")
+
+    # Atomic event deduplication for Twilio (AETH-P0-05)
+    msg_sid = form.get("MessageSid") or form.get("SmsMessageSid") or form.get("SmsSid")
+    if msg_sid:
+        try:
+            with db.begin_nested():
+                processed_event = ProcessedWebhookEvent(
+                    provider="twilio",
+                    event_id=str(msg_sid)
+                )
+                db.add(processed_event)
+                db.flush()
+        except IntegrityError:
+            print(f"[Twilio Webhook] Duplicate delivery ignored: {msg_sid}")
+            return Response(content="<Response></Response>", media_type="application/xml")
 
     try:
         sender_full = form.get("From", "")  # e.g. "whatsapp:+919876543210"
@@ -5553,6 +5619,7 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
             UserIntegrationPairing.is_active == True
         ).first()
         user_email = pairing.user_email if pairing else None
+        owner_id = pairing.owner_user_id if pairing else None
 
         # Check 6-digit OTP pairing atomically (AETH-P0-05)
         clean_code = re.sub(r'[^0-9]', '', body)
@@ -5595,37 +5662,31 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
                 db.commit()
                 reply = f"✅ Aether WhatsApp Linked with {target_email}! Ab aap reminders aur kharch direct WhatsApp par bhej sakte hain."
                 return Response(content=f"<Response><Message>{reply}</Message></Response>", media_type="application/xml")
+            else:
+                db.query(ChannelPairingChallenge).filter(
+                    ChannelPairingChallenge.channel == "whatsapp",
+                    ChannelPairingChallenge.consumed == False,
+                    ChannelPairingChallenge.expires_at >= now_ts
+                ).update({
+                    ChannelPairingChallenge.attempts: ChannelPairingChallenge.attempts + 1
+                }, synchronize_session=False)
+                db.query(ChannelPairingChallenge).filter(
+                    ChannelPairingChallenge.channel == "whatsapp",
+                    ChannelPairingChallenge.attempts >= 5
+                ).update({
+                    ChannelPairingChallenge.consumed: True
+                }, synchronize_session=False)
+                db.commit()
 
         if body.lower().startswith("/login") or body.lower().startswith("/start"):
             reply = "⚡ Aether WhatsApp: सुरक्षा कारणों से सीधा ईमेल लिंक बंद कर दिया गया है। कृपया Aether ऐप से 6-अंकों का पेयरिंग कोड प्राप्त करें और उसे यहाँ भेजें।"
             return Response(content=f"<Response><Message>{reply}</Message></Response>", media_type="application/xml")
         elif not user_email:
-            operator_mem = db.query(MemoryItem).filter(MemoryItem.category == "whatsapp_pairing").first()
-            operator_email = operator_mem.fact.split(":", 1)[1].strip() if operator_mem else "e.pawandixit@gmail.com"
-            operator_context = build_context(db, user_email=operator_email)
-            safe_context = {
-                "tasks": operator_context.get("tasks", []),
-                "user_name": "Pawan Dixit"
-            }
-            from ai_engine import generate_external_contact_reply
-            result = await generate_external_contact_reply(
-                sender_identifier=sender,
-                message_text=body,
-                operator_name="Pawan Dixit",
-                operator_context=safe_context,
-                language="auto"
-            )
-            reply = result.get("reply", "")
-            try:
-                db.add(ChatMessage(user_email=operator_email, role="user", content=f"📩 [External WhatsApp from +{sender}]: {body}", action_type="external_msg"))
-                db.add(ChatMessage(user_email=operator_email, role="aether", content=f"🤖 [Aether Executive Auto-Reply to +{sender}]:\n{reply}", action_type="external_reply"))
-                db.add(Task(user_email=operator_email, title=f"Follow up with +{sender}: {body[:50]}", priority="medium", status="pending"))
-                db.commit()
-            except Exception as e_log:
-                print(f"[Twilio Auto-Responder Log Error] {e_log}")
+            reply = "⚠️ खाता लिंक नहीं है। कृपया Aether ऐप में जाकर 'Pair WhatsApp' पर टैप करके 6-अंकों का कोड जनरेट करें और यहाँ भेजें।"
+            return Response(content=f"<Response><Message>{reply}</Message></Response>", media_type="application/xml")
         else:
             from ai_engine import parse_intent_with_llm
-            context = build_context(db, user_email=user_email)
+            context = build_context(db, user_email=user_email, owner_user_id=owner_id)
             parsed = await parse_intent_with_llm(
                 body,
                 context=context,
@@ -5636,12 +5697,12 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
             action = parsed.get("action", "query")
             data_inner = parsed.get("data", {})
             if action == "task":
-                t = Task(user_email=user_email, title=data_inner.get("title", body), reminder_time=data_inner.get("reminder_time"), status="pending")
+                t = Task(user_email=user_email, owner_user_id=owner_id, title=data_inner.get("title", body), reminder_time=data_inner.get("reminder_time"), status="pending")
                 db.add(t)
                 db.commit()
                 reply = f"⏰ Task saved: {t.title} (Time: {t.reminder_time or 'Anytime'})"
             elif action == "expense":
-                rec = FinancialRecord(user_email=user_email, type="expense", category=data_inner.get("category", "general"), amount=data_inner.get("amount", 0.0), currency="INR", note=data_inner.get("note", body))
+                rec = FinancialRecord(user_email=user_email, owner_user_id=owner_id, type="expense", category=data_inner.get("category", "general"), amount=data_inner.get("amount", 0.0), currency="INR", note=data_inner.get("note", body))
                 db.add(rec)
                 db.commit()
                 reply = f"🧾 Kharch saved: ₹{rec.amount:,.2f} ({rec.category})"
@@ -5668,7 +5729,6 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
                 reply = data_inner.get("response", "Done.")
 
         twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{reply}</Message></Response>'
-        from fastapi.responses import Response
         return Response(content=twiml, media_type="application/xml")
     except Exception as e:
         print(f"[Twilio WA Error] {e}")
