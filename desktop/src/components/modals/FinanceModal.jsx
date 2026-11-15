@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../../supabase';
 import { 
   Wallet, 
   Plus, 
@@ -168,7 +169,7 @@ export const FinanceModal = ({
     if (!isNaN(amtVal) && amtVal > 0) {
       setIsParsingSms(true);
       try {
-        const resp = await fetch(`${API_BASE}/finance/records`, {
+        const resp = await apiFetch(`${API_BASE}/finance/records`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -218,7 +219,7 @@ export const FinanceModal = ({
     setIsParsingSms(true);
     setParsedSmsResult(null);
     try {
-      const resp = await fetch(`${API_BASE}/finance/parse-sms`, {
+      const resp = await apiFetch(`${API_BASE}/finance/parse-sms`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1662,7 +1663,7 @@ export const FinanceModal = ({
 
               let saved = false;
               try {
-                const resp = await fetch(`${API_BASE}/finance/records/bulk`, {
+                const resp = await apiFetch(`${API_BASE}/finance/records/bulk`, {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',
@@ -1678,7 +1679,7 @@ export const FinanceModal = ({
 
               if (!saved) {
                 await Promise.all(recordsToSave.map(rec => 
-                  fetch(`${API_BASE}/finance/records`, {
+                  apiFetch(`${API_BASE}/finance/records`, {
                     method: 'POST',
                     headers: {
                       'Content-Type': 'application/json',
@@ -1713,7 +1714,7 @@ export const FinanceModal = ({
               return;
             }
             try {
-              const resp = await fetch(`${API_BASE}/finance/records`, {
+              const resp = await apiFetch(`${API_BASE}/finance/records`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { apiFetch } from '../../supabase';
 import { 
   Share2, 
   Send, 
@@ -157,7 +158,7 @@ export const SocialMediaModal = ({
     }
     setIsAdapting(true);
     try {
-      const resp = await fetch(`${API_BASE}/social/adapt-post`, {
+      const resp = await apiFetch(`${API_BASE}/social/adapt-post`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -189,7 +190,7 @@ export const SocialMediaModal = ({
     }
     setIsAnalyzingHooks(true);
     try {
-      const resp = await fetch(`${API_BASE}/social/viral-hooks`, {
+      const resp = await apiFetch(`${API_BASE}/social/viral-hooks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -247,7 +248,7 @@ export const SocialMediaModal = ({
     }
     setIsSummarizingVideo(true);
     try {
-      const resp = await fetch(`${API_BASE}/social/summarize-video`, {
+      const resp = await apiFetch(`${API_BASE}/social/summarize-video`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: youtubeUrl })
@@ -272,7 +273,7 @@ export const SocialMediaModal = ({
     }
     setIsRepurposingVideo(true);
     try {
-      const resp = await fetch(`${API_BASE}/social/repurpose-video`, {
+      const resp = await apiFetch(`${API_BASE}/social/repurpose-video`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -296,7 +297,7 @@ export const SocialMediaModal = ({
   const fetchEngagementPosts = async () => {
     setIsLoadingEngagement(true);
     try {
-      const resp = await fetch(`${API_BASE}/social/engagement?user_email=${encodeURIComponent(userEmail || '')}`);
+      const resp = await apiFetch(`${API_BASE}/social/engagement?user_email=${encodeURIComponent(userEmail || '')}`);
       const data = await resp.json();
       if (data.status === 'success') {
         setEngagementPosts(data.posts || []);
@@ -314,7 +315,7 @@ export const SocialMediaModal = ({
       return;
     }
     try {
-      const resp = await fetch(`${API_BASE}/social/engagement/track`, {
+      const resp = await apiFetch(`${API_BASE}/social/engagement/track`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -345,7 +346,7 @@ export const SocialMediaModal = ({
   const fetchWhatsAppMessages = async () => {
     setIsLoadingWhatsApp(true);
     try {
-      const resp = await fetch(`${API_BASE}/whatsapp/messages?user_email=${encodeURIComponent(userEmail || '')}`);
+      const resp = await apiFetch(`${API_BASE}/whatsapp/messages?user_email=${encodeURIComponent(userEmail || '')}`);
       const data = await resp.json();
       if (data.status === 'success') {
         setWhatsappMessages(data.messages || []);
@@ -365,7 +366,7 @@ export const SocialMediaModal = ({
     }
     setIsSendingWhatsApp(true);
     try {
-      const resp = await fetch(`${API_BASE}/whatsapp/send`, {
+      const resp = await apiFetch(`${API_BASE}/whatsapp/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -402,7 +403,7 @@ export const SocialMediaModal = ({
         "Awesome! The automation workflows are working perfectly."
       ];
       const randomMsg = sampleReplies[Math.floor(Math.random() * sampleReplies.length)];
-      const resp = await fetch(`${API_BASE}/whatsapp/simulate-incoming`, {
+      const resp = await apiFetch(`${API_BASE}/whatsapp/simulate-incoming`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
