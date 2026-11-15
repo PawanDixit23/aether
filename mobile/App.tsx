@@ -89,6 +89,8 @@ const ALLOWED_BRIDGE_ACTIONS = new Set([
 ]);
 
 // Cryptographically secure token generator for native WebView bridge (AETH-P0-04)
+// FAIL-CLOSED: If no CSPRNG is available, throws an error. The bridge will NOT be initialized
+// with a weak token. Math.random() fallback has been deliberately removed.
 function generateCryptographicBridgeToken(): string {
   if (typeof globalThis !== 'undefined' && globalThis.crypto && typeof globalThis.crypto.getRandomValues === 'function') {
     const bytes = new Uint8Array(32);
@@ -101,12 +103,13 @@ function generateCryptographicBridgeToken(): string {
       return 'aeth_br_' + nodeCrypto.randomBytes(32).toString('hex');
     }
   } catch (_) {}
-  let hex = '';
-  for (let i = 0; i < 64; i++) {
-    const r = (Math.random() * 16) | 0;
-    hex += r.toString(16);
-  }
-  return 'aeth_br_' + hex;
+  // FAIL-CLOSED: No cryptographically secure random source is available.
+  // Do NOT fall back to Math.random() — it is not cryptographically secure.
+  // Throw here so the bridge is never initialized with an insecure token.
+  throw new Error(
+    '[AETH-P0-04] No cryptographically secure random source available. ' +
+    'WebView bridge cannot be initialized safely. App must not start.'
+  );
 }
 
 export default function App() {

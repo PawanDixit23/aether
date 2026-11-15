@@ -386,6 +386,29 @@ def test_p0_04_android_webview():
 
     # Native Bridge Cryptographic Session Token & Subframe Isolation (AETH-P0-04)
     import secrets
+
+    # AETH-P0-04: Verify mobile/App.tsx does NOT contain Math.random() in executable code
+    import os as _os
+    app_tsx_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "mobile", "App.tsx")
+    if _os.path.exists(app_tsx_path):
+        with open(app_tsx_path, "r") as _f:
+            app_tsx_content = _f.read()
+        # Check only non-comment lines for Math.random() usage
+        executable_math_random = [
+            line for line in app_tsx_content.splitlines()
+            if not line.strip().startswith("//") and "Math.random()" in line
+        ]
+        assert len(executable_math_random) == 0, (
+            f"SECURITY VIOLATION [AETH-P0-04]: Math.random() in executable code: {executable_math_random}. "
+            "Remove the Math.random() fallback — only cryptographically secure sources allowed."
+        )
+        assert "throw new Error" in app_tsx_content and "No cryptographically secure random source" in app_tsx_content, (
+            "AETH-P0-04: generateCryptographicBridgeToken() must throw (fail-closed) when no CSPRNG is available."
+        )
+        print("✅ P0-04: mobile/App.tsx confirmed — Math.random() NOT in executable code, fail-closed throw verified.")
+    else:
+        print("⚠️  P0-04: mobile/App.tsx not found at expected path, skipping source scan.")
+
     def generate_test_bridge_token() -> str:
         return "aeth_br_" + secrets.token_hex(32)
 

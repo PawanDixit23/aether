@@ -221,7 +221,9 @@ def ensure_schema_migrations():
                     conn.execute(text(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY;"))
                     conn.execute(text(f"ALTER TABLE {t} FORCE ROW LEVEL SECURITY;"))
                     if t in ["user_integration_pairings", "channel_pairing_challenges"]:
-                        # AETH-P0-05: Bridge tables allow verified webhook provider lookup OR tenant access
+                        # AETH-P0-05: Bridge tables allow PROVIDER-MATCHED verified webhook lookup OR tenant access.
+                        # Provider isolation: Telegram webhook cannot read WhatsApp pairings and vice-versa.
+                        # The channel column is matched against request.webhook_provider setting.
                         conn.execute(text(f"""
                             DO $$
                             BEGIN
@@ -234,11 +236,17 @@ def ensure_schema_migrations():
                                     FOR ALL
                                     USING (
                                         owner_user_id = current_setting('request.jwt.claim.sub', true)
-                                        OR current_setting('request.webhook_service_authorized', true) = 'true'
+                                        OR (
+                                            current_setting('request.webhook_service_authorized', true) = 'true'
+                                            AND channel = current_setting('request.webhook_provider', true)
+                                        )
                                     )
                                     WITH CHECK (
                                         owner_user_id = current_setting('request.jwt.claim.sub', true)
-                                        OR current_setting('request.webhook_service_authorized', true) = 'true'
+                                        OR (
+                                            current_setting('request.webhook_service_authorized', true) = 'true'
+                                            AND channel = current_setting('request.webhook_provider', true)
+                                        )
                                     );
                             END $$;
                         """))

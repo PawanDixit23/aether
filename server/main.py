@@ -4788,6 +4788,9 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
             claimed, webhook_evt = claim_webhook_event(db, provider="telegram", event_id=event_key)
             if not claimed:
                 return {"status": "ok", "message": "duplicate update ignored"}
+            # AETH-P0-05 CRITICAL: claim_webhook_event() calls db.commit() internally which resets
+            # transaction-local SET LOCAL settings. Re-establish webhook service RLS context after claim.
+            set_webhook_service_rls_context(db, "telegram")
 
         message = data.get("message") or data.get("edited_message")
         if not message:
@@ -5556,6 +5559,9 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             if not claimed:
                 print(f"[WhatsApp Webhook] Duplicate/in-flight message received ({msg_id}) — ignoring to prevent duplicate response.")
                 return {"status": "ok", "message": "duplicate ignored"}
+            # AETH-P0-05 CRITICAL: claim_webhook_event() calls db.commit() internally which resets
+            # transaction-local SET LOCAL settings. Re-establish webhook service RLS context after claim.
+            set_webhook_service_rls_context(db, "whatsapp")
 
         sender = msg.get("from")  # e.g., '919876543210'
         msg_type = msg.get("type")
@@ -5985,6 +5991,9 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
         if not claimed:
             print(f"[Twilio Webhook] Duplicate delivery ignored: {msg_sid}")
             return Response(content="<Response></Response>", media_type="application/xml")
+        # AETH-P0-05 CRITICAL: claim_webhook_event() calls db.commit() internally which resets
+        # transaction-local SET LOCAL settings. Re-establish webhook service RLS context after claim.
+        set_webhook_service_rls_context(db, "twilio")
 
     try:
         sender_full = form.get("From", "")  # e.g. "whatsapp:+919876543210"
