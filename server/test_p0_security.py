@@ -686,6 +686,107 @@ def test_p0_05_messaging_webhooks():
     print("✅ P0-05: Webhook business action idempotency and atomic transactional mutation verified.")
 
 
+def test_p0_03_whatsapp_direct_send_approval_gate():
+    """Direct WhatsApp dispatch must consume a one-time approval bound to user and exact payload."""
+    from unittest.mock import AsyncMock, patch
+    from database import Base, engine
+    from main import get_db
+    Base.metadata.create_all(bind=engine)
+
+    active_user = {
+        "identity": UserIdentity(
+            user_id="11111111-1111-4111-8111-111111111111",
+            email="alice@example.test"
+        )
+    }
+    app.dependency_overrides[get_current_user_identity] = lambda: active_user["identity"]
+
+    def override_db():
+        session = SessionLocal()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = override_db
+    previous_env = {
+        key: os.environ.get(key)
+        for key in ("ENVIRONMENT", "WHATSAPP_TOKEN", "WHATSAPP_PHONE_ID")
+    }
+    os.environ["ENVIRONMENT"] = "production"
+    os.environ["WHATSAPP_TOKEN"] = "test-provider-token"
+    os.environ["WHATSAPP_PHONE_ID"] = "test-phone-id"
+
+    payload = {
+        "to_phone": "9876543210",
+        "message": "Approved security test message",
+        "attachment_type": "image"
+    }
+    try:
+        with patch("main._send_whatsapp_message", new_callable=AsyncMock) as dispatch:
+            dispatch.return_value = {"status": "success", "id": "wamid.security-test"}
+
+            # Direct dispatch without a server-issued approval is always rejected.
+            denied = client.post("/api/whatsapp/send", json=payload)
+            assert denied.status_code == 403, f"Unapproved direct send was not blocked: {denied.status_code}"
+            assert dispatch.await_count == 0, "Provider dispatch occurred without approval"
+
+            # Invalid destination numbers must not fall back to a hard-coded recipient.
+            invalid = client.post("/api/whatsapp/send/prepare", json={**payload, "to_phone": "123"})
+            assert invalid.status_code == 422, "Invalid destination must be rejected"
+
+            prepared = client.post("/api/whatsapp/send/prepare", json=payload)
+            assert prepared.status_code == 200, f"Could not prepare approval: {prepared.text}"
+            approval_id = prepared.json()["approval_id"]
+
+            # A different authenticated user cannot consume Alice's approval.
+            active_user["identity"] = UserIdentity(
+                user_id="22222222-2222-4222-8222-222222222222",
+                email="bob@example.test"
+            )
+            cross_user = client.post(
+                "/api/whatsapp/send",
+                json={**payload, "approval_id": approval_id}
+            )
+            assert cross_user.status_code == 403, "Cross-user approval consumption was not rejected"
+            assert dispatch.await_count == 0, "Cross-user request reached WhatsApp provider"
+
+            active_user["identity"] = UserIdentity(
+                user_id="11111111-1111-4111-8111-111111111111",
+                email="alice@example.test"
+            )
+            tampered = client.post(
+                "/api/whatsapp/send",
+                json={**payload, "message": "Tampered message", "approval_id": approval_id}
+            )
+            assert tampered.status_code == 403, "Approval did not bind the exact message payload"
+            assert dispatch.await_count == 0, "Tampered request reached WhatsApp provider"
+
+            sent = client.post(
+                "/api/whatsapp/send",
+                json={**payload, "approval_id": approval_id}
+            )
+            assert sent.status_code == 200, f"Approved send failed: {sent.text}"
+            assert dispatch.await_count == 1, "Approved send must dispatch exactly once"
+
+            replay = client.post(
+                "/api/whatsapp/send",
+                json={**payload, "approval_id": approval_id}
+            )
+            assert replay.status_code == 403, "Consumed approval was replayed"
+            assert dispatch.await_count == 1, "Replay reached WhatsApp provider"
+
+        print("✅ P0-03: Direct WhatsApp send requires user-bound, exact-payload, one-time server approval.")
+    finally:
+        app.dependency_overrides.pop(get_current_user_identity, None)
+        app.dependency_overrides.pop(get_db, None)
+        for key, value in previous_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def run_all_tests():
     print("======================================================================")
     print("🔒 RUNNING AETHER P0 CRITICAL SECURITY REGRESSION SUITE")
@@ -693,6 +794,7 @@ def run_all_tests():
     test_p0_01_jwt_auth()
     test_p0_02_tenant_isolation()
     test_p0_03_action_approval()
+    test_p0_03_whatsapp_direct_send_approval_gate()
     test_p0_04_android_webview()
     test_p0_05_messaging_webhooks()
     print("\n======================================================================")
