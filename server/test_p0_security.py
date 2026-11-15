@@ -286,6 +286,9 @@ def test_p0_03_action_approval():
         owner_user_id=db_approval.owner_user_id, db=db
     )
     assert not tampered_ok and "tampering" in tampered_err.lower()
+    # The failed verification performed a read-only diagnostic query. End this
+    # test-owned transaction before TestClient opens a separate writer session.
+    db.rollback()
     print("✅ P0-03: Altered action parameters detected and rejected by canonical hash.")
 
     # 5. Legitimate approval consumption
