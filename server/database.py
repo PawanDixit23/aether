@@ -28,17 +28,22 @@ engine = create_engine(
 )
 
 # Concurrency & Reliability Hardening for SQLite:
-# WAL (Write-Ahead Logging) allows simultaneous reads and writes without blocking.
-# busy_timeout=5000 prevents any 'database is locked' errors under high load.
+# Configure WAL once per process. Re-running PRAGMA journal_mode=WAL on every
+# newly opened connection can itself contend for SQLite's schema/database lock
+# when another session has an active transaction (notably TestClient + worker sessions).
+# Per-connection settings remain in the connect hook.
 if DATABASE_URL.startswith("sqlite"):
-    from sqlalchemy import event
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA busy_timeout=15000")
         cursor.close()
+
+    # journal_mode is persistent for the database file; set it once during engine
+    # initialization rather than attempting to change it on every connection.
+    with engine.connect() as sqlite_connection:
+        sqlite_connection.exec_driver_sql("PRAGMA journal_mode=WAL")
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 @event.listens_for(SessionLocal, "after_begin")
@@ -70,11 +75,24 @@ def ensure_schema_migrations():
     """Ensure all required columns and tables exist across both SQLite and PostgreSQL."""
     is_pg = "postgres" in str(engine.url).lower()
 
-    # Ensure all tables from Base metadata exist
+    # Register every ORM model before create_all. This function is also invoked
+    # from a fresh Python process by CI/CLI, where Alembic's earlier "import models"
+    # does not carry over and Base.metadata would otherwise be empty.
     try:
+        try:
+            import models  # noqa: F401
+        except ImportError:
+            from . import models  # noqa: F401
+
+        # Ensure all tables from the fully populated Base metadata exist.
         Base.metadata.create_all(bind=engine)
     except Exception as e:
-        print(f"[Schema Migration Warning] create_all error: {e}")
+        print(f"[Schema Migration Error] create_all failed: {e}")
+        # Continuing to ALTER/RLS operations with missing base tables is unsafe.
+        if is_pg:
+            raise RuntimeError(
+                "CRITICAL: Failed to create ORM tables before applying schema/RLS migrations"
+            ) from e
 
     # Inspect existing columns to skip unnecessary ALTER TABLE locks on PostgreSQL
     table_columns = {}

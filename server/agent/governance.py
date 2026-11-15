@@ -195,9 +195,13 @@ class ActionApprovalManager:
                     ActionApproval.consumed: True,
                     ActionApproval.consumed_at: datetime.utcnow()
                 }, synchronize_session=False)
-                db.commit()
-
                 if rows_updated > 0:
+                    # Persist the one-time consume before any privileged tool executes.
+                    # Without this commit, get_db() closes the request session and rolls
+                    # the UPDATE back, allowing the same approval token to be replayed.
+                    # This method is the transaction boundary for this security-critical
+                    # compare-and-set operation; callers must not wrap it in db.begin().
+                    db.commit()
                     return True, "Authorized"
 
                 # If update matched 0 rows, check specific reason
@@ -216,6 +220,9 @@ class ActionApprovalManager:
                     return False, "Parameter tampering detected! Provided parameters do not match approved payload."
                 return False, "Approval token consumption rejected"
             except Exception as e:
+                # A failed SQL statement leaves the SQLAlchemy transaction unusable.
+                # Roll it back before returning so the caller can safely fail closed
+                # or create a fresh pending approval in the same request session.
                 db.rollback()
                 return False, f"Database error during approval verification: {e}"
 

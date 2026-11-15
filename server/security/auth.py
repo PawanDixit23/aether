@@ -7,12 +7,15 @@ and eliminates caller-controlled identity spoofing or unverified fallback in pro
 import os
 import re
 import json
+import base64
 import time
 import math
-import base64
-import hmac
 import hashlib
+from functools import lru_cache
 from typing import Optional, Dict, Any
+import jwt
+from jwt import PyJWKClient
+from jwt.exceptions import InvalidTokenError, PyJWKClientError
 from fastapi import Header, HTTPException, Depends, Request
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -42,7 +45,7 @@ class UserIdentity:
 
 
 def _decode_jwt_unverified(token: str) -> Optional[Dict[str, Any]]:
-    """Decodes JWT payload without signature check (strictly for local dev/testing only)."""
+    """Decode JWT claims without verification for explicitly enabled local dev/test only."""
     parts = token.split(".")
     if len(parts) != 3:
         return None
@@ -55,102 +58,89 @@ def _decode_jwt_unverified(token: str) -> Optional[Dict[str, Any]]:
 
 UUID_REGEX = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
 
+
+def _supabase_jwks_url() -> str:
+    """Resolve Supabase JWKS endpoint, allowing an explicit deployment override."""
+    configured = os.environ.get("SUPABASE_JWKS_URL", "").strip()
+    if configured:
+        return configured
+    supabase_url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+    if not supabase_url:
+        raise ValueError("SUPABASE_URL or SUPABASE_JWKS_URL is required for ES256 verification")
+    return f"{supabase_url}/auth/v1/.well-known/jwks.json"
+
+
+@lru_cache(maxsize=4)
+def _get_jwks_client(url: str) -> PyJWKClient:
+    """Reuse the JWKS client so its key-set cache is effective across requests."""
+    return PyJWKClient(url, cache_jwk_set=True, cache_keys=True, timeout=5)
+
+
 def verify_supabase_jwt(
     token: str,
     jwt_secret: str,
     expected_iss: Optional[str] = None,
-    expected_aud: Optional[str] = "authenticated"
+    expected_aud: Optional[str] = "authenticated",
+    jwks_url: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """
-    Cryptographically verifies Supabase JWT (AETH-P0-01):
-    - Pins accepted algorithm strictly to HS256 (rejects 'none' or unexpected algorithms)
-    - Validates HMAC-SHA256 signature in constant time
-    - Enforces mandatory 'sub' with strict UUID format validation
-    - Validates expected Supabase issuer ('iss') when configured
-    - Validates expected audience ('aud') supporting string and list claims
-    - Validates numeric 'exp' with 30s clock skew allowance
-    - Validates 'nbf' when present
+    Verify Supabase access tokens using their declared signing algorithm.
+    ES256 uses the matching public key from Supabase JWKS; HS256 uses the
+    legacy JWT secret for existing tokens. All other algorithms fail closed.
     """
-    parts = token.split(".")
-    if len(parts) != 3:
-        return None
-
-    header_b64, payload_b64, sig_b64 = parts
-
-    # 1. Inspect header algorithm - reject alg=none or non-HS256
     try:
-        header_padded = header_b64 + "=" * (-len(header_b64) % 4)
-        header = json.loads(base64.urlsafe_b64decode(header_padded).decode("utf-8"))
-        if not isinstance(header, dict) or header.get("alg") != "HS256":
-            return None
-    except Exception:
-        return None
+        header = jwt.get_unverified_header(token)
+        algorithm = header.get("alg")
 
-    # 2. Verify HMAC signature in constant time
-    signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
-    expected_sig = hmac.new(jwt_secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
-    expected_b64 = base64.urlsafe_b64encode(expected_sig).rstrip(b"=").decode("utf-8")
-
-    if not hmac.compare_digest(expected_b64, sig_b64):
-        return None
-
-    # 3. Decode & validate claims
-    try:
-        payload_padded = payload_b64 + "=" * (-len(payload_b64) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(payload_padded).decode("utf-8"))
-    except Exception:
-        return None
-
-    now = time.time()
-
-    # Mandatory 'sub' claim with strict UUID format check (AETH-P0-01)
-    sub = payload.get("sub")
-    if not sub or not UUID_REGEX.match(str(sub).strip()):
-        return None
-
-    # Mandatory numeric 'exp' claim with finite number validation and 30s clock skew tolerance
-    exp = payload.get("exp")
-    if exp is None or not isinstance(exp, (int, float)) or not math.isfinite(exp) or math.isnan(exp):
-        return None
-    try:
-        exp_f = float(exp)
-        if now > (exp_f + 30):
-            return None  # Token expired
-        if exp_f > (now + 365 * 86400):
-            return None  # Unrealistic far-future token (> 1 year)
-    except (ValueError, TypeError):
-        return None
-
-    # Optional 'nbf' (not-before) claim with finite number validation
-    nbf = payload.get("nbf")
-    if nbf is not None:
-        if not isinstance(nbf, (int, float)) or not math.isfinite(nbf) or math.isnan(nbf):
-            return None
-        try:
-            if now < (float(nbf) - 30):
-                return None  # Token not yet valid
-        except (ValueError, TypeError):
-            return None
-
-    # Issuer validation ('iss')
-    if expected_iss:
-        token_iss = payload.get("iss")
-        if not token_iss or str(token_iss).strip().rstrip("/") != str(expected_iss).strip().rstrip("/"):
-            return None
-
-    # Audience validation ('aud')
-    if expected_aud:
-        token_aud = payload.get("aud")
-        if isinstance(token_aud, list):
-            if expected_aud not in token_aud:
+        if algorithm == "ES256":
+            jwks_client = _get_jwks_client(jwks_url or _supabase_jwks_url())
+            signing_key = jwks_client.get_signing_key_from_jwt(token)
+            verification_key = signing_key.key
+            allowed_algorithms = ["ES256"]
+        elif algorithm == "HS256":
+            if not jwt_secret:
                 return None
-        elif isinstance(token_aud, str):
-            if token_aud != expected_aud:
-                return None
+            verification_key = jwt_secret
+            allowed_algorithms = ["HS256"]
         else:
             return None
 
-    return payload
+        required_claims = ["exp", "sub", "aud"]
+        if expected_iss:
+            required_claims.append("iss")
+
+        payload = jwt.decode(
+            token,
+            key=verification_key,
+            algorithms=allowed_algorithms,
+            audience=expected_aud,
+            issuer=expected_iss,
+            leeway=30,
+            options={"require": required_claims}
+        )
+
+        sub = payload.get("sub")
+        if not sub or not UUID_REGEX.match(str(sub).strip()):
+            return None
+
+        exp = payload.get("exp")
+        if not isinstance(exp, (int, float)) or not math.isfinite(exp):
+            return None
+        if float(exp) > time.time() + 365 * 86400:
+            return None
+
+        nbf = payload.get("nbf")
+        if nbf is not None and (
+            not isinstance(nbf, (int, float)) or not math.isfinite(nbf)
+        ):
+            return None
+
+        return payload
+    except (InvalidTokenError, PyJWKClientError, ValueError, TypeError, KeyError):
+        return None
+    except Exception:
+        # JWKS/network/cryptographic failures must never fall back to unverified claims.
+        return None
 
 
 def _finalize_identity(request: Optional[Request], user_identity: UserIdentity) -> UserIdentity:
@@ -202,7 +192,7 @@ def get_current_user_identity(
             raise HTTPException(status_code=401, detail="Empty Bearer token in Authorization header")
 
         # 1. Cryptographic Supabase JWT Verification
-        if jwt_secret:
+        if jwt_secret or token.count(".") == 2:
             payload = verify_supabase_jwt(token, jwt_secret, expected_iss=expected_iss, expected_aud=expected_aud)
             if not payload:
                 raise HTTPException(status_code=401, detail="Invalid, expired, or tampered authentication token")

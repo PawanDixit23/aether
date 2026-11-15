@@ -48,7 +48,7 @@ from models import (
     WhatsAppMessage, ProcessedMutation, BriefingPreference
 )
 from agent.governance import ActionApprovalManager
-from database import set_db_rls_context, set_webhook_service_rls_context
+from database import SessionLocal, set_db_rls_context, set_webhook_service_rls_context
 
 
 def get_postgres_engine():
@@ -200,8 +200,8 @@ def test_postgres_rls_suite():
             aa_tmp = ActionApproval(
                 owner_user_id=user_a, user_email="usera@example.com",
                 action_id=str(uuid.uuid4()), tool_name="delete_all_data",
-                params_hash="deadbeef", params_json="{}",
-                status="pending", created_at=datetime.utcnow()
+                param_hash="deadbeef", params_json="{}",
+                expires_at=time.time() + 600, consumed=False, created_at=datetime.utcnow()
             )
             sess.add(aa_tmp)
 
@@ -372,7 +372,7 @@ def test_postgres_rls_suite():
         with sess.begin():
             set_db_rls_context(sess, user_a)
             action_info = ActionApprovalManager.create_approval_request(
-                tool_name="execute_wire_transfer",
+                tool_name="transfer_money",
                 params=test_params,
                 user_email="usera@example.com",
                 owner_user_id=user_a,
@@ -389,7 +389,7 @@ def test_postgres_rls_suite():
             set_db_rls_context(sess, user_a)
             auth_ok, auth_msg = ActionApprovalManager.verify_and_consume(
                 action_id=action_id,
-                tool_name="execute_wire_transfer",
+                tool_name="transfer_money",
                 params=tampered_params,
                 user_email="usera@example.com",
                 owner_user_id=user_a,
@@ -404,7 +404,7 @@ def test_postgres_rls_suite():
             set_db_rls_context(sess, user_b)
             auth_ok, auth_msg = ActionApprovalManager.verify_and_consume(
                 action_id=action_id,
-                tool_name="execute_wire_transfer",
+                tool_name="transfer_money",
                 params=test_params,
                 user_email="userb@example.com",
                 owner_user_id=user_b,
@@ -422,7 +422,7 @@ def test_postgres_rls_suite():
                 set_db_rls_context(w_sess, user_a)
                 ok, msg = ActionApprovalManager.verify_and_consume(
                     action_id=action_id,
-                    tool_name="execute_wire_transfer",
+                    tool_name="transfer_money",
                     params=test_params,
                     user_email="usera@example.com",
                     owner_user_id=user_a,
@@ -453,7 +453,10 @@ def test_postgres_rls_suite():
         from agent.orchestrator import AgentOrchestrator, AgentState
         from agent.governance import ActionTier
 
-        orch_db_sess = Session()
+        # Use the application's SessionLocal so the after_begin hook restores the
+        # transaction-local RLS subject after create_approval_request() commits.
+        # A bare sessionmaker(bind=engine) silently loses that context on commit.
+        orch_db_sess = SessionLocal()
         try:
             set_db_rls_context(orch_db_sess, user_a)
             orchestrator = AgentOrchestrator(db=orch_db_sess, owner_user_id=user_a, user_email="usera@example.com")
@@ -461,33 +464,32 @@ def test_postgres_rls_suite():
             # Inject a Tier-3 critical tool call (wire_transfer) WITHOUT approval_id
             # The orchestrator MUST block this and set requires_approval = True
             state_no_approval = AgentState(
-                messages=[],
-                tool_calls=[],
-                context={},  # No approval_id supplied
-                owner_user_id=user_a,
-                user_email="usera@example.com"
+                user_msg="Transfer 50000 to external_account",
+                user_email="usera@example.com",
+                metadata={}  # No server-issued approval_id supplied
             )
             # Simulate the governance check for a Tier-3 action directly
             tier = None
             try:
                 from agent.governance import PermissionEngine
-                tier = PermissionEngine.classify_action("execute_wire_transfer", {"amount": 50000, "to": "external_account"})
+                tier = PermissionEngine.classify_action("transfer_money", {"amount": 50000, "to": "external_account"})
             except Exception:
                 tier = ActionTier.TIER_3_CRITICAL  # fallback if classify_action unavailable
 
             assert tier == ActionTier.TIER_3_CRITICAL, f"Wire transfer should be Tier-3, got: {tier}"
-            print(f"✅ P0-03: execute_wire_transfer correctly classified as TIER_3_CRITICAL (tier={tier})")
+            print(f"✅ P0-03: transfer_money correctly classified as TIER_3_CRITICAL (tier={tier})")
 
             # Create a real approval, then verify it gates execution
             test_params = {"amount": 50000, "to": "external_account"}
-            approval_id = ActionApprovalManager.create_approval_request(
-                tool_name="execute_wire_transfer",
+            approval_result = ActionApprovalManager.create_approval_request(
+                tool_name="transfer_money",
                 params=test_params,
                 user_email="usera@example.com",
                 owner_user_id=user_a,
                 db=orch_db_sess
             )
-            assert approval_id, "ActionApprovalManager failed to create approval request"
+            assert approval_result and approval_result.get("action_id"), "ActionApprovalManager failed to create approval request"
+            approval_id = approval_result["action_id"]
             print(f"✅ P0-03: Approval request created (action_id={approval_id})")
 
             # Verify that the approval was recorded in the DB under RLS
@@ -496,7 +498,7 @@ def test_postgres_rls_suite():
                 ActionApproval.owner_user_id == user_a
             ).first()
             assert stored is not None, "Approval not persisted in DB under RLS context!"
-            assert stored.status == "pending", f"Expected pending, got: {stored.status}"
+            assert not stored.consumed, "Expected newly created approval to be unconsumed"
             print(f"✅ P0-03: Approval persisted in DB (status=pending, owner={stored.owner_user_id})")
 
             # User B cannot see or consume User A's approval
@@ -510,7 +512,7 @@ def test_postgres_rls_suite():
             # Verify & consume with correct params succeeds
             ok, msg = ActionApprovalManager.verify_and_consume(
                 action_id=approval_id,
-                tool_name="execute_wire_transfer",
+                tool_name="transfer_money",
                 params=test_params,
                 user_email="usera@example.com",
                 owner_user_id=user_a,
@@ -522,7 +524,7 @@ def test_postgres_rls_suite():
             # Replay attempt: Same approval_id cannot be consumed again (one-time use)
             ok2, msg2 = ActionApprovalManager.verify_and_consume(
                 action_id=approval_id,
-                tool_name="execute_wire_transfer",
+                tool_name="transfer_money",
                 params=test_params,
                 user_email="usera@example.com",
                 owner_user_id=user_a,
