@@ -369,15 +369,14 @@ def test_postgres_rls_suite():
     test_params = {"destination": "0x1234567890abcdef", "amount_usd": 25000}
     action_info = None
     with Session() as sess:
-        with sess.begin():
-            set_db_rls_context(sess, user_a)
-            action_info = ActionApprovalManager.create_approval_request(
-                tool_name="execute_wire_transfer",
-                params=test_params,
-                user_email="usera@example.com",
-                owner_user_id=user_a,
-                db=sess
-            )
+        set_db_rls_context(sess, user_a)
+        action_info = ActionApprovalManager.create_approval_request(
+            tool_name="execute_wire_transfer",
+            params=test_params,
+            user_email="usera@example.com",
+            owner_user_id=user_a,
+            db=sess
+        )
     action_id = action_info["action_id"]
     assert action_id is not None
     print(f"✅ Created real ActionApproval request with tenant RLS context: action_id={action_id}")
@@ -385,50 +384,47 @@ def test_postgres_rls_suite():
     # 9a. Tampering Protection: Tampered parameters must be rejected
     tampered_params = {"destination": "0x1234567890abcdef", "amount_usd": 999999}
     with Session() as sess:
-        with sess.begin():
-            set_db_rls_context(sess, user_a)
-            auth_ok, auth_msg = ActionApprovalManager.verify_and_consume(
-                action_id=action_id,
-                tool_name="execute_wire_transfer",
-                params=tampered_params,
-                user_email="usera@example.com",
-                owner_user_id=user_a,
-                db=sess
-            )
-            assert not auth_ok, "Security Violation: Tampered action parameters were authorized!"
-            print(f"✅ ActionApproval parameter tampering rejected: {auth_msg}")
+        set_db_rls_context(sess, user_a)
+        auth_ok, auth_msg = ActionApprovalManager.verify_and_consume(
+            action_id=action_id,
+            tool_name="execute_wire_transfer",
+            params=tampered_params,
+            user_email="usera@example.com",
+            owner_user_id=user_a,
+            db=sess
+        )
+        assert not auth_ok, "Security Violation: Tampered action parameters were authorized!"
+        print(f"✅ ActionApproval parameter tampering rejected: {auth_msg}")
 
     # 9b. Tenant Isolation: User B cannot consume User A's approval request
     with Session() as sess:
-        with sess.begin():
-            set_db_rls_context(sess, user_b)
-            auth_ok, auth_msg = ActionApprovalManager.verify_and_consume(
-                action_id=action_id,
-                tool_name="execute_wire_transfer",
-                params=test_params,
-                user_email="userb@example.com",
-                owner_user_id=user_b,
-                db=sess
-            )
-            assert not auth_ok, "Security Violation: User B was able to consume User A's action approval!"
-            print(f"✅ ActionApproval cross-tenant consumption rejected: {auth_msg}")
+        set_db_rls_context(sess, user_b)
+        auth_ok, auth_msg = ActionApprovalManager.verify_and_consume(
+            action_id=action_id,
+            tool_name="execute_wire_transfer",
+            params=test_params,
+            user_email="userb@example.com",
+            owner_user_id=user_b,
+            db=sess
+        )
+        assert not auth_ok, "Security Violation: User B was able to consume User A's action approval!"
+        print(f"✅ ActionApproval cross-tenant consumption rejected: {auth_msg}")
 
     # 9c. Real PostgreSQL Concurrent Consumption: 5 concurrent threads attempt to consume the same approval
     results = []
     def worker_consume(worker_name):
         w_sess = Session()
         try:
-            with w_sess.begin():
-                set_db_rls_context(w_sess, user_a)
-                ok, msg = ActionApprovalManager.verify_and_consume(
-                    action_id=action_id,
-                    tool_name="execute_wire_transfer",
-                    params=test_params,
-                    user_email="usera@example.com",
-                    owner_user_id=user_a,
-                    db=w_sess
-                )
-                results.append((worker_name, ok, msg))
+            set_db_rls_context(w_sess, user_a)
+            ok, msg = ActionApprovalManager.verify_and_consume(
+                action_id=action_id,
+                tool_name="execute_wire_transfer",
+                params=test_params,
+                user_email="usera@example.com",
+                owner_user_id=user_a,
+                db=w_sess
+            )
+            results.append((worker_name, ok, msg))
         except Exception as exc:
             results.append((worker_name, False, f"error: {exc}"))
         finally:

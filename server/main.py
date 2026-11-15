@@ -16,6 +16,7 @@ import base64
 import hashlib
 import hmac
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, UploadFile, File
+from twilio.request_validator import RequestValidator
 from document_parser import extract_text_from_file
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
@@ -5953,28 +5954,25 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
     form = await req.form()
     form_dict = {k: str(v) for k, v in form.items()}
 
-    # Cryptographic Twilio signature verification with reverse-proxy canonical URL (AETH-P0-05)
+    # Validate with Twilio's maintained SDK. Never trust client-supplied forwarded host/proto.
     if twilio_auth_token or is_prod:
+        if not twilio_auth_token:
+            raise HTTPException(status_code=503, detail="Twilio webhook authentication is not configured")
         sig_header = req.headers.get("X-Twilio-Signature", "").strip()
         if not sig_header:
             raise HTTPException(status_code=403, detail="Missing X-Twilio-Signature header")
 
-        proto = req.headers.get("X-Forwarded-Proto", req.url.scheme)
-        host = req.headers.get("X-Forwarded-Host", req.url.netloc)
-        canonical_url = f"{proto}://{host}{req.url.path}"
+        # In production, configure the exact public webhook URL in deployment settings.
+        # This avoids accepting spoofed X-Forwarded-Host / X-Forwarded-Proto values.
+        canonical_url = os.environ.get("TWILIO_WEBHOOK_PUBLIC_URL", "").strip()
+        if is_prod and not canonical_url:
+            raise HTTPException(status_code=503, detail="TWILIO_WEBHOOK_PUBLIC_URL must be configured")
+        if not canonical_url:
+            canonical_url = str(req.url)
 
-        s = canonical_url
-        for k in sorted(form_dict.keys()):
-            s += k + form_dict[k]
-        computed_sig = base64.b64encode(hmac.new(twilio_auth_token.encode("utf-8"), s.encode("utf-8"), hashlib.sha1).digest()).decode("utf-8")
-
-        if not hmac.compare_digest(sig_header, computed_sig):
-            s_raw = str(req.url)
-            for k in sorted(form_dict.keys()):
-                s_raw += k + form_dict[k]
-            computed_raw = base64.b64encode(hmac.new(twilio_auth_token.encode("utf-8"), s_raw.encode("utf-8"), hashlib.sha1).digest()).decode("utf-8")
-            if not hmac.compare_digest(sig_header, computed_raw):
-                raise HTTPException(status_code=403, detail="Twilio webhook signature verification failed")
+        validator = RequestValidator(twilio_auth_token)
+        if not validator.validate(canonical_url, form_dict, sig_header):
+            raise HTTPException(status_code=403, detail="Twilio webhook signature verification failed")
 
     # Authorize bridge tables (user_integration_pairings, channel_pairing_challenges) for verified webhook
     set_webhook_service_rls_context(db, "whatsapp")
