@@ -70,11 +70,24 @@ def ensure_schema_migrations():
     """Ensure all required columns and tables exist across both SQLite and PostgreSQL."""
     is_pg = "postgres" in str(engine.url).lower()
 
-    # Ensure all tables from Base metadata exist
+    # Register every ORM model before create_all. This function is also invoked
+    # from a fresh Python process by CI/CLI, where Alembic's earlier "import models"
+    # does not carry over and Base.metadata would otherwise be empty.
     try:
+        try:
+            import models  # noqa: F401
+        except ImportError:
+            from . import models  # noqa: F401
+
+        # Ensure all tables from the fully populated Base metadata exist.
         Base.metadata.create_all(bind=engine)
     except Exception as e:
-        print(f"[Schema Migration Warning] create_all error: {e}")
+        print(f"[Schema Migration Error] create_all failed: {e}")
+        # Continuing to ALTER/RLS operations with missing base tables is unsafe.
+        if is_pg:
+            raise RuntimeError(
+                "CRITICAL: Failed to create ORM tables before applying schema/RLS migrations"
+            ) from e
 
     # Inspect existing columns to skip unnecessary ALTER TABLE locks on PostgreSQL
     table_columns = {}
