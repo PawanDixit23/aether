@@ -146,6 +146,12 @@ class TestPostgresTenantRLS(unittest.TestCase):
         finally:
             webhook.close()
 
+    def test_postgres_runtime_role_passes_api_startup_guard(self):
+        # Importing main exercises its legacy metadata bootstrap under the restricted
+        # runtime role; the explicit guard must accept this non-superuser connection.
+        from main import enforce_postgres_runtime_role
+        enforce_postgres_runtime_role()
+
     def test_internal_worker_context_is_explicit_and_cross_tenant(self):
         alice = self.session_for(self.user_a, self.email_a)
         task = Task(user_email=self.email_a, title="worker visible sentinel")

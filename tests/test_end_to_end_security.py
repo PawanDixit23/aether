@@ -2,20 +2,44 @@ import sys
 import os
 import unittest
 from datetime import datetime, timedelta
+from uuid import uuid5, NAMESPACE_URL
+from unittest.mock import patch
 
 # Add server to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "server")))
 
 from fastapi.testclient import TestClient
 from main import app
-from database import SessionLocal, Base, engine
+from database import SessionLocal, Base, engine, set_worker_context
 from models import Task, FinancialRecord, MemoryItem, ChatMessage
+
+
+async def _fake_test_supabase_verifier(token: str):
+    if token.startswith("test:"):
+        email = token.split(":", 1)[1].strip().lower()
+        return {"id": str(uuid5(NAMESPACE_URL, email)), "email": email}
+    from fastapi import HTTPException
+    raise HTTPException(status_code=401, detail="Invalid test token")
+
+
+class _AuthenticatedTestClient(TestClient):
+    def request(self, method, url, **kwargs):
+        headers = dict(kwargs.get("headers") or {})
+        email = headers.pop("X-User-Email", None)
+        if email:
+            headers["Authorization"] = f"Bearer test:{email}"
+        kwargs["headers"] = headers
+        return super().request(method, url, **kwargs)
+
 
 class TestEndToEndAndSecurityAudit(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.client = TestClient(app)
+        cls.auth_patch = patch("main.verify_supabase_access_token", new=_fake_test_supabase_verifier)
+        cls.auth_patch.start()
+        cls.client = _AuthenticatedTestClient(app)
         cls.db = SessionLocal()
+        set_worker_context(cls.db)
         cls.user_a = "alice@security-audit.local"
         cls.user_b = "bob@security-audit.local"
         cls.owner = "e.pawandixit@gmail.com"
@@ -29,6 +53,8 @@ class TestEndToEndAndSecurityAudit(unittest.TestCase):
         cls.db.query(ChatMessage).filter(ChatMessage.user_email.in_([cls.user_a, cls.user_b])).delete(synchronize_session=False)
         cls.db.commit()
         cls.db.close()
+        cls.client.close()
+        cls.auth_patch.stop()
 
     def test_01_health_and_metrics(self):
         """Verify baseline health, APM telemetry, and news endpoints respond 200 OK."""
