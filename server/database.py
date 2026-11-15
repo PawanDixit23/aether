@@ -150,6 +150,29 @@ def ensure_schema_migrations():
                 print(f"[Postgres Migration Note] {stmt}: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
+    # AETH-P0-05: Ensure unique constraint on sender_pairing_rate_limits
+    # ─────────────────────────────────────────────────────────────────────────
+    try:
+        with engine.connect() as conn:
+            if is_pg:
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint WHERE conname = 'uq_sender_pairing_rate_limit'
+                        ) THEN
+                            ALTER TABLE sender_pairing_rate_limits ADD CONSTRAINT uq_sender_pairing_rate_limit UNIQUE (channel, sender);
+                        END IF;
+                    END $$;
+                """))
+                conn.commit()
+            else:
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_sender_pairing_rate_limit ON sender_pairing_rate_limits (channel, sender);"))
+                conn.commit()
+    except Exception as e:
+        print(f"[Unique Constraint Migration Note] sender_pairing_rate_limits: {e}")
+
+    # ─────────────────────────────────────────────────────────────────────────
     # AETH-P0-02: Trusted Supabase Auth Identity Mapping & Quarantining
     # ─────────────────────────────────────────────────────────────────────────
     tenant_tables = [

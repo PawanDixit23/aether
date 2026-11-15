@@ -330,14 +330,38 @@ export default function App() {
           mediaCapturePermissionGrantType="prompt"
           injectedJavaScriptBeforeContentLoaded={`
             (function() {
-              if (window.self !== window.top) {
+              function stripBridge(target) {
+                if (!target) return;
                 try {
-                  delete window.ReactNativeWebView;
-                  Object.defineProperty(window, 'ReactNativeWebView', {
+                  delete target.ReactNativeWebView;
+                  Object.defineProperty(target, 'ReactNativeWebView', {
                     get: function() { return undefined; },
                     set: function() {},
-                    configurable: false
+                    configurable: false,
+                    enumerable: false
                   });
+                } catch (e) {}
+              }
+
+              if (window.self !== window.top) {
+                stripBridge(window);
+              } else {
+                // Top-level frame: continuously sanitize all present, nested and dynamically created child frames (AETH-P0-04)
+                try {
+                  var observer = new MutationObserver(function(mutations) {
+                    mutations.forEach(function(m) {
+                      m.addedNodes.forEach(function(node) {
+                        if (node && node.nodeName === 'IFRAME') {
+                          try {
+                            stripBridge(node.contentWindow);
+                          } catch(e) {}
+                        }
+                      });
+                    });
+                  });
+                  if (document.documentElement) {
+                    observer.observe(document.documentElement, { childList: true, subtree: true });
+                  }
                 } catch (e) {}
               }
             })();

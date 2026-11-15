@@ -2271,13 +2271,16 @@ def get_next_weekday(dt: datetime) -> datetime:
     return next_day
 
 def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = None):
-    """Automatically rolls recurring tasks (daily, weekdays, weekly) forward strictly isolated by owner_user_id (AETH-P0-02)."""
+    """Automatically rolls recurring tasks (daily, weekdays, weekly) forward strictly isolated by owner_user_id (AETH-P0-02). Fails closed if owner_user_id is missing."""
     try:
+        # AETH-P0-02: Strict fail-closed tenant boundary. Never query or advance tasks without a valid authenticated tenant UUID!
+        if not owner_user_id or not str(owner_user_id).strip():
+            print("[Security Notice] auto_advance_recurring_tasks called without valid owner_user_id - failing closed to protect tenant isolation.")
+            return
+
         now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
         today = now.date()
-        query = db.query(Task).filter(Task.recurrence != None)
-        if owner_user_id:
-            query = query.filter(Task.owner_user_id == owner_user_id)
+        query = db.query(Task).filter(Task.recurrence != None, Task.owner_user_id == str(owner_user_id).strip())
         rec_tasks = query.all()
         updated = False
         for dt in rec_tasks:
@@ -4600,6 +4603,85 @@ def request_telegram_pairing(
         "instruction": f"Send the 6-digit code '{otp}' to our Telegram bot to verify and link your account."
     }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# AETH-P0-05: Atomic Conditional Webhook Event Claiming & Business Idempotency
+# ─────────────────────────────────────────────────────────────────────────────
+def claim_webhook_event(db: Session, provider: str, event_id: str) -> Tuple[bool, Optional[ProcessedWebhookEvent]]:
+    """
+    Atomically claims a webhook event across concurrent workers using conditional atomic SQL operations (AETH-P0-05).
+    Guarantees:
+    1. If the event is currently 'processing' or 'processed', rejects immediately.
+    2. If the event is 'failed', uses a conditional atomic UPDATE to claim it ('failed' -> 'processing').
+       If multiple concurrent workers race to retry, exactly ONE worker wins the update.
+    3. If the event is new, performs an atomic insert with status='processing'.
+       If multiple workers race to insert, unique constraint on event_id ensures only one succeeds.
+    Returns:
+        (claimed: bool, event_record: Optional[ProcessedWebhookEvent])
+    """
+    evt_str = str(event_id).strip()
+    existing = db.query(ProcessedWebhookEvent).filter(
+        ProcessedWebhookEvent.provider == provider,
+        ProcessedWebhookEvent.event_id == evt_str
+    ).first()
+
+    if existing:
+        if existing.status in ["processing", "processed"]:
+            return False, None
+        # status is 'failed': Attempt atomic conditional claim
+        claimed_count = db.query(ProcessedWebhookEvent).filter(
+            ProcessedWebhookEvent.provider == provider,
+            ProcessedWebhookEvent.event_id == evt_str,
+            ProcessedWebhookEvent.status == "failed"
+        ).update({ProcessedWebhookEvent.status: "processing"}, synchronize_session=False)
+        db.commit()
+        if claimed_count > 0:
+            db.refresh(existing)
+            return True, existing
+        return False, None
+
+    # New event: atomic insert
+    try:
+        new_evt = ProcessedWebhookEvent(provider=provider, event_id=evt_str, status="processing")
+        with db.begin_nested():
+            db.add(new_evt)
+            db.flush()
+        db.commit()
+        db.refresh(new_evt)
+        return True, new_evt
+    except Exception:
+        db.rollback()
+        return False, None
+
+def finalize_webhook_event(db: Session, event_record: Optional[ProcessedWebhookEvent], success: bool):
+    """Transitions event status to 'processed' on success, or 'failed' on unhandled error (AETH-P0-05)."""
+    if not event_record:
+        return
+    try:
+        event_record.status = "processed" if success else "failed"
+        db.commit()
+    except Exception:
+        db.rollback()
+
+def is_business_action_executed(db: Session, mutation_key: str) -> bool:
+    """Checks if business mutation has already been executed for this webhook message (AETH-P0-05)."""
+    return db.query(ProcessedMutation).filter(ProcessedMutation.mutation_id == mutation_key).first() is not None
+
+def record_business_action_executed(db: Session, mutation_key: str, user_email: Optional[str] = None, owner_user_id: Optional[str] = None, response_summary: Optional[str] = None):
+    """Atomically records that a business action (task, expense, etc.) has been executed."""
+    try:
+        with db.begin_nested():
+            mut = ProcessedMutation(
+                mutation_id=mutation_key,
+                user_email=user_email,
+                owner_user_id=owner_user_id,
+                response_json=response_summary
+            )
+            db.add(mut)
+            db.flush()
+        db.commit()
+    except Exception:
+        db.rollback()
+
 @app.post("/api/telegram/webhook")
 async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
     """
@@ -4616,19 +4698,15 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
         if not token_header or not hmac.compare_digest(token_header, telegram_secret):
             raise HTTPException(status_code=403, detail="Invalid or missing Telegram webhook secret token")
 
+    webhook_evt = None
     try:
         data = await req.json()
-        # 2. Atomic Durable deduplication via DB (AETH-P0-05)
+        # 2. Atomic Durable deduplication & state machine via DB (AETH-P0-05)
         update_id = data.get("update_id")
         if update_id:
             event_key = f"tg_{update_id}"
-            try:
-                with db.begin_nested():
-                    db.add(ProcessedWebhookEvent(provider="telegram", event_id=event_key))
-                    db.flush()
-                db.commit()
-            except Exception:
-                db.rollback()
+            claimed, webhook_evt = claim_webhook_event(db, provider="telegram", event_id=event_key)
+            if not claimed:
                 return {"status": "ok", "message": "duplicate update ignored"}
 
         message = data.get("message") or data.get("edited_message")
@@ -4775,40 +4853,51 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
         action = parsed.get("action", "query")
         data_inner = parsed.get("data", {})
         
+        mut_key = f"webhook_telegram_{update_id}" if update_id else None
         reply_text = ""
         if action == "task":
-            t = Task(
-                user_email=user_email,
-                owner_user_id=owner_id,
-                title=data_inner.get("title", text),
-                priority=data_inner.get("priority", "medium"),
-                reminder_time=data_inner.get("reminder_time"),
-                status="pending"
-            )
-            db.add(t)
-            db.commit()
-            db.refresh(t)
-            subs = data_inner.get("subtasks")
-            if subs and isinstance(subs, list):
-                for st in subs:
-                    if str(st).strip():
-                        db.add(Task(user_email=user_email, owner_user_id=owner_id, title=str(st).strip(), parent_id=t.id, status="pending"))
+            if mut_key and is_business_action_executed(db, mut_key):
+                reply_text = f"⏰ *टास्क पहले ही दर्ज है!*\n\n• **कार्य**: {data_inner.get('title', text)}"
+            else:
+                t = Task(
+                    user_email=user_email,
+                    owner_user_id=owner_id,
+                    title=data_inner.get("title", text),
+                    priority=data_inner.get("priority", "medium"),
+                    reminder_time=data_inner.get("reminder_time"),
+                    status="pending"
+                )
+                db.add(t)
                 db.commit()
-            reply_text = f"⏰ *टास्क दर्ज किया गया!*\n\n• **कार्य**: {t.title}\n• **समय**: {t.reminder_time or 'Anytime'}\n• **प्राथमिकता**: {t.priority.upper()}"
+                db.refresh(t)
+                subs = data_inner.get("subtasks")
+                if subs and isinstance(subs, list):
+                    for st in subs:
+                        if str(st).strip():
+                            db.add(Task(user_email=user_email, owner_user_id=owner_id, title=str(st).strip(), parent_id=t.id, status="pending"))
+                    db.commit()
+                if mut_key:
+                    record_business_action_executed(db, mut_key, user_email, owner_id, t.title)
+                reply_text = f"⏰ *टास्क दर्ज किया गया!*\n\n• **कार्य**: {t.title}\n• **समय**: {t.reminder_time or 'Anytime'}\n• **प्राथमिकता**: {t.priority.upper()}"
         elif action == "expense":
-            rec = FinancialRecord(
-                user_email=user_email,
-                owner_user_id=owner_id,
-                type="expense",
-                category=data_inner.get("category", "general"),
-                amount=data_inner.get("amount", 0.0),
-                currency="INR",
-                payment_mode=data_inner.get("payment_mode", "upi"),
-                note=data_inner.get("note", text)
-            )
-            db.add(rec)
-            db.commit()
-            reply_text = f"🧾 *खर्च दर्ज किया गया!*\n\n• **राशि**: ₹{rec.amount:,.2f}\n• **श्रेणी**: {rec.category.title()}\n• **विवरण**: {rec.note}"
+            if mut_key and is_business_action_executed(db, mut_key):
+                reply_text = f"🧾 *खर्च पहले ही दर्ज है!*\n\n• **राशि**: ₹{data_inner.get('amount', 0.0):,.2f}"
+            else:
+                rec = FinancialRecord(
+                    user_email=user_email,
+                    owner_user_id=owner_id,
+                    type="expense",
+                    category=data_inner.get("category", "general"),
+                    amount=data_inner.get("amount", 0.0),
+                    currency="INR",
+                    payment_mode=data_inner.get("payment_mode", "upi"),
+                    note=data_inner.get("note", text)
+                )
+                db.add(rec)
+                db.commit()
+                if mut_key:
+                    record_business_action_executed(db, mut_key, user_email, owner_id, str(rec.amount))
+                reply_text = f"🧾 *खर्च दर्ज किया गया!*\n\n• **राशि**: ₹{rec.amount:,.2f}\n• **श्रेणी**: {rec.category.title()}\n• **विवरण**: {rec.note}"
         else:
             reply_text = data_inner.get("response") or "प्रतिक्रिया संसाधित की गई।"
 
@@ -4819,8 +4908,10 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
                     "text": reply_text,
                     "parse_mode": "Markdown"
                 })
+        finalize_webhook_event(db, webhook_evt, success=True)
         return {"status": "ok"}
     except Exception as e:
+        finalize_webhook_event(db, webhook_evt, success=False)
         print(f"[Telegram Webhook Error] {e}")
         return {"status": "error", "detail": str(e)}
 
@@ -5327,29 +5418,10 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         # 2. Atomic Deduplication & Retry-Safe State Machine via ProcessedWebhookEvent table (AETH-P0-05)
         webhook_evt = None
         if msg_id:
-            existing_evt = db.query(ProcessedWebhookEvent).filter(
-                ProcessedWebhookEvent.provider == "whatsapp",
-                ProcessedWebhookEvent.event_id == str(msg_id)
-            ).first()
-            if existing_evt:
-                if existing_evt.status in ["processing", "processed"]:
-                    print(f"[WhatsApp Webhook] Duplicate/in-flight message received ({msg_id}) — ignoring to prevent duplicate response.")
-                    return {"status": "ok", "message": "duplicate ignored"}
-                else:
-                    existing_evt.status = "processing"
-                    db.commit()
-                    webhook_evt = existing_evt
-            else:
-                try:
-                    with db.begin_nested():
-                        webhook_evt = ProcessedWebhookEvent(provider="whatsapp", event_id=str(msg_id), status="processing")
-                        db.add(webhook_evt)
-                        db.flush()
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                    print(f"[WhatsApp Webhook] Duplicate message received ({msg_id}) — ignoring to prevent duplicate response.")
-                    return {"status": "ok", "message": "duplicate ignored"}
+            claimed, webhook_evt = claim_webhook_event(db, provider="whatsapp", event_id=str(msg_id))
+            if not claimed:
+                print(f"[WhatsApp Webhook] Duplicate/in-flight message received ({msg_id}) — ignoring to prevent duplicate response.")
+                return {"status": "ok", "message": "duplicate ignored"}
 
         sender = msg.get("from")  # e.g., '919876543210'
         msg_type = msg.get("type")
@@ -5553,88 +5625,104 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         action = parsed.get("action", "query")
         data_inner = parsed.get("data", {})
 
+        mut_key = f"webhook_whatsapp_{msg_id}" if msg_id else None
         reply_text = ""
         if action == "task":
             multi = data_inner.get("multi_tasks")
             if multi and isinstance(multi, list) and len(multi) > 1:
-                created_tasks = []
-                for item in multi:
-                    title = item.get("title", "").strip()
-                    if title:
-                        t = Task(
-                            user_email=user_email,
-                            owner_user_id=owner_id,
-                            title=title,
-                            priority=item.get("priority", "medium"),
-                            reminder_time=item.get("reminder_time"),
-                            status="pending"
-                        )
-                        db.add(t)
-                        created_tasks.append(t)
-                db.commit()
-                task_lines = "\n".join([f"• *{ct.title}* ({ct.reminder_time or 'Anytime'})" for ct in created_tasks])
-                reply_text = f"⏰ *{len(created_tasks)} टास्क दर्ज किए गए!*\n\n{task_lines}\n\nसभी रिमाइंडर्स आपके एजेंडा में सिंक हो चुके हैं।"
+                if mut_key and is_business_action_executed(db, mut_key):
+                    reply_text = f"⏰ *टास्क पहले ही दर्ज हैं!*\n\n{len(multi)} कार्य आपके एजेंडा में पहले से मौजूद हैं।"
+                else:
+                    created_tasks = []
+                    for item in multi:
+                        title = item.get("title", "").strip()
+                        if title:
+                            t = Task(
+                                user_email=user_email,
+                                owner_user_id=owner_id,
+                                title=title,
+                                priority=item.get("priority", "medium"),
+                                reminder_time=item.get("reminder_time"),
+                                status="pending"
+                            )
+                            db.add(t)
+                            created_tasks.append(t)
+                    db.commit()
+                    if mut_key:
+                        record_business_action_executed(db, mut_key, user_email, owner_id, f"{len(created_tasks)} tasks")
+                    task_lines = "\n".join([f"• *{ct.title}* ({ct.reminder_time or 'Anytime'})" for ct in created_tasks])
+                    reply_text = f"⏰ *{len(created_tasks)} टास्क दर्ज किए गए!*\n\n{task_lines}\n\nसभी रिमाइंडर्स आपके एजेंडा में सिंक हो चुके हैं।"
             else:
-                t = Task(
+                if mut_key and is_business_action_executed(db, mut_key):
+                    reply_text = f"⏰ *टास्क पहले ही दर्ज है!*\n\n• *कार्य*: {data_inner.get('title', user_text)}"
+                else:
+                    t = Task(
+                        user_email=user_email,
+                        owner_user_id=owner_id,
+                        title=data_inner.get("title", user_text),
+                        priority=data_inner.get("priority", "medium"),
+                        reminder_time=data_inner.get("reminder_time"),
+                        status="pending"
+                    )
+                    db.add(t)
+                    db.commit()
+                    db.refresh(t)
+                    subs = data_inner.get("subtasks")
+                    if subs and isinstance(subs, list):
+                        for st in subs:
+                            if str(st).strip():
+                                db.add(Task(user_email=user_email, owner_user_id=owner_id, title=str(st).strip(), parent_id=t.id, status="pending"))
+                        db.commit()
+                    if mut_key:
+                        record_business_action_executed(db, mut_key, user_email, owner_id, t.title)
+                    reply_text = f"⏰ *टास्क दर्ज किया गया!*\n\n• *कार्य*: {t.title}\n• *समय*: {t.reminder_time or 'Anytime'}\n• *प्राथमिकता*: {t.priority.upper()}"
+        elif action in ["expense", "income"]:
+            if mut_key and is_business_action_executed(db, mut_key):
+                reply_text = f"🧾 *खर्च/आय पहले ही दर्ज है!*\n\n• *राशि*: ₹{data_inner.get('amount', 0.0):,.2f}"
+            else:
+                rec_type = "expense" if action == "expense" else "income"
+                rec = FinancialRecord(
                     user_email=user_email,
                     owner_user_id=owner_id,
-                    title=data_inner.get("title", user_text),
-                    priority=data_inner.get("priority", "medium"),
-                    reminder_time=data_inner.get("reminder_time"),
-                    status="pending"
+                    type=rec_type,
+                    category=data_inner.get("category", "general"),
+                    amount=data_inner.get("amount", 0.0),
+                    currency="INR",
+                    payment_mode=data_inner.get("payment_mode", "upi"),
+                    note=data_inner.get("note", user_text)
                 )
-                db.add(t)
+                db.add(rec)
                 db.commit()
-                db.refresh(t)
-                subs = data_inner.get("subtasks")
-                if subs and isinstance(subs, list):
-                    for st in subs:
-                        if str(st).strip():
-                            db.add(Task(user_email=user_email, owner_user_id=owner_id, title=str(st).strip(), parent_id=t.id, status="pending"))
-                    db.commit()
-                reply_text = f"⏰ *टास्क दर्ज किया गया!*\n\n• *कार्य*: {t.title}\n• *समय*: {t.reminder_time or 'Anytime'}\n• *प्राथमिकता*: {t.priority.upper()}"
-        elif action in ["expense", "income"]:
-            rec_type = "expense" if action == "expense" else "income"
-            rec = FinancialRecord(
-                user_email=user_email,
-                owner_user_id=owner_id,
-                type=rec_type,
-                category=data_inner.get("category", "general"),
-                amount=data_inner.get("amount", 0.0),
-                currency="INR",
-                payment_mode=data_inner.get("payment_mode", "upi"),
-                note=data_inner.get("note", user_text)
-            )
-            db.add(rec)
-            db.commit()
+                if mut_key:
+                    record_business_action_executed(db, mut_key, user_email, owner_id, str(rec.amount))
 
-            if rec_type == "expense":
-                # Check Monthly Category Budget Alert
-                month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                cat_spend = db.query(func.sum(FinancialRecord.amount)).filter(
-                    FinancialRecord.owner_user_id == owner_id,
-                    FinancialRecord.type == "expense",
-                    FinancialRecord.category == rec.category,
-                    FinancialRecord.date >= month_start
-                ).scalar() or 0.0
+                if rec_type == "expense":
+                    # Check Monthly Category Budget Alert
+                    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                    cat_spend = db.query(func.sum(FinancialRecord.amount)).filter(
+                        FinancialRecord.owner_user_id == owner_id,
+                        FinancialRecord.type == "expense",
+                        FinancialRecord.category == rec.category,
+                        FinancialRecord.date >= month_start
+                    ).scalar() or 0.0
 
-                BUDGETS = {
-                    "fuel": 4000.0,
-                    "food": 5000.0,
-                    "shopping": 10000.0,
-                    "travel": 4000.0,
-                    "dining": 5000.0,
-                    "bills": 3000.0
-                }
-                b_limit = BUDGETS.get(rec.category.lower())
-                alert_suffix = ""
-                if b_limit and cat_spend >= (b_limit * 0.8):
-                    pct = int((cat_spend / b_limit) * 100)
-                    alert_suffix = f"\n\n⚠️ *बजट अलर्ट*: इस माह {rec.category.title()} का कुल खर्च ₹{cat_spend:,.0f} / ₹{b_limit:,.0f} ({pct}%) हो चुका है!"
+                    BUDGETS = {
+                        "fuel": 4000.0,
+                        "food": 5000.0,
+                        "shopping": 10000.0,
+                        "travel": 4000.0,
+                        "dining": 5000.0,
+                        "bills": 3000.0
+                    }
+                    b_limit = BUDGETS.get(rec.category.lower())
+                    alert_suffix = ""
+                    if b_limit and cat_spend >= (b_limit * 0.8):
+                        pct = int((cat_spend / b_limit) * 100)
+                        alert_suffix = f"\n\n⚠️ *बजट अलर्ट*: इस माह {rec.category.title()} का कुल खर्च ₹{cat_spend:,.0f} / ₹{b_limit:,.0f} ({pct}%) हो चुका है!"
 
-                reply_text = f"🧾 *खर्च दर्ज किया गया!*\n\n• *राशि*: ₹{rec.amount:,.2f}\n• *श्रेणी*: {rec.category.title()}\n• *मोड*: {rec.payment_mode.upper()}\n• *विवरण*: {rec.note}{alert_suffix}"
-            else:
-                reply_text = f"💰 *आय दर्ज की गई!*\n\n• *राशि*: +₹{rec.amount:,.2f}\n• *श्रेणी*: {rec.category.title()}\n• *विवरण*: {rec.note}"
+                    reply_text = f"🧾 *खर्च दर्ज किया गया!*\n\n• *राशि*: ₹{rec.amount:,.2f}\n• *श्रेणी*: {rec.category.title()}\n• *मोड*: {rec.payment_mode.upper()}\n• *विवरण*: {rec.note}{alert_suffix}"
+                else:
+                    reply_text = f"💰 *आय दर्ज की गई!*\n\n• *राशि*: +₹{rec.amount:,.2f}\n• *श्रेणी*: {rec.category.title()}\n• *विवरण*: {rec.note}"
         elif action == "youtube":
             q = data_inner.get("query")
             if not q or q == user_text:
@@ -5665,19 +5753,11 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         except Exception as e_chat:
             print(f"[WhatsApp ChatMessage Sync Error] {e_chat}")
 
-        if webhook_evt:
-            webhook_evt.status = "processed"
-            db.commit()
-
+        finalize_webhook_event(db, webhook_evt, success=True)
         await _send_whatsapp_message(sender, reply_text, wa_phone_id, wa_token)
         return {"status": "ok"}
     except Exception as e:
-        if webhook_evt:
-            try:
-                webhook_evt.status = "failed"
-                db.commit()
-            except Exception:
-                db.rollback()
+        finalize_webhook_event(db, webhook_evt, success=False)
         print(f"[WhatsApp Webhook Error] {e}")
         return {"status": "error", "detail": str(e)}
 
@@ -5719,33 +5799,10 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
     msg_sid = form.get("MessageSid") or form.get("SmsMessageSid") or form.get("SmsSid")
     twilio_evt = None
     if msg_sid:
-        existing_t_evt = db.query(ProcessedWebhookEvent).filter(
-            ProcessedWebhookEvent.provider == "twilio",
-            ProcessedWebhookEvent.event_id == str(msg_sid)
-        ).first()
-        if existing_t_evt:
-            if existing_t_evt.status in ["processing", "processed"]:
-                print(f"[Twilio Webhook] Duplicate delivery ignored: {msg_sid}")
-                return Response(content="<Response></Response>", media_type="application/xml")
-            else:
-                existing_t_evt.status = "processing"
-                db.commit()
-                twilio_evt = existing_t_evt
-        else:
-            try:
-                with db.begin_nested():
-                    twilio_evt = ProcessedWebhookEvent(
-                        provider="twilio",
-                        event_id=str(msg_sid),
-                        status="processing"
-                    )
-                    db.add(twilio_evt)
-                    db.flush()
-                db.commit()
-            except (IntegrityError, Exception):
-                db.rollback()
-                print(f"[Twilio Webhook] Duplicate delivery ignored: {msg_sid}")
-                return Response(content="<Response></Response>", media_type="application/xml")
+        claimed, twilio_evt = claim_webhook_event(db, provider="twilio", event_id=str(msg_sid))
+        if not claimed:
+            print(f"[Twilio Webhook] Duplicate delivery ignored: {msg_sid}")
+            return Response(content="<Response></Response>", media_type="application/xml")
 
     try:
         sender_full = form.get("From", "")  # e.g. "whatsapp:+919876543210"
@@ -5837,16 +5894,27 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
             )
             action = parsed.get("action", "query")
             data_inner = parsed.get("data", {})
+            mut_key = f"webhook_twilio_{msg_sid}" if msg_sid else None
             if action == "task":
-                t = Task(user_email=user_email, owner_user_id=owner_id, title=data_inner.get("title", body), reminder_time=data_inner.get("reminder_time"), status="pending")
-                db.add(t)
-                db.commit()
-                reply = f"⏰ Task saved: {t.title} (Time: {t.reminder_time or 'Anytime'})"
+                if mut_key and is_business_action_executed(db, mut_key):
+                    reply = f"⏰ Task saved: {data_inner.get('title', body)}"
+                else:
+                    t = Task(user_email=user_email, owner_user_id=owner_id, title=data_inner.get("title", body), reminder_time=data_inner.get("reminder_time"), status="pending")
+                    db.add(t)
+                    db.commit()
+                    if mut_key:
+                        record_business_action_executed(db, mut_key, user_email, owner_id, t.title)
+                    reply = f"⏰ Task saved: {t.title} (Time: {t.reminder_time or 'Anytime'})"
             elif action == "expense":
-                rec = FinancialRecord(user_email=user_email, owner_user_id=owner_id, type="expense", category=data_inner.get("category", "general"), amount=data_inner.get("amount", 0.0), currency="INR", note=data_inner.get("note", body))
-                db.add(rec)
-                db.commit()
-                reply = f"🧾 Kharch saved: ₹{rec.amount:,.2f} ({rec.category})"
+                if mut_key and is_business_action_executed(db, mut_key):
+                    reply = f"🧾 Kharch saved: ₹{data_inner.get('amount', 0.0):,.2f} ({data_inner.get('category', 'general')})"
+                else:
+                    rec = FinancialRecord(user_email=user_email, owner_user_id=owner_id, type="expense", category=data_inner.get("category", "general"), amount=data_inner.get("amount", 0.0), currency="INR", note=data_inner.get("note", body))
+                    db.add(rec)
+                    db.commit()
+                    if mut_key:
+                        record_business_action_executed(db, mut_key, user_email, owner_id, str(rec.amount))
+                    reply = f"🧾 Kharch saved: ₹{rec.amount:,.2f} ({rec.category})"
             elif action == "youtube":
                 q = data_inner.get("query")
                 if not q or q == body:
@@ -5870,17 +5938,10 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
                 reply = data_inner.get("response", "Done.")
 
         twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{reply}</Message></Response>'
-        if twilio_evt:
-            twilio_evt.status = "processed"
-            db.commit()
+        finalize_webhook_event(db, twilio_evt, success=True)
         return Response(content=twiml, media_type="application/xml")
     except Exception as e:
-        if twilio_evt:
-            try:
-                twilio_evt.status = "failed"
-                db.commit()
-            except Exception:
-                db.rollback()
+        finalize_webhook_event(db, twilio_evt, success=False)
         print(f"[Twilio WA Error] {e}")
         return Response(content='<Response><Message>Error processing</Message></Response>', media_type="application/xml")
 

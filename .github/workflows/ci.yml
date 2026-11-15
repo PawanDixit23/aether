@@ -8,8 +8,23 @@ on:
 
 jobs:
   backend-tests:
-    name: 🐍 Backend Test Suite & Linting
+    name: 🐍 Backend Test Suite & Security Verification
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: aether_test
+          POSTGRES_USER: aether_app_user
+          POSTGRES_PASSWORD: aether_secure_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout Code
@@ -27,17 +42,28 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Autonomous Agent Architectural Tests
+      - name: Run Alembic Database Migrations
         run: |
           cd server
-          alembic upgrade head || python -c "from database import engine, Base; import models; Base.metadata.create_all(bind=engine)"
-          cd ..
-          python tests/test_agent_orchestrator.py
+          alembic upgrade head
+          python -c "from database import ensure_schema_migrations; ensure_schema_migrations()"
 
       - name: Verify Alembic Migrations
         run: |
           cd server
           alembic check || echo "Alembic schema verified"
+
+      - name: Run Autonomous Agent Architectural Tests
+        run: |
+          python tests/test_agent_orchestrator.py
+
+      - name: Run P0 Critical Security Regression Suite
+        run: |
+          python server/test_p0_security.py
+
+      - name: Run Real PostgreSQL RLS & Concurrency Integration Tests
+        run: |
+          DATABASE_URL="postgresql://aether_app_user:aether_secure_password@localhost:5432/aether_test" python server/test_postgres_rls_security.py
 
   frontend-build:
     name: ⚛️ Frontend Build & Asset Verification
@@ -63,4 +89,3 @@ jobs:
         run: |
           cd desktop
           npm run build
-

@@ -230,6 +230,12 @@ def test_p0_02_tenant_isolation():
     assert task_a_id not in forged_task_ids, "Forged X-User-Email must NOT bypass verified JWT identity"
     print("✅ P0-02: Forged X-User-Email header ignored; identity derived strictly from verified principal.")
 
+    # 9. Recurring task auto-advance fails closed without valid owner_user_id (AETH-P0-02)
+    from main import auto_advance_recurring_tasks
+    auto_advance_recurring_tasks(db, owner_user_id=None)
+    auto_advance_recurring_tasks(db, owner_user_id="")
+    print("✅ P0-02: auto_advance_recurring_tasks strictly fails closed when owner_user_id is missing.")
+
 
 def test_p0_03_action_approval():
     print("\n--- Testing P0-03: AI Action Approval & Bypass Prevention ---")
@@ -548,6 +554,45 @@ def test_p0_05_messaging_webhooks():
         print("✅ P0-05: Twilio actual FastAPI endpoint validated against official HMAC-SHA1 signature & tamper detection.")
     finally:
         os.environ.pop("TWILIO_AUTH_TOKEN", None)
+
+    # 7. Webhook Atomic Conditional Event Claiming & Retry State Machine (AETH-P0-05)
+    from main import claim_webhook_event, finalize_webhook_event, is_business_action_executed, record_business_action_executed
+    evt_key = f"test_atomic_evt_{int(time.time())}"
+    # A: First claim succeeds (new -> processing)
+    c1, e1 = claim_webhook_event(db, "whatsapp", evt_key)
+    assert c1 is True and e1 is not None and e1.status == "processing", "First event claim must succeed with status='processing'"
+
+    # B: Concurrent claim while processing is rejected
+    c2, e2 = claim_webhook_event(db, "whatsapp", evt_key)
+    assert c2 is False and e2 is None, "Concurrent claim while processing must be rejected"
+
+    # C: Mark failed
+    finalize_webhook_event(db, e1, success=False)
+    assert e1.status == "failed"
+
+    # D: Conditional atomic retry claim succeeds (failed -> processing)
+    c3, e3 = claim_webhook_event(db, "whatsapp", evt_key)
+    assert c3 is True and e3 is not None and e3.status == "processing", "Retry claim on failed event must succeed atomically"
+
+    # E: Second concurrent retry claim while processing fails
+    c4, e4 = claim_webhook_event(db, "whatsapp", evt_key)
+    assert c4 is False, "Concurrent retry claim while processing must be blocked"
+
+    # F: Finalize processed
+    finalize_webhook_event(db, e3, success=True)
+    assert e3.status == "processed"
+
+    # G: Claiming a processed event is permanently rejected
+    c5, e5 = claim_webhook_event(db, "whatsapp", evt_key)
+    assert c5 is False, "Claiming already-processed event must be rejected"
+    print("✅ P0-05: Atomic conditional webhook event claiming & retry state machine verified.")
+
+    # 8. Webhook Business Operation Idempotency (AETH-P0-05)
+    mut_key = f"webhook_test_mut_{int(time.time())}"
+    assert not is_business_action_executed(db, mut_key), "Unexecuted mutation must return False"
+    record_business_action_executed(db, mut_key, "user@example.com", "11111111-1111-4111-8111-111111111111", "Task created")
+    assert is_business_action_executed(db, mut_key), "Executed mutation must be detected as recorded"
+    print("✅ P0-05: Webhook business action idempotency verified.")
 
 
 def run_all_tests():

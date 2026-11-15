@@ -28,7 +28,7 @@ except ImportError:
 # Ensure server module is in python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "server")))
 
-from database import engine, Base, get_db
+from database import engine, Base, get_db, ensure_schema_migrations
 import models
 from models import AuditLog, MemoryItem, ScheduledJob
 from agent.state import ActionTier, ToolCall
@@ -38,8 +38,9 @@ from agent.orchestrator import AgentOrchestrator
 from memory.chatsorter import ChatSorter
 from memory.hybrid_provider import HybridMemoryProvider
 
-# Auto-initialize all table schemas on clean test runner environments (e.g. GitHub Actions CI)
+# Auto-initialize all table schemas and migrations on clean test runner environments (e.g. GitHub Actions CI)
 Base.metadata.create_all(bind=engine)
+ensure_schema_migrations()
 
 
 def test_permission_engine_classification():
