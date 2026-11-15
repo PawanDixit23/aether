@@ -48,7 +48,7 @@ from models import (
     WhatsAppMessage, ProcessedMutation, BriefingPreference
 )
 from agent.governance import ActionApprovalManager
-from database import set_db_rls_context, set_webhook_service_rls_context
+from database import SessionLocal, set_db_rls_context, set_webhook_service_rls_context
 
 
 def get_postgres_engine():
@@ -453,7 +453,10 @@ def test_postgres_rls_suite():
         from agent.orchestrator import AgentOrchestrator, AgentState
         from agent.governance import ActionTier
 
-        orch_db_sess = Session()
+        # Use the application's SessionLocal so the after_begin hook restores the
+        # transaction-local RLS subject after create_approval_request() commits.
+        # A bare sessionmaker(bind=engine) silently loses that context on commit.
+        orch_db_sess = SessionLocal()
         try:
             set_db_rls_context(orch_db_sess, user_a)
             orchestrator = AgentOrchestrator(db=orch_db_sess, owner_user_id=user_a, user_email="usera@example.com")
