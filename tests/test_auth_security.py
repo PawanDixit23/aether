@@ -66,6 +66,8 @@ class TestVerifiedIdentityMiddleware(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         db = SessionLocal()
+        db.info["tenant_user_id"] = owner_id
+        db.info["tenant_user_email"] = "alice@example.test"
         try:
             task = db.query(Task).filter(
                 Task.user_email == "alice@example.test",

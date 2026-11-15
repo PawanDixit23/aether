@@ -33,14 +33,20 @@ jobs:
           fi
 
       - name: 🔔 Trigger Due Reminder Push Notifications
+        env:
+          AETHER_WORKER_TOKEN: ${{ secrets.AETHER_WORKER_TOKEN }}
         run: |
+          if [ -z "$AETHER_WORKER_TOKEN" ]; then
+            echo "AETHER_WORKER_TOKEN GitHub secret is required."
+            exit 1
+          fi
           echo "🔔 Triggering push notifications for due reminders..."
           PUSH_STATUS=$(curl -s -o /tmp/push_response.json -w "%{http_code}" \
             --max-time 30 \
             --retry 2 \
             -X POST \
             -H "Content-Type: application/json" \
-            -H "X-GitHub-Actions: true" \
+            -H "Authorization: Bearer $AETHER_WORKER_TOKEN" \
             "https://aether-kjrj.onrender.com/api/reminders/push-check")
           echo "Push check status: $PUSH_STATUS"
           cat /tmp/push_response.json || true

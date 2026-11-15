@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import hmac
 
 # Ensure server module directory is in sys.path regardless of execution root
 _SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,7 +19,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 import httpx
 import re
 import traceback
@@ -69,16 +70,16 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
 # ──────────────────────────────────────────────────────────────────────────────
 
 try:
-    from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
+    from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_tenant_context, set_worker_context
     from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
     from ai_engine import parse_intent_with_llm
 except ImportError:
     try:
-        from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
+        from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_tenant_context, set_worker_context
         from server.models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
         from server.ai_engine import parse_intent_with_llm
     except ImportError:
-        from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
+        from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_tenant_context, set_worker_context
         from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
         from .ai_engine import parse_intent_with_llm
 
@@ -87,6 +88,23 @@ Base.metadata.create_all(bind=engine)
 ensure_schema_migrations()
 
 app = FastAPI(title="Aether Executive Core", version="0.1.0")
+
+@app.on_event("startup")
+def enforce_postgres_runtime_role():
+    """Refuse PostgreSQL superuser/BYPASSRLS connections in the API runtime."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.connect() as connection:
+        role_flags = connection.execute(
+            text(
+                "SELECT rolsuper, rolbypassrls "
+                "FROM pg_roles WHERE rolname = current_user"
+            )
+        ).first()
+    if role_flags is None or bool(role_flags[0]) or bool(role_flags[1]):
+        raise RuntimeError(
+            "Aether API must use a PostgreSQL runtime role with NOSUPERUSER and NOBYPASSRLS"
+        )
 
 try:
     from auth import verify_supabase_access_token
@@ -115,16 +133,29 @@ async def verified_identity_middleware(request: Request, call_next):
     if is_api and not is_public:
         authorization = request.headers.get("Authorization", "")
         scheme, _, token = authorization.partition(" ")
-        if scheme.lower() != "bearer" or not token.strip():
-            from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=401, content={"detail": "Bearer authentication required"})
-        try:
-            identity = await verify_supabase_access_token(token.strip())
-        except HTTPException as exc:
-            from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-        request.state.user_id = identity["id"]
-        request.state.user_email = identity["email"]
+
+        # The global reminder worker is authenticated with a dedicated secret,
+        # never with a spoofable X-GitHub-Actions header or a user email.
+        if path == "/api/reminders/push-check":
+            expected_worker_token = os.environ.get("AETHER_WORKER_TOKEN", "").strip()
+            if not expected_worker_token:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=503, content={"detail": "Reminder worker authentication is not configured"})
+            if scheme.lower() != "bearer" or not hmac.compare_digest(token.strip(), expected_worker_token):
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=401, content={"detail": "Invalid worker credentials"})
+            request.state.is_worker = True
+        else:
+            if scheme.lower() != "bearer" or not token.strip():
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=401, content={"detail": "Bearer authentication required"})
+            try:
+                identity = await verify_supabase_access_token(token.strip())
+            except HTTPException as exc:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+            request.state.user_id = identity["id"]
+            request.state.user_email = identity["email"]
     return await call_next(request)
 
 # Enable CORS for local desktop & web apps
@@ -394,11 +425,11 @@ def record_user_login(req: AuthRecordRequest, request: Request, db: Session = De
     try:
         # Migrate any previously unassigned records ONLY if primary environment owner
         if is_owner_email(email):
-            db.query(Task).filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai")).update({Task.user_email: email})
-            db.query(FinancialRecord).filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == "") | (FinancialRecord.user_email == "operator@aether.ai")).update({FinancialRecord.user_email: email})
-            db.query(MemoryItem).filter((MemoryItem.user_email == None) | (MemoryItem.user_email == "") | (MemoryItem.user_email == "operator@aether.ai")).update({MemoryItem.user_email: email})
-            db.query(ChatMessage).filter((ChatMessage.user_email == None) | (ChatMessage.user_email == "") | (ChatMessage.user_email == "operator@aether.ai")).update({ChatMessage.user_email: email})
-            db.query(AuditLog).filter((AuditLog.user_email == None) | (AuditLog.user_email == "") | (AuditLog.user_email == "operator@aether.ai")).update({AuditLog.user_email: email})
+            db.query(Task).filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai")).update({Task.user_email: email, Task.owner_user_id: request.state.user_id})
+            db.query(FinancialRecord).filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == "") | (FinancialRecord.user_email == "operator@aether.ai")).update({FinancialRecord.user_email: email, FinancialRecord.owner_user_id: request.state.user_id})
+            db.query(MemoryItem).filter((MemoryItem.user_email == None) | (MemoryItem.user_email == "") | (MemoryItem.user_email == "operator@aether.ai")).update({MemoryItem.user_email: email, MemoryItem.owner_user_id: request.state.user_id})
+            db.query(ChatMessage).filter((ChatMessage.user_email == None) | (ChatMessage.user_email == "") | (ChatMessage.user_email == "operator@aether.ai")).update({ChatMessage.user_email: email, ChatMessage.owner_user_id: request.state.user_id})
+            db.query(AuditLog).filter((AuditLog.user_email == None) | (AuditLog.user_email == "") | (AuditLog.user_email == "operator@aether.ai")).update({AuditLog.user_email: email, AuditLog.owner_user_id: request.state.user_id})
             db.commit()
     except Exception as e:
         print(f"[Record Login Auto-claim Note] {e}")
@@ -2802,6 +2833,7 @@ async def start_reminder_background_worker():
         while True:
             try:
                 db = SessionLocal()
+                set_worker_context(db)
                 try:
                     _run_push_check_internal(db)
                 finally:
@@ -2914,6 +2946,8 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
             MemoryItem.fact.like(f"{chat_id}:%")
         ).first()
         user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
+        if user_email:
+            set_tenant_context(db, user_email)
 
         bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
@@ -3052,7 +3086,7 @@ async def _send_whatsapp_message(to_number: str, message_body: str, phone_id: st
         print(f"[WhatsApp Outgoing Error] {e}")
 
 @app.get("/api/whatsapp/sync-waba")
-async def sync_whatsapp_waba(db: Session = Depends(get_db)):
+async def sync_whatsapp_waba(user_email: str = Depends(get_user_email), db: Session = Depends(get_db)):
     """Subscribes WABA to the app and sends a direct test ping."""
     token = os.environ.get("WHATSAPP_TOKEN", "").strip()
     phone_id = os.environ.get("WHATSAPP_PHONE_ID", "1432995866556035").strip()
@@ -3061,7 +3095,7 @@ async def sync_whatsapp_waba(db: Session = Depends(get_db)):
     
     # Pre-pair the user's phone with their account
     user_phone = "918741838653"
-    user_email = "e.pawandixit@gmail.com"
+    user_email = user_email.strip().lower()
     link_mem = db.query(MemoryItem).filter(
         MemoryItem.category == "whatsapp_pairing",
         MemoryItem.fact.like(f"{user_phone}:%")
@@ -3199,6 +3233,8 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             MemoryItem.fact.like(f"{sender}:%")
         ).first()
         user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
+        if user_email:
+            set_tenant_context(db, user_email)
 
         wa_token = os.environ.get("WHATSAPP_TOKEN", "").strip()
         wa_phone_id = os.environ.get("WHATSAPP_PHONE_ID", "").strip()
@@ -3223,6 +3259,7 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
                     f"Aether तुरंत आपके ऐप में सिंक कर देगा! 🚀"
                 )
                 try:
+                    set_tenant_context(db, target_email)
                     db.add(ChatMessage(user_email=target_email, role="user", content=f"📱 {user_text}", action_type="query"))
                     db.add(ChatMessage(user_email=target_email, role="aether", content=reply_text, action_type="query"))
                     db.commit()
@@ -3243,6 +3280,7 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             operator_mem = db.query(MemoryItem).filter(MemoryItem.category == "whatsapp_pairing").first()
             operator_email = operator_mem.fact.split(":", 1)[1].strip() if operator_mem else "e.pawandixit@gmail.com"
             operator_phone = operator_mem.fact.split(":", 1)[0].strip() if operator_mem else None
+            set_tenant_context(db, operator_email)
             
             operator_context = build_context(db, user_email=operator_email)
             safe_context = {
@@ -3442,6 +3480,8 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
             MemoryItem.fact.like(f"{sender}:%")
         ).first()
         user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
+        if user_email:
+            set_tenant_context(db, user_email)
 
         if body.lower().startswith("/login") or ("@" in body and len(body.split()) == 1):
             target_email = body.split()[-1].strip().lower()
@@ -3454,6 +3494,7 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
         elif not user_email:
             operator_mem = db.query(MemoryItem).filter(MemoryItem.category == "whatsapp_pairing").first()
             operator_email = operator_mem.fact.split(":", 1)[1].strip() if operator_mem else "e.pawandixit@gmail.com"
+            set_tenant_context(db, operator_email)
             operator_context = build_context(db, user_email=operator_email)
             safe_context = {
                 "tasks": operator_context.get("tasks", []),
