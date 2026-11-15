@@ -176,7 +176,7 @@ def get_current_user_identity(
             raise HTTPException(status_code=401, detail="Empty Bearer token in Authorization header")
 
         # 1. Cryptographic Supabase JWT Verification
-        if jwt_secret:
+        if jwt_secret or token.count(".") == 2:
             payload = verify_supabase_jwt(token, jwt_secret, expected_iss=expected_iss, expected_aud=expected_aud)
             if not payload:
                 raise HTTPException(status_code=401, detail="Invalid, expired, or tampered authentication token")
