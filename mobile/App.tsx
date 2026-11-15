@@ -283,8 +283,8 @@ export default function App() {
               }
             }
           } as any)}
-          originWhitelist={['*']}
-          mixedContentMode="always"
+          originWhitelist={['https://*', 'http://localhost*', 'http://127.0.0.1*']}
+          mixedContentMode="never"
           cacheEnabled={false}
           cacheMode="LOAD_NO_CACHE"
           onShouldStartLoadWithRequest={(request) => {

@@ -66,6 +66,20 @@ def ensure_schema_migrations():
         "ALTER TABLE chat_sessions ADD COLUMN project VARCHAR",
         "ALTER TABLE memory_vault ADD COLUMN embedding TEXT",
         "ALTER TABLE chat_messages ADD COLUMN embedding TEXT",
+        "ALTER TABLE tasks ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE financial_records ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE memory_vault ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE audit_logs ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE chat_sessions ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE chat_messages ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE whatsapp_messages ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE tasks ADD COLUMN dependency_task_ids TEXT DEFAULT '[]'",
+        "ALTER TABLE financial_records ADD COLUMN is_recurring BOOLEAN DEFAULT 0",
+        "ALTER TABLE financial_records ADD COLUMN recurrence_interval VARCHAR",
+        "ALTER TABLE financial_records ADD COLUMN next_due_date DATETIME",
+        "ALTER TABLE memory_vault ADD COLUMN importance FLOAT DEFAULT 1.0",
+        "ALTER TABLE memory_vault ADD COLUMN last_accessed_at DATETIME",
+        "ALTER TABLE scheduled_jobs ADD COLUMN idempotency_key VARCHAR",
     ]
 
     for stmt in migration_statements:

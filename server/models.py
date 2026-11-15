@@ -11,6 +11,7 @@ class Task(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String, index=True, nullable=True)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     priority = Column(String, default="medium")  # low, medium, high, urgent
@@ -19,6 +20,7 @@ class Task(Base):
     reminder_time = Column(String, nullable=True) # e.g. "10:30 AM" or "13:30"
     recurrence = Column(String, nullable=True, default=None) # e.g. "daily", "weekdays", "weekly_monday" or None
     parent_id = Column(Integer, nullable=True, default=None) # For hierarchical subtasks
+    dependency_task_ids = Column(Text, nullable=True, default="[]") # JSON array of blocking task IDs
     notified = Column(Boolean, default=False)
     completion_comment = Column(Text, nullable=True) # Comments / notes on completion
     attachments = Column(Text, nullable=True) # JSON array string of attached files [{name, url, type, size}]
@@ -29,12 +31,16 @@ class FinancialRecord(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String, index=True, nullable=True)
     type = Column(String, nullable=False)        # expense, income, emi, investment
     category = Column(String, default="general") # food, rent, fuel, client, etc.
     amount = Column(Float, nullable=False)
     currency = Column(String, default="INR")
     payment_mode = Column(String, default="upi") # upi, cash, card, bank
     note = Column(Text, nullable=True)
+    is_recurring = Column(Boolean, default=False)
+    recurrence_interval = Column(String, nullable=True) # "monthly", "yearly", "weekly"
+    next_due_date = Column(DateTime, nullable=True)
     date = Column(DateTime, default=datetime.utcnow)
 
 class MemoryItem(Base):
@@ -42,9 +48,12 @@ class MemoryItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String, index=True, nullable=True)
     category = Column(String, default="general") # preference, personal_rule, contact, context
     fact = Column(Text, nullable=False)
     confidence = Column(Float, default=1.0)
+    importance = Column(Float, default=1.0)
+    last_accessed_at = Column(DateTime, default=datetime.utcnow)
     embedding = Column(Text, nullable=True) # JSON array of floats for semantic vector search
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
@@ -54,6 +63,7 @@ class AuditLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String, index=True, nullable=True)
     action_type = Column(String, nullable=False) # create_task, log_expense, etc.
     details = Column(Text, nullable=False)
     confidence_score = Column(Float, default=1.0)
@@ -66,6 +76,7 @@ class ChatSession(Base):
 
     id = Column(String, primary_key=True, index=True) # e.g. sess_20261102_123456
     user_email = Column(String, index=True, nullable=False)
+    owner_user_id = Column(String, index=True, nullable=True)
     title = Column(String, nullable=False, default="New Conversation")
     is_pinned = Column(Boolean, default=False)
     project = Column(String, nullable=True, default=None) # e.g. "work", "personal", "ideas"
@@ -77,12 +88,15 @@ class ChatMessage(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String, index=True, nullable=True)
     session_id = Column(String, index=True, default="default", nullable=True)
     role = Column(String, nullable=False)        # "user" or "aether"
     content = Column(Text, nullable=False)
     action_type = Column(String, default="query")# "task", "expense", "income", "memory", "query"
     action_data = Column(Text, nullable=True)    # JSON string
     confidence = Column(Float, default=1.0)
+    importance = Column(Float, default=1.0)
+    last_accessed_at = Column(DateTime, default=datetime.utcnow)
     embedding = Column(Text, nullable=True) # JSON array of floats for semantic vector search
     created_at = Column(DateTime, default=datetime.utcnow)
 class PushSubscription(Base):
@@ -101,6 +115,7 @@ class ScheduledJob(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
     job_type = Column(String, nullable=False)   # e.g. "reminder", "task_notify", "whatsapp_digest"
+    idempotency_key = Column(String, index=True, nullable=True)
     payload = Column(Text, nullable=True)       # JSON string
     scheduled_at = Column(DateTime, nullable=False)
     status = Column(String, default="pending")  # pending, running, completed, failed
@@ -124,6 +139,7 @@ class WhatsAppMessage(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String, index=True, nullable=True)
     direction = Column(String, default="outbound")  # "outbound" or "inbound"
     phone_number = Column(String, index=True, nullable=False)
     sender_name = Column(String, nullable=True)
@@ -135,5 +151,31 @@ class WhatsAppMessage(Base):
     waba_message_id = Column(String, nullable=True, index=True)
     activity_data = Column(Text, nullable=True)     # JSON array of { event, timestamp, note }
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class ProcessedMutation(Base):
+    __tablename__ = "processed_mutations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    mutation_id = Column(String, unique=True, index=True, nullable=False)
+    user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String, index=True, nullable=True)
+    endpoint = Column(String, nullable=True)
+    response_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class BriefingPreference(Base):
+    __tablename__ = "briefing_preferences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_email = Column(String, unique=True, index=True, nullable=False)
+    owner_user_id = Column(String, index=True, nullable=True)
+    modules = Column(Text, default='["tasks","finances","weather","news","cricket"]') # JSON list
+    delivery_time_morning = Column(String, default="08:00")
+    delivery_time_evening = Column(String, default="20:00")
+    channel_in_app = Column(Boolean, default=True)
+    channel_whatsapp = Column(Boolean, default=False)
+    channel_tts = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
 
 

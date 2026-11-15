@@ -39,13 +39,24 @@ class DurableScheduler:
         job_type: str,
         scheduled_at: datetime,
         user_email: str = "operator@aether.local",
-        payload: Optional[Dict[str, Any]] = None
+        payload: Optional[Dict[str, Any]] = None,
+        idempotency_key: Optional[str] = None
     ) -> ScheduledJob:
-        """Saves job persistently to database and enqueues to Redis if active."""
+        """Saves job persistently to database and enqueues to Redis if active (AETH-REL-01)."""
+        # Deduplication check via idempotency_key
+        if idempotency_key:
+            existing = db.query(ScheduledJob).filter(
+                ScheduledJob.idempotency_key == idempotency_key,
+                ScheduledJob.status.in_(["pending", "running", "completed"])
+            ).first()
+            if existing:
+                return existing
+
         payload_str = json.dumps(payload or {})
         job = ScheduledJob(
             user_email=user_email,
             job_type=job_type,
+            idempotency_key=idempotency_key,
             payload=payload_str,
             scheduled_at=scheduled_at,
             status="pending",
@@ -57,7 +68,6 @@ class DurableScheduler:
 
         if self.redis_client:
             try:
-                # Add to Redis ZSET by timestamp
                 score = scheduled_at.timestamp()
                 self.redis_client.zadd("aether_scheduled_jobs", {str(job.id): score})
             except Exception as r_err:
@@ -67,13 +77,25 @@ class DurableScheduler:
 
     @staticmethod
     def get_pending_jobs(db: Session) -> List[ScheduledJob]:
-        """Fetches all jobs that are due for execution and not yet completed."""
+        """Fetches and claims due jobs atomically by transitioning status to 'running'."""
         now = datetime.utcnow()
-        return db.query(ScheduledJob).filter(
+        candidates = db.query(ScheduledJob).filter(
             ScheduledJob.status == "pending",
             ScheduledJob.scheduled_at <= now,
             ScheduledJob.attempts < 5
-        ).order_by(ScheduledJob.scheduled_at.asc()).all()
+        ).order_by(ScheduledJob.scheduled_at.asc()).limit(20).all()
+
+        claimed_jobs = []
+        for job in candidates:
+            # Atomic state claiming
+            job.status = "running"
+            job.updated_at = datetime.utcnow()
+            claimed_jobs.append(job)
+        
+        if claimed_jobs:
+            db.commit()
+
+        return claimed_jobs
 
     @staticmethod
     def mark_completed(db: Session, job: ScheduledJob):
@@ -83,9 +105,16 @@ class DurableScheduler:
 
     @staticmethod
     def mark_failed(db: Session, job: ScheduledJob, error: str):
+        from datetime import timedelta
         job.attempts += 1
         job.last_error = str(error)
-        job.status = "failed" if job.attempts >= 5 else "pending"
+        if job.attempts >= 5:
+            job.status = "failed"
+        else:
+            # Exponential backoff retry: 30s, 60s, 120s, 240s
+            backoff_secs = min(30 * (2 ** (job.attempts - 1)), 600)
+            job.status = "pending"
+            job.scheduled_at = datetime.utcnow() + timedelta(seconds=backoff_secs)
         job.updated_at = datetime.utcnow()
         db.commit()
 

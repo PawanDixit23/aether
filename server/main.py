@@ -122,30 +122,50 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
 
 try:
     from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
-    from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession, TaskDateCompletion, WhatsAppMessage
+    from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation, BriefingPreference
     from ai_engine import parse_intent_with_llm
 except ImportError:
     try:
         from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
-        from server.models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession, TaskDateCompletion, WhatsAppMessage
+        from server.models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation, BriefingPreference
         from server.ai_engine import parse_intent_with_llm
     except ImportError:
         from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
-        from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession, TaskDateCompletion, WhatsAppMessage
+        from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription, ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation, BriefingPreference
         from .ai_engine import parse_intent_with_llm
 
 # Initialize tables & run automated schema migrations
 Base.metadata.create_all(bind=engine)
 ensure_schema_migrations()
 
-app = FastAPI(title="Aether Executive Core", version="0.1.0")
+app = FastAPI(
+    title="Aether Executive Core API",
+    version="2.0.0",
+    description="Production-grade AI Operating System with hardened security, tenant isolation, durable scheduling, and multi-modal autonomous workflows (AETH-DOC-02).",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
-# Enable CORS for local desktop & web apps
+# Enable hardened CORS for local desktop, mobile webview & authorized origins (AETH-SEC-07)
+_raw_allowed_origins = os.environ.get("ALLOWED_ORIGINS", "").strip()
+ALLOWED_ORIGINS = [o.strip() for o in _raw_allowed_origins.split(",") if o.strip()]
+if not ALLOWED_ORIGINS:
+    ALLOWED_ORIGINS = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+        "tauri://localhost",
+        "https://tauri.localhost",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -223,23 +243,43 @@ def _verify_supabase_jwt(token: str, secret: str) -> Optional[dict]:
         return None
     return payload
 
+from security.auth import (
+    UserIdentity,
+    get_current_user_identity,
+    get_current_user_email,
+    get_current_user_id,
+    get_optional_user_identity,
+    verify_supabase_jwt,
+)
+
 def get_user_email(
+    request: Request,
     x_user_email: Optional[str] = Header(None, alias="X-User-Email"),
     authorization: Optional[str] = Header(None, alias="Authorization"),
     user_email: Optional[str] = None
 ) -> Optional[str]:
-    jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
-    if authorization and authorization.startswith("Bearer ") and jwt_secret:
-        token = authorization[7:].strip()
-        payload = _verify_supabase_jwt(token, jwt_secret)
-        if not payload or not payload.get("email"):
-            raise HTTPException(status_code=401, detail="Invalid or expired authentication token")
-        return str(payload["email"]).strip().lower()
+    """
+    Resolves authenticated user email safely (AETH-SEC-01).
+    Strictly verifies Bearer JWT token when provided. Rejects arbitrary header spoofing in production.
+    """
+    # 1. Bearer Token Authentication (Cryptographically verified)
+    if authorization and authorization.startswith("Bearer "):
+        user = get_current_user_identity(request, authorization)
+        return user.email
 
-    email = x_user_email or user_email
-    if email and email.strip():
-        return email.strip().lower()
-    return None
+    # 2. Production Environment Check: If SUPABASE_JWT_SECRET is active, require Bearer token
+    jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
+    is_prod = os.environ.get("ENVIRONMENT", "development").lower() in ["production", "prod"]
+    if jwt_secret or is_prod:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required. Please provide a valid Bearer token in Authorization header."
+        )
+
+    # 3. Development / Local offline mode fallback (pinned to default owner)
+    if x_user_email or user_email:
+        return (x_user_email or user_email).strip().lower()
+    return DEFAULT_OWNER_EMAIL
 
 DEFAULT_OWNER_EMAIL = os.environ.get("DEFAULT_USER_EMAIL", "e.pawandixit@gmail.com").strip().lower()
 
@@ -315,6 +355,7 @@ class TaskCreate(BaseModel):
     reminder_time: Optional[str] = None
     recurrence: Optional[str] = None
     parent_id: Optional[int] = None
+    dependency_task_ids: Optional[List[int]] = None
     subtasks: Optional[List[str]] = None
     completion_comment: Optional[str] = None
     attachments: Optional[str] = None
@@ -326,6 +367,7 @@ class TaskUpdate(BaseModel):
     due_date: Optional[datetime] = None
     reminder_time: Optional[str] = None
     recurrence: Optional[str] = None
+    dependency_task_ids: Optional[List[int]] = None
     status: Optional[str] = None
     completion_comment: Optional[str] = None
     attachments: Optional[str] = None
@@ -358,6 +400,9 @@ class FinancialRecordCreate(BaseModel):
     payment_mode: Optional[str] = "upi"
     note: Optional[str] = None
     monthly_budget: Optional[float] = None
+    is_recurring: Optional[bool] = False
+    recurrence_interval: Optional[str] = None
+    next_due_date: Optional[str] = None
 
 class FinancialRecordBulkCreate(BaseModel):
     records: List[FinancialRecordCreate]
@@ -399,6 +444,47 @@ class EmailDraftRequest(BaseModel):
     instructions: Optional[str] = ""
     language: Optional[str] = "en"
     user_name: Optional[str] = "Pawan Dixit"
+
+# ─── Financial Precision & Idempotency Utilities (AETH-REL-03 & AETH-REL-04) ───
+from decimal import Decimal, ROUND_HALF_EVEN
+
+def round_currency(amount: Any) -> float:
+    """Rounds currency to 2 decimal places with Banker's Rounding to eliminate drift (AETH-REL-03)."""
+    try:
+        d = Decimal(str(amount))
+        return float(d.quantize(Decimal('0.01'), rounding=ROUND_HALF_EVEN))
+    except Exception:
+        try:
+            return round(float(amount), 2)
+        except Exception:
+            return 0.0
+
+def get_cached_mutation(mutation_id: Optional[str], db: Session) -> Optional[Dict[str, Any]]:
+    if not mutation_id:
+        return None
+    try:
+        rec = db.query(ProcessedMutation).filter(ProcessedMutation.mutation_id == str(mutation_id).strip()).first()
+        if rec and rec.response_json:
+            return json.loads(rec.response_json)
+    except Exception:
+        pass
+    return None
+
+def record_mutation(mutation_id: Optional[str], user_email: Optional[str], endpoint: str, data: Any, db: Session):
+    if not mutation_id:
+        return
+    try:
+        rec = ProcessedMutation(
+            mutation_id=str(mutation_id).strip(),
+            user_email=user_email,
+            endpoint=endpoint,
+            response_json=json.dumps(data)
+        )
+        db.add(rec)
+        db.commit()
+    except Exception as e:
+        print(f"[record_mutation error] {e}")
+        db.rollback()
 
 try:
     from zoneinfo import ZoneInfo
@@ -727,6 +813,8 @@ class AgentRunRequest(BaseModel):
     user_email: Optional[str] = None
     language: Optional[str] = "auto"
     approved_tools: Optional[List[str]] = None
+    action_id: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
 
 @app.post("/api/agent/run")
 @app.post("/api/agent/approve")
@@ -737,12 +825,17 @@ async def run_agent_workflow(
 ):
     """
     Executes multi-step autonomous workflows with permission checks, tool loops,
-    and reversible audit logging as defined in AETHER_RECOMMENDED_ARCHITECTURE.md
+    canonical parameter hash approvals, and reversible audit logging.
     """
     from agent import AgentOrchestrator
     eff_email = req.user_email or user_email or "operator@aether.local"
     orchestrator = AgentOrchestrator(db=db, user_email=eff_email, lang=req.language or "auto")
-    result_state = await orchestrator.run(req.prompt, approved_tools=req.approved_tools)
+    context = {}
+    if req.action_id:
+        context["action_id"] = req.action_id
+    if req.parameters:
+        context["parameters"] = req.parameters
+    result_state = await orchestrator.run(req.prompt, context=context, approved_tools=req.approved_tools)
     return {
         "status": "completed" if result_state.completed else "partial",
         "requires_approval": result_state.requires_approval,
@@ -2170,6 +2263,7 @@ def serialize_task(t: Task, db: Optional[Session] = None) -> dict:
         "notified": t.notified,
         "completion_comment": getattr(t, "completion_comment", None),
         "attachments": getattr(t, "attachments", None),
+        "dependency_task_ids": json.loads(getattr(t, "dependency_task_ids", "[]") or "[]"),
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "subtasks": []
     }
@@ -2226,6 +2320,9 @@ def create_task(
     data = task_in.dict()
     data["user_email"] = eff_email
     subtasks = data.pop("subtasks", None)
+    deps = data.pop("dependency_task_ids", None)
+    if deps is not None:
+        data["dependency_task_ids"] = json.dumps(deps)
     task = Task(**data)
     if task.reminder_time:
         time_comp = parse_reminder_time_components(task.reminder_time)
@@ -2274,6 +2371,8 @@ def update_task(
         task.reminder_time = req.reminder_time.strip()
     if req.recurrence is not None:
         task.recurrence = req.recurrence
+    if req.dependency_task_ids is not None:
+        task.dependency_task_ids = json.dumps(req.dependency_task_ids)
     if req.status is not None:
         task.status = req.status
     if req.completion_comment is not None:
@@ -2306,6 +2405,26 @@ def toggle_task(
         new_status = req.status
     else:
         new_status = "completed" if task.status != "completed" else "pending"
+
+    # Dependency Tree Check (AETH-TASK-01): Block completion if dependencies are pending
+    if new_status == "completed" and task.dependency_task_ids:
+        try:
+            dep_ids = json.loads(task.dependency_task_ids)
+            if dep_ids and isinstance(dep_ids, list):
+                blocking = db.query(Task).filter(
+                    Task.id.in_(dep_ids),
+                    Task.status != "completed"
+                ).all()
+                if blocking:
+                    titles = [b.title for b in blocking]
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot complete task: blocked by uncompleted dependencies: {', '.join(titles)}"
+                    )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
 
     now_dt = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     today_str = now_dt.strftime("%Y-%m-%d")
@@ -2900,26 +3019,43 @@ def list_finance_records(
 @app.post("/api/finance/records")
 def create_finance_record(
     req: FinancialRecordCreate,
+    x_mutation_id: Optional[str] = Header(None, alias="X-Client-Mutation-Id"),
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
     eff_email = get_effective_email(req.user_email or user_email)
     if not eff_email:
         raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Idempotency cache check (AETH-REL-04)
+    cached = get_cached_mutation(x_mutation_id, db)
+    if cached:
+        return cached
     
     rec_type = (req.type or "expense").strip().lower()
     if rec_type not in ["expense", "income"]:
         rec_type = "expense"
         
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
+    due_dt = None
+    if req.next_due_date:
+        try:
+            due_dt = datetime.fromisoformat(req.next_due_date)
+        except Exception:
+            due_dt = None
+
+    rounded_amt = round_currency(req.amount) # AETH-REL-03 Banker's rounding
     new_rec = FinancialRecord(
         user_email=eff_email,
         type=rec_type,
         category=(req.category or "general").strip().lower(),
-        amount=abs(float(req.amount)),
+        amount=rounded_amt,
         currency=req.currency or "INR",
         payment_mode=(req.payment_mode or "upi").strip().lower(),
         note=(req.note or "").strip() or None,
+        is_recurring=bool(req.is_recurring),
+        recurrence_interval=req.recurrence_interval,
+        next_due_date=due_dt,
         date=now
     )
     db.add(new_rec)
@@ -2934,26 +3070,91 @@ def create_finance_record(
             FinancialRecord.type == "expense",
             FinancialRecord.date >= month_start
         ).all()
-        total_spent = sum(float(r.amount or 0) for r in month_expenses)
+        total_spent = sum(round_currency(r.amount) for r in month_expenses)
         pct = round((total_spent / float(req.monthly_budget)) * 100.0, 1)
         if pct >= 100.0:
-            budget_alert = {
-                "level": "exceeded",
-                "percent": pct,
-                "spent": total_spent,
-                "budget": float(req.monthly_budget),
-                "message": f"Monthly budget exceeded ({pct}% used: ₹{total_spent:,.0f} / ₹{req.monthly_budget:,.0f})"
-            }
+            budget_alert = f"Alert: You have exhausted {pct}% of your monthly budget (₹{total_spent:,.0f} / ₹{req.monthly_budget:,.0f})"
         elif pct >= 80.0:
-            budget_alert = {
-                "level": "warning",
-                "percent": pct,
-                "spent": total_spent,
-                "budget": float(req.monthly_budget),
-                "message": f"Monthly budget alert: {pct}% used (₹{total_spent:,.0f} / ₹{req.monthly_budget:,.0f})"
-            }
+            budget_alert = f"Notice: You have used {pct}% of your monthly budget (₹{total_spent:,.0f} / ₹{req.monthly_budget:,.0f})"
 
-    return {"status": "success", "record": new_rec, "budget_alert": budget_alert}
+    rec_dict = {
+        "id": new_rec.id,
+        "user_email": new_rec.user_email,
+        "type": new_rec.type,
+        "category": new_rec.category,
+        "amount": new_rec.amount,
+        "currency": new_rec.currency,
+        "payment_mode": new_rec.payment_mode,
+        "note": new_rec.note,
+        "is_recurring": new_rec.is_recurring,
+        "recurrence_interval": new_rec.recurrence_interval,
+        "next_due_date": new_rec.next_due_date.isoformat() if new_rec.next_due_date else None,
+        "date": new_rec.date.isoformat() if new_rec.date else None
+    }
+    resp_data = {"status": "success", "record": rec_dict, "budget_alert": budget_alert}
+    record_mutation(x_mutation_id, eff_email, "/api/finance/records", resp_data, db)
+    return resp_data
+
+@app.get("/api/finances/forecast")
+def get_cash_flow_forecast(
+    days: int = 30,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    """
+    30-day forward cash flow forecast (AETH-FIN-01).
+    Computes projected balance using recurring commitments and 30-day historical daily average burn rate.
+    """
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    now = datetime.utcnow()
+    past_30d = now - timedelta(days=30)
+    
+    # 1. Historical 30-day expenses to calculate average daily discretionary spend
+    past_expenses = db.query(FinancialRecord).filter(
+        FinancialRecord.user_email == eff_email,
+        FinancialRecord.type == "expense",
+        FinancialRecord.date >= past_30d
+    ).all()
+    past_expense_total = sum(round_currency(r.amount) for r in past_expenses)
+    avg_daily_spend = round_currency(past_expense_total / 30.0) if past_expenses else 0.0
+
+    # 2. Historical 30-day income
+    past_incomes = db.query(FinancialRecord).filter(
+        FinancialRecord.user_email == eff_email,
+        FinancialRecord.type == "income",
+        FinancialRecord.date >= past_30d
+    ).all()
+    past_income_total = sum(round_currency(r.amount) for r in past_incomes)
+
+    # 3. Recurring income & expenses
+    recurring_items = db.query(FinancialRecord).filter(
+        FinancialRecord.user_email == eff_email,
+        FinancialRecord.is_recurring == True
+    ).all()
+    
+    recurring_monthly_income = sum(round_currency(r.amount) for r in recurring_items if r.type == "income")
+    recurring_monthly_expense = sum(round_currency(r.amount) for r in recurring_items if r.type == "expense")
+
+    # 4. Projected 30-day cash flow
+    projected_discretionary = round_currency(avg_daily_spend * days)
+    projected_total_outflow = round_currency(recurring_monthly_expense + projected_discretionary)
+    projected_net_cashflow = round_currency(recurring_monthly_income - projected_total_outflow)
+
+    return {
+        "status": "success",
+        "forecast_days": days,
+        "average_daily_spend": avg_daily_spend,
+        "past_30d_income": past_income_total,
+        "past_30d_expense": past_expense_total,
+        "recurring_monthly_income": recurring_monthly_income,
+        "recurring_monthly_expense": recurring_monthly_expense,
+        "projected_total_outflow": projected_total_outflow,
+        "projected_net_cashflow": projected_net_cashflow,
+        "runway_health": "positive" if projected_net_cashflow >= 0 else "burn_rate_warning"
+    }
 
 @app.post("/api/finance/records/bulk")
 def create_finance_records_bulk(
@@ -3595,6 +3796,87 @@ def get_executive_audio_briefing(
         "text": briefing_text
     }
 
+# ─── Executive Briefing Preferences Subsystem (AETH-BRIEF-01) ─────────────
+class BriefingPreferenceRequest(BaseModel):
+    modules: Optional[List[str]] = None
+    delivery_time_morning: Optional[str] = "08:00"
+    delivery_time_evening: Optional[str] = "20:00"
+    channel_in_app: Optional[bool] = True
+    channel_whatsapp: Optional[bool] = False
+    channel_tts: Optional[bool] = True
+
+@app.get("/api/briefing/preferences")
+def get_briefing_preferences(
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    """Retrieves the user's customized briefing module and delivery preferences (AETH-BRIEF-01)."""
+    eff_email = get_effective_email(user_email)
+    defaults = {
+        "modules": ["tasks", "finances", "weather", "news", "cricket"],
+        "delivery_time_morning": "08:00",
+        "delivery_time_evening": "20:00",
+        "channel_in_app": True,
+        "channel_whatsapp": False,
+        "channel_tts": True
+    }
+    if not eff_email:
+        return defaults
+    pref = db.query(BriefingPreference).filter(BriefingPreference.user_email == eff_email).first()
+    if not pref:
+        return defaults
+    return {
+        "modules": json.loads(pref.modules or '["tasks","finances","weather","news","cricket"]'),
+        "delivery_time_morning": pref.delivery_time_morning or "08:00",
+        "delivery_time_evening": pref.delivery_time_evening or "20:00",
+        "channel_in_app": pref.channel_in_app if pref.channel_in_app is not None else True,
+        "channel_whatsapp": pref.channel_whatsapp if pref.channel_whatsapp is not None else False,
+        "channel_tts": pref.channel_tts if pref.channel_tts is not None else True
+    }
+
+@app.post("/api/briefing/preferences")
+def update_briefing_preferences(
+    req: BriefingPreferenceRequest,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    """Updates customized briefing modules, schedule, and multi-modal delivery channels (AETH-BRIEF-01)."""
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    pref = db.query(BriefingPreference).filter(BriefingPreference.user_email == eff_email).first()
+    if not pref:
+        pref = BriefingPreference(user_email=eff_email)
+        db.add(pref)
+    
+    if req.modules is not None:
+        pref.modules = json.dumps(req.modules)
+    if req.delivery_time_morning:
+        pref.delivery_time_morning = req.delivery_time_morning
+    if req.delivery_time_evening:
+        pref.delivery_time_evening = req.delivery_time_evening
+    if req.channel_in_app is not None:
+        pref.channel_in_app = req.channel_in_app
+    if req.channel_whatsapp is not None:
+        pref.channel_whatsapp = req.channel_whatsapp
+    if req.channel_tts is not None:
+        pref.channel_tts = req.channel_tts
+    
+    pref.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(pref)
+    return {
+        "status": "success",
+        "preferences": {
+            "modules": json.loads(pref.modules),
+            "delivery_time_morning": pref.delivery_time_morning,
+            "delivery_time_evening": pref.delivery_time_evening,
+            "channel_in_app": pref.channel_in_app,
+            "channel_whatsapp": pref.channel_whatsapp,
+            "channel_tts": pref.channel_tts
+        }
+    }
+
 # ----------------- Audit Logs & Undo -----------------
 @app.get("/api/audit-logs")
 def list_audit_logs(
@@ -3645,39 +3927,73 @@ def undo_action(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
+    """
+    Transactional audit log rollback with strict ownership verification (AETH-SEC-05).
+    Reverses mutating action within an atomic database transaction.
+    """
     eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required to perform undo")
+
     log = db.query(AuditLog).filter(AuditLog.id == log_id).first()
     if not log or not log.undo_payload:
-        raise HTTPException(status_code=404, detail="Log or undo payload not found")
-    if log.user_email and log.user_email.strip().lower() != (eff_email or ""):
-        raise HTTPException(status_code=403, detail="Not authorized to undo this action")
+        raise HTTPException(status_code=404, detail="Audit log entry or undo payload not found")
+    
+    if log.user_email and log.user_email.strip().lower() != eff_email:
+        raise HTTPException(status_code=403, detail="Not authorized to undo another user's action")
+    
     if log.is_undone:
-        return {"message": "Already undone"}
+        return {"status": "already_undone", "message": "Action has already been reversed"}
 
-    payload = json.loads(log.undo_payload)
+    try:
+        payload = json.loads(log.undo_payload)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corrupted undo payload in audit log")
+
     table = payload.get("table")
     record_id = payload.get("id")
     record_ids = payload.get("ids") or ([record_id] if record_id is not None else [])
 
-    if table == "financial_records":
-        for rid in record_ids:
-            rec = db.query(FinancialRecord).filter(FinancialRecord.id == rid).first()
-            if rec:
-                db.delete(rec)
-    elif table == "tasks":
-        for rid in record_ids:
-            rec = db.query(Task).filter(Task.id == rid).first()
-            if rec:
-                db.delete(rec)
-    elif table == "memory_vault":
-        for rid in record_ids:
-            rec = db.query(MemoryItem).filter(MemoryItem.id == rid).first()
-            if rec:
-                db.delete(rec)
+    ALLOWED_UNDO_TABLES = {"financial_records", "tasks", "memory_vault"}
+    if table not in ALLOWED_UNDO_TABLES:
+        raise HTTPException(status_code=400, detail=f"Table '{table}' is not supported for rollback")
 
-    log.is_undone = True
-    db.commit()
-    return {"message": "Action successfully reversed (Undone)"}
+    try:
+        # Transactional rollback block
+        with db.begin_nested():
+            if table == "financial_records":
+                for rid in record_ids:
+                    rec = db.query(FinancialRecord).filter(
+                        FinancialRecord.id == rid,
+                        (FinancialRecord.user_email == eff_email) | (FinancialRecord.user_email == None)
+                    ).first()
+                    if rec:
+                        db.delete(rec)
+            elif table == "tasks":
+                for rid in record_ids:
+                    rec = db.query(Task).filter(
+                        Task.id == rid,
+                        (Task.user_email == eff_email) | (Task.user_email == None)
+                    ).first()
+                    if rec:
+                        db.delete(rec)
+            elif table == "memory_vault":
+                for rid in record_ids:
+                    rec = db.query(MemoryItem).filter(
+                        MemoryItem.id == rid,
+                        (MemoryItem.user_email == eff_email) | (MemoryItem.user_email == None)
+                    ).first()
+                    if rec:
+                        db.delete(rec)
+
+            log.is_undone = True
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[Undo Transaction Error] {e}")
+        raise HTTPException(status_code=500, detail=f"Transactional rollback failed: {str(e)}")
+
+    return {"status": "success", "message": "Action successfully reversed (Undone)"}
 
 # ----------------- Audio & TTS Streaming for Mobile WebViews -----------------
 @app.api_route("/api/tts", methods=["GET", "HEAD"])
@@ -4729,11 +5045,50 @@ def whatsapp_verify(request: Request):
             return challenge
     raise HTTPException(status_code=403, detail="Verification token mismatch")
 
+# ─── WhatsApp Webhook & Phone Pairing Subsystem (AETH-SEC-06) ─────────────
+PHONE_PAIRING_OTPS: Dict[str, Dict[str, Any]] = {}
+PAIRED_PHONE_NUMBERS: Dict[str, str] = {} # { phone_clean: user_email }
+
+@app.post("/api/whatsapp/pair-request")
+def request_phone_pairing(user_email: Optional[str] = Depends(get_user_email)):
+    """Generates a short-lived 6-digit OTP to safely pair a WhatsApp number without identity spoofing."""
+    import random
+    eff_email = get_effective_email(user_email)
+    if not eff_email:
+        raise HTTPException(status_code=401, detail="Authentication required to generate pairing code")
+    
+    otp = f"{random.randint(100000, 999999)}"
+    PHONE_PAIRING_OTPS[otp] = {
+        "user_email": eff_email,
+        "expires_at": time.time() + 600 # 10 minute expiration
+    }
+    return {
+        "status": "success",
+        "pairing_code": otp,
+        "expires_in_seconds": 600,
+        "instruction": f"Send the code '{otp}' to our WhatsApp bot from your mobile to link your account securely."
+    }
+
 @app.post("/api/whatsapp/webhook")
 async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
-    """Receives and processes incoming WhatsApp messages from Meta Cloud API."""
+    """
+    Receives and processes incoming WhatsApp messages from Meta Cloud API.
+    Enforces HMAC-SHA256 signature verification (AETH-SEC-06).
+    """
+    whatsapp_secret = os.environ.get("WHATSAPP_APP_SECRET", "").strip()
+    raw_body = await req.body()
+
+    # Cryptographic signature verification against Meta app secret
+    if whatsapp_secret:
+        hub_sig = req.headers.get("X-Hub-Signature-256", "").strip()
+        if not hub_sig or not hub_sig.startswith("sha256="):
+            raise HTTPException(status_code=403, detail="Missing or invalid X-Hub-Signature-256 header")
+        expected_sig = "sha256=" + hmac.new(whatsapp_secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(hub_sig, expected_sig):
+            raise HTTPException(status_code=403, detail="WhatsApp webhook signature mismatch")
+
     try:
-        payload = await req.json()
+        payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
         entry = payload.get("entry", [{}])[0]
         changes = entry.get("changes", [{}])[0]
         value = changes.get("value", {})
@@ -4780,6 +5135,34 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             user_text = msg.get("text", {}).get("body", "").strip()
         else:
             user_text = "Hello Aether"
+
+        # Check if message is a 6-digit OTP for secure pairing (AETH-SEC-06)
+        clean_code = re.sub(r'[^0-9]', '', user_text)
+        if len(clean_code) == 6 and clean_code in PHONE_PAIRING_OTPS:
+            pairing_info = PHONE_PAIRING_OTPS[clean_code]
+            if time.time() <= pairing_info.get("expires_at", 0):
+                paired_user_email = pairing_info["user_email"]
+                PAIRED_PHONE_NUMBERS[sender] = paired_user_email
+                PHONE_PAIRING_OTPS.pop(clean_code, None)
+                try:
+                    mem = MemoryItem(
+                        user_email=paired_user_email,
+                        category="preference",
+                        fact=f"WhatsApp phone +{sender} securely paired with user {paired_user_email}",
+                        confidence=1.0
+                    )
+                    db.add(mem)
+                    db.commit()
+                except Exception:
+                    pass
+                try:
+                    send_whatsapp_message(
+                        to_phone=sender,
+                        message_text=f"✅ Security Verified! Your phone (+{sender}) is now securely linked to your Aether account ({paired_user_email})."
+                    )
+                except Exception:
+                    pass
+                return {"status": "ok", "message": "phone successfully paired"}
 
         # Record inbound message in WhatsAppMessage table for In-App Live Messenger
         try:

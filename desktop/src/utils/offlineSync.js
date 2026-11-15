@@ -1,12 +1,39 @@
+/**
+ * Aether Offline-First Synchronization Subsystem (AETH-REL-04)
+ * Generates unique client_mutation_id UUIDs for idempotency and prevents duplicate mutations.
+ */
+
 const OFFLINE_QUEUE_KEY = 'aether_offline_queue';
+
+function generateUUID() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return 'mut_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 9);
+}
 
 export function enqueueOfflineAction(action) {
   try {
     const existing = JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
-    existing.push({ ...action, queuedAt: Date.now() });
-    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(existing.slice(-50)));
+    const mutationId = action.clientMutationId || generateUUID();
+    const headers = {
+      ...(action.headers || {}),
+      'Content-Type': 'application/json',
+      'X-Client-Mutation-Id': mutationId,
+    };
+
+    existing.push({
+      ...action,
+      clientMutationId: mutationId,
+      headers,
+      queuedAt: Date.now(),
+      lastModifiedAt: new Date().toISOString(),
+    });
+
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(existing.slice(-100)));
     return true;
-  } catch {
+  } catch (e) {
+    console.warn('[enqueueOfflineAction error]', e);
     return false;
   }
 }
@@ -25,11 +52,18 @@ export async function flushOfflineQueue() {
   let syncedCount = 0;
   for (const item of queue) {
     try {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(item.headers || {}),
+        'X-Client-Mutation-Id': item.clientMutationId || generateUUID(),
+      };
+
       const res = await fetch(item.url, {
         method: item.method || 'POST',
-        headers: item.headers || { 'Content-Type': 'application/json' },
+        headers,
         body: item.body ? JSON.stringify(item.body) : undefined,
       });
+
       if (res.ok || res.status < 500) {
         syncedCount += 1;
       } else {
@@ -39,9 +73,9 @@ export async function flushOfflineQueue() {
       remaining.push(item);
     }
   }
+
   try {
     localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(remaining));
   } catch {}
   return syncedCount;
 }
-

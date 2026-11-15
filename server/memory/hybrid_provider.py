@@ -1,133 +1,189 @@
 """
-Hybrid Memory Provider with Semantic Vector Embeddings
-Combines Google Gemini text-embedding-004 vectors, cosine similarity, 
-and category weighting for state-of-the-art episodic retrieval.
+Aether Hybrid Episodic & Semantic Memory Subsystem
+Combines Gemini/Local Dense Vector Embeddings with Keyword & Recency Decay Scoring
+Enforces Tenant Isolation (AETH-SEC-02), Vector Normalization (AETH-MEM-01),
+and Semantic Deduplication & Temporal Decay (AETH-MEM-02).
 """
 
 import os
 import re
-import math
 import json
+import math
 import hashlib
+from datetime import datetime
 from typing import List, Dict, Any, Optional
-import httpx
 from sqlalchemy.orm import Session
+import httpx
+
 from models import MemoryItem
 
-_EMBEDDING_CACHE: Dict[str, List[float]] = {}
-GEMINI_EMBEDDING_URL = "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent"
 
-
-def _deterministic_local_vector(text: str, dim: int = 384) -> List[float]:
+# ─────────────────────────────────────────────────────────────────────────────
+# Vector Normalization: 768-dimensional Vector Embeddings (AETH-MEM-01)
+# ─────────────────────────────────────────────────────────────────────────────
+def _deterministic_local_vector(text: str, dim: int = 768) -> List[float]:
     """
-    Lightweight, deterministic semantic hash vector for offline/zero-dependency fallback.
-    Encodes char 3-grams and tokens with normalization.
+    Generates a deterministic, normalized 768-dimensional float embedding vector
+    for local offline execution when Gemini API is unavailable or unconfigured.
+    Guarantees exact dimension matching with Gemini text-embedding-004.
     """
-    cleaned = re.sub(r'[^\w\s]', ' ', text.lower()).strip()
-    tokens = cleaned.split()
     vec = [0.0] * dim
-    if not tokens:
+    words = re.findall(r'\w+', text.lower())
+    if not words:
         return vec
-    
-    # 1. Token hashes
-    for tok in tokens:
-        h = int(hashlib.md5(tok.encode('utf-8')).hexdigest()[:8], 16) % dim
-        vec[h] += 1.5
-    
-    # 2. 3-gram hashes for subword/morphological similarity
-    for i in range(len(cleaned) - 2):
-        trigram = cleaned[i:i+3]
-        h = int(hashlib.sha256(trigram.encode('utf-8')).hexdigest()[:8], 16) % dim
-        vec[h] += 0.5
-        
-    # Normalize vector to unit length
-    norm = math.sqrt(sum(x * x for x in vec))
-    if norm > 0:
-        vec = [x / norm for x in vec]
+
+    for word in words:
+        h = hashlib.sha256(word.encode("utf-8")).digest()
+        for i in range(min(len(h), 32)):
+            idx = (h[i] * 29 + i * 17) % dim
+            sign = 1.0 if (h[i] % 2 == 0) else -1.0
+            vec[idx] += sign * (float(h[i]) / 255.0)
+
+    # L2 Euclidean Normalization
+    magnitude = math.sqrt(sum(x * x for x in vec))
+    if magnitude > 1e-9:
+        vec = [round(x / magnitude, 6) for x in vec]
     return vec
 
 
 def get_embedding(text: str) -> List[float]:
     """
-    Generate vector embedding using Gemini text-embedding-004 with automatic caching
-    and deterministic local fallback.
+    Fetches 768-dim semantic embedding vector from Gemini text-embedding-004,
+    or smoothly falls back to 768-dim deterministic local vector in offline mode.
     """
-    if not text or not text.strip():
+    clean = (text or "").strip()
+    if not clean:
         return [0.0] * 768
-    
-    cleaned = text.strip()
-    cache_key = cleaned.lower()
-    if cache_key in _EMBEDDING_CACHE:
-        return _EMBEDDING_CACHE[cache_key]
-    
-    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if gemini_key:
         try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={gemini_key}"
+            payload = {
+                "model": "models/text-embedding-004",
+                "content": {"parts": [{"text": clean[:2048]}]}
+            }
             with httpx.Client(timeout=4.0) as client:
-                resp = client.post(
-                    f"{GEMINI_EMBEDDING_URL}?key={gemini_key}",
-                    json={
-                        "model": "models/text-embedding-004",
-                        "content": {
-                            "parts": [{"text": cleaned[:1200]}]
-                        }
-                    }
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    values = data.get("embedding", {}).get("values")
-                    if values and isinstance(values, list):
-                        _EMBEDDING_CACHE[cache_key] = values
-                        if len(_EMBEDDING_CACHE) > 50:
-                            # Prune cache to preserve 512MB RAM budget
-                            _EMBEDDING_CACHE.pop(next(iter(_EMBEDDING_CACHE)))
+                res = client.post(url, json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    values = data.get("embedding", {}).get("values", [])
+                    if len(values) == 768:
                         return values
+                    elif len(values) > 0:
+                        # Normalize to 768 dimensions if alternate model responds
+                        if len(values) > 768:
+                            return values[:768]
+                        else:
+                            return values + [0.0] * (768 - len(values))
         except Exception as e:
-            # Silently fall back to deterministic vector
             pass
-            
-    fallback_vec = _deterministic_local_vector(cleaned)
-    if len(_EMBEDDING_CACHE) > 50:
-        _EMBEDDING_CACHE.pop(next(iter(_EMBEDDING_CACHE)))
-    _EMBEDDING_CACHE[cache_key] = fallback_vec
-    return fallback_vec
+
+    return _deterministic_local_vector(clean, dim=768)
 
 
 def cosine_similarity(v1: List[float], v2: List[float]) -> float:
-    """Compute cosine similarity between two float vectors."""
+    """Computes cosine similarity between two float vectors."""
     if not v1 or not v2 or len(v1) != len(v2):
         return 0.0
+
     dot = 0.0
-    norm1 = 0.0
-    norm2 = 0.0
+    norm_a = 0.0
+    norm_b = 0.0
+
     for a, b in zip(v1, v2):
         dot += a * b
-        norm1 += a * a
-        norm2 += b * b
-    if norm1 <= 0.0 or norm2 <= 0.0:
+        norm_a += a * a
+        norm_b += b * b
+
+    if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
-    return max(-1.0, min(1.0, dot / (math.sqrt(norm1) * math.sqrt(norm2))))
+
+    return max(-1.0, min(1.0, dot / (math.sqrt(norm_a) * math.sqrt(norm_b))))
 
 
 class HybridMemoryProvider:
     """
-    Semantic Vector + Keyword Episodic Retrieval.
+    Semantic Vector + Keyword Episodic Retrieval with Temporal Decay & Deduplication.
     Enables deep context awareness, fuzzy question answering, and contact lookup.
     """
 
     @staticmethod
-    def recall_context(query: str, user_email: str, db: Session, limit: int = 10, min_similarity: float = 0.25) -> Dict[str, Any]:
+    def add_or_merge_memory(
+        fact: str,
+        category: str,
+        user_email: str,
+        db: Session,
+        confidence: float = 1.0,
+        importance: float = 1.0
+    ) -> MemoryItem:
+        """
+        Deduplicates incoming memory against existing items using cosine similarity threshold 0.88 (AETH-MEM-02).
+        If duplicate detected, updates existing memory instead of inserting redundant row.
+        """
+        clean_fact = (fact or "").strip()
+        new_vec = get_embedding(clean_fact)
+        now = datetime.utcnow()
+
+        existing = db.query(MemoryItem).filter(
+            MemoryItem.user_email == user_email,
+            MemoryItem.category == category
+        ).all()
+
+        for mem in existing:
+            if mem.embedding:
+                try:
+                    mem_vec = json.loads(mem.embedding)
+                    sim = cosine_similarity(new_vec, mem_vec)
+                    if sim >= 0.88:
+                        # High similarity detected: merge and update existing memory
+                        mem.fact = clean_fact
+                        mem.confidence = max(mem.confidence or 1.0, confidence)
+                        mem.importance = max(getattr(mem, "importance", 1.0) or 1.0, importance)
+                        mem.last_accessed_at = now
+                        mem.updated_at = now
+                        mem.embedding = json.dumps(new_vec)
+                        db.commit()
+                        db.refresh(mem)
+                        return mem
+                except Exception:
+                    pass
+
+        # No duplicate: insert new memory item
+        new_mem = MemoryItem(
+            user_email=user_email,
+            category=category,
+            fact=clean_fact,
+            confidence=confidence,
+            importance=importance,
+            last_accessed_at=now,
+            embedding=json.dumps(new_vec)
+        )
+        db.add(new_mem)
+        db.commit()
+        db.refresh(new_mem)
+        return new_mem
+
+    @staticmethod
+    def recall_context(
+        query: str,
+        user_email: str,
+        db: Session,
+        limit: int = 10,
+        min_similarity: float = 0.25
+    ) -> Dict[str, Any]:
         if not query or not query.strip():
             return {"relevant_facts": [], "formatted_context": ""}
 
         q_clean = query.strip()
         q_tokens = [w.lower() for w in re.findall(r'\b\w{3,}\b', q_clean)]
         q_embedding = get_embedding(q_clean)
+        now = datetime.utcnow()
 
+        # Enforce strict tenant isolation: Never return NULL/unowned records as personal memory
         all_memories = db.query(MemoryItem).filter(
             (MemoryItem.user_email == user_email) | 
-            (MemoryItem.user_email == None) | 
-            (MemoryItem.user_email == "operator@aether.local")
+            (MemoryItem.category == "system_knowledge")
         ).all()
 
         if not all_memories:
@@ -149,7 +205,7 @@ class HybridMemoryProvider:
                 except Exception:
                     mem_vec = None
             
-            if not mem_vec:
+            if not mem_vec or len(mem_vec) != 768:
                 mem_vec = get_embedding(fact_str)
                 try:
                     mem.embedding = json.dumps(mem_vec)
@@ -175,20 +231,32 @@ class HybridMemoryProvider:
             elif cat in ["routine", "context"]:
                 cat_boost = 0.08
 
-            total_score = (semantic_score * 0.70) + (keyword_score * 0.20) + cat_boost
+            # 4. Temporal Decay Scoring (AETH-MEM-02)
+            last_date = mem.last_accessed_at or mem.created_at or now
+            delta_days = max(0, (now - last_date).days)
+            # Gentle exponential decay over 90+ days
+            decay_factor = math.exp(-0.005 * delta_days)
+            importance = getattr(mem, "importance", 1.0) or 1.0
+
+            total_score = ((semantic_score * 0.70) + (keyword_score * 0.20) + cat_boost) * decay_factor * min(importance, 2.0)
 
             if total_score >= min_similarity:
                 scored.append((total_score, semantic_score, mem))
+
+        # Sort descending by total score
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top_items = scored[:limit]
+
+        # Touch last_accessed_at for retrieved memories
+        for _, _, m in top_items:
+            m.last_accessed_at = now
+            needs_commit = True
 
         if needs_commit:
             try:
                 db.commit()
             except Exception:
                 db.rollback()
-
-        # Sort descending by total score
-        scored.sort(key=lambda x: x[0], reverse=True)
-        top_items = scored[:limit]
 
         formatted_lines = []
         for total_s, sem_s, m in top_items:

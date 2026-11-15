@@ -12,6 +12,7 @@ class ActionTier(str, Enum):
     TIER_1_READ = "tier_1_read"             # Safe read-only queries (weather, search, balance check)
     TIER_2_MUTATE_SAFE = "tier_2_mutate"     # Safe, reversible mutations (tasks, notes, reminders, expense logging)
     TIER_3_CRITICAL = "tier_3_critical"      # Irreversible / sensitive actions (large deletions, external dispatch)
+    TIER_DENIED = "tier_denied"              # Unknown or unauthorized tools (Deny by Default)
 
 
 class ToolCall(BaseModel):

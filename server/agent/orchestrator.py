@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 
 from .state import AgentState, ToolCall, ActionTier
-from .governance import PermissionEngine, VerificationEngine
+from .governance import PermissionEngine, VerificationEngine, ActionApprovalManager
 from .tools import ToolRegistry
 
 
@@ -52,22 +52,55 @@ class AgentOrchestrator:
 
             tool_call = ToolCall(tool_name=tool_name, parameters=params)
 
-            # Governance: Permission Engine Check
+            # Governance: Permission Engine Check (AETH-SEC-03: Denial by Default)
             tier = PermissionEngine.classify_action(tool_name, params)
             tool_call.tier = tier
 
-            if tier == ActionTier.TIER_3_CRITICAL and tool_name not in approved_set:
-                state.requires_approval = True
-                state.approval_prompt = (
-                    f"⚠️ **Approval Required for Critical Action:**\n"
-                    f"Aether wants to execute **{tool_name}** with details: {json.dumps(params)}.\n"
-                    f"Do you authorize this transaction?"
-                )
-                state.metadata["pending_action"] = {"tool_name": tool_name, "parameters": params}
-                tool_call.status = "waiting_approval"
+            if tier == ActionTier.TIER_DENIED:
+                tool_call.status = "denied"
+                tool_call.error = f"Security Violation: Tool '{tool_name}' is not permitted by system safety policy."
                 state.executed_tools.append(tool_call)
-                state.final_message = state.approval_prompt
-                return state
+                messages.append(f"⛔ Action Denied: Tool '{tool_name}' is unregistered or prohibited.")
+                continue
+
+            # Governance: Action Approval Manager Check (AETH-SEC-04: Approval Tampering Prevention)
+            if tier == ActionTier.TIER_3_CRITICAL:
+                approval_id = (context or {}).get("action_id") or (context or {}).get("approval_id")
+                is_authorized = False
+                if approval_id:
+                    is_auth, auth_msg = ActionApprovalManager.verify_and_consume(
+                        action_id=approval_id,
+                        tool_name=tool_name,
+                        params=params,
+                        user_email=self.user_email
+                    )
+                    is_authorized = is_auth
+                    if not is_auth:
+                        messages.append(f"⚠️ Authorization check failed for {tool_name}: {auth_msg}")
+
+                if not is_authorized and tool_name not in approved_set:
+                    appr_req = ActionApprovalManager.create_approval_request(
+                        tool_name=tool_name,
+                        params=params,
+                        user_email=self.user_email
+                    )
+                    state.requires_approval = True
+                    state.approval_prompt = (
+                        f"⚠️ **Approval Required for Critical Action:**\n"
+                        f"Aether wants to execute **{tool_name}** with details: {json.dumps(params)}.\n"
+                        f"Do you authorize this transaction?"
+                    )
+                    state.metadata["pending_action"] = {
+                        "action_id": appr_req["action_id"],
+                        "tool_name": tool_name,
+                        "parameters": params,
+                        "param_hash": appr_req["param_hash"],
+                        "expires_at": appr_req["expires_at"]
+                    }
+                    tool_call.status = "waiting_approval"
+                    state.executed_tools.append(tool_call)
+                    state.final_message = state.approval_prompt
+                    return state
 
             # Governance: Verification Engine Pre-Execution Check
             is_valid, validation_err = VerificationEngine.validate_pre_execution(tool_call)

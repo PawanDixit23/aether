@@ -76,11 +76,35 @@ def extract_plain_text(content_bytes: bytes) -> Tuple[str, int]:
     return content_bytes.decode("utf-8", errors="replace").strip(), 1
 
 
+MAX_DOCUMENT_BYTES = 25 * 1024 * 1024  # 25 MB safety ceiling (AETH-DOC-01)
+
+def sanitize_extracted_text(text: str) -> str:
+    """Strips zero-width spaces, null bytes, and non-printable control characters (AETH-DOC-01)."""
+    if not text:
+        return ""
+    # Remove null bytes, zero-width spaces & byte-order marks
+    cleaned = re.sub(r'[\x00\u200B\u200C\u200D\uFEFF]', '', text)
+    # Remove control characters except standard whitespace
+    cleaned = re.sub(r'[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]', '', cleaned)
+    return cleaned.strip()
+
 def extract_text_from_file(filename: str, content_bytes: bytes) -> Dict[str, Any]:
     """
     Extract readable text from file bytes according to filename extension.
     Supported: .pdf, .docx, .doc, .txt, .md, .csv, .json, .rtf, .log, .tsv, etc.
     """
+    if len(content_bytes) > MAX_DOCUMENT_BYTES:
+        return {
+            "filename": filename,
+            "extension": os.path.splitext(filename.lower())[1],
+            "text": "",
+            "pages": 0,
+            "word_count": 0,
+            "character_count": 0,
+            "success": False,
+            "error": "File size exceeds the 25 MB safety limit."
+        }
+
     ext = os.path.splitext(filename.lower())[1]
     text = ""
     pages = 1
@@ -111,6 +135,7 @@ def extract_text_from_file(filename: str, content_bytes: bytes) -> Dict[str, Any
         except Exception:
             text = ""
 
+    text = sanitize_extracted_text(text)
     words = len(text.split()) if text else 0
     chars = len(text) if text else 0
 
