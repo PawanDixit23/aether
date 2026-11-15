@@ -1,5 +1,6 @@
 import os
-from sqlalchemy import create_engine, text
+from typing import Optional, Any, Dict, List
+from sqlalchemy import create_engine, text, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -39,11 +40,27 @@ if DATABASE_URL.startswith("sqlite"):
         cursor.close()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+@event.listens_for(SessionLocal, "after_begin")
+def receive_after_begin(session, transaction, connection):
+    """Re-applies transaction-local PostgreSQL RLS context whenever a new transaction begins (AETH-P0-02)."""
+    user_id = session.info.get("rls_user_id")
+    if user_id and "postgres" in str(engine.url).lower():
+        try:
+            connection.execute(text("SET LOCAL request.jwt.claim.sub = :sub"), {"sub": str(user_id).strip()})
+        except Exception as e:
+            raise RuntimeError(f"Failed to apply transaction-local RLS security context: {e}")
+
 Base = declarative_base()
 
-def get_db():
+def get_db(request: Optional[Any] = None):
+    """FastAPI database dependency wired with transaction-local RLS context (AETH-P0-02)."""
     db = SessionLocal()
     try:
+        if request and hasattr(request, "state"):
+            request.state.db = db
+            user_id = getattr(request.state, "current_user_id", None)
+            if user_id:
+                set_db_rls_context(db, user_id)
         yield db
     finally:
         db.close()
@@ -94,6 +111,10 @@ def ensure_schema_migrations():
         "ALTER TABLE chat_messages ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE whatsapp_messages ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE task_date_completions ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE processed_mutations ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE briefing_preferences ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE channel_pairing_challenges ADD COLUMN owner_user_id VARCHAR",
+        "ALTER TABLE processed_webhook_events ADD COLUMN status VARCHAR DEFAULT 'processed'",
         "ALTER TABLE push_subscriptions ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE scheduled_jobs ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE tasks ADD COLUMN dependency_task_ids TEXT DEFAULT '[]'",
@@ -132,7 +153,9 @@ def ensure_schema_migrations():
     # ─────────────────────────────────────────────────────────────────────────
     tenant_tables = [
         "tasks", "financial_records", "memory_vault", "chat_sessions", 
-        "chat_messages", "audit_logs", "push_subscriptions", "scheduled_jobs"
+        "chat_messages", "audit_logs", "push_subscriptions", "scheduled_jobs",
+        "task_date_completions", "whatsapp_messages", "processed_mutations",
+        "briefing_preferences", "channel_pairing_challenges"
     ]
     for tbl in tenant_tables:
         try:
@@ -158,12 +181,15 @@ def ensure_schema_migrations():
 
     # ─────────────────────────────────────────────────────────────────────────
     # AETH-P0-02: PostgreSQL Row-Level Security (RLS) & Force Enforcement
+    # Complete inventory of all 15 tenant-owned tables
     # ─────────────────────────────────────────────────────────────────────────
     if is_pg:
         rls_tables = [
             "tasks", "financial_records", "memory_vault", "chat_sessions",
             "chat_messages", "audit_logs", "action_approvals", "user_integration_pairings",
-            "push_subscriptions", "scheduled_jobs", "whatsapp_messages"
+            "push_subscriptions", "scheduled_jobs", "whatsapp_messages",
+            "task_date_completions", "processed_mutations", "briefing_preferences",
+            "channel_pairing_challenges"
         ]
         for t in rls_tables:
             try:
@@ -192,13 +218,16 @@ def set_db_rls_context(db: Session, user_id: str):
     """
     Sets transaction-local PostgreSQL RLS context from verified authenticated UUID (AETH-P0-02).
     Ensures current_setting('request.jwt.claim.sub', true) matches verified user_id in all queries.
+    Fails closed if the identity cannot be set.
     """
     if not user_id:
         return
+    clean_sub = str(user_id).strip()
+    db.info["rls_user_id"] = clean_sub
     try:
         is_pg = "postgres" in str(engine.url).lower()
         if is_pg:
-            db.execute(text("SET LOCAL request.jwt.claim.sub = :sub"), {"sub": str(user_id).strip()})
+            db.execute(text("SET LOCAL request.jwt.claim.sub = :sub"), {"sub": clean_sub})
     except Exception as e:
-        print(f"[RLS Context Warning] Failed to set request.jwt.claim.sub: {e}")
+        raise RuntimeError(f"Database security context initialization failed: {e}")
 

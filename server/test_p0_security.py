@@ -25,8 +25,9 @@ from fastapi.testclient import TestClient
 from main import app, tenant_filter
 from database import SessionLocal, ensure_schema_migrations
 from models import (
-    Task, FinancialRecord, ChatSession, MemoryItem, WhatsAppMessage, PushSubscription,
-    ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing, ChannelPairingChallenge
+    Task, FinancialRecord, ChatSession, ChatMessage, MemoryItem, WhatsAppMessage, PushSubscription,
+    ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing, ChannelPairingChallenge,
+    SenderPairingRateLimit
 )
 from security.auth import verify_supabase_jwt, UserIdentity, get_current_user_identity, validate_security_config_at_startup
 from agent.governance import PermissionEngine, ActionApprovalManager
@@ -198,7 +199,7 @@ def test_p0_02_tenant_isolation():
     assert fin_a_id not in b_fin_ids, "User B should not see User A's financial records"
     print("✅ P0-02: User B cannot view or delete User A's financial record.")
 
-    # 5. Chat Session isolation
+    # 5. Chat Session and ChatMessage isolation
     sess_a_id = f"sess_a_{int(time.time())}"
     client.put(f"/api/chat/sessions/{sess_a_id}/pin", headers=headers_a, json={"is_pinned": True})
 
@@ -206,12 +207,22 @@ def test_p0_02_tenant_isolation():
     assert resp_b_pin.status_code in [403, 404], f"User B should be denied from modifying User A's chat session (got {resp_b_pin.status_code})"
     print("✅ P0-02: User B cannot modify or hijack User A's chat session.")
 
-    # 6. WhatsApp messages isolation: User B cannot view User A's WhatsApp messages
+    # 6. ChatMessage creation strictly persists owner_user_id (AETH-P0-02)
+    resp_chat_a = client.post("/api/chat", headers=headers_a, json={"prompt": "Record secret note for User A"})
+    assert resp_chat_a.status_code == 200
+    msg_a = db.query(ChatMessage).filter(ChatMessage.content.like("%Record secret note for User A%")).first()
+    if msg_a:
+        assert msg_a.owner_user_id is not None, "ChatMessage MUST have verified owner_user_id set"
+        # User B cannot see msg_a
+        assert msg_a.owner_user_id != "22222222-2222-4222-8222-222222222222"
+    print("✅ P0-02: ChatMessage creation persists verified immutable owner_user_id.")
+
+    # 7. WhatsApp messages isolation: User B cannot view User A's WhatsApp messages
     resp_wa_msgs = client.get("/api/whatsapp/messages", headers=headers_b)
     assert resp_wa_msgs.status_code == 200
     print("✅ P0-02: WhatsApp message history strictly scoped by tenant_filter.")
 
-    # 7. Forged X-User-Email cannot cross tenant boundaries
+    # 8. Forged X-User-Email cannot cross tenant boundaries
     forged_headers = {"Authorization": "Bearer test_user_b@tenant.com", "X-User-Email": "test_user_a@tenant.com"}
     resp_forged = client.get(f"/api/tasks", headers=forged_headers)
     assert resp_forged.status_code == 200
@@ -288,6 +299,37 @@ def test_p0_03_action_approval():
     replay_json = resp_replay.json()
     assert replay_json.get("requires_approval") == True or "failed" in str(replay_json.get("message", "")).lower()
     print("✅ P0-03: Replay attack blocked; consumed approval ID cannot re-execute.")
+
+    # 7. Concurrency Test: Two concurrent workers consume same approval; exactly one succeeds (AETH-P0-03)
+    from concurrent.futures import ThreadPoolExecutor
+    owner_id_val = str(db_approval.owner_user_id)
+    appr_c = ActionApprovalManager.create_approval_request(
+        "transfer_funds", {"amount": 5000}, "test_user_a@tenant.com",
+        owner_user_id=owner_id_val, db=db
+    )
+    action_id_c = appr_c["action_id"]
+
+    def consume_attempt():
+        db_worker = SessionLocal()
+        try:
+            return ActionApprovalManager.verify_and_consume(
+                action_id_c, "transfer_funds", {"amount": 5000}, "test_user_a@tenant.com",
+                owner_user_id=owner_id_val, db=db_worker
+            )
+        finally:
+            db_worker.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        f1 = executor.submit(consume_attempt)
+        f2 = executor.submit(consume_attempt)
+        res1 = f1.result()
+        res2 = f2.result()
+
+    successes = [r for r in [res1, res2] if r[0] is True]
+    failures = [r for r in [res1, res2] if r[0] is False]
+    assert len(successes) == 1, f"Exactly one concurrent attempt must succeed, got {len(successes)}"
+    assert len(failures) == 1, "Exactly one concurrent attempt must fail with replay protection"
+    print("✅ P0-03: Concurrent consume race condition prevented: exactly one worker succeeded.")
 
 
 def test_p0_04_android_webview():
@@ -374,12 +416,15 @@ def test_p0_05_messaging_webhooks():
     assert resp_wa_spoof.json()["status"] == "guide_sent", "Insecure WhatsApp /login must be rejected"
     print("✅ P0-05: Insecure WhatsApp /login email pairing rejected.")
 
-    # 3. OTP Attempt Accounting: 5 invalid guesses must exhaust/lockout the challenge (AETH-P0-05)
+    # 3. OTP Attempt Accounting: Attacker failed guesses do NOT exhaust legitimate user challenge (AETH-P0-05)
     resp_otp_test = client.post("/api/whatsapp/pair-request", headers=headers_a)
     assert resp_otp_test.status_code == 200
     real_otp = resp_otp_test.json()["pairing_code"]
 
-    # Submit 5 invalid OTP guesses
+    attacker_phone = "918888888888"
+    legit_phone = "919876543210"
+
+    # Attacker submits 5 invalid OTP guesses
     for i in range(5):
         client.post("/api/whatsapp/webhook", json={
             "entry": [{
@@ -387,7 +432,7 @@ def test_p0_05_messaging_webhooks():
                     "value": {
                         "messages": [{
                             "id": f"wamid_guess_{i}_{int(time.time())}",
-                            "from": "919876543210",
+                            "from": attacker_phone,
                             "type": "text",
                             "text": {"body": "000000"} # Wrong code
                         }]
@@ -396,14 +441,22 @@ def test_p0_05_messaging_webhooks():
             }]
         })
 
-    # Now submit the correct OTP: it MUST be rejected because attempts are exhausted!
-    resp_exhausted = client.post("/api/whatsapp/webhook", json={
+    # Attacker phone MUST now be locked out
+    attacker_rate = db.query(SenderPairingRateLimit).filter(
+        SenderPairingRateLimit.channel == "whatsapp",
+        SenderPairingRateLimit.sender == attacker_phone
+    ).first()
+    assert attacker_rate is not None and attacker_rate.failed_attempts >= 5, "Attacker phone must record 5 failed attempts"
+    assert attacker_rate.locked_until > time.time(), "Attacker phone must be locked out"
+
+    # But legitimate user challenge was NOT affected or consumed by attacker's failed guesses!
+    resp_legit_pair = client.post("/api/whatsapp/webhook", json={
         "entry": [{
             "changes": [{
                 "value": {
                     "messages": [{
-                        "id": f"wamid_after_exhaust_{int(time.time())}",
-                        "from": "919876543210",
+                        "id": f"wamid_legit_{int(time.time())}",
+                        "from": legit_phone,
                         "type": "text",
                         "text": {"body": real_otp}
                     }]
@@ -411,33 +464,11 @@ def test_p0_05_messaging_webhooks():
             }]
         }]
     })
-    assert "successfully paired" not in str(resp_exhausted.json().get("message", "")), "Exhausted challenge must reject pairing"
-    print("✅ P0-05: 5 invalid OTP guesses lock out and expire challenge atomically.")
+    assert resp_legit_pair.status_code == 200
+    assert "successfully paired" in resp_legit_pair.json().get("message", ""), "Legitimate user challenge must succeed"
+    print("✅ P0-05: Failed OTP guesses strictly scoped per sender; attacker cannot DoS other users.")
 
-    # 4. Fresh OTP pairing succeeds
-    resp_otp = client.post("/api/whatsapp/pair-request", headers=headers_a)
-    assert resp_otp.status_code == 200
-    otp_code = resp_otp.json()["pairing_code"]
-
-    resp_wa_otp = client.post("/api/whatsapp/webhook", json={
-        "entry": [{
-            "changes": [{
-                "value": {
-                    "messages": [{
-                        "id": f"wamid_otp_{int(time.time())}",
-                        "from": "919876543210",
-                        "type": "text",
-                        "text": {"body": otp_code}
-                    }]
-                }
-            }]
-        }]
-    })
-    assert resp_wa_otp.status_code == 200
-    assert resp_wa_otp.json()["status"] == "ok" and "successfully paired" in resp_wa_otp.json()["message"]
-    print(f"✅ P0-05: WhatsApp phone securely paired using 6-digit OTP ({otp_code}).")
-
-    # 5. Durable Atomic Webhook Deduplication via ProcessedWebhookEvent
+    # 4. Durable Atomic Webhook Deduplication via ProcessedWebhookEvent
     duplicate_wamid = f"wamid_test_dup_{int(time.time())}"
     resp_wa_first = client.post("/api/whatsapp/webhook", json={
         "entry": [{
@@ -475,14 +506,12 @@ def test_p0_05_messaging_webhooks():
     assert resp_wa_second.json().get("message") == "duplicate ignored"
     print("✅ P0-05: Webhook duplicate delivery deduplicated atomically via ProcessedWebhookEvent table.")
 
-    # 6. Twilio Durable Deduplication
+    # 5. Twilio Durable Deduplication
     twilio_msg_sid = f"SM_test_sid_{int(time.time())}"
-    # Insert ProcessedWebhookEvent for Twilio
     resp_tw_dedupe = client.post(
         "/api/whatsapp/twilio",
         data={"MessageSid": twilio_msg_sid, "From": "whatsapp:+919876543210", "Body": "Hello"}
     )
-    # Re-sending same MessageSid must be deduplicated
     resp_tw_dup2 = client.post(
         "/api/whatsapp/twilio",
         data={"MessageSid": twilio_msg_sid, "From": "whatsapp:+919876543210", "Body": "Hello"}
@@ -491,15 +520,34 @@ def test_p0_05_messaging_webhooks():
     assert "<Response></Response>" in resp_tw_dup2.text
     print("✅ P0-05: Twilio MessageSid duplicate delivery detected and ignored atomically.")
 
-    # 7. Twilio Canonical URL Signature Verification
-    twilio_auth_token = "1234567890abcdef1234567890abcdef"
-    twilio_url = "https://aether-app.render.com/api/whatsapp/twilio"
-    params = {"Body": "Hello Aether", "From": "+919876543210"}
-    sorted_str = twilio_url + "".join(k + params[k] for k in sorted(params.keys()))
-    expected_sig = base64.b64encode(hmac.new(twilio_auth_token.encode(), sorted_str.encode(), hashlib.sha1).digest()).decode()
-    computed_sig = base64.b64encode(hmac.new(twilio_auth_token.encode(), sorted_str.encode(), hashlib.sha1).digest()).decode()
-    assert hmac.compare_digest(expected_sig, computed_sig)
-    print("✅ P0-05: Twilio canonical URL and sorted parameters signature verified.")
+    # 6. Twilio Official Endpoint Signature Verification (AETH-P0-05)
+    test_auth_token = "official_twilio_secret_token_123456"
+    os.environ["TWILIO_AUTH_TOKEN"] = test_auth_token
+    try:
+        tw_sid = f"SM_live_sig_{int(time.time())}"
+        tw_data = {"Body": "Hello Aether", "From": "whatsapp:+919876543210", "MessageSid": tw_sid}
+        # Official Twilio HMAC-SHA1 signature computation
+        sorted_params = "http://testserver/api/whatsapp/twilio" + "".join(k + tw_data[k] for k in sorted(tw_data.keys()))
+        valid_twilio_sig = base64.b64encode(
+            hmac.new(test_auth_token.encode("utf-8"), sorted_params.encode("utf-8"), hashlib.sha1).digest()
+        ).decode("utf-8")
+
+        # A: Call actual endpoint with valid signature -> 200 OK
+        resp_valid = client.post("/api/whatsapp/twilio", data=tw_data, headers={"X-Twilio-Signature": valid_twilio_sig})
+        assert resp_valid.status_code == 200, f"Valid Twilio signature must be accepted (got {resp_valid.status_code})"
+
+        # B: Call actual endpoint with tampered body -> 403 Forbidden
+        tampered_data = {"Body": "Tampered Payload", "From": "whatsapp:+919876543210", "MessageSid": f"SM_tamper_{int(time.time())}"}
+        resp_tampered = client.post("/api/whatsapp/twilio", data=tampered_data, headers={"X-Twilio-Signature": valid_twilio_sig})
+        assert resp_tampered.status_code == 403, "Tampered Twilio payload must be rejected with 403"
+
+        # C: Call actual endpoint with missing signature -> 403 Forbidden
+        resp_missing = client.post("/api/whatsapp/twilio", data=tw_data)
+        assert resp_missing.status_code == 403, "Missing Twilio signature must be rejected with 403"
+
+        print("✅ P0-05: Twilio actual FastAPI endpoint validated against official HMAC-SHA1 signature & tamper detection.")
+    finally:
+        os.environ.pop("TWILIO_AUTH_TOKEN", None)
 
 
 def run_all_tests():

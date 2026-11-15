@@ -153,6 +153,21 @@ def verify_supabase_jwt(
     return payload
 
 
+def _finalize_identity(request: Optional[Request], user_identity: UserIdentity) -> UserIdentity:
+    """Stores verified identity on request state and wires transaction-local RLS context (AETH-P0-02)."""
+    if request and hasattr(request, "state"):
+        request.state.current_user = user_identity
+        request.state.current_user_id = user_identity.user_id
+        db = getattr(request.state, "db", None)
+        if db:
+            try:
+                from database import set_db_rls_context
+                set_db_rls_context(db, user_identity.user_id)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Database RLS security context initialization failed: {e}")
+    return user_identity
+
+
 def get_current_user_identity(
     request: Request,
     authorization: Optional[str] = Header(None, alias="Authorization")
@@ -195,14 +210,14 @@ def get_current_user_identity(
             user_id = str(payload.get("sub")).strip()
             email = str(payload.get("email") or default_dev_email).strip().lower()
 
-            return UserIdentity(
+            return _finalize_identity(request, UserIdentity(
                 user_id=user_id,
                 email=email,
                 role=payload.get("role", "authenticated"),
                 issuer=payload.get("iss", "supabase"),
                 audience=payload.get("aud", "authenticated"),
                 exp=float(payload.get("exp", 0))
-            )
+            ))
 
         # In production without secret: Fail closed immediately
         if is_production:
@@ -219,14 +234,14 @@ def get_current_user_identity(
             if payload and payload.get("sub"):
                 sub = str(payload.get("sub")).strip()
                 email = str(payload.get("email") or default_dev_email).strip().lower()
-                return UserIdentity(
+                return _finalize_identity(request, UserIdentity(
                     user_id=sub,
                     email=email,
                     role=payload.get("role", "authenticated"),
                     issuer=payload.get("iss", "dev"),
                     audience=payload.get("aud", "authenticated"),
                     exp=float(payload.get("exp", time.time() + 3600))
-                )
+                ))
 
             # Test token prefixes for test client in dev/test mode
             if token.startswith("test_") or token.startswith("dev_"):
@@ -238,11 +253,11 @@ def get_current_user_identity(
                 else:
                     test_uuid = hashlib.md5(ident.encode()).hexdigest()
                     test_uuid = f"{test_uuid[:8]}-{test_uuid[8:12]}-{test_uuid[12:16]}-{test_uuid[16:20]}-{test_uuid[20:32]}"
-                return UserIdentity(
+                return _finalize_identity(request, UserIdentity(
                     user_id=test_uuid,
                     email=test_email,
                     role="authenticated"
-                )
+                ))
 
         raise HTTPException(status_code=401, detail="Malformed or unverified Bearer token")
 
@@ -250,11 +265,11 @@ def get_current_user_identity(
     is_dev = env in ["dev", "development", "local", "test"]
     allow_insecure_dev = os.environ.get("ENABLE_INSECURE_DEV_AUTH", "").lower() in ["true", "1", "yes"]
     if is_dev and not is_production and not jwt_secret and allow_insecure_dev:
-        return UserIdentity(
+        return _finalize_identity(request, UserIdentity(
             user_id="00000000-0000-0000-0000-000000000001",
             email=default_dev_email,
             role="authenticated"
-        )
+        ))
 
     # In production or when unauthenticated, reject access with 401
     raise HTTPException(

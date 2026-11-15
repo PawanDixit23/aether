@@ -9,7 +9,8 @@ import {
   Platform,
   PermissionsAndroid,
   StatusBar as RNStatusBar,
-  Linking
+  Linking,
+  Alert
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
@@ -330,28 +331,69 @@ export default function App() {
           {...({
             onPermissionRequest: (event: any) => {
               // Deny if origin is missing or untrusted (AETH-P0-04)
-              if (event?.origin && isTrustedOrigin(event.origin)) {
-                const requested = Array.isArray(event.resources) ? event.resources : [];
-                const allowed = requested.filter((r: string) => 
-                  r === 'android.webkit.resource.AUDIO_CAPTURE' || r === 'android.webkit.resource.VIDEO_CAPTURE'
-                );
-                if (allowed.length > 0) {
-                  event?.grant?.(allowed);
-                } else {
-                  event?.deny?.();
-                }
-              } else {
+              if (!event?.origin || !isTrustedOrigin(event.origin)) {
                 event?.deny?.();
+                return;
               }
+              const requested = Array.isArray(event.resources) ? event.resources : [];
+              const hasAudio = requested.includes('android.webkit.resource.AUDIO_CAPTURE');
+              const hasVideo = requested.includes('android.webkit.resource.VIDEO_CAPTURE');
+              if (!hasAudio && !hasVideo) {
+                event?.deny?.();
+                return;
+              }
+              const permLabel = hasAudio && hasVideo ? 'Microphone and Camera' : hasAudio ? 'Microphone' : 'Camera';
+              Alert.alert(
+                'Permission Request',
+                `Aether (${event.origin}) requests permission to access your ${permLabel} for voice or visual capabilities. Do you allow access?`,
+                [
+                  {
+                    text: 'Deny',
+                    style: 'cancel',
+                    onPress: () => event?.deny?.()
+                  },
+                  {
+                    text: 'Allow',
+                    onPress: () => {
+                      const allowed = requested.filter((r: string) => 
+                        r === 'android.webkit.resource.AUDIO_CAPTURE' || r === 'android.webkit.resource.VIDEO_CAPTURE'
+                      );
+                      event?.grant?.(allowed);
+                    }
+                  }
+                ],
+                { cancelable: false }
+              );
             },
             onGeolocationPermissionsShowPrompt: (event: any) => {
-              if (event?.origin && isTrustedOrigin(event.origin)) {
-                if (event && typeof event.allow === 'function') {
-                  event.allow(event.origin, true, false);
-                } else if (event && typeof event.grant === 'function') {
-                  event.grant(event.origin);
-                }
+              if (!event?.origin || !isTrustedOrigin(event.origin)) {
+                if (typeof event?.deny === 'function') event.deny();
+                return;
               }
+              Alert.alert(
+                'Location Permission',
+                `Aether (${event.origin}) requests your location for local weather and relevant local suggestions. Do you allow access?`,
+                [
+                  {
+                    text: 'Deny',
+                    style: 'cancel',
+                    onPress: () => {
+                      if (typeof event?.deny === 'function') event.deny();
+                    }
+                  },
+                  {
+                    text: 'Allow',
+                    onPress: () => {
+                      if (event && typeof event.allow === 'function') {
+                        event.allow(event.origin, true, false);
+                      } else if (event && typeof event.grant === 'function') {
+                        event.grant(event.origin);
+                      }
+                    }
+                  }
+                ],
+                { cancelable: false }
+              );
             }
           } as any)}
           originWhitelist={[

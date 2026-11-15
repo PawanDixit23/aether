@@ -210,7 +210,23 @@ class ProcessedWebhookEvent(Base):
     id = Column(Integer, primary_key=True, index=True)
     provider = Column(String, index=True, nullable=False)  # "whatsapp", "telegram"
     event_id = Column(String, unique=True, index=True, nullable=False)
+    status = Column(String, default="processed", nullable=False)  # "processing", "processed", "failed"
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SenderPairingRateLimit(Base):
+    """
+    Per-sender OTP rate-limiting and bounded lockout table (AETH-P0-05).
+    Guarantees failed guesses from one sender/attacker never increment or exhaust another user's challenges.
+    """
+    __tablename__ = "sender_pairing_rate_limits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    channel = Column(String, index=True, nullable=False)  # "whatsapp", "telegram"
+    sender = Column(String, index=True, nullable=False)   # phone number or chat_id
+    failed_attempts = Column(Integer, default=0, nullable=False)
+    locked_until = Column(Float, default=0.0, nullable=False)
+    last_attempt_at = Column(DateTime, default=datetime.utcnow)
 
 
 class UserIntegrationPairing(Base):

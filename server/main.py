@@ -11,7 +11,7 @@ import json
 import csv
 import io
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import base64
 import hashlib
 import hmac
@@ -129,7 +129,7 @@ try:
         Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
         ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
         BriefingPreference, ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing,
-        ChannelPairingChallenge
+        ChannelPairingChallenge, SenderPairingRateLimit
     )
     from ai_engine import parse_intent_with_llm
 except ImportError:
@@ -139,7 +139,7 @@ except ImportError:
             Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
             ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
             BriefingPreference, ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing,
-            ChannelPairingChallenge
+            ChannelPairingChallenge, SenderPairingRateLimit
         )
         from server.ai_engine import parse_intent_with_llm
     except ImportError:
@@ -148,7 +148,7 @@ except ImportError:
             Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
             ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
             BriefingPreference, ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing,
-            ChannelPairingChallenge
+            ChannelPairingChallenge, SenderPairingRateLimit
         )
         from .ai_engine import parse_intent_with_llm
 
@@ -302,6 +302,47 @@ def tenant_filter(model, current_user: UserIdentity):
     # Fail closed: never silently return True or fall back to email
     import sqlalchemy.sql
     return sqlalchemy.sql.false()
+
+
+def check_and_record_otp_attempt(db: Session, channel: str, sender: str, is_correct: bool) -> Tuple[bool, str]:
+    """
+    Per-sender OTP rate-limiting and bounded lockout (AETH-P0-05).
+    Guarantees failed guesses from one sender/attacker never increment or exhaust another user's challenges.
+    """
+    now = time.time()
+    rate_rec = db.query(SenderPairingRateLimit).filter(
+        SenderPairingRateLimit.channel == channel,
+        SenderPairingRateLimit.sender == str(sender)
+    ).first()
+    if not rate_rec:
+        rate_rec = SenderPairingRateLimit(
+            channel=channel,
+            sender=str(sender),
+            failed_attempts=0,
+            locked_until=0.0
+        )
+        db.add(rate_rec)
+        db.commit()
+        db.refresh(rate_rec)
+
+    if rate_rec.locked_until > now:
+        remaining_min = int((rate_rec.locked_until - now) / 60) + 1
+        return False, f"⚠️ Too many failed attempts. This sender is locked out. Try again in {remaining_min} minutes."
+
+    if is_correct:
+        rate_rec.failed_attempts = 0
+        rate_rec.locked_until = 0.0
+        db.commit()
+        return True, "Success"
+    else:
+        rate_rec.failed_attempts += 1
+        rate_rec.last_attempt_at = datetime.utcnow()
+        if rate_rec.failed_attempts >= 5:
+            rate_rec.locked_until = now + 900  # 15-minute lockout
+        db.commit()
+        if rate_rec.failed_attempts >= 5:
+            return False, "⚠️ 5 failed attempts exceeded. This sender is locked out for 15 minutes."
+        return False, f"⚠️ Invalid pairing code. {5 - rate_rec.failed_attempts} attempts remaining."
 
 DEFAULT_OWNER_EMAIL = os.environ.get("DEFAULT_USER_EMAIL", "e.pawandixit@gmail.com").strip().lower()
 
@@ -979,7 +1020,8 @@ async def _execute_quick_capture(
         user_msg = "कृपया इस फ़ोटो का विश्लेषण करें (यदि यह बिल/रसीद/खर्च है तो राशि और विवरण दर्ज करें, अन्यथा सामान्य जानकारी दें)।"
 
     eff_email = current_user.email
-    active_session_id = (req.session_id or "").strip() or "default"
+    req_sess = (req.session_id or "").strip()
+    active_session_id = req_sess if req_sess and req_sess != "default" else f"default_{owner_user_id}"
     is_temporary = active_session_id.startswith("temp_") or active_session_id == "temporary"
 
     # Ensure ChatSession exists or auto-title it (Skip completely for Temporary Chats)
@@ -991,6 +1033,7 @@ async def _execute_quick_capture(
             if not sess_obj:
                 sess_obj = ChatSession(
                     id=active_session_id,
+                    owner_user_id=owner_user_id,
                     user_email=eff_email,
                     title=smart_title,
                     created_at=datetime.utcnow(),
@@ -998,11 +1041,16 @@ async def _execute_quick_capture(
                 )
                 db.add(sess_obj)
             else:
+                if sess_obj.owner_user_id and sess_obj.owner_user_id != owner_user_id:
+                    raise HTTPException(status_code=403, detail="Access denied: Cannot post to another user's chat session")
+                sess_obj.owner_user_id = owner_user_id
                 sess_obj.user_email = eff_email
                 if sess_obj.title in ["New Conversation", "New Chat", "default"] and smart_title:
                     sess_obj.title = smart_title
                 sess_obj.updated_at = datetime.utcnow()
             db.commit()
+        except HTTPException:
+            raise
         except Exception as sess_err:
             db.rollback()
             print(f"[ChatSession Note] {sess_err}")
@@ -1012,25 +1060,20 @@ async def _execute_quick_capture(
     if is_suspicious:
         print(f"[Security Alert] Neutralized prompt injection pattern in: {user_msg[:60]}")
 
-    # Record User Message (Skip completely for Temporary Chats)
+    # Record User Message (Skip completely for Temporary Chats) (AETH-P0-02)
     user_chat = None
     if not is_temporary:
         db_content = f"📸 {user_msg}" if req.image_data and not user_msg.startswith("📸") else user_msg
-        try:
-            user_chat = ChatMessage(role="user", content=db_content, user_email=eff_email, session_id=active_session_id)
-            db.add(user_chat)
-            db.commit()
-            db.refresh(user_chat)
-        except Exception as u_err:
-            db.rollback()
-            try:
-                user_chat = ChatMessage(role="user", content=db_content, user_email=eff_email)
-                db.add(user_chat)
-                db.commit()
-                db.refresh(user_chat)
-            except Exception:
-                db.rollback()
-                user_chat = None
+        user_chat = ChatMessage(
+            role="user",
+            content=db_content,
+            user_email=eff_email,
+            owner_user_id=owner_user_id,
+            session_id=active_session_id
+        )
+        db.add(user_chat)
+        db.commit()
+        db.refresh(user_chat)
 
     # 1. ChatSorter: Automatically extract episodic facts/routines into memory vault (Skip for Temporary Chats)
     if not is_temporary:
@@ -1040,19 +1083,25 @@ async def _execute_quick_capture(
         except Exception as cs_err:
             print(f"[ChatSorter Passive Note] {cs_err}")
 
-    # 2. Autonomous Multi-Step Agent Routing
+    # 2. Autonomous Multi-Step Agent Routing (AETH-P0-03)
     lang = req.language or "auto"
     has_conjunction = bool(re.search(r'\b(?:and then|after that|aur phir|and|aur|तथा|और)\b', user_msg, re.I))
     has_multi_intent = any(w in user_msg.lower() for w in ["spent", "kharch", "balance", "task", "remind", "weather", "youtube", "meeting"])
     if has_conjunction and has_multi_intent and not (req.image_data or req.images):
         try:
             from agent import AgentOrchestrator
-            orchestrator = AgentOrchestrator(db=db, user_email=eff_email or "operator@aether.local", lang=lang)
+            orchestrator = AgentOrchestrator(
+                db=db,
+                user_email=eff_email,
+                owner_user_id=owner_user_id,
+                lang=lang
+            )
             agent_res = await orchestrator.run(user_msg)
             if agent_res.executed_tools and len(agent_res.executed_tools) > 1:
                 if not is_temporary:
                     ai_chat = ChatMessage(
                         user_email=eff_email,
+                        owner_user_id=owner_user_id,
                         session_id=active_session_id,
                         role="assistant",
                         content=agent_res.final_message,
@@ -1221,11 +1270,11 @@ async def _execute_quick_capture(
             else:
                 result_message = f"₹{record.amount:,.2f} का खर्च ({record.category}) सफलतापूर्वक दर्ज कर लिया गया है।"
         
-        # Monthly Category Budget Check & Smart Alert
+        # Monthly Category Budget Check & Smart Alert (AETH-P0-02)
         try:
             m_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             c_spend = db.query(func.sum(FinancialRecord.amount)).filter(
-                FinancialRecord.user_email == eff_email,
+                FinancialRecord.owner_user_id == owner_user_id,
                 FinancialRecord.type == "expense",
                 FinancialRecord.category == record.category,
                 FinancialRecord.date >= m_start
@@ -1528,19 +1577,11 @@ async def _execute_quick_capture(
                 c_num = p_match.group(1).replace(" ", "").replace("-", "")
                 data["phone_number"] = c_num
 
-        # Smart Memory Lookup: Check if user stored this contact's phone number in memory vault
+        # Smart Memory Lookup: Check if user stored this contact's phone number in memory vault (AETH-P0-02)
         if not c_num:
             try:
-                target_email = get_effective_email(eff_email or user_email)
                 search_terms = [c_name.lower(), c_name.replace(" ", "").lower()]
-                if is_owner_email(target_email):
-                    mems = db.query(MemoryItem).filter(
-                        (MemoryItem.user_email == target_email) |
-                        (MemoryItem.user_email == None) |
-                        (MemoryItem.user_email == "operator@aether.local")
-                    ).all()
-                else:
-                    mems = db.query(MemoryItem).filter(MemoryItem.user_email == target_email).all()
+                mems = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
                 for m in mems:
                     m_fact = (m.fact or "").lower()
                     if any(st in m_fact for st in search_terms):
@@ -1667,6 +1708,7 @@ async def _execute_quick_capture(
             effective_msg = (result_message and result_message.strip()) or (data.get("response") if isinstance(data, dict) else None) or "प्रतिक्रिया संसाधित की गई।"
             ai_chat = ChatMessage(
                 user_email=eff_email,
+                owner_user_id=owner_user_id,
                 session_id=active_session_id,
                 role="assistant",
                 content=effective_msg,
@@ -1680,6 +1722,7 @@ async def _execute_quick_capture(
             if executed and action != "query":
                 audit = AuditLog(
                     user_email=eff_email,
+                    owner_user_id=owner_user_id,
                     action_type=f"auto_{action}",
                     details=effective_msg,
                     confidence_score=confidence,
@@ -1694,6 +1737,7 @@ async def _execute_quick_capture(
                 effective_msg = (result_message and result_message.strip()) or (data.get("response") if isinstance(data, dict) else None) or "प्रतिक्रिया संसाधित की गई।"
                 ai_chat = ChatMessage(
                     user_email=eff_email,
+                    owner_user_id=owner_user_id,
                     role="assistant",
                     content=effective_msg,
                     action_type=action,
@@ -1742,10 +1786,9 @@ class DirectChatRequest(BaseModel):
 @app.post("/chat")
 async def direct_chat_endpoint(
     req: DirectChatRequest,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(req.user_email or user_email)
     text = (req.prompt or req.input_text or "").strip()
     if not text:
         return {"response": "नमस्ते! मैं सुन रहा हूँ, कृपया बोलें।", "content": "नमस्ते! मैं सुन रहा हूँ।"}
@@ -1753,7 +1796,7 @@ async def direct_chat_endpoint(
     qc_req = QuickCaptureRequest(
         input_text=text,
         language=req.language or req.lang or "auto",
-        user_email=eff_email,
+        user_email=current_user.email,
         api_key=req.api_key,
         openai_key=req.openai_key,
         grok_key=req.grok_key,
@@ -1765,7 +1808,7 @@ async def direct_chat_endpoint(
         longitude=req.longitude,
         city=req.city
     )
-    result = await quick_capture(qc_req, user_email=eff_email, db=db)
+    result = await _execute_quick_capture(qc_req, current_user, db)
     
     reply = result.get("message") or ""
     if not reply and result.get("parsed"):
@@ -2499,25 +2542,25 @@ def toggle_task(
         # so that tomorrow and future dates are NEVER pre-marked as completed!
         # Only TaskDateCompletion records completion for the specific target_date.
         task.status = "pending"
-        if eff_email:
-            try:
-                rec = db.query(TaskDateCompletion).filter(
-                    TaskDateCompletion.task_id == task.id,
-                    TaskDateCompletion.date_str == target_date,
-                    TaskDateCompletion.user_email == eff_email
-                ).first()
-                if rec:
-                    rec.completed = (new_status == "completed")
-                else:
-                    db.add(TaskDateCompletion(
-                        task_id=task.id,
-                        user_email=eff_email,
-                        date_str=target_date,
-                        completed=(new_status == "completed"),
-                        created_at=datetime.utcnow()
-                    ))
-            except Exception as e:
-                print(f"[toggle_task] Date completion note: {e}")
+        try:
+            rec = db.query(TaskDateCompletion).filter(
+                TaskDateCompletion.task_id == task.id,
+                TaskDateCompletion.date_str == target_date,
+                tenant_filter(TaskDateCompletion, current_user)
+            ).first()
+            if rec:
+                rec.completed = (new_status == "completed")
+            else:
+                db.add(TaskDateCompletion(
+                    task_id=task.id,
+                    owner_user_id=current_user.id,
+                    user_email=current_user.email,
+                    date_str=target_date,
+                    completed=(new_status == "completed"),
+                    created_at=datetime.utcnow()
+                ))
+        except Exception as e:
+            print(f"[toggle_task] Date completion note: {e}")
     else:
         task.status = new_status
         if new_status == "completed":
@@ -3845,6 +3888,7 @@ def update_briefing_preferences(
     pref = db.query(BriefingPreference).filter(tenant_filter(BriefingPreference, current_user)).first()
     if not pref:
         pref = BriefingPreference(owner_user_id=current_user.id, user_email=eff_email)
+        db.add(pref)
     else:
         pref.owner_user_id = current_user.id
         db.add(pref)
@@ -4431,36 +4475,39 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
                 digest_type = "morning" if is_morning_window else "evening"
                 digest_key = f"{today_str}:{digest_type}"
 
-                paired = db.query(MemoryItem).filter(MemoryItem.category == "whatsapp_pairing").all()
-                for p in paired:
+                pairings = db.query(UserIntegrationPairing).filter(
+                    UserIntegrationPairing.channel == "whatsapp",
+                    UserIntegrationPairing.is_active == True
+                ).all()
+                for p in pairings:
                     try:
-                        p_phone, p_email = p.fact.split(":", 1)
+                        p_phone = p.channel_user_id
+                        p_owner_id = p.owner_user_id
                         already_sent = db.query(MemoryItem).filter(
                             MemoryItem.category == "whatsapp_digest_sent",
-                            MemoryItem.user_email == p_email,
+                            MemoryItem.owner_user_id == p_owner_id,
                             MemoryItem.fact == digest_key
                         ).first()
 
                         if not already_sent:
                             if digest_type == "morning":
                                 p_tasks = db.query(Task).filter(
-                                    Task.user_email == p_email,
+                                    Task.owner_user_id == p_owner_id,
                                     Task.status == "pending",
                                     Task.parent_id == None
                                 ).all()
                                 task_count = len(p_tasks)
                                 top_tasks_str = ", ".join([f"'{t.title}'" for t in p_tasks[:3]]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
                                 digest_msg = (
-                                    f"☀️ *सुप्रभात पवन जी! Aether Morning Digest*\n\n"
-                                    f"📍 *मौसम*: Jaipur में धूप खिली हुई (31°C)\n"
+                                    f"☀️ *सुप्रभात! Aether Morning Digest*\n\n"
                                     f"🎯 *आज के कार्य ({task_count})*: {top_tasks_str}\n\n"
                                     f"दिन की शानदार शुरुआत करें! कोई भी नया काम या खर्च दर्ज करने के लिए सीधे यहाँ रिप्लाई करें। 🚀"
                                 )
                             else:
-                                comp_count = db.query(Task).filter(Task.user_email == p_email, Task.status == "completed").count()
-                                pend_count = db.query(Task).filter(Task.user_email == p_email, Task.status == "pending").count()
+                                comp_count = db.query(Task).filter(Task.owner_user_id == p_owner_id, Task.status == "completed").count()
+                                pend_count = db.query(Task).filter(Task.owner_user_id == p_owner_id, Task.status == "pending").count()
                                 digest_msg = (
-                                    f"🌙 *शुभ संध्या पवन जी! Aether Day Wrap-up*\n\n"
+                                    f"🌙 *शुभ संध्या! Aether Day Wrap-up*\n\n"
                                     f"📊 *आज की प्रगति*:\n"
                                     f"• पूरे हुए कार्य: ✅ {comp_count}\n"
                                     f"• शेष कार्य: ⏳ {pend_count}\n\n"
@@ -4470,7 +4517,7 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
                             # Synchronous dispatch for worker thread (Issue #1 fix)
                             sent_ok = _send_whatsapp_message_sync(p_phone, digest_msg, wa_phone_id, wa_token)
                             if sent_ok:
-                                db.add(MemoryItem(user_email=p_email, category="whatsapp_digest_sent", fact=digest_key))
+                                db.add(MemoryItem(owner_user_id=p_owner_id, user_email=p.user_email, category="whatsapp_digest_sent", fact=digest_key))
                                 db.commit()
                                 print(f"[WhatsApp Digest] Successfully sent {digest_type} digest to {p_phone}")
                             else:
@@ -4577,7 +4624,23 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
         if len(clean_code) == 6:
             code_hash = hashlib.sha256(clean_code.encode()).hexdigest()
             now_ts = time.time()
-            # Atomic conditional consumption enforcing max 5 attempts
+            
+            # Scoped rate limiting: Check if this specific sender is locked out (AETH-P0-05)
+            rate_rec = db.query(SenderPairingRateLimit).filter(
+                SenderPairingRateLimit.channel == "telegram",
+                SenderPairingRateLimit.sender == str(chat_id)
+            ).first()
+            if rate_rec and rate_rec.locked_until > now_ts:
+                rem = int((rate_rec.locked_until - now_ts) / 60) + 1
+                lock_msg = f"⚠️ बहुत अधिक असफल प्रयास। यह प्रेषक {rem} मिनट के लिए लॉक है।"
+                if bot_token:
+                    async with httpx.AsyncClient() as client:
+                        await client.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={
+                            "chat_id": chat_id, "text": lock_msg
+                        })
+                return {"status": "rate_limited"}
+
+            # Atomic conditional consumption enforcing max 5 attempts on the specific challenge
             rows_updated = db.query(ChannelPairingChallenge).filter(
                 ChannelPairingChallenge.otp_hash == code_hash,
                 ChannelPairingChallenge.channel == "telegram",
@@ -4591,6 +4654,7 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
             db.commit()
 
             if rows_updated > 0:
+                check_and_record_otp_attempt(db, "telegram", str(chat_id), is_correct=True)
                 challenge = db.query(ChannelPairingChallenge).filter(
                     ChannelPairingChallenge.otp_hash == code_hash,
                     ChannelPairingChallenge.channel == "telegram"
@@ -4627,22 +4691,15 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
                         })
                 return {"status": "paired"}
             else:
-                # Increment attempts on active challenge for telegram to enforce 5-guess lockout (AETH-P0-05)
-                db.query(ChannelPairingChallenge).filter(
-                    ChannelPairingChallenge.channel == "telegram",
-                    ChannelPairingChallenge.consumed == False,
-                    ChannelPairingChallenge.expires_at >= now_ts
-                ).update({
-                    ChannelPairingChallenge.attempts: ChannelPairingChallenge.attempts + 1
-                }, synchronize_session=False)
-                # Expire any challenges that have reached 5 attempts
-                db.query(ChannelPairingChallenge).filter(
-                    ChannelPairingChallenge.channel == "telegram",
-                    ChannelPairingChallenge.attempts >= 5
-                ).update({
-                    ChannelPairingChallenge.consumed: True
-                }, synchronize_session=False)
-                db.commit()
+                # Increment failed attempts ONLY for this specific sender, never exhausting other users' challenges (AETH-P0-05)
+                _, fail_msg = check_and_record_otp_attempt(db, "telegram", str(chat_id), is_correct=False)
+                if bot_token:
+                    async with httpx.AsyncClient() as client:
+                        await client.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={
+                            "chat_id": chat_id,
+                            "text": fail_msg
+                        })
+                return {"status": "invalid_code"}
 
         # If user tries old insecure /login command, reject and guide to app OTP
         if text.startswith("/start") or text.startswith("/login"):
@@ -4853,37 +4910,36 @@ async def sync_whatsapp_waba(db: Session = Depends(get_db)):
 @app.post("/api/whatsapp/send-digest")
 async def trigger_whatsapp_digest(
     time_of_day: str = "morning",
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Manually triggers sending the Morning or Evening WhatsApp Executive Digest."""
+    """Manually triggers sending the Morning or Evening WhatsApp Executive Digest (AETH-P0-02)."""
     token = os.environ.get("WHATSAPP_TOKEN", "").strip()
     phone_id = os.environ.get("WHATSAPP_PHONE_ID", "1432995866556035").strip()
-    eff_email = (user_email or "e.pawandixit@gmail.com").strip().lower()
 
-    link_mem = db.query(MemoryItem).filter(
-        MemoryItem.category == "whatsapp_pairing",
-        MemoryItem.fact.like(f"%:{eff_email}")
+    pairing = db.query(UserIntegrationPairing).filter(
+        UserIntegrationPairing.channel == "whatsapp",
+        UserIntegrationPairing.owner_user_id == current_user.id,
+        UserIntegrationPairing.is_active == True
     ).first()
-    if not link_mem:
-        raise HTTPException(status_code=400, detail="WhatsApp pairing not found for user")
+    if not pairing:
+        raise HTTPException(status_code=400, detail="WhatsApp pairing not found for active user account")
     
-    user_phone = link_mem.fact.split(":", 1)[0].strip()
+    user_phone = pairing.channel_user_id
 
     if time_of_day == "morning":
-        p_tasks = db.query(Task).filter(Task.user_email == eff_email, Task.status == "pending", Task.parent_id == None).all()
+        p_tasks = db.query(Task).filter(Task.owner_user_id == current_user.id, Task.status == "pending", Task.parent_id == None).all()
         top_tasks = ", ".join([f"'{t.title}'" for t in p_tasks[:3]]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
         digest_msg = (
-            f"☀️ *सुप्रभात पवन जी! Aether Morning Digest*\n\n"
-            f"📍 *मौसम*: Jaipur में 31.4°C धूप खिली हुई\n"
+            f"☀️ *सुप्रभात! Aether Morning Digest*\n\n"
             f"🎯 *आज के कार्य ({len(p_tasks)})*: {top_tasks}\n\n"
             f"दिन की शानदार शुरुआत करें! कोई भी नया काम या खर्च दर्ज करने के लिए सीधे यहाँ रिप्लाई करें। 🚀"
         )
     else:
-        comp_count = db.query(Task).filter(Task.user_email == eff_email, Task.status == "completed").count()
-        pend_count = db.query(Task).filter(Task.user_email == eff_email, Task.status == "pending").count()
+        comp_count = db.query(Task).filter(Task.owner_user_id == current_user.id, Task.status == "completed").count()
+        pend_count = db.query(Task).filter(Task.owner_user_id == current_user.id, Task.status == "pending").count()
         digest_msg = (
-            f"🌙 *शुभ संध्या पवन जी! Aether Day Wrap-up*\n\n"
+            f"🌙 *शुभ संध्या! Aether Day Wrap-up*\n\n"
             f"📊 *आज की प्रगति*:\n"
             f"• पूरे हुए कार्य: ✅ {comp_count}\n"
             f"• शेष कार्य: ⏳ {pend_count}\n\n"
@@ -5261,11 +5317,30 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         wa_token = os.environ.get("WHATSAPP_TOKEN", "").strip()
         wa_phone_id = os.environ.get("WHATSAPP_PHONE_ID", "").strip()
 
-        # 3. Atomic OTP consumption via ChannelPairingChallenge (AETH-P0-05)
+        # 3. Atomic OTP consumption via ChannelPairingChallenge with per-sender rate limiting (AETH-P0-05)
         clean_code = re.sub(r'[^0-9]', '', user_text)
         if len(clean_code) == 6:
             code_hash = hashlib.sha256(clean_code.encode()).hexdigest()
             now_ts = time.time()
+
+            # Scoped rate limiting: Check if this specific sender is locked out (AETH-P0-05)
+            rate_rec = db.query(SenderPairingRateLimit).filter(
+                SenderPairingRateLimit.channel == "whatsapp",
+                SenderPairingRateLimit.sender == str(sender)
+            ).first()
+            if rate_rec and rate_rec.locked_until > now_ts:
+                rem = int((rate_rec.locked_until - now_ts) / 60) + 1
+                try:
+                    await _send_whatsapp_message(
+                        sender,
+                        f"⚠️ बहुत अधिक असफल प्रयास। यह नंबर {rem} मिनट के लिए अस्थायी रूप से लॉक है।",
+                        wa_phone_id,
+                        wa_token
+                    )
+                except Exception:
+                    pass
+                return {"status": "ok", "message": "sender locked out"}
+
             rows_updated = db.query(ChannelPairingChallenge).filter(
                 ChannelPairingChallenge.otp_hash == code_hash,
                 ChannelPairingChallenge.channel == "whatsapp",
@@ -5279,6 +5354,7 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             db.commit()
 
             if rows_updated > 0:
+                check_and_record_otp_attempt(db, "whatsapp", str(sender), is_correct=True)
                 challenge = db.query(ChannelPairingChallenge).filter(
                     ChannelPairingChallenge.otp_hash == code_hash,
                     ChannelPairingChallenge.channel == "whatsapp"
@@ -5317,22 +5393,13 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
                     pass
                 return {"status": "ok", "message": "phone successfully paired"}
             else:
-                # Increment failed attempts on active challenge for whatsapp to enforce 5-guess lockout (AETH-P0-05)
-                db.query(ChannelPairingChallenge).filter(
-                    ChannelPairingChallenge.channel == "whatsapp",
-                    ChannelPairingChallenge.consumed == False,
-                    ChannelPairingChallenge.expires_at >= now_ts
-                ).update({
-                    ChannelPairingChallenge.attempts: ChannelPairingChallenge.attempts + 1
-                }, synchronize_session=False)
-                # Expire any challenges that have reached 5 attempts
-                db.query(ChannelPairingChallenge).filter(
-                    ChannelPairingChallenge.channel == "whatsapp",
-                    ChannelPairingChallenge.attempts >= 5
-                ).update({
-                    ChannelPairingChallenge.consumed: True
-                }, synchronize_session=False)
-                db.commit()
+                # Increment failed attempts ONLY for this specific sender, never exhausting other users' challenges (AETH-P0-05)
+                _, fail_msg = check_and_record_otp_attempt(db, "whatsapp", str(sender), is_correct=False)
+                try:
+                    await _send_whatsapp_message(sender, fail_msg, wa_phone_id, wa_token)
+                except Exception:
+                    pass
+                return {"status": "ok", "message": "invalid_code"}
 
         # 4. Check verified pairing strictly from UserIntegrationPairing (AETH-P0-05)
         verified_pairing = db.query(UserIntegrationPairing).filter(
@@ -5621,11 +5688,22 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
         user_email = pairing.user_email if pairing else None
         owner_id = pairing.owner_user_id if pairing else None
 
-        # Check 6-digit OTP pairing atomically (AETH-P0-05)
+        # Check 6-digit OTP pairing atomically with per-sender rate limiting (AETH-P0-05)
         clean_code = re.sub(r'[^0-9]', '', body)
         if len(clean_code) == 6:
             code_hash = hashlib.sha256(clean_code.encode()).hexdigest()
             now_ts = time.time()
+
+            # Scoped rate limiting: Check if this specific sender is locked out (AETH-P0-05)
+            rate_rec = db.query(SenderPairingRateLimit).filter(
+                SenderPairingRateLimit.channel == "whatsapp",
+                SenderPairingRateLimit.sender == str(sender)
+            ).first()
+            if rate_rec and rate_rec.locked_until > now_ts:
+                rem = int((rate_rec.locked_until - now_ts) / 60) + 1
+                reply = f"⚠️ बहुत अधिक असफल प्रयास। यह नंबर {rem} मिनट के लिए लॉक है।"
+                return Response(content=f"<Response><Message>{reply}</Message></Response>", media_type="application/xml")
+
             rows_updated = db.query(ChannelPairingChallenge).filter(
                 ChannelPairingChallenge.otp_hash == code_hash,
                 ChannelPairingChallenge.channel == "whatsapp",
@@ -5639,6 +5717,7 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
             db.commit()
 
             if rows_updated > 0:
+                check_and_record_otp_attempt(db, "whatsapp", str(sender), is_correct=True)
                 challenge = db.query(ChannelPairingChallenge).filter(
                     ChannelPairingChallenge.otp_hash == code_hash,
                     ChannelPairingChallenge.channel == "whatsapp"
@@ -5663,20 +5742,9 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
                 reply = f"✅ Aether WhatsApp Linked with {target_email}! Ab aap reminders aur kharch direct WhatsApp par bhej sakte hain."
                 return Response(content=f"<Response><Message>{reply}</Message></Response>", media_type="application/xml")
             else:
-                db.query(ChannelPairingChallenge).filter(
-                    ChannelPairingChallenge.channel == "whatsapp",
-                    ChannelPairingChallenge.consumed == False,
-                    ChannelPairingChallenge.expires_at >= now_ts
-                ).update({
-                    ChannelPairingChallenge.attempts: ChannelPairingChallenge.attempts + 1
-                }, synchronize_session=False)
-                db.query(ChannelPairingChallenge).filter(
-                    ChannelPairingChallenge.channel == "whatsapp",
-                    ChannelPairingChallenge.attempts >= 5
-                ).update({
-                    ChannelPairingChallenge.consumed: True
-                }, synchronize_session=False)
-                db.commit()
+                # Increment failed attempts ONLY for this specific sender, never exhausting other users' challenges (AETH-P0-05)
+                _, fail_msg = check_and_record_otp_attempt(db, "whatsapp", str(sender), is_correct=False)
+                return Response(content=f"<Response><Message>{fail_msg}</Message></Response>", media_type="application/xml")
 
         if body.lower().startswith("/login") or body.lower().startswith("/start"):
             reply = "⚡ Aether WhatsApp: सुरक्षा कारणों से सीधा ईमेल लिंक बंद कर दिया गया है। कृपया Aether ऐप से 6-अंकों का पेयरिंग कोड प्राप्त करें और उसे यहाँ भेजें।"
@@ -5737,26 +5805,30 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
 # ----------------- Play Store Account Deletion, Routines & Docs Q&A -----------------
 @app.delete("/api/account/data")
 def delete_account_data(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Permanently deletes all server-side user data (Play Store account/data deletion compliance)."""
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    """Permanently deletes all server-side user data (Play Store account/data deletion compliance) (AETH-P0-02)."""
     deleted = {}
-    for model_cls, col, label in [
-        (Task, Task.user_email, "tasks"),
-        (FinancialRecord, FinancialRecord.user_email, "financial_records"),
-        (MemoryItem, MemoryItem.user_email, "memory_vault"),
-        (AuditLog, AuditLog.user_email, "audit_logs"),
-        (PushSubscription, PushSubscription.user_email, "push_subscriptions"),
-        (ScheduledJob, ScheduledJob.user_email, "scheduled_jobs"),
-        (ChatSession, ChatSession.user_email, "chat_sessions"),
+    for model_cls, label in [
+        (Task, "tasks"),
+        (FinancialRecord, "financial_records"),
+        (MemoryItem, "memory_vault"),
+        (AuditLog, "audit_logs"),
+        (PushSubscription, "push_subscriptions"),
+        (ScheduledJob, "scheduled_jobs"),
+        (ChatSession, "chat_sessions"),
+        (ChatMessage, "chat_messages"),
+        (TaskDateCompletion, "task_date_completions"),
+        (WhatsAppMessage, "whatsapp_messages"),
+        (ProcessedMutation, "processed_mutations"),
+        (BriefingPreference, "briefing_preferences"),
+        (UserIntegrationPairing, "user_integration_pairings"),
+        (ChannelPairingChallenge, "channel_pairing_challenges"),
     ]:
-        deleted[label] = db.query(model_cls).filter(col == eff_email).delete(synchronize_session=False)
+        deleted[label] = db.query(model_cls).filter(model_cls.owner_user_id == current_user.id).delete(synchronize_session=False)
     db.commit()
-    return {"status": "deleted", "user_email": eff_email, "deleted": deleted}
+    return {"status": "deleted", "owner_user_id": current_user.id, "deleted": deleted}
 
 class RoutineCreateRequest(BaseModel):
     title: str
@@ -5766,14 +5838,11 @@ class RoutineCreateRequest(BaseModel):
 
 @app.get("/api/routines")
 def list_routines(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
-    if not eff_email:
-        return []
     jobs = db.query(ScheduledJob).filter(
-        ScheduledJob.user_email == eff_email,
+        tenant_filter(ScheduledJob, current_user),
         ScheduledJob.job_type == "routine"
     ).order_by(ScheduledJob.created_at.desc()).all()
     results = []
@@ -5796,15 +5865,13 @@ def list_routines(
 @app.post("/api/routines")
 def create_routine(
     req: RoutineCreateRequest,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
     now = datetime.utcnow()
     job = ScheduledJob(
-        user_email=eff_email,
+        owner_user_id=current_user.id,
+        user_email=current_user.email,
         job_type="routine",
         payload_json=json.dumps({
             "title": req.title.strip(),
@@ -5823,15 +5890,12 @@ def create_routine(
 @app.delete("/api/routines/{job_id}")
 def delete_routine(
     job_id: int,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
     job = db.query(ScheduledJob).filter(
         ScheduledJob.id == job_id,
-        ScheduledJob.user_email == eff_email,
+        tenant_filter(ScheduledJob, current_user),
         ScheduledJob.job_type == "routine"
     ).first()
     if not job:
@@ -6278,11 +6342,10 @@ Return STRICT JSON:
 @app.get("/api/social/ghostwriter-thought")
 async def get_ghostwriter_thought(
     niche: Optional[str] = "tech_leadership",
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
-    recent_tasks = db.query(Task).filter(Task.user_email == eff_email).order_by(Task.created_at.desc()).limit(3).all()
+    recent_tasks = db.query(Task).filter(tenant_filter(Task, current_user)).order_by(Task.created_at.desc()).limit(3).all()
     task_context = ", ".join([t.title for t in recent_tasks]) if recent_tasks else "building intelligent autonomous software systems"
 
     prompt = f"""You are Aether's Executive Ghostwriter for modern founders, developers, and operators.
