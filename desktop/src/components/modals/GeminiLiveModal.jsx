@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, X, Volume2, Sparkles, RefreshCw, PhoneOff, Radio, Square, ArrowDown } from 'lucide-react';
+import { Mic, MicOff, X, Volume2, Sparkles, RefreshCw, PhoneOff, Radio, Square, ArrowDown, ExternalLink } from 'lucide-react';
 import { FormattedMessage } from '../chat/FormattedMessage';
+
+const YoutubeIcon = ({ size = 20, color = "#fff" }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} style={{ display: 'block' }}>
+    <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+  </svg>
+);
 
 // Strip all emojis and pictographs so TTS voice never pronounces emoji names
 const stripEmojis = (str) => {
@@ -54,6 +60,7 @@ export default function GeminiLiveModal({
   const [isMobile, setIsMobile] = useState(() => (typeof window !== 'undefined' ? window.innerWidth <= 640 : false));
   const [thinkingPhaseIndex, setThinkingPhaseIndex] = useState(0);
   const [thinkingElapsed, setThinkingElapsed] = useState(0);
+  const [activeMediaAction, setActiveMediaAction] = useState(null);
 
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
@@ -67,6 +74,7 @@ export default function GeminiLiveModal({
   const typewriterTimerRef = useRef(null);
   const transcriptBoxRef = useRef(null);
   const userScrolledUpRef = useRef(false);
+  const activeMediaActionRef = useRef(null);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth <= 640);
@@ -251,6 +259,8 @@ export default function GeminiLiveModal({
     setDisplayedResponse('');
     userScrolledUpRef.current = false;
     setShowScrollBottomBtn(false);
+    setActiveMediaAction(null);
+    activeMediaActionRef.current = null;
 
     if (recognitionRef.current) {
       try {
@@ -468,6 +478,27 @@ export default function GeminiLiveModal({
       setAiResponse(aiText);
       startCuratedStreamingText(aiText);
 
+      // Handle media playback intent (e.g. YouTube song playback)
+      if (data?.action === 'youtube' && data?.data) {
+        const ytData = data.data;
+        setActiveMediaAction(ytData);
+        activeMediaActionRef.current = ytData;
+
+        // Dispatch external URL to native mobile WebView if active
+        const directTarget = ytData.play_url || ytData.watch_url || ytData.url;
+        if (directTarget && typeof window !== 'undefined' && window.ReactNativeWebView) {
+          try {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'OPEN_EXTERNAL_URL',
+              url: directTarget
+            }));
+          } catch (e) {}
+        }
+      } else {
+        setActiveMediaAction(null);
+        activeMediaActionRef.current = null;
+      }
+
       if (onNewMessage) {
         onNewMessage({
           id: `live-${Date.now()}`,
@@ -513,6 +544,7 @@ export default function GeminiLiveModal({
       text
         .replace(/\[(.*?)\]\([^)]*\)/g, '$1')
         .replace(/https?:\/\/[^\s]+/g, '')
+        .replace(/▶️\s*(?:Play Video:?)?/gi, '')
         .replace(/[*#_`~>|]/g, '')
     );
 
@@ -529,6 +561,13 @@ export default function GeminiLiveModal({
       isDispatchingRef.current = false;
       latestSpokenRef.current = '';
       audioPlayerRef.current = null;
+
+      // If YouTube video/music is actively playing, don't auto-restart mic to avoid audio loop
+      if (activeMediaActionRef.current) {
+        setSessionState('listening');
+        return;
+      }
+
       if (isSessionActiveRef.current && !isMutedRef.current) {
         setSessionState('listening');
         startLiveListening();
@@ -583,6 +622,10 @@ export default function GeminiLiveModal({
 
   // Handle User Interrupt / Tap Orb to Barge-In or Send Now
   const handleOrbTap = () => {
+    if (activeMediaActionRef.current) {
+      activeMediaActionRef.current = null;
+      setActiveMediaAction(null);
+    }
     if (isMutedRef.current || isMuted || sessionState === 'muted') {
       toggleMute();
       return;
@@ -642,11 +685,11 @@ export default function GeminiLiveModal({
   // Dynamic Theme Colors based on Live Session State (Stable & Non-flickering)
   const themeGradients = {
     listening: {
-      primary: '#38bdf8',
-      glow: 'rgba(56, 189, 248, 0.45)',
-      ring: 'rgba(56, 189, 248, 0.28)',
-      statusText: 'Listening... Speak freely',
-      statusColor: '#38bdf8'
+      primary: activeMediaAction ? '#ef4444' : '#38bdf8',
+      glow: activeMediaAction ? 'rgba(239, 68, 68, 0.45)' : 'rgba(56, 189, 248, 0.45)',
+      ring: activeMediaAction ? 'rgba(239, 68, 68, 0.28)' : 'rgba(56, 189, 248, 0.28)',
+      statusText: activeMediaAction ? 'Playing Media • Tap orb to speak' : 'Listening... Speak freely',
+      statusColor: activeMediaAction ? '#f87171' : '#38bdf8'
     },
     thinking: {
       primary: '#f59e0b',
@@ -952,12 +995,12 @@ export default function GeminiLiveModal({
               width: '100%',
               boxSizing: 'border-box',
               minHeight: '85px',
-              maxHeight: isMobile ? '230px' : '280px',
+              maxHeight: activeMediaAction ? (isMobile ? '380px' : '440px') : (isMobile ? '230px' : '280px'),
               overflowY: 'auto',
               display: 'flex',
               flexDirection: 'column',
-              justifyContent: (sessionState === 'speaking' || (transcript && transcript.length > 70)) ? 'flex-start' : 'center',
-              boxShadow: sessionState === 'thinking' ? '0 12px 36px rgba(245, 158, 11, 0.15)' : '0 12px 36px rgba(0, 0, 0, 0.7)',
+              justifyContent: (sessionState === 'speaking' || activeMediaAction || (transcript && transcript.length > 70)) ? 'flex-start' : 'center',
+              boxShadow: activeMediaAction ? '0 12px 36px rgba(239, 68, 68, 0.2)' : (sessionState === 'thinking' ? '0 12px 36px rgba(245, 158, 11, 0.15)' : '0 12px 36px rgba(0, 0, 0, 0.7)'),
               scrollbarWidth: 'thin',
               scrollbarColor: 'rgba(56, 189, 248, 0.35) transparent',
               WebkitOverflowScrolling: 'touch',
@@ -974,7 +1017,7 @@ export default function GeminiLiveModal({
             }}>
               {interimTranscript ? (
                 <span style={{ color: '#38bdf8', fontStyle: 'italic' }}>"{interimTranscript}"</span>
-              ) : sessionState === 'speaking' ? (
+              ) : (sessionState === 'speaking' || activeMediaAction) ? (
                 <div style={{ position: 'relative' }}>
                   <FormattedMessage text={displayedResponse || aiResponse} />
                   {isStreamingText && (
@@ -988,6 +1031,97 @@ export default function GeminiLiveModal({
                       borderRadius: '2px',
                       animation: 'livePulse 0.8s infinite'
                     }} />
+                  )}
+
+                  {activeMediaAction && (
+                    <div style={{
+                      marginTop: '14px',
+                      width: '100%',
+                      borderRadius: '16px',
+                      overflow: 'hidden',
+                      background: '#090d16',
+                      border: '1.5px solid rgba(239, 68, 68, 0.45)',
+                      boxShadow: '0 8px 30px rgba(0, 0, 0, 0.6)'
+                    }}>
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '10px 14px',
+                        background: 'rgba(239, 68, 68, 0.12)',
+                        borderBottom: '1px solid rgba(239, 68, 68, 0.2)'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                          <div style={{
+                            width: '28px',
+                            height: '28px',
+                            borderRadius: '6px',
+                            background: '#ef4444',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0
+                          }}>
+                            <YoutubeIcon size={16} color="#fff" />
+                          </div>
+                          <span style={{
+                            fontSize: '0.84rem',
+                            fontWeight: 700,
+                            color: '#f8fafc',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {activeMediaAction.query || 'YouTube Music'}
+                          </span>
+                        </div>
+
+                        <a
+                          href={activeMediaAction.watch_url || activeMediaAction.url || `https://www.youtube.com/watch?v=${activeMediaAction.video_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            padding: '4px 10px',
+                            borderRadius: '6px',
+                            background: 'rgba(239, 68, 68, 0.25)',
+                            border: '1px solid rgba(239, 68, 68, 0.5)',
+                            color: '#fca5a5',
+                            fontSize: '0.74rem',
+                            fontWeight: 600,
+                            textDecoration: 'none'
+                          }}
+                        >
+                          <span>Open App</span>
+                          <ExternalLink size={12} />
+                        </a>
+                      </div>
+
+                      <div style={{
+                        position: 'relative',
+                        width: '100%',
+                        paddingBottom: '56.25%',
+                        height: 0,
+                        background: '#000'
+                      }}>
+                        <iframe
+                          src={activeMediaAction.embed_url || `https://www.youtube.com/embed/${activeMediaAction.video_id}?autoplay=1&enablejsapi=1`}
+                          title={activeMediaAction.query || "YouTube Player"}
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                          allowFullScreen
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            height: '100%',
+                            border: 'none'
+                          }}
+                        />
+                      </div>
+                    </div>
                   )}
                 </div>
               ) : transcript ? (
