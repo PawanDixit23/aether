@@ -82,6 +82,17 @@ export default function GeminiLiveModal({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Lock body scroll while Live Modal is active so background never scrolls or pushes layout
+  useEffect(() => {
+    if (isOpen) {
+      const origOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = origOverflow;
+      };
+    }
+  }, [isOpen]);
+
   // Dynamic live thinking phase rotation (synced with Claude/Gemini dynamic status)
   useEffect(() => {
     if (sessionState !== 'thinking') {
@@ -740,7 +751,14 @@ export default function GeminiLiveModal({
   return (
     <div style={{
       position: 'fixed',
-      inset: 0,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      width: '100vw',
+      maxWidth: '100vw',
+      height: '100dvh',
+      maxHeight: '100dvh',
       zIndex: 999999,
       backgroundColor: '#030712',
       display: 'flex',
@@ -749,8 +767,8 @@ export default function GeminiLiveModal({
       color: '#ffffff',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif',
       padding: '0 16px',
-      paddingTop: 'max(env(safe-area-inset-top, 24px), 24px)',
-      paddingBottom: 'max(env(safe-area-inset-bottom, 16px), 16px)',
+      paddingTop: 'max(env(safe-area-inset-top, 16px), 16px)',
+      paddingBottom: 'max(env(safe-area-inset-bottom, 10px), 10px)',
       boxSizing: 'border-box',
       overflow: 'hidden'
     }}>
@@ -848,7 +866,7 @@ export default function GeminiLiveModal({
         margin: '0 auto',
         width: '100%',
         textAlign: 'center',
-        padding: activeMediaAction ? '2px 0 8px 0' : '10px 0',
+        padding: activeMediaAction ? '0 0 6px 0' : '6px 0',
         position: 'relative'
       }}>
         {/* Living Multi-layered Orb */}
@@ -857,8 +875,8 @@ export default function GeminiLiveModal({
           title={isMuted ? "Tap to unmute" : (sessionState === 'speaking' ? "Tap to interrupt" : "Tap to send immediately")}
           style={{
             position: 'relative',
-            width: activeMediaAction ? '90px' : (isMobile ? '160px' : '200px'),
-            height: activeMediaAction ? '90px' : (isMobile ? '160px' : '200px'),
+            width: activeMediaAction ? '60px' : (isMobile ? '120px' : '150px'),
+            height: activeMediaAction ? '60px' : (isMobile ? '120px' : '150px'),
             borderRadius: '50%',
             cursor: 'pointer',
             display: 'flex',
@@ -873,7 +891,7 @@ export default function GeminiLiveModal({
           {/* Ripple Wave 1 */}
           <div style={{
             position: 'absolute',
-            inset: activeMediaAction ? '-14px' : '-28px',
+            inset: activeMediaAction ? '-10px' : '-22px',
             borderRadius: '50%',
             background: `radial-gradient(circle, ${currentTheme.ring} 0%, rgba(0,0,0,0) 70%)`,
             animation: 'liveRipple 2.6s infinite ease-in-out',
@@ -883,7 +901,7 @@ export default function GeminiLiveModal({
           {/* Ripple Wave 2 */}
           <div style={{
             position: 'absolute',
-            inset: activeMediaAction ? '-6px' : '-12px',
+            inset: activeMediaAction ? '-4px' : '-10px',
             borderRadius: '50%',
             background: `radial-gradient(circle, ${currentTheme.ring} 0%, rgba(0,0,0,0) 75%)`,
             animation: 'liveRipple 1.8s infinite ease-in-out 0.4s',
@@ -892,8 +910,8 @@ export default function GeminiLiveModal({
 
           {/* Core Living Glass Orb */}
           <div style={{
-            width: activeMediaAction ? '68px' : (isMobile ? '120px' : '150px'),
-            height: activeMediaAction ? '68px' : (isMobile ? '120px' : '150px'),
+            width: activeMediaAction ? '48px' : (isMobile ? '90px' : '115px'),
+            height: activeMediaAction ? '48px' : (isMobile ? '90px' : '115px'),
             borderRadius: '50%',
             background: isMuted
               ? 'radial-gradient(circle at 35% 30%, #ef4444 0%, #b91c1c 45%, #7f1d1d 85%, #450a0a 100%)'
@@ -904,7 +922,7 @@ export default function GeminiLiveModal({
                   : (sessionState === 'thinking'
                     ? 'radial-gradient(circle at 35% 30%, #fbbf24 0%, #f59e0b 45%, #b45309 85%, #451a03 100%)'
                     : 'radial-gradient(circle at 35% 30%, #94a3b8 0%, #64748b 50%, #334155 100%)'))),
-            boxShadow: `0 0 ${activeMediaAction ? '30px' : '60px'} ${currentTheme.glow}, inset 0 0 25px rgba(255, 255, 255, 0.4)`,
+            boxShadow: `0 0 ${activeMediaAction ? '24px' : '50px'} ${currentTheme.glow}, inset 0 0 20px rgba(255, 255, 255, 0.4)`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -918,8 +936,8 @@ export default function GeminiLiveModal({
               position: 'absolute',
               top: '12%',
               left: '20%',
-              width: activeMediaAction ? '24px' : '50px',
-              height: activeMediaAction ? '14px' : '30px',
+              width: activeMediaAction ? '18px' : '40px',
+              height: activeMediaAction ? '10px' : '22px',
               borderRadius: '50%',
               background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.7) 0%, rgba(255,255,255,0) 80%)',
               transform: 'rotate(-25deg)',
@@ -928,34 +946,34 @@ export default function GeminiLiveModal({
 
             {/* Inner Graphic State */}
             {isMuted ? (
-              <MicOff size={activeMediaAction ? 22 : 44} color="#ffffff" />
+              <MicOff size={activeMediaAction ? 18 : (isMobile ? 32 : 38)} color="#ffffff" />
             ) : activeMediaAction ? (
               <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
-                <span style={{ width: '3px', height: '10px', background: '#ffffff', borderRadius: '3px', animation: 'liveBar 0.7s infinite ease-in-out 0.1s' }} />
-                <span style={{ width: '3px', height: '18px', background: '#ffffff', borderRadius: '3px', animation: 'liveBar 0.7s infinite ease-in-out 0.3s' }} />
-                <span style={{ width: '3px', height: '12px', background: '#ffffff', borderRadius: '3px', animation: 'liveBar 0.7s infinite ease-in-out 0.2s' }} />
+                <span style={{ width: '3px', height: '8px', background: '#ffffff', borderRadius: '3px', animation: 'liveBar 0.7s infinite ease-in-out 0.1s' }} />
+                <span style={{ width: '3px', height: '14px', background: '#ffffff', borderRadius: '3px', animation: 'liveBar 0.7s infinite ease-in-out 0.3s' }} />
+                <span style={{ width: '3px', height: '10px', background: '#ffffff', borderRadius: '3px', animation: 'liveBar 0.7s infinite ease-in-out 0.2s' }} />
               </div>
             ) : sessionState === 'listening' ? (
-              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                <span style={{ width: '4px', height: '18px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.9s infinite ease-in-out 0.1s' }} />
-                <span style={{ width: '4px', height: '36px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.9s infinite ease-in-out 0.25s' }} />
-                <span style={{ width: '4px', height: '48px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.9s infinite ease-in-out 0.4s' }} />
-                <span style={{ width: '4px', height: '28px', background: '#ffffff', borderRadius: '4px', animation: 'liveBar 0.9s infinite ease-in-out 0.15s' }} />
+              <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                <span style={{ width: '3px', height: '14px', background: '#ffffff', borderRadius: '3px', animation: 'liveBar 0.9s infinite ease-in-out 0.1s' }} />
+                <span style={{ width: '3px', height: '28px', background: '#ffffff', borderRadius: '3px', animation: 'liveBar 0.9s infinite ease-in-out 0.25s' }} />
+                <span style={{ width: '3px', height: '36px', background: '#ffffff', borderRadius: '3px', animation: 'liveBar 0.9s infinite ease-in-out 0.4s' }} />
+                <span style={{ width: '3px', height: '20px', background: '#ffffff', borderRadius: '3px', animation: 'liveBar 0.9s infinite ease-in-out 0.15s' }} />
               </div>
             ) : sessionState === 'speaking' ? (
-              <Volume2 size={activeMediaAction ? 24 : 46} color="#ffffff" style={{ animation: 'livePulse 1.2s infinite' }} />
+              <Volume2 size={activeMediaAction ? 18 : (isMobile ? 32 : 38)} color="#ffffff" style={{ animation: 'livePulse 1.2s infinite' }} />
             ) : sessionState === 'thinking' ? (
-              <RefreshCw size={activeMediaAction ? 22 : 42} color="#ffffff" style={{ animation: 'liveSpin 1.1s linear infinite' }} />
+              <RefreshCw size={activeMediaAction ? 18 : (isMobile ? 30 : 36)} color="#ffffff" style={{ animation: 'liveSpin 1.1s linear infinite' }} />
             ) : (
-              <Mic size={activeMediaAction ? 22 : 42} color="#ffffff" />
+              <Mic size={activeMediaAction ? 18 : (isMobile ? 30 : 36)} color="#ffffff" />
             )}
           </div>
         </div>
 
         {/* State Label */}
         <div style={{
-          marginTop: activeMediaAction ? '8px' : '18px',
-          fontSize: '0.84rem',
+          marginTop: activeMediaAction ? '4px' : '10px',
+          fontSize: activeMediaAction ? '0.74rem' : '0.80rem',
           fontWeight: 700,
           letterSpacing: '0.04em',
           textTransform: 'uppercase',
@@ -964,7 +982,7 @@ export default function GeminiLiveModal({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: '8px',
+          gap: '6px',
           flexShrink: 0
         }}>
           {sessionState === 'thinking' ? (
@@ -972,14 +990,14 @@ export default function GeminiLiveModal({
               display: 'inline-flex',
               alignItems: 'center',
               gap: '8px',
-              padding: '5px 14px',
+              padding: '4px 12px',
               borderRadius: '999px',
               background: 'rgba(245, 158, 11, 0.12)',
               border: '1px solid rgba(245, 158, 11, 0.35)',
               boxShadow: '0 2px 14px rgba(245, 158, 11, 0.22)',
               color: '#fbbf24'
             }}>
-              <span style={{ fontSize: '1rem', animation: 'livePulse 1.5s infinite' }}>
+              <span style={{ fontSize: '0.95rem', animation: 'livePulse 1.5s infinite' }}>
                 {currentThinking.emoji}
               </span>
               <span
@@ -987,7 +1005,7 @@ export default function GeminiLiveModal({
                 style={{
                   color: '#fbbf24',
                   fontWeight: 700,
-                  fontSize: '0.82rem',
+                  fontSize: '0.80rem',
                   letterSpacing: '0.02em',
                   animation: 'fadeInThinking 0.25s ease'
                 }}
@@ -995,7 +1013,7 @@ export default function GeminiLiveModal({
                 {currentThinking.text}
               </span>
               {thinkingElapsed > 0 && (
-                <span style={{ fontSize: '0.72rem', color: '#fde68a', opacity: 0.85 }}>
+                <span style={{ fontSize: '0.70rem', color: '#fde68a', opacity: 0.85 }}>
                   {thinkingElapsed}s
                 </span>
               )}
@@ -1009,24 +1027,32 @@ export default function GeminiLiveModal({
         </div>
 
         {/* Real-time Subtitle / Spoken Transcript Card */}
-        <div style={{ position: 'relative', width: '100%', marginTop: activeMediaAction ? '10px' : '16px' }}>
+        <div style={{
+          position: 'relative',
+          width: '100%',
+          marginTop: activeMediaAction ? '6px' : '12px',
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column'
+        }}>
           <div
             ref={transcriptBoxRef}
             onScroll={handleTranscriptScroll}
             style={{
               background: '#0a1224',
               border: sessionState === 'thinking' ? '1px solid rgba(245, 158, 11, 0.35)' : '1px solid rgba(56, 189, 248, 0.28)',
-              borderRadius: '20px',
-              padding: activeMediaAction ? '12px 16px' : '16px 20px',
+              borderRadius: '18px',
+              padding: activeMediaAction ? '10px 14px' : '14px 18px',
               width: '100%',
               boxSizing: 'border-box',
-              minHeight: '85px',
-              maxHeight: activeMediaAction ? (isMobile ? '280px' : '360px') : (isMobile ? '210px' : '260px'),
+              minHeight: '65px',
+              maxHeight: activeMediaAction ? (isMobile ? '220px' : '260px') : (isMobile ? '180px' : '240px'),
               overflowY: 'auto',
               display: 'flex',
               flexDirection: 'column',
               justifyContent: (sessionState === 'speaking' || activeMediaAction || (transcript && transcript.length > 70)) ? 'flex-start' : 'center',
-              boxShadow: activeMediaAction ? '0 12px 36px rgba(239, 68, 68, 0.2)' : (sessionState === 'thinking' ? '0 12px 36px rgba(245, 158, 11, 0.15)' : '0 12px 36px rgba(0, 0, 0, 0.7)'),
+              boxShadow: activeMediaAction ? '0 8px 24px rgba(239, 68, 68, 0.2)' : (sessionState === 'thinking' ? '0 8px 24px rgba(245, 158, 11, 0.15)' : '0 8px 24px rgba(0, 0, 0, 0.7)'),
               scrollbarWidth: 'thin',
               scrollbarColor: 'rgba(56, 189, 248, 0.35) transparent',
               WebkitOverflowScrolling: 'touch',
@@ -1034,8 +1060,8 @@ export default function GeminiLiveModal({
             }}
           >
             <div style={{
-              fontSize: '0.98rem',
-              lineHeight: '1.58',
+              fontSize: '0.94rem',
+              lineHeight: '1.54',
               color: '#f8fafc',
               fontWeight: 500,
               width: '100%',
@@ -1061,37 +1087,37 @@ export default function GeminiLiveModal({
 
                   {activeMediaAction && (
                     <div style={{
-                      marginTop: '14px',
+                      marginTop: '8px',
                       width: '100%',
-                      borderRadius: '16px',
+                      borderRadius: '12px',
                       overflow: 'hidden',
                       background: '#090d16',
                       border: '1.5px solid rgba(239, 68, 68, 0.45)',
-                      boxShadow: '0 8px 30px rgba(0, 0, 0, 0.6)'
+                      boxShadow: '0 6px 20px rgba(0, 0, 0, 0.6)'
                     }}>
                       <div style={{
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        padding: '10px 14px',
+                        padding: '6px 10px',
                         background: 'rgba(239, 68, 68, 0.12)',
                         borderBottom: '1px solid rgba(239, 68, 68, 0.2)'
                       }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
                           <div style={{
-                            width: '28px',
-                            height: '28px',
-                            borderRadius: '6px',
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '5px',
                             background: '#ef4444',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                             flexShrink: 0
                           }}>
-                            <YoutubeIcon size={16} color="#fff" />
+                            <YoutubeIcon size={14} color="#fff" />
                           </div>
                           <span style={{
-                            fontSize: '0.84rem',
+                            fontSize: '0.80rem',
                             fontWeight: 700,
                             color: '#f8fafc',
                             overflow: 'hidden',
@@ -1110,25 +1136,26 @@ export default function GeminiLiveModal({
                             display: 'inline-flex',
                             alignItems: 'center',
                             gap: '4px',
-                            padding: '4px 10px',
+                            padding: '3px 8px',
                             borderRadius: '6px',
                             background: 'rgba(239, 68, 68, 0.25)',
                             border: '1px solid rgba(239, 68, 68, 0.5)',
                             color: '#fca5a5',
-                            fontSize: '0.74rem',
+                            fontSize: '0.70rem',
                             fontWeight: 600,
                             textDecoration: 'none'
                           }}
                         >
                           <span>Open App</span>
-                          <ExternalLink size={12} />
+                          <ExternalLink size={11} />
                         </a>
                       </div>
 
                       <div style={{
                         position: 'relative',
                         width: '100%',
-                        paddingBottom: '56.25%',
+                        paddingBottom: '52%',
+                        maxHeight: isMobile ? '150px' : '180px',
                         height: 0,
                         background: '#000'
                       }}>
@@ -1194,33 +1221,33 @@ export default function GeminiLiveModal({
 
         {errorMsg && (
           <div style={{
-            marginTop: '12px',
-            padding: '8px 14px',
-            borderRadius: '10px',
+            marginTop: '8px',
+            padding: '6px 12px',
+            borderRadius: '8px',
             background: 'rgba(239, 68, 68, 0.18)',
             border: '1px solid rgba(239, 68, 68, 0.4)',
             color: '#fca5a5',
-            fontSize: '0.78rem'
+            fontSize: '0.76rem'
           }}>
             {errorMsg}
           </div>
         )}
       </div>
 
-      {/* ── Bottom Control Panel ── */}
+      {/* ── Bottom Control Panel: GUARANTEED ALWAYS VISIBLE AND PINNED ── */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: isMobile ? '20px' : '26px',
+        gap: isMobile ? '18px' : '24px',
         width: '100%',
         maxWidth: '360px',
         margin: '0 auto',
-        paddingTop: '10px',
+        paddingTop: '6px',
         paddingBottom: 'max(env(safe-area-inset-bottom, 8px), 8px)',
         flexShrink: 0,
         position: 'relative',
-        zIndex: 20
+        zIndex: 30
       }}>
         {/* Mute Mic Toggle Button */}
         <button
@@ -1228,8 +1255,8 @@ export default function GeminiLiveModal({
           onClick={toggleMute}
           title={isMuted ? "Unmute Mic" : "Mute Mic"}
           style={{
-            width: '58px',
-            height: '58px',
+            width: isMobile ? '50px' : '56px',
+            height: isMobile ? '50px' : '56px',
             borderRadius: '50%',
             background: isMuted ? 'rgba(239, 68, 68, 0.25)' : 'rgba(255, 255, 255, 0.08)',
             border: isMuted ? '1.5px solid rgba(239, 68, 68, 0.6)' : '1px solid rgba(255, 255, 255, 0.16)',
@@ -1239,10 +1266,11 @@ export default function GeminiLiveModal({
             justifyContent: 'center',
             cursor: 'pointer',
             backdropFilter: 'blur(10px)',
-            transition: 'all 0.18s ease'
+            transition: 'all 0.18s ease',
+            flexShrink: 0
           }}
         >
-          {isMuted ? <MicOff size={22} /> : <Mic size={22} />}
+          {isMuted ? <MicOff size={isMobile ? 20 : 22} /> : <Mic size={isMobile ? 20 : 22} />}
         </button>
 
         {/* Center Tap to Send / Interrupt Button */}
@@ -1257,8 +1285,8 @@ export default function GeminiLiveModal({
               : "तुरंत भेजें (Tap to send immediately)"
           }
           style={{
-            width: '64px',
-            height: '64px',
+            width: isMobile ? '58px' : '64px',
+            height: isMobile ? '58px' : '64px',
             borderRadius: '50%',
             background: sessionState === 'speaking' ? 'rgba(239, 68, 68, 0.22)' : 'rgba(56, 189, 248, 0.18)',
             border: sessionState === 'speaking' ? '1.5px solid rgba(239, 68, 68, 0.55)' : '1.5px solid rgba(56, 189, 248, 0.45)',
@@ -1269,15 +1297,16 @@ export default function GeminiLiveModal({
             cursor: 'pointer',
             backdropFilter: 'blur(10px)',
             boxShadow: sessionState === 'speaking' ? '0 4px 20px rgba(239, 68, 68, 0.3)' : '0 4px 20px rgba(56, 189, 248, 0.25)',
-            transition: 'all 0.18s ease'
+            transition: 'all 0.18s ease',
+            flexShrink: 0
           }}
         >
           {sessionState === 'speaking' ? (
-            <Square size={20} fill="#f87171" />
+            <Square size={isMobile ? 18 : 20} fill="#f87171" />
           ) : sessionState === 'thinking' ? (
-            <RefreshCw size={22} style={{ animation: 'liveSpin 1s linear infinite' }} />
+            <RefreshCw size={isMobile ? 20 : 22} style={{ animation: 'liveSpin 1s linear infinite' }} />
           ) : (
-            <Sparkles size={24} />
+            <Sparkles size={isMobile ? 22 : 24} />
           )}
         </button>
 
@@ -1287,8 +1316,8 @@ export default function GeminiLiveModal({
           onClick={onClose}
           title="End Live Voice Session"
           style={{
-            width: '58px',
-            height: '58px',
+            width: isMobile ? '50px' : '56px',
+            height: isMobile ? '50px' : '56px',
             borderRadius: '50%',
             background: 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)',
             border: 'none',
@@ -1298,10 +1327,11 @@ export default function GeminiLiveModal({
             justifyContent: 'center',
             cursor: 'pointer',
             boxShadow: '0 6px 20px rgba(239, 68, 68, 0.45)',
-            transition: 'all 0.18s ease'
+            transition: 'all 0.18s ease',
+            flexShrink: 0
           }}
         >
-          <PhoneOff size={22} />
+          <PhoneOff size={isMobile ? 20 : 22} />
         </button>
       </div>
     </div>

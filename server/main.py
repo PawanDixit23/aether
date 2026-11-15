@@ -5145,6 +5145,59 @@ class SocialAdaptRequest(BaseModel):
     content: str
     platforms: Optional[List[str]] = None
 
+def _call_gemini_json_sync(prompt: str) -> dict:
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+    if not gemini_key:
+        return {}
+    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+    for m in models:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={gemini_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.3}
+            }
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        raw_text = "".join([p.get("text", "") for p in parts]).strip()
+                        if "```json" in raw_text:
+                            raw_text = raw_text.split("```json")[1].split("```")[0].strip()
+                        elif "```" in raw_text:
+                            raw_text = raw_text.split("```")[1].split("```")[0].strip()
+                        return json.loads(raw_text)
+        except Exception:
+            continue
+    return {}
+
+def _call_gemini_text_sync(prompt: str) -> str:
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+    if not gemini_key:
+        return ""
+    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+    for m in models:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={gemini_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.4}
+            }
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        return "".join([p.get("text", "") for p in parts]).strip()
+        except Exception:
+            continue
+    return ""
+
 @app.post("/api/social/adapt-post")
 async def adapt_social_post(
     req: SocialAdaptRequest,
@@ -5171,22 +5224,7 @@ Return STRICT JSON with these exact keys:
   "reddit": "<Thoughtful discussion starter formatted with Markdown, including title idea and community discussion prompt>"
 }}"""
 
-    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    adapted_result = {}
-    if gemini_key:
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            resp = model.generate_content(prompt)
-            raw = getattr(resp, "text", "").strip()
-            if "```json" in raw:
-                raw = raw.split("```json")[1].split("```")[0].strip()
-            elif "```" in raw:
-                raw = raw.split("```")[1].split("```")[0].strip()
-            adapted_result = json.loads(raw)
-        except Exception as e:
-            print(f"[Social Adapt LLM Notice] {e}")
+    adapted_result = _call_gemini_json_sync(prompt)
 
     if not adapted_result:
         snippet = base_text[:220]
@@ -5225,14 +5263,7 @@ async def summarize_youtube_video(
     except Exception as e_oe:
         print(f"[YouTube oEmbed Notice] {e_oe}")
 
-    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    summary_text = ""
-    if gemini_key:
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=gemini_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            yt_prompt = f"""You are Aether's executive video intelligence agent. The user wants a comprehensive summary of this YouTube video:
+    yt_prompt = f"""You are Aether's executive video intelligence agent. The user wants a comprehensive summary of this YouTube video:
 URL: {url}
 Title: {video_title}
 
@@ -5243,10 +5274,8 @@ Provide:
 4. ⏱️ Recommended target audience
 
 Keep it high-value, crisp, and executive-ready."""
-            resp = model.generate_content(yt_prompt)
-            summary_text = getattr(resp, "text", "").strip()
-        except Exception as e_yt:
-            print(f"[YouTube Summarize LLM Notice] {e_yt}")
+
+    summary_text = _call_gemini_text_sync(yt_prompt)
 
     if not summary_text:
         summary_text = f"📌 Core Topic: Analysis of {video_title}\n\n💡 Key Points:\n• High-impact coverage of the subject matter.\n• Actionable workflows and real-world demonstrations.\n• Relevant insights for builders and creators.\n\n🎯 Recommendation: Worth watching for practical techniques."
@@ -5257,6 +5286,282 @@ Keep it high-value, crisp, and executive-ready."""
         "url": url,
         "summary": summary_text
     }
+
+# ----------------- Advanced Social Hub AI Endpoints -----------------
+class ViralHookRequest(BaseModel):
+    content: str
+    platform: Optional[str] = "linkedin"
+
+@app.post("/api/social/viral-hooks")
+async def generate_viral_hooks(
+    req: ViralHookRequest,
+    user_email: Optional[str] = Depends(get_user_email)
+):
+    base_text = (req.content or "").strip()
+    if not base_text:
+        raise HTTPException(status_code=400, detail="Content cannot be empty")
+
+    prompt = f"""You are Aether's master viral copywriter and retention strategist.
+Analyze this social media draft and produce 3 high-converting opening hooks, a viral score (1-10), and viral rationale.
+
+Draft Content:
+"{base_text}"
+
+Return STRICT JSON:
+{{
+  "viral_score": 8.7,
+  "score_label": "High Viral Potential 🚀",
+  "reason": "<1 sentence explanation on why this topic resonates>",
+  "hooks": [
+    {{
+      "type": "curiosity",
+      "label": "🔍 Curiosity Gap",
+      "text": "<Hook that sparks curiosity and challenges common beliefs>"
+    }},
+    {{
+      "type": "proof",
+      "label": "📊 Data & Proof",
+      "text": "<Hook stating concrete results, numbers, or specific lessons>"
+    }},
+    {{
+      "type": "story",
+      "label": "📖 Personal Story",
+      "text": "<Hook that starts in media res with an authentic emotional or professional moment>"
+    }}
+  ],
+  "best_time": "Tuesday & Thursday 8:30 AM - 10:00 AM IST",
+  "hashtags": ["#leadership", "#innovation", "#growth", "#productivity"]
+}}"""
+
+    result = _call_gemini_json_sync(prompt)
+
+    if not result or not result.get("hooks"):
+        first_few = base_text[:60]
+        result = {
+            "viral_score": 8.4,
+            "score_label": "Strong Potential ⚡",
+            "reason": "Clear professional focus with high community resonance.",
+            "hooks": [
+                {
+                    "type": "curiosity",
+                    "label": "🔍 Curiosity Gap",
+                    "text": f"Most people approach this the hard way. Here is what actually worked for {first_few}:"
+                },
+                {
+                    "type": "proof",
+                    "label": "📊 Data & Proof",
+                    "text": f"3 key rules that 10x'd our output when working on {first_few}:"
+                },
+                {
+                    "type": "story",
+                    "label": "📖 Personal Story",
+                    "text": f"6 months ago, I was completely stuck on this. Here is the mental shift that changed everything:"
+                }
+            ],
+            "best_time": "Weekdays 8:30 AM - 11:00 AM IST",
+            "hashtags": ["#growth", "#mindset", "#productivity", "#leadership"]
+        }
+
+    return {"status": "success", "analysis": result}
+
+
+@app.get("/api/social/ghostwriter-thought")
+async def get_ghostwriter_thought(
+    niche: Optional[str] = "tech_leadership",
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
+    recent_tasks = db.query(Task).filter(Task.user_email == eff_email).order_by(Task.created_at.desc()).limit(3).all()
+    task_context = ", ".join([t.title for t in recent_tasks]) if recent_tasks else "building intelligent autonomous software systems"
+
+    prompt = f"""You are Aether's Executive Ghostwriter for modern founders, developers, and operators.
+Create 1 high-impact thought for today.
+Context/Interests: {task_context}
+Niche: {niche}
+
+Return STRICT JSON:
+{{
+  "topic": "<Short title of thought, e.g. The compounding effect of small systems>",
+  "hook": "<Punchy opening line>",
+  "thought_body": "<Crisp 3-4 sentence insight with whitespace and actionable takeaway>",
+  "linkedin_post": "<Full ready-to-post LinkedIn update with hook, body, takeaway, question, and 3 hashtags>",
+  "tweet": "<Punchy tweet under 240 chars with 2 hashtags>",
+  "category": "Mindset & Execution"
+}}"""
+
+    thought_result = _call_gemini_json_sync(prompt)
+
+    if not thought_result:
+        thought_result = {
+            "topic": "Systems Over Motivation",
+            "hook": "Motivation gets you started. Automated systems keep you going.",
+            "thought_body": "The biggest difference between overwhelmed operators and calm leaders isn't talent—it's having workflows that run predictably even on low-energy days. Simplify your daily inputs and protect your cognitive bandwidth.",
+            "linkedin_post": "Motivation gets you started. Automated systems keep you going.\n\nThe biggest difference between overwhelmed operators and calm leaders isn't talent—it's having workflows that run predictably even on low-energy days.\n\n3 rules I follow:\n1. Automate repetitive captures immediately.\n2. Keep active priorities to under 3 per day.\n3. Protect uninterrupted focus hours.\n\nWhat systems keep you focused? Let's connect below.\n\n#leadership #productivity #systems",
+            "tweet": "Motivation gets you started. Automated systems keep you going. Protect your cognitive bandwidth by building predictable routines. ⚡ #mindset #leadership",
+            "category": "Execution"
+        }
+
+    return {"status": "success", "thought": thought_result}
+
+
+class VideoRepurposeRequest(BaseModel):
+    title: str
+    summary: str
+
+@app.post("/api/social/repurpose-video")
+async def repurpose_video_content(
+    req: VideoRepurposeRequest,
+    user_email: Optional[str] = Depends(get_user_email)
+):
+    title = (req.title or "Video Insights").strip()
+    summary = (req.summary or "").strip()
+    if not summary:
+        raise HTTPException(status_code=400, detail="Summary required")
+
+    prompt = f"""You are Aether's content repurposing master.
+Take this video summary and convert it into:
+1. A 5-tweet viral Twitter thread (labeled 1/5 through 5/5)
+2. A 30-second Short/Reel voiceover script (Hook, Body, Call to Action)
+
+Title: {title}
+Summary: {summary}
+
+Return STRICT JSON:
+{{
+  "thread": [
+    "1/5: <Hook tweet>",
+    "2/5: <Key point 1>",
+    "3/5: <Key point 2>",
+    "4/5: <Key point 3>",
+    "5/5: <Takeaway and Retweet request>"
+  ],
+  "reel_script": {{
+    "hook": "<0-3s attention grabber>",
+    "body": "<4-24s fast-paced value point>",
+    "cta": "<25-30s follow / share call to action>"
+  }}
+}}"""
+
+    result = _call_gemini_json_sync(prompt)
+
+    if not result:
+        result = {
+            "thread": [
+                f"1/5: Most people miss the real lesson behind « {title[:50]} ». Here's the executive breakdown: 🧵👇",
+                "2/5: Lesson 1: Execution speed matters far more than theoretical perfection.",
+                "3/5: Lesson 2: Automate low-leverage tasks so you can focus on high-impact strategy.",
+                "4/5: Lesson 3: Consistency compounds over 6-12 months into undeniable results.",
+                "5/5: That's the breakdown! If you found this valuable, follow @Aether for daily executive AI workflows. 🔄"
+            ],
+            "reel_script": {
+                "hook": f"Stop scrolling if you want to understand « {title[:45]} » in under 30 seconds.",
+                "body": "Here are the top 3 takeaways: First, simplify your approach. Second, build repeatable systems. Third, track your metrics weekly.",
+                "cta": "Double tap if this resonates and save this reel for later!"
+            }
+        }
+
+    return {"status": "success", "repurposed": result}
+
+
+class SocialEngagementTrackRequest(BaseModel):
+    title: str
+    content: str
+    platform: str
+    likes: Optional[int] = 0
+    comments: Optional[int] = 0
+    views: Optional[int] = 0
+    top_comment: Optional[str] = None
+    url: Optional[str] = None
+
+@app.get("/api/social/engagement")
+def get_social_engagement_posts(
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
+    items = db.query(MemoryItem).filter(
+        MemoryItem.user_email == eff_email,
+        MemoryItem.category == "social_post_engagement"
+    ).order_by(MemoryItem.created_at.desc()).limit(20).all()
+
+    posts = []
+    for item in items:
+        try:
+            data = json.loads(item.fact)
+            data["id"] = item.id
+            data["created_at"] = item.created_at.isoformat() if item.created_at else None
+            posts.append(data)
+        except Exception:
+            continue
+
+    if not posts:
+        # Default realistic seed posts for first-time onboarding
+        posts = [
+            {
+                "id": "seed-1",
+                "title": "Autonomous AI Assistants in 2026",
+                "platform": "linkedin",
+                "likes": 142,
+                "comments": 28,
+                "views": 4820,
+                "top_comment": "Loved the breakdown on local memory vs cloud latency! Very practical.",
+                "url": "https://linkedin.com",
+                "created_at": datetime.utcnow().isoformat()
+            },
+            {
+                "id": "seed-2",
+                "title": "5 Workflows that saved 10h/week",
+                "platform": "x",
+                "likes": 89,
+                "comments": 14,
+                "views": 2910,
+                "top_comment": "Thread bookmarking this right now 🔥",
+                "url": "https://x.com",
+                "created_at": (datetime.utcnow() - timedelta(days=1)).isoformat()
+            },
+            {
+                "id": "seed-3",
+                "title": "Aether Executive Core Launch Update",
+                "platform": "telegram",
+                "likes": 64,
+                "comments": 9,
+                "views": 1150,
+                "top_comment": "Smooth release! Really enjoying the live voice talk.",
+                "url": "https://t.me",
+                "created_at": (datetime.utcnow() - timedelta(days=2)).isoformat()
+            }
+        ]
+
+    return {"status": "success", "posts": posts}
+
+@app.post("/api/social/engagement/track")
+def track_social_engagement_post(
+    req: SocialEngagementTrackRequest,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db)
+):
+    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
+    post_payload = {
+        "title": req.title.strip()[:100],
+        "content": req.content.strip()[:400],
+        "platform": req.platform.lower(),
+        "likes": req.likes or 0,
+        "comments": req.comments or 0,
+        "views": req.views or 0,
+        "top_comment": req.top_comment or "Great insight!",
+        "url": req.url or ""
+    }
+    item = MemoryItem(
+        user_email=eff_email,
+        category="social_post_engagement",
+        fact=json.dumps(post_payload),
+        confidence=1.0
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {"status": "success", "id": item.id, "post": post_payload}
 
 # ----------------- Static Frontend Hosting (Single-Service Cloud Deployment) -----------------
 DIST_DIR = os.path.join(os.path.dirname(__file__), "..", "desktop", "dist")
