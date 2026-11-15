@@ -140,8 +140,15 @@ def get_live_weather_data(lat: float = None, lon: float = None, city_name: str =
     import time
     now_ts = time.time()
 
-    use_lat = round(lat or 26.85, 4)
-    use_lon = round(lon or 75.72, 4)
+    try:
+        use_lat = round(float(lat), 4) if lat is not None and str(lat).strip() else 26.85
+    except (ValueError, TypeError):
+        use_lat = 26.85
+
+    try:
+        use_lon = round(float(lon), 4) if lon is not None and str(lon).strip() else 75.72
+    except (ValueError, TypeError):
+        use_lon = 75.72
     coord_key = f"{use_lat},{use_lon}_{city_name or ''}"
 
     # 1. Per-coordinate cache check (15 min TTL)
@@ -901,7 +908,7 @@ def fetch_cricinfo_live_matches(force: bool = False) -> list:
             'https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket',
             headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         )
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
             data = json.loads(resp.read().decode('utf-8'))
         
         sports = data.get('sports', [])
@@ -983,7 +990,7 @@ def fetch_cricinfo_live_matches(force: bool = False) -> list:
                 'https://static.cricinfo.com/rss/livescores.xml',
                 headers={'User-Agent': 'Mozilla/5.0'}
             )
-            with urllib.request.urlopen(req_rss, timeout=4) as resp:
+            with urllib.request.urlopen(req_rss, timeout=2.5) as resp:
                 root = ET.fromstring(resp.read())
                 for idx, it in enumerate(root.findall('.//item')):
                     title = it.find('title').text.strip() if it.find('title') is not None else ''
@@ -2236,7 +2243,7 @@ async def _call_openai_compatible_api(
     }
 
     last_err = ""
-    async with httpx.AsyncClient(timeout=22.0) as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         for model in models:
             try:
                 payload = {
@@ -2608,11 +2615,11 @@ async def parse_intent_with_llm(
             conversation_contents = conversation_contents[-10:]
 
         models_to_try = [
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
             "gemini-1.5-flash",
+            "gemini-2.0-flash",
             "gemini-1.5-flash-8b",
-            GEMINI_MODEL
+            GEMINI_MODEL,
+            "gemini-2.5-flash"
         ]
         unique_models = list(dict.fromkeys([m for m in models_to_try if m]))
 
@@ -2633,7 +2640,7 @@ async def parse_intent_with_llm(
                     }
                     if is_news_or_info_query:
                         payload["tools"] = [{"googleSearch": {}}]
-                    async with httpx.AsyncClient(timeout=16.0) as client:
+                    async with httpx.AsyncClient(timeout=8.0) as client:
                         resp = await client.post(url, json=payload)
                         # If model rejects googleSearch tool or system_instruction with 400, fallback gracefully
                         if resp.status_code == 400:

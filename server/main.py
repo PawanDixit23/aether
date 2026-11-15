@@ -3736,8 +3736,8 @@ def get_executive_briefing(
         from ai_engine import get_live_weather_data, get_city_travel_guide
     except ImportError:
         from .ai_engine import get_live_weather_data, get_city_travel_guide
-    live_w = get_live_weather_data(lat=lat, lon=lon, city_name=city)
-    city_guide = get_city_travel_guide(city_name=city or live_w.get("city"), lat=lat, lon=lon)
+    live_w = get_live_weather_data(lat=parsed_lat, lon=parsed_lon, city_name=city)
+    city_guide = get_city_travel_guide(city_name=city or live_w.get("city"), lat=parsed_lat, lon=parsed_lon)
 
     effective_city = (city or "").strip() or live_w.get("city") or "Jaipur"
     weather = {

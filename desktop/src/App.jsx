@@ -90,7 +90,7 @@ import { TasksModal } from './components/modals/TasksModal';
 import { ConfirmModal } from './components/modals/ConfirmModal';
 import { ChatHistoryDrawer } from './components/chat/ChatHistoryDrawer';
 import { AI_PROVIDERS } from './components/common/constants';
-import { TaskCompletionModal } from './components/modals/TaskCompletionModal';
+
 
 // Code-split heavy modals for instant mobile loading & 0-lag startup
 const FinanceModal = React.lazy(() => import('./components/modals/FinanceModal').then(m => ({ default: m.FinanceModal })));
@@ -673,7 +673,6 @@ export default function App() {
     } catch (e) {}
     return [];
   });
-  const [completionPromptTask, setCompletionPromptTask] = useState(null);
   const combinedTasks = useMemo(() => {
     const seenIds = new Set();
     const seenTitleDate = new Set();
@@ -5166,11 +5165,6 @@ export default function App() {
       willBeDone = !(targetTask?.is_completed || targetTask?.status === 'completed');
     }
 
-    // Trigger completion comment & attachment popup whenever any task is marked complete
-    if (willBeDone && !completionData) {
-      setCompletionPromptTask(targetTask || { id: actualTaskId, title: 'Task' });
-    }
-
     if (isDaily) {
       try {
         const saved = localStorage.getItem('aether_task_date_completions');
@@ -9320,18 +9314,6 @@ export default function App() {
           setActiveSubModal('social');
         }}
       />
-
-      {/* Universal Task Completion Note & Attachment Modal */}
-      {completionPromptTask && (
-        <TaskCompletionModal
-          task={completionPromptTask}
-          onClose={() => setCompletionPromptTask(null)}
-          onSave={async (id, data) => {
-            await handleUpdateTask(id, data);
-            setCompletionPromptTask(null);
-          }}
-        />
-      )}
 
       {/* 0. Tasks & Agenda Modal (Redesigned Clean UI matching Screenshot) */}
       <TasksModal

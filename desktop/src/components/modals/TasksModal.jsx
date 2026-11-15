@@ -3715,51 +3715,47 @@ export const TasksModal = ({
         </div>
       )}
 
-      {/* Task Completion Note & Attachment Sheet / Dialog */}
+      {/* Task Completion Note & Attachment Sheet / Dialog (Bottom Sheet format matching subtask modal) */}
       {completionPromptTask && (
         <div
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(0, 0, 0, 0.78)',
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
-            zIndex: 300,
+            height: viewportHeight ? `${viewportHeight}px` : '100%',
+            background: 'rgba(0, 0, 0, 0.65)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            zIndex: 320,
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '16px'
+            flexDirection: 'column',
+            justifyContent: 'flex-end'
           }}
           onClick={() => setCompletionPromptTask(null)}
         >
           <div
             style={{
               background: '#0d1527',
-              border: '1px solid rgba(56, 189, 248, 0.35)',
-              borderRadius: '24px',
-              padding: '22px',
-              width: '100%',
-              maxWidth: '460px',
-              boxShadow: '0 24px 64px rgba(0, 0, 0, 0.9), 0 0 35px rgba(56, 189, 248, 0.15)',
+              borderTop: '2px solid #38bdf8',
+              borderRadius: '24px 24px 0 0',
+              padding: '16px 16px max(24px, env(safe-area-inset-bottom, 20px))',
+              boxShadow: '0 -20px 50px rgba(0, 0, 0, 0.95)',
               display: 'flex',
               flexDirection: 'column',
-              gap: '14px',
+              gap: '12px',
               animation: 'fadeIn 0.18s ease'
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                  <span style={{ fontSize: '1.1rem' }}>🎉</span>
-                  <span style={{ fontSize: '1.05rem', fontWeight: 700, color: '#f8fafc' }}>
-                    Task Completed!
-                  </span>
-                </div>
-                <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '3px', fontWeight: 500 }}>
+            {/* Header - Matching Screenshot 1 Content + Screenshot 2 Layout */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                <span style={{ fontSize: '1.1rem' }}>🎉</span>
+                <span style={{ fontSize: '0.96rem', fontWeight: 700, color: '#f8fafc' }}>
+                  Task Completed!
+                </span>
+                <span style={{ color: '#94a3b8', fontSize: '0.78rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
                   "{completionPromptTask.title}"
-                </div>
+                </span>
               </div>
               <button
                 type="button"
@@ -3774,7 +3770,8 @@ export const TasksModal = ({
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  fontSize: '0.9rem'
                 }}
               >
                 ✕
@@ -3788,21 +3785,22 @@ export const TasksModal = ({
                 <span>Add Note / Comment (Optional)</span>
               </label>
               <textarea
-                rows={3}
+                rows={2}
                 value={promptComment}
                 onChange={(e) => setPromptComment(e.target.value)}
                 placeholder="e.g. Completed today, sent invoice to client, payment done ref #..."
                 style={{
                   width: '100%',
                   boxSizing: 'border-box',
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid rgba(56, 189, 248, 0.3)',
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid rgba(56, 189, 248, 0.4)',
                   borderRadius: '12px',
                   padding: '10px 12px',
                   color: '#e0f2fe',
-                  fontSize: '0.84rem',
-                  resize: 'vertical',
-                  outline: 'none'
+                  fontSize: '0.88rem',
+                  resize: 'none',
+                  outline: 'none',
+                  fontFamily: 'inherit'
                 }}
                 autoFocus
               />
@@ -3819,7 +3817,7 @@ export const TasksModal = ({
                   type="button"
                   onClick={() => promptFileInputRef.current && promptFileInputRef.current.click()}
                   style={{
-                    background: 'rgba(56, 189, 248, 0.12)',
+                    background: 'rgba(56, 189, 248, 0.14)',
                     border: '1px solid rgba(56, 189, 248, 0.35)',
                     color: '#38bdf8',
                     borderRadius: '8px',
@@ -3846,7 +3844,7 @@ export const TasksModal = ({
               />
 
               {promptAttachments.length > 0 ? (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '110px', overflowY: 'auto', padding: '2px 0' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '80px', overflowY: 'auto' }}>
                   {promptAttachments.map(att => {
                     const isImg = att.type?.startsWith('image/') || (att.data && att.data.startsWith('data:image/'));
                     return (
@@ -3859,23 +3857,23 @@ export const TasksModal = ({
                           background: 'rgba(255, 255, 255, 0.08)',
                           border: '1px solid rgba(255, 255, 255, 0.15)',
                           borderRadius: '8px',
-                          padding: '4px 8px',
-                          fontSize: '0.72rem',
+                          padding: '3px 8px',
+                          fontSize: '0.70rem',
                           color: '#cbd5e1'
                         }}
                       >
                         {isImg ? (
-                          <img src={att.data} alt={att.name} style={{ width: '18px', height: '18px', borderRadius: '4px', objectFit: 'cover' }} />
+                          <img src={att.data} alt={att.name} style={{ width: '16px', height: '16px', borderRadius: '4px', objectFit: 'cover' }} />
                         ) : (
                           <FileText size={12} color="#38bdf8" />
                         )}
-                        <span style={{ maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {att.name}
                         </span>
                         <button
                           type="button"
                           onClick={() => setPromptAttachments(prev => prev.filter(x => x.id !== att.id))}
-                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px', fontSize: '0.82rem', lineHeight: 1 }}
+                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px', fontSize: '0.80rem', lineHeight: 1 }}
                           title="Remove attachment"
                         >
                           ✕
@@ -3892,17 +3890,17 @@ export const TasksModal = ({
             </div>
 
             {/* Footer Buttons */}
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '6px' }}>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '4px' }}>
               <button
                 type="button"
                 onClick={() => setCompletionPromptTask(null)}
                 style={{
-                  background: 'rgba(255, 255, 255, 0.08)',
-                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  background: '#1e293b',
+                  border: 'none',
                   color: '#94a3b8',
-                  padding: '8px 16px',
-                  borderRadius: '10px',
-                  fontSize: '0.80rem',
+                  padding: '9px 18px',
+                  borderRadius: '8px',
+                  fontSize: '0.78rem',
                   cursor: 'pointer',
                   fontWeight: 600
                 }}
@@ -3914,17 +3912,19 @@ export const TasksModal = ({
                 disabled={isSavingCompletionPrompt}
                 onClick={handleSaveCompletionPrompt}
                 style={{
-                  background: 'linear-gradient(135deg, #0284c7, #0369a1)',
+                  background: 'linear-gradient(135deg, #0284c7, #2563eb)',
                   border: 'none',
                   color: '#fff',
-                  padding: '8px 18px',
-                  borderRadius: '10px',
-                  fontSize: '0.80rem',
+                  padding: '9px 20px',
+                  borderRadius: '8px',
+                  fontSize: '0.78rem',
                   fontWeight: 700,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px'
+                  gap: '6px',
+                  boxShadow: '0 4px 14px rgba(2, 132, 199, 0.4)',
+                  opacity: isSavingCompletionPrompt ? 0.7 : 1
                 }}
               >
                 {isSavingCompletionPrompt ? 'Saving...' : 'Save Note & Attachment'}
