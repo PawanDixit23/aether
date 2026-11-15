@@ -81,7 +81,7 @@ const YoutubeIcon = ({ size = 20, color = "#fff" }) => (
     <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
   </svg>
 );
-import { supabase } from './supabase';
+import { supabase, apiFetch } from './supabase';
 import { flushOfflineQueue } from './utils/offlineSync';
 import { FormattedMessage } from './components/chat/FormattedMessage';
 import { AetherParticleSphere } from './components/chat/AetherParticleSphere';
@@ -421,7 +421,7 @@ export default function App() {
   const fetchLiveCricketScores = async () => {
     setIsCricketLoading(true);
     try {
-      const resp = await fetch(`${API_BASE}/cricket/live`);
+      const resp = await apiFetch(`${API_BASE}/cricket/live`);
       if (resp.ok) {
         const data = await resp.json();
         setCricketMatches(data.matches || []);
@@ -952,7 +952,7 @@ export default function App() {
       window.__onContactResolved = ({ name, phone }) => {
         if (phone) {
           const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
-          fetch(`${API_BASE}/memory`, {
+          apiFetch(`${API_BASE}/memory`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -1086,7 +1086,7 @@ export default function App() {
     }
     try {
       showToast(`Saving ${contactsList.length} contacts to Memory Vault... ⚡`, "info");
-      const resp = await fetch(`${API_BASE}/memory/bulk-contacts`, {
+      const resp = await apiFetch(`${API_BASE}/memory/bulk-contacts`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1176,7 +1176,7 @@ export default function App() {
         }
 
         try {
-          const resp = await fetch(`${API_BASE}/finance/records/${id}`, {
+          const resp = await apiFetch(`${API_BASE}/finance/records/${id}`, {
             method: 'DELETE',
             headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
           });
@@ -1195,7 +1195,7 @@ export default function App() {
   const handleSaveFinanceEdit = async () => {
     if (!editingFinanceRecord || !editingFinanceRecord.id) return;
     try {
-      const resp = await fetch(`${API_BASE}/finance/records/${editingFinanceRecord.id}`, {
+      const resp = await apiFetch(`${API_BASE}/finance/records/${editingFinanceRecord.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -1216,7 +1216,7 @@ export default function App() {
         } : r));
         setEditingFinanceRecord(null);
         showToast("Expense updated successfully!", "success");
-        fetch(`${API_BASE}/finance/summary`, { headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) } })
+        apiFetch(`${API_BASE}/finance/summary`, { headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) } })
           .then(r => r.json())
           .then(data => setFinanceSummary(data))
           .catch(() => {});
@@ -1346,7 +1346,7 @@ export default function App() {
     try {
       setIsBriefingLoading(true);
       showToast("🎙️ Aether is preparing your executive briefing...", "info");
-      const resp = await fetch(`${API_BASE}/briefing/executive`, {
+      const resp = await apiFetch(`${API_BASE}/briefing/executive`, {
         headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
       });
       const data = await resp.json();
@@ -1587,7 +1587,7 @@ export default function App() {
 
       // 2. Validate via server proxy (for Gemini fallback, OpenAI, and Grok)
       if (!isValid) {
-        const beResp = await fetch(`${API_BASE}/auth/validate-key`, {
+        const beResp = await apiFetch(`${API_BASE}/auth/validate-key`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ api_key: cleanKey, provider: prov })
@@ -1644,12 +1644,12 @@ export default function App() {
   const recordAuthEvent = async (email, name) => {
     if (!email) return;
     try {
-      await fetch(`${API_BASE}/auth/record-login`, {
+      await apiFetch(`${API_BASE}/auth/record-login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, name, provider: 'google' })
       });
-      const resAudit = await fetch(`${API_BASE}/audit-logs`);
+      const resAudit = await apiFetch(`${API_BASE}/audit-logs`);
       if (resAudit.ok) setAuditLogs(await resAudit.json());
     } catch (err) {
       console.error('Failed to log auth event:', err);
@@ -2033,7 +2033,7 @@ export default function App() {
   const handleConfirmAccountReset = async () => {
     if (userEmail) {
       try {
-        await fetch(`${API_BASE}/account/data`, {
+        await apiFetch(`${API_BASE}/account/data`, {
           method: 'DELETE',
           headers: { 'X-User-Email': userEmail }
         });
@@ -2053,7 +2053,7 @@ export default function App() {
   const handleApproveAgentAction = async (msgId, promptText, pendingToolName) => {
     if (!pendingToolName) return;
     try {
-      const res = await fetch(`${API_BASE}/agent/approve`, {
+      const res = await apiFetch(`${API_BASE}/agent/approve`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2227,7 +2227,7 @@ export default function App() {
       const FALLBACK_VAPID_PUBLIC_KEY = "BD4PXJ0PRrZXvh6dgsnzr0qOjEl_TcZweG4uI57Mr-W1vQY7HjoPo_66fBeFWZHOmRmpzJhpwS_nMIFaGVn2E7g";
       let keyToUse = FALLBACK_VAPID_PUBLIC_KEY;
       try {
-        const keyRes = await fetch(`${API_BASE}/push/vapid-public-key`);
+        const keyRes = await apiFetch(`${API_BASE}/push/vapid-public-key`);
         if (keyRes.ok) {
           const { publicKey } = await keyRes.json();
           if (publicKey && typeof publicKey === 'string' && publicKey.startsWith('B') && publicKey.length === 87) {
@@ -2273,7 +2273,7 @@ export default function App() {
 
       // 3. Subscription server को भेजें (Strict isolation: user email)
       if (subscription) {
-        const subRes = await fetch(`${API_BASE}/push/subscribe`, {
+        const subRes = await apiFetch(`${API_BASE}/push/subscribe`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2323,7 +2323,7 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/push/test?user_email=${encodeURIComponent(emailToUse)}`, { method: 'POST' });
+      const res = await apiFetch(`${API_BASE}/push/test?user_email=${encodeURIComponent(emailToUse)}`, { method: 'POST' });
       const data = await res.json();
       if (data.status === 'success' && data.sent > 0) {
         showToast(`📲 Cloud push sent! (${data.sent} device connected)`, 'success');
@@ -2603,7 +2603,7 @@ export default function App() {
 
     // C: Fall back to server detection
     try {
-      const srv = await fetch(`${API_BASE}/location/detect`);
+      const srv = await apiFetch(`${API_BASE}/location/detect`);
       if (srv.ok) {
         const d = await srv.json();
         if (d.display_name && !d.display_name.toLowerCase().includes('singapore')) {
@@ -2808,7 +2808,7 @@ export default function App() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await fetch(`${API_BASE}/documents/parse`, {
+      const res = await apiFetch(`${API_BASE}/documents/parse`, {
         method: 'POST',
         headers: userEmail ? { 'X-User-Email': userEmail } : {},
         body: formData
@@ -3044,7 +3044,7 @@ export default function App() {
         const emailToUse = userEmail || localStorage.getItem('aether_user_email');
         if (emailToUse) {
           try {
-            await fetch(`${API_BASE}/push/subscribe`, {
+            await apiFetch(`${API_BASE}/push/subscribe`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -3101,7 +3101,7 @@ export default function App() {
     setTasks(prev => prev.map(t => String(t.id) === String(taskId) ? { ...t, due_date: `${finalDate}T10:00:00`, status: 'pending', is_completed: false } : t));
     try {
       const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
-      await fetch(`${API_BASE}/tasks/${taskId}/reschedule`, {
+      await apiFetch(`${API_BASE}/tasks/${taskId}/reschedule`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({ due_date: `${finalDate}T10:00:00` })
@@ -3115,7 +3115,7 @@ export default function App() {
   const handleRescheduleAllOverdue = async () => {
     try {
       const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
-      const res = await fetch(`${API_BASE}/tasks/reschedule-overdue`, {
+      const res = await apiFetch(`${API_BASE}/tasks/reschedule-overdue`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders }
       });
@@ -3140,7 +3140,7 @@ export default function App() {
       let count = 0;
       for (const t of todayTasks) {
         const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
-        await fetch(`${API_BASE}/tasks`, {
+        await apiFetch(`${API_BASE}/tasks`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...authHeaders },
           body: JSON.stringify({
@@ -3182,7 +3182,7 @@ export default function App() {
     }));
     try {
       for (const t of completedToday) {
-        await fetch(`${API_BASE}/tasks/${t.id}/toggle`, {
+        await apiFetch(`${API_BASE}/tasks/${t.id}/toggle`, {
           method: 'PUT',
           headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
         });
@@ -3277,7 +3277,7 @@ export default function App() {
     setTasks(prev => [optimisticTask, ...prev]);
 
     try {
-      const res = await fetch(`${API_BASE}/tasks`, {
+      const res = await apiFetch(`${API_BASE}/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({
@@ -3314,7 +3314,7 @@ export default function App() {
     }
     setIsSyncingGCal(true);
     try {
-      const res = await fetch(`${API_BASE}/calendar/sync-ical`, {
+      const res = await apiFetch(`${API_BASE}/calendar/sync-ical`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, user_email: userEmail }),
@@ -3547,21 +3547,21 @@ export default function App() {
 
     try {
       const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
-      const authHeaders = currentEmail ? { 'X-User-Email': currentEmail } : {};
+      const authHeaders = {}; // apiFetch attaches the verified Supabase Bearer token
       const curSessionId = activeSessionIdRef.current || 'default';
       const briefLocParams = `&lat=${userCoords?.latitude || ''}&lon=${userCoords?.longitude || ''}&city=${encodeURIComponent(userLocationName || '')}`;
       const [resBrief, resChat, resSessions, resTasks, resFin, resFinSum, resMem, resAudit, resNews, resDue, resCricket] = await Promise.all([
-        fetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}${briefLocParams}`, { headers: authHeaders }),
-        opts.skipChatHistory ? Promise.resolve({ ok: false }) : fetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(curSessionId)}&limit=60`, { headers: authHeaders }),
-        fetch(`${API_BASE}/chat/sessions`, { headers: authHeaders }),
-        fetch(`${API_BASE}/tasks`, { headers: authHeaders }),
-        fetch(`${API_BASE}/finance/records`, { headers: authHeaders }),
-        fetch(`${API_BASE}/finance/summary`, { headers: authHeaders }),
-        fetch(`${API_BASE}/memory`, { headers: authHeaders }),
-        fetch(`${API_BASE}/audit-logs`, { headers: authHeaders }),
-        fetch(`${API_BASE}/news?limit=4`),
-        fetch(`${API_BASE}/reminders/due`, { headers: authHeaders }),
-        fetch(`${API_BASE}/cricket/live`).catch(() => ({ ok: false }))
+        apiFetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}${briefLocParams}`, { headers: authHeaders }),
+        opts.skipChatHistory ? Promise.resolve({ ok: false }) : apiFetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(curSessionId)}&limit=60`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/chat/sessions`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/tasks`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/finance/records`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/finance/summary`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/memory`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/audit-logs`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/news?limit=4`),
+        apiFetch(`${API_BASE}/reminders/due`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/cricket/live`).catch(() => ({ ok: false }))
       ]);
 
       if (resBrief.ok) {
@@ -3878,7 +3878,7 @@ export default function App() {
             const bFin = backupData.finances || [];
 
             if (bTasks.length > 0 || bMems.length > 0 || bFin.length > 0) {
-              fetch(`${API_BASE}/sync/backup`, {
+              apiFetch(`${API_BASE}/sync/backup`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
                 body: JSON.stringify({
@@ -3915,7 +3915,7 @@ export default function App() {
             );
           }
           
-          fetch(`${API_BASE}/reminders/${dueItem.id}/ack`, { 
+          apiFetch(`${API_BASE}/reminders/${dueItem.id}/ack`, { 
             method: 'POST',
             headers: authHeaders
           }).catch(() => {});
@@ -4486,7 +4486,7 @@ export default function App() {
   const handleTranslateMessage = async (msgIdx, originalText) => {
     try {
       showToast("Translating to Hindi...", "info");
-      const resp = await fetch(`${API_BASE}/translate`, {
+      const resp = await apiFetch(`${API_BASE}/translate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: originalText, target_lang: 'hi' })
@@ -4605,7 +4605,7 @@ export default function App() {
         finance_summary: financeSummary
       };
 
-      const resp = await fetch(`${API_BASE}/action/quick-capture`, {
+      const resp = await apiFetch(`${API_BASE}/action/quick-capture`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -4773,7 +4773,7 @@ export default function App() {
 
       // Quietly refresh chat sessions to get updated titles/timestamps (skip if temporary chat)
       if (!isTemporaryChat && userEmail) {
-        fetch(`${API_BASE}/chat/sessions`, { headers: { 'X-User-Email': userEmail } })
+        apiFetch(`${API_BASE}/chat/sessions`, { headers: { 'X-User-Email': userEmail } })
           .then(r => r.ok ? r.json() : null)
           .then(sessData => {
             if (Array.isArray(sessData)) {
@@ -4994,7 +4994,7 @@ export default function App() {
 
     if (initialProject && initialProject !== 'all' && currentEmail) {
       const projTitle = `New ${initialProject.charAt(0).toUpperCase() + initialProject.slice(1)} Chat`;
-      fetch(`${API_BASE}/chat/sessions`, {
+      apiFetch(`${API_BASE}/chat/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
         body: JSON.stringify({ id: newSessionId, title: projTitle, project: initialProject })
@@ -5045,7 +5045,7 @@ export default function App() {
 
     try {
       const authHeaders = currentEmail ? { 'X-User-Email': currentEmail } : {};
-      const res = await fetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(sessionId)}&limit=60`, { headers: authHeaders });
+      const res = await apiFetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(sessionId)}&limit=60`, { headers: authHeaders });
       if (res.ok) {
         const chats = await res.json();
         if (activeSessionIdRef.current === sessionId) {
@@ -5086,7 +5086,7 @@ export default function App() {
 
     try {
       const authHeaders = currentEmail ? { 'X-User-Email': currentEmail, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
-      const res = await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}`, {
+      const res = await apiFetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}`, {
         method: 'PUT',
         headers: authHeaders,
         body: JSON.stringify({ title: cleanTitle })
@@ -5124,7 +5124,7 @@ export default function App() {
 
     try {
       const authHeaders = currentEmail ? { 'X-User-Email': currentEmail } : {};
-      await fetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}`, {
+      await apiFetch(`${API_BASE}/chat/sessions/${encodeURIComponent(sessionId)}`, {
         method: 'DELETE',
         headers: authHeaders
       });
@@ -5227,7 +5227,7 @@ export default function App() {
     }
 
     try {
-      const resp = await fetch(`${API_BASE}/tasks/${actualTaskId}/toggle`, { 
+      const resp = await apiFetch(`${API_BASE}/tasks/${actualTaskId}/toggle`, { 
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -5303,7 +5303,7 @@ export default function App() {
         setGoogleTasks(prev => prev.filter(t => String(t.id) !== String(taskId)));
 
         try {
-          const resp = await fetch(`${API_BASE}/tasks/${taskId}`, { 
+          const resp = await apiFetch(`${API_BASE}/tasks/${taskId}`, { 
             method: 'DELETE',
             headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
           });
@@ -5337,7 +5337,7 @@ export default function App() {
     }));
 
     try {
-      const resp = await fetch(`${API_BASE}/tasks/${taskId}`, {
+      const resp = await apiFetch(`${API_BASE}/tasks/${taskId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -5409,7 +5409,7 @@ export default function App() {
     });
 
     try {
-      const resp = await fetch(`${API_BASE}/tasks`, {
+      const resp = await apiFetch(`${API_BASE}/tasks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -5532,7 +5532,7 @@ export default function App() {
     }
 
     try {
-      await fetch(`${API_BASE}/tasks`, {
+      await apiFetch(`${API_BASE}/tasks`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -5568,7 +5568,7 @@ export default function App() {
         deletedMemoryIdsRef.current.add(String(memId));
         setMemories(prev => prev.filter(m => String(m.id) !== String(memId)));
         try {
-          const resp = await fetch(`${API_BASE}/memory/${memId}`, { 
+          const resp = await apiFetch(`${API_BASE}/memory/${memId}`, { 
             method: 'DELETE',
             headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
           });
@@ -5584,7 +5584,7 @@ export default function App() {
 
   const handleUndo = async (logId) => {
     try {
-      await fetch(`${API_BASE}/audit-logs/${logId}/undo`, { 
+      await apiFetch(`${API_BASE}/audit-logs/${logId}/undo`, { 
         method: 'POST',
         headers: { ...(userEmail ? { 'X-User-Email': userEmail } : {}) }
       });
@@ -7416,7 +7416,7 @@ export default function App() {
                             }));
                             try {
                               const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || 'e.pawandixit@gmail.com';
-                              fetch(`${API_BASE}/memory`, {
+                              apiFetch(`${API_BASE}/memory`, {
                                 method: 'POST',
                                 headers: {
                                   'Content-Type': 'application/json',
@@ -8331,7 +8331,7 @@ export default function App() {
                                 e.stopPropagation();
                                 try {
                                   const factToSave = `${item.name}: ${item.content.slice(0, 1500)}`;
-                                  const res = await fetch(`${API_BASE}/memory`, {
+                                  const res = await apiFetch(`${API_BASE}/memory`, {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json', ...(userEmail ? { 'X-User-Email': userEmail } : {}) },
                                     body: JSON.stringify({ fact: factToSave, category: 'personal', user_email: userEmail || null })
