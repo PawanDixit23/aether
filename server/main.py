@@ -13,6 +13,8 @@ import io
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 import base64
+import hashlib
+import hmac
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, UploadFile, File
 from document_parser import extract_text_from_file
 from fastapi.staticfiles import StaticFiles
@@ -125,7 +127,8 @@ try:
     from models import (
         Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
         ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
-        BriefingPreference, ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing
+        BriefingPreference, ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing,
+        ChannelPairingChallenge
     )
     from ai_engine import parse_intent_with_llm
 except ImportError:
@@ -134,7 +137,8 @@ except ImportError:
         from server.models import (
             Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
             ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
-            BriefingPreference, ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing
+            BriefingPreference, ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing,
+            ChannelPairingChallenge
         )
         from server.ai_engine import parse_intent_with_llm
     except ImportError:
@@ -142,7 +146,8 @@ except ImportError:
         from .models import (
             Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
             ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
-            BriefingPreference, ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing
+            BriefingPreference, ActionApproval, ProcessedWebhookEvent, UserIntegrationPairing,
+            ChannelPairingChallenge
         )
         from .ai_engine import parse_intent_with_llm
 
@@ -274,6 +279,17 @@ def get_user_email(
     """
     user = get_current_user_identity(request, authorization)
     return user.email
+
+
+def tenant_filter(model, current_user: UserIdentity):
+    """
+    Returns SQLAlchemy filter condition enforcing tenant isolation by immutable UUID (AETH-P0-02),
+    with safe fallback to user_email for pre-migration legacy records where owner_user_id is NULL.
+    """
+    return (
+        (model.owner_user_id == current_user.id) |
+        ((model.owner_user_id == None) & (model.user_email == current_user.email))
+    )
 
 DEFAULT_OWNER_EMAIL = os.environ.get("DEFAULT_USER_EMAIL", "e.pawandixit@gmail.com").strip().lower()
 
@@ -497,7 +513,7 @@ def get_current_time_str(client_time: Optional[str] = None, tz_name: Optional[st
         pass
     return datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
 
-def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None, exclude_chat_id: Optional[int] = None, prompt_query: Optional[str] = None, session_id: Optional[str] = None, user_lat: Optional[float] = None, user_lon: Optional[float] = None, user_city: Optional[str] = None) -> dict:
+def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None, exclude_chat_id: Optional[int] = None, prompt_query: Optional[str] = None, session_id: Optional[str] = None, user_lat: Optional[float] = None, user_lon: Optional[float] = None, user_city: Optional[str] = None, owner_user_id: Optional[str] = None) -> dict:
     user_loc = (user_city or "").strip()
     if not user_loc:
         if user_lat and user_lon:
@@ -535,8 +551,12 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
             "user_state": "Rajasthan",
             "user_city": "Jaipur"
         }
-    tasks = db.query(Task).filter(Task.user_email == user_email, Task.status == "pending").all()
-    records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).all()
+    if owner_user_id:
+        tasks = db.query(Task).filter(((Task.owner_user_id == owner_user_id) | ((Task.owner_user_id == None) & (Task.user_email == user_email))), Task.status == "pending").all()
+        records = db.query(FinancialRecord).filter((FinancialRecord.owner_user_id == owner_user_id) | ((FinancialRecord.owner_user_id == None) & (FinancialRecord.user_email == user_email))).all()
+    else:
+        tasks = db.query(Task).filter(Task.user_email == user_email, Task.status == "pending").all()
+        records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email).all()
 
     # Hybrid Memory Retrieval: rank & surface relevant facts/contacts matching the prompt
     recalled_mems = []
@@ -1850,17 +1870,13 @@ def detect_user_location(request: Request):
 # ----------------- Chat Sessions & History -----------------
 @app.get("/api/chat/sessions")
 def get_chat_sessions(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
-    if not eff_email:
-        return []
-    
     # Exclude any temporary or ephemeral sessions
     sessions = (
         db.query(ChatSession)
-        .filter(ChatSession.user_email == eff_email, ~ChatSession.id.startswith("temp_"), ChatSession.id != "temporary")
+        .filter(tenant_filter(ChatSession, current_user), ~ChatSession.id.startswith("temp_"), ChatSession.id != "temporary")
         .order_by(ChatSession.updated_at.desc())
         .all()
     )
@@ -1917,16 +1933,14 @@ def get_chat_sessions(
 @app.post("/api/chat/sessions")
 def create_chat_session(
     req: ChatSessionCreate,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
     sess_id = (req.id or "").strip() or f"sess_{int(datetime.utcnow().timestamp() * 1000)}"
-    existing = db.query(ChatSession).filter(ChatSession.id == sess_id, ChatSession.user_email == eff_email).first()
+    existing = db.query(ChatSession).filter(ChatSession.id == sess_id, tenant_filter(ChatSession, current_user)).first()
     if existing:
+        existing.owner_user_id = current_user.id
+        db.commit()
         return {
             "id": existing.id,
             "title": existing.title,
@@ -1938,7 +1952,8 @@ def create_chat_session(
     
     session = ChatSession(
         id=sess_id,
-        user_email=eff_email,
+        owner_user_id=current_user.id,
+        user_email=current_user.email,
         title=req.title or "New Conversation",
         is_pinned=bool(req.is_pinned),
         project=req.project,
@@ -1961,14 +1976,13 @@ def create_chat_session(
 def update_chat_session(
     session_id: str,
     req: ChatSessionUpdate,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).first()
+    session = db.query(ChatSession).filter(ChatSession.id == session_id, tenant_filter(ChatSession, current_user)).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    session.owner_user_id = current_user.id
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found")
     
@@ -1997,30 +2011,30 @@ def update_chat_session(
 def pin_chat_session(
     session_id: str,
     req: ChatSessionPin,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-    if not session:
+    raw_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if raw_session:
+        if raw_session.owner_user_id and raw_session.owner_user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Not authorized to modify another user's session")
+        elif not raw_session.owner_user_id and raw_session.user_email and raw_session.user_email.strip().lower() != current_user.email:
+            raise HTTPException(status_code=403, detail="Not authorized to modify another user's session")
+        raw_session.owner_user_id = current_user.id
+        raw_session.is_pinned = req.is_pinned
+        raw_session.updated_at = datetime.utcnow()
+        session = raw_session
+    else:
         session = ChatSession(
             id=session_id,
-            owner_user_id=eff_email,
-            user_email=eff_email,
+            owner_user_id=current_user.id,
+            user_email=current_user.email,
             title="Conversation",
             is_pinned=req.is_pinned,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
         db.add(session)
-    else:
-        if session.user_email and session.user_email.strip().lower() != eff_email:
-            raise HTTPException(status_code=403, detail="Not authorized to modify another user's session")
-        session.is_pinned = req.is_pinned
-        session.updated_at = datetime.utcnow()
     db.commit()
     return {"status": "ok", "id": session.id, "is_pinned": session.is_pinned}
 
@@ -2028,66 +2042,58 @@ def pin_chat_session(
 def set_chat_session_project(
     session_id: str,
     req: ChatSessionProject,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-    if not session:
+    raw_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if raw_session:
+        if raw_session.owner_user_id and raw_session.owner_user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Not authorized to modify another user's session")
+        elif not raw_session.owner_user_id and raw_session.user_email and raw_session.user_email.strip().lower() != current_user.email:
+            raise HTTPException(status_code=403, detail="Not authorized to modify another user's session")
+        raw_session.owner_user_id = current_user.id
+        raw_session.project = (req.project.strip() if req.project else None)
+        raw_session.updated_at = datetime.utcnow()
+        session = raw_session
+    else:
         session = ChatSession(
             id=session_id,
-            owner_user_id=eff_email,
-            user_email=eff_email,
+            owner_user_id=current_user.id,
+            user_email=current_user.email,
             title="Conversation",
             project=(req.project.strip() if req.project else None),
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
         db.add(session)
-    else:
-        if session.user_email and session.user_email.strip().lower() != eff_email:
-            raise HTTPException(status_code=403, detail="Not authorized to modify another user's session")
-        session.project = (req.project.strip() if req.project else None)
-        session.updated_at = datetime.utcnow()
     db.commit()
     return {"status": "ok", "id": session.id, "project": session.project}
 
 @app.delete("/api/chat/sessions/{session_id}")
 def delete_chat_session(
     session_id: str,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
     try:
-        # Delete associated messages
-        try:
-            if session_id == "default":
-                db.query(ChatMessage).filter(
-                    (ChatMessage.session_id == "default") | (ChatMessage.session_id == None) | (ChatMessage.session_id == ""),
-                    ChatMessage.user_email == eff_email
-                ).delete(synchronize_session=False)
-            else:
-                db.query(ChatMessage).filter(
-                    ChatMessage.session_id == session_id,
-                    ChatMessage.user_email == eff_email
-                ).delete(synchronize_session=False)
-        except Exception as msg_del_err:
-            print(f"[Delete Session Messages Note] {msg_del_err}")
+        if session_id == "default":
+            db.query(ChatMessage).filter(
+                (ChatMessage.session_id == "default") | (ChatMessage.session_id == None) | (ChatMessage.session_id == ""),
+                tenant_filter(ChatMessage, current_user)
+            ).delete(synchronize_session=False)
+        else:
+            db.query(ChatMessage).filter(
+                ChatMessage.session_id == session_id,
+                tenant_filter(ChatMessage, current_user)
+            ).delete(synchronize_session=False)
 
-        session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        session = db.query(ChatSession).filter(ChatSession.id == session_id, tenant_filter(ChatSession, current_user)).first()
         if session:
-            if session.user_email and session.user_email.strip().lower() != eff_email:
-                raise HTTPException(status_code=403, detail="Not authorized to delete another user's session")
             db.delete(session)
         db.commit()
         return {"status": "success", "message": "Chat session deleted"}
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         print(f"[Delete Session Error] {e}")
@@ -2097,43 +2103,30 @@ def delete_chat_session(
 def get_chat_history(
     session_id: Optional[str] = None,
     limit: int = 60, 
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
-    if not eff_email:
-        return []
-    
     try:
-        query = db.query(ChatMessage).filter(ChatMessage.user_email == eff_email)
+        query = db.query(ChatMessage).filter(tenant_filter(ChatMessage, current_user))
         if session_id:
             query = query.filter(ChatMessage.session_id == session_id)
         msgs = query.order_by(ChatMessage.created_at.asc()).all()
         return msgs[-limit:]
     except Exception as e:
         db.rollback()
-        try:
-            msgs = db.query(ChatMessage).filter(ChatMessage.user_email == eff_email).order_by(ChatMessage.created_at.asc()).all()
-            return msgs[-limit:]
-        except Exception:
-            db.rollback()
-            return []
+        return []
 
 @app.delete("/api/chat/history")
 def clear_chat_history(
     session_id: Optional[str] = None,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        return {"message": "No authenticated user to clear"}
-    
-    query = db.query(ChatMessage).filter(ChatMessage.user_email == eff_email)
+    query = db.query(ChatMessage).filter(tenant_filter(ChatMessage, current_user))
     if session_id:
         query = query.filter(ChatMessage.session_id == session_id)
-        db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_email == eff_email).delete()
-    query.delete()
+        db.query(ChatSession).filter(ChatSession.id == session_id, tenant_filter(ChatSession, current_user)).delete(synchronize_session=False)
+    query.delete(synchronize_session=False)
     db.commit()
     return {"message": "Chat history cleared"}
 
@@ -2331,16 +2324,13 @@ def serialize_task(t: Task, db: Optional[Session] = None) -> dict:
 @app.get("/api/tasks")
 def list_tasks(
     status: Optional[str] = None, 
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
-    if not eff_email:
-        return []
-
+    eff_email = current_user.email
     auto_advance_recurring_tasks(db, eff_email)
 
-    query = db.query(Task).filter(Task.user_email == eff_email)
+    query = db.query(Task).filter(tenant_filter(Task, current_user))
     
     # Return top-level tasks by default (nested subtasks are attached inside serialize_task)
     query = query.filter((Task.parent_id == None) | (Task.parent_id == 0))
@@ -2350,7 +2340,7 @@ def list_tasks(
     # Fetch persistent date completions across all dates for recurring tasks
     date_completions_map = {}
     try:
-        records = db.query(TaskDateCompletion).filter(TaskDateCompletion.user_email == eff_email).all()
+        records = db.query(TaskDateCompletion).filter(tenant_filter(TaskDateCompletion, current_user)).all()
         for r in records:
             if r.task_id not in date_completions_map:
                 date_completions_map[r.task_id] = {}
@@ -2368,15 +2358,13 @@ def list_tasks(
 @app.post("/api/tasks")
 def create_task(
     task_in: TaskCreate, 
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    eff_email = current_user.email
     data = task_in.dict()
     data["user_email"] = eff_email
-    data["owner_user_id"] = eff_email
+    data["owner_user_id"] = current_user.id
     subtasks = data.pop("subtasks", None)
     deps = data.pop("dependency_task_ids", None)
     if deps is not None:
@@ -2396,7 +2384,7 @@ def create_task(
         for st in subtasks:
             st_name = str(st).strip()
             if st_name:
-                db.add(Task(user_email=eff_email, owner_user_id=eff_email, title=st_name, parent_id=task.id, priority=task.priority, status="pending"))
+                db.add(Task(user_email=eff_email, owner_user_id=current_user.id, title=st_name, parent_id=task.id, priority=task.priority, status="pending"))
         db.commit()
     return serialize_task(task, db=db)
 
@@ -2404,16 +2392,14 @@ def create_task(
 def update_task(
     task_id: int,
     req: TaskUpdate,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    query = db.query(Task).filter(Task.id == task_id, Task.user_email == eff_email)
+    query = db.query(Task).filter(Task.id == task_id, tenant_filter(Task, current_user))
     task = query.first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    task.owner_user_id = current_user.id
     
     if req.title is not None and req.title.strip():
         task.title = req.title.strip()
@@ -2444,16 +2430,14 @@ def update_task(
 def toggle_task(
     task_id: int, 
     req: Optional[TaskToggleRequest] = None,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    query = db.query(Task).filter(Task.id == task_id, Task.user_email == eff_email)
+    query = db.query(Task).filter(Task.id == task_id, tenant_filter(Task, current_user))
     task = query.first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    task.owner_user_id = current_user.id
     
     if req and req.status in ["completed", "pending"]:
         new_status = req.status
@@ -2548,13 +2532,10 @@ def toggle_task(
 
 @app.get("/api/tasks/date-completions")
 def get_task_date_completions(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        return {}
-    records = db.query(TaskDateCompletion).filter(TaskDateCompletion.user_email == eff_email).all()
+    records = db.query(TaskDateCompletion).filter(tenant_filter(TaskDateCompletion, current_user)).all()
     res = {}
     for r in records:
         if r.task_id not in res:
@@ -2566,14 +2547,12 @@ def get_task_date_completions(
 def set_task_date_completion(
     task_id: int,
     req: DateCompletionRequest,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="User email required")
+    eff_email = current_user.email
 
-    task = db.query(Task).filter(Task.id == task_id, Task.user_email == eff_email).first()
+    task = db.query(Task).filter(Task.id == task_id, tenant_filter(Task, current_user)).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -2581,14 +2560,16 @@ def set_task_date_completion(
     rec = db.query(TaskDateCompletion).filter(
         TaskDateCompletion.task_id == task_id,
         TaskDateCompletion.date_str == clean_date,
-        TaskDateCompletion.user_email == eff_email
+        tenant_filter(TaskDateCompletion, current_user)
     ).first()
 
     if rec:
         rec.completed = req.completed
+        rec.owner_user_id = current_user.id
     else:
         rec = TaskDateCompletion(
             task_id=task_id,
+            owner_user_id=current_user.id,
             user_email=eff_email,
             date_str=clean_date,
             completed=req.completed,
@@ -2613,14 +2594,10 @@ class TaskSnoozeRequest(BaseModel):
 @app.post("/tasks/{task_id}/complete")
 def complete_task_action(
     task_id: int,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    task_q = db.query(Task).filter(Task.id == task_id)
-    if eff_email and not is_owner_email(eff_email):
-        task_q = task_q.filter(Task.user_email == eff_email)
-    task = task_q.first()
+    task = db.query(Task).filter(Task.id == task_id, tenant_filter(Task, current_user)).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     task.status = "completed"
@@ -2634,14 +2611,10 @@ def complete_task_action(
 def snooze_task_action(
     task_id: int,
     req: Optional[TaskSnoozeRequest] = None,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    task_q = db.query(Task).filter(Task.id == task_id)
-    if eff_email and not is_owner_email(eff_email):
-        task_q = task_q.filter(Task.user_email == eff_email)
-    task = task_q.first()
+    task = db.query(Task).filter(Task.id == task_id, tenant_filter(Task, current_user)).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     mins = (req.minutes if req and req.minutes else 15)
@@ -2719,16 +2692,10 @@ def download_task_attachment_file(token: str):
 def reschedule_task(
     task_id: int, 
     req: TaskReschedule, 
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    query = db.query(Task).filter(Task.id == task_id)
-    if eff_email:
-        query = query.filter(Task.user_email == eff_email)
-    else:
-        query = query.filter(Task.user_email.is_(None))
-    task = query.first()
+    task = db.query(Task).filter(Task.id == task_id, tenant_filter(Task, current_user)).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     if req.due_date:
@@ -2743,16 +2710,13 @@ def reschedule_task(
 
 @app.post("/api/tasks/reschedule-overdue")
 def reschedule_all_overdue(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
     """Reschedules all overdue non-recurring tasks to today at their original reminder time."""
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     today = now.date()
-    eff_email = get_effective_email(user_email)
-    query = db.query(Task).filter(Task.status == "pending", Task.recurrence == None, Task.due_date != None)
-    if eff_email:
-        query = query.filter(Task.user_email == eff_email)
+    query = db.query(Task).filter(tenant_filter(Task, current_user), Task.status == "pending", Task.recurrence == None, Task.due_date != None)
     tasks = query.all()
     count = 0
     for t in tasks:
@@ -2771,18 +2735,15 @@ def reschedule_all_overdue(
 @app.delete("/api/tasks/{task_id}")
 def delete_task(
     task_id: int, 
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    task = db.query(Task).filter(Task.id == task_id, Task.user_email == eff_email).first()
+    task = db.query(Task).filter(Task.id == task_id, tenant_filter(Task, current_user)).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     # Delete child subtasks if parent is deleted
     try:
-        db.query(Task).filter(Task.parent_id == task.id).delete(synchronize_session=False)
+        db.query(Task).filter(Task.parent_id == task.id, tenant_filter(Task, current_user)).delete(synchronize_session=False)
     except Exception as e:
         print(f"[Delete Subtasks Note] {e}")
     db.delete(task)
@@ -3060,23 +3021,19 @@ def sync_ical_feed(req: ICalSyncRequest, user_email: Optional[str] = Depends(get
 @app.get("/api/finance/records")
 def list_finance_records(
     limit: int = 100, 
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    if not user_email:
-        return []
-    return db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email.strip().lower()).order_by(FinancialRecord.date.desc()).limit(limit).all()
+    return db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user)).order_by(FinancialRecord.date.desc()).limit(limit).all()
 
 @app.post("/api/finance/records")
 def create_finance_record(
     req: FinancialRecordCreate,
     x_mutation_id: Optional[str] = Header(None, alias="X-Client-Mutation-Id"),
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(req.user_email or user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    eff_email = current_user.email
 
     # Idempotency cache check (AETH-REL-04)
     cached = get_cached_mutation(x_mutation_id, db)
@@ -3097,6 +3054,7 @@ def create_finance_record(
 
     rounded_amt = round_currency(req.amount) # AETH-REL-03 Banker's rounding
     new_rec = FinancialRecord(
+        owner_user_id=current_user.id,
         user_email=eff_email,
         type=rec_type,
         category=(req.category or "general").strip().lower(),
@@ -3117,7 +3075,7 @@ def create_finance_record(
     if rec_type == "expense" and req.monthly_budget and req.monthly_budget > 0:
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         month_expenses = db.query(FinancialRecord).filter(
-            FinancialRecord.user_email == eff_email,
+            tenant_filter(FinancialRecord, current_user),
             FinancialRecord.type == "expense",
             FinancialRecord.date >= month_start
         ).all()
@@ -3149,23 +3107,19 @@ def create_finance_record(
 @app.get("/api/finances/forecast")
 def get_cash_flow_forecast(
     days: int = 30,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
     """
     30-day forward cash flow forecast (AETH-FIN-01).
     Computes projected balance using recurring commitments and 30-day historical daily average burn rate.
     """
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
     now = datetime.utcnow()
     past_30d = now - timedelta(days=30)
     
     # 1. Historical 30-day expenses to calculate average daily discretionary spend
     past_expenses = db.query(FinancialRecord).filter(
-        FinancialRecord.user_email == eff_email,
+        tenant_filter(FinancialRecord, current_user),
         FinancialRecord.type == "expense",
         FinancialRecord.date >= past_30d
     ).all()
@@ -3174,7 +3128,7 @@ def get_cash_flow_forecast(
 
     # 2. Historical 30-day income
     past_incomes = db.query(FinancialRecord).filter(
-        FinancialRecord.user_email == eff_email,
+        tenant_filter(FinancialRecord, current_user),
         FinancialRecord.type == "income",
         FinancialRecord.date >= past_30d
     ).all()
@@ -3182,7 +3136,7 @@ def get_cash_flow_forecast(
 
     # 3. Recurring income & expenses
     recurring_items = db.query(FinancialRecord).filter(
-        FinancialRecord.user_email == eff_email,
+        tenant_filter(FinancialRecord, current_user),
         FinancialRecord.is_recurring == True
     ).all()
     
@@ -3210,12 +3164,10 @@ def get_cash_flow_forecast(
 @app.post("/api/finance/records/bulk")
 def create_finance_records_bulk(
     req: FinancialRecordBulkCreate,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(req.user_email or user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    eff_email = current_user.email
     
     if not req.records or len(req.records) == 0:
         raise HTTPException(status_code=400, detail="No records provided")
@@ -3233,6 +3185,7 @@ def create_finance_records_bulk(
         if amt <= 0:
             continue
         new_rec = FinancialRecord(
+            owner_user_id=current_user.id,
             user_email=eff_email,
             type=rec_type,
             category=(item.category or "general").strip().lower(),
@@ -3260,17 +3213,10 @@ def create_finance_records_bulk(
 
 @app.get("/api/finance/summary")
 def get_finance_summary(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    if not user_email:
-        return {
-            "total_income": 0,
-            "total_expense": 0,
-            "balance": 0,
-            "record_count": 0
-        }
-    records = db.query(FinancialRecord).filter(FinancialRecord.user_email == user_email.strip().lower()).all()
+    records = db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user)).all()
     total_income = sum(r.amount for r in records if r.type == "income")
     total_expense = sum(r.amount for r in records if r.type == "expense")
     balance = total_income - total_expense
@@ -3285,15 +3231,10 @@ def get_finance_summary(
 def export_finance_csv(
     year: Optional[int] = None,
     month: Optional[int] = None,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = (user_email or "").strip().lower()
-    query = db.query(FinancialRecord)
-    if eff_email:
-        query = query.filter(FinancialRecord.user_email == eff_email)
-    else:
-        query = query.filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == ""))
+    query = db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user))
     records = query.order_by(FinancialRecord.date.desc()).all()
 
     # If year and month are provided, filter records (month is 0-indexed: 0=Jan, 10=Nov)
@@ -3349,15 +3290,12 @@ def export_finance_csv(
 @app.delete("/api/finance/records/{record_id}")
 def delete_finance_record(
     record_id: int,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    rec = db.query(FinancialRecord).filter(FinancialRecord.id == record_id).first()
+    rec = db.query(FinancialRecord).filter(FinancialRecord.id == record_id, tenant_filter(FinancialRecord, current_user)).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Financial record not found")
-    eff_email = (user_email or "").strip().lower()
-    if not eff_email or not rec.user_email or rec.user_email.strip().lower() != eff_email:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this record")
     db.delete(rec)
     db.commit()
     return {"status": "success", "deleted_id": record_id}
@@ -3366,15 +3304,13 @@ def delete_finance_record(
 def update_finance_record(
     record_id: int,
     req: FinancialRecordUpdate,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    rec = db.query(FinancialRecord).filter(FinancialRecord.id == record_id).first()
+    rec = db.query(FinancialRecord).filter(FinancialRecord.id == record_id, tenant_filter(FinancialRecord, current_user)).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Financial record not found")
-    eff_email = (user_email or "").strip().lower()
-    if not eff_email or not rec.user_email or rec.user_email.strip().lower() != eff_email:
-        raise HTTPException(status_code=403, detail="Not authorized to edit this record")
+    rec.owner_user_id = current_user.id
     if req.type is not None:
         rec.type = req.type
     if req.category is not None:
@@ -3491,21 +3427,18 @@ async def draft_email_reply_endpoint(
 # ----------------- Memory Vault Endpoints -----------------
 @app.get("/api/memory")
 def list_memory(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email) or DEFAULT_OWNER_EMAIL
-    if not eff_email:
-        return []
-    return db.query(MemoryItem).filter(MemoryItem.user_email == eff_email).order_by(MemoryItem.created_at.desc()).all()
+    return db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user)).order_by(MemoryItem.created_at.desc()).all()
 
 @app.post("/api/memory")
 def create_memory(
     req: MemoryCreate,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(req.user_email or user_email)
+    eff_email = current_user.email
     fact_str = (req.fact or "").strip()
     if not fact_str:
         raise HTTPException(status_code=400, detail="Empty fact")
@@ -3513,16 +3446,10 @@ def create_memory(
 
     # Check if existing item exists for this contact/subject to avoid duplicates
     first_token = fact_str.split()[0].lower() if fact_str else ""
-    if is_owner_email(eff_email):
-        existing = db.query(MemoryItem).filter(
-            (MemoryItem.user_email == eff_email) | (MemoryItem.user_email == None) | (MemoryItem.user_email == "operator@aether.local"),
-            MemoryItem.category == cat
-        ).all()
-    else:
-        existing = db.query(MemoryItem).filter(
-            MemoryItem.user_email == eff_email,
-            MemoryItem.category == cat
-        ).all()
+    existing = db.query(MemoryItem).filter(
+        tenant_filter(MemoryItem, current_user),
+        MemoryItem.category == cat
+    ).all()
     matched = next((ex for ex in existing if first_token in (ex.fact or "").lower()), None)
     from memory.hybrid_provider import get_embedding
     emb = get_embedding(fact_str)
@@ -3530,6 +3457,7 @@ def create_memory(
 
     if matched:
         matched.fact = fact_str
+        matched.owner_user_id = current_user.id
         matched.user_email = eff_email
         matched.embedding = emb_json
         matched.updated_at = datetime.utcnow()
@@ -3537,7 +3465,7 @@ def create_memory(
         db.refresh(matched)
         return {"id": matched.id, "fact": matched.fact, "category": matched.category, "updated": True}
 
-    item = MemoryItem(user_email=eff_email, category=cat, fact=fact_str, confidence=1.0, embedding=emb_json)
+    item = MemoryItem(owner_user_id=current_user.id, user_email=eff_email, category=cat, fact=fact_str, confidence=1.0, embedding=emb_json)
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -3551,10 +3479,10 @@ class BulkContactsSyncRequest(BaseModel):
 @app.post("/memory/bulk-contacts")
 def sync_bulk_contacts(
     req: BulkContactsSyncRequest,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(req.user_email or user_email)
+    eff_email = current_user.email
     from memory.hybrid_provider import get_embedding
     
     contacts_list = req.contacts or []
@@ -3563,7 +3491,7 @@ def sync_bulk_contacts(
         
     synced = 0
     existing = db.query(MemoryItem).filter(
-        MemoryItem.user_email == eff_email,
+        tenant_filter(MemoryItem, current_user),
         MemoryItem.category == "contact"
     ).all()
     existing_facts = { (e.fact or "").lower(): e for e in existing }
@@ -3596,6 +3524,7 @@ def sync_bulk_contacts(
             matched.updated_at = datetime.utcnow()
         else:
             new_item = MemoryItem(
+                owner_user_id=current_user.id,
                 user_email=eff_email,
                 category="contact",
                 fact=fact_str,
@@ -3618,16 +3547,14 @@ def sync_bulk_contacts(
 def update_memory(
     item_id: int,
     req: MemoryCreate,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    query = db.query(MemoryItem).filter(MemoryItem.id == item_id, MemoryItem.user_email == eff_email)
+    query = db.query(MemoryItem).filter(MemoryItem.id == item_id, tenant_filter(MemoryItem, current_user))
     item = query.first()
     if not item:
         raise HTTPException(status_code=404, detail="Memory item not found")
+    item.owner_user_id = current_user.id
     fact_str = (req.fact or "").strip()
     if not fact_str:
         raise HTTPException(status_code=400, detail="Empty fact")
@@ -3642,13 +3569,10 @@ def update_memory(
 @app.delete("/api/memory/{item_id}")
 def delete_memory(
     item_id: int, 
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    query = db.query(MemoryItem).filter(MemoryItem.id == item_id, MemoryItem.user_email == eff_email)
+    query = db.query(MemoryItem).filter(MemoryItem.id == item_id, tenant_filter(MemoryItem, current_user))
     item = query.first()
     if not item:
         raise HTTPException(status_code=404, detail="Memory item not found")
@@ -3879,11 +3803,10 @@ class BriefingPreferenceRequest(BaseModel):
 
 @app.get("/api/briefing/preferences")
 def get_briefing_preferences(
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
     """Retrieves the user's customized briefing module and delivery preferences (AETH-BRIEF-01)."""
-    eff_email = get_effective_email(user_email)
     defaults = {
         "modules": ["tasks", "finances", "weather", "news", "cricket"],
         "delivery_time_morning": "08:00",
@@ -3892,9 +3815,7 @@ def get_briefing_preferences(
         "channel_whatsapp": False,
         "channel_tts": True
     }
-    if not eff_email:
-        return defaults
-    pref = db.query(BriefingPreference).filter(BriefingPreference.user_email == eff_email).first()
+    pref = db.query(BriefingPreference).filter(tenant_filter(BriefingPreference, current_user)).first()
     if not pref:
         return defaults
     return {
@@ -3909,16 +3830,16 @@ def get_briefing_preferences(
 @app.post("/api/briefing/preferences")
 def update_briefing_preferences(
     req: BriefingPreferenceRequest,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
     """Updates customized briefing modules, schedule, and multi-modal delivery channels (AETH-BRIEF-01)."""
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    pref = db.query(BriefingPreference).filter(BriefingPreference.user_email == eff_email).first()
+    eff_email = current_user.email
+    pref = db.query(BriefingPreference).filter(tenant_filter(BriefingPreference, current_user)).first()
     if not pref:
-        pref = BriefingPreference(user_email=eff_email)
+        pref = BriefingPreference(owner_user_id=current_user.id, user_email=eff_email)
+    else:
+        pref.owner_user_id = current_user.id
         db.add(pref)
     
     if req.modules is not None:
@@ -3954,12 +3875,10 @@ def update_briefing_preferences(
 def list_audit_logs(
     limit: int = 60, 
     date: Optional[str] = None,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    if not user_email:
-        return []
-    query = db.query(AuditLog).filter(AuditLog.user_email == user_email)
+    query = db.query(AuditLog).filter(tenant_filter(AuditLog, current_user))
     if date and date.strip():
         try:
             target_date = datetime.strptime(date.strip(), "%Y-%m-%d").date()
@@ -3996,23 +3915,16 @@ def list_audit_logs(
 @app.post("/api/audit-logs/{log_id}/undo")
 def undo_action(
     log_id: int,
-    user_email: Optional[str] = Depends(get_user_email),
+    current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
     """
     Transactional audit log rollback with strict ownership verification (AETH-SEC-05).
     Reverses mutating action within an atomic database transaction.
     """
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required to perform undo")
-
-    log = db.query(AuditLog).filter(AuditLog.id == log_id).first()
+    log = db.query(AuditLog).filter(AuditLog.id == log_id, tenant_filter(AuditLog, current_user)).first()
     if not log or not log.undo_payload:
         raise HTTPException(status_code=404, detail="Audit log entry or undo payload not found")
-    
-    if log.user_email and log.user_email.strip().lower() != eff_email:
-        raise HTTPException(status_code=403, detail="Not authorized to undo another user's action")
     
     if log.is_undone:
         return {"status": "already_undone", "message": "Action has already been reversed"}
@@ -4037,7 +3949,7 @@ def undo_action(
                 for rid in record_ids:
                     rec = db.query(FinancialRecord).filter(
                         FinancialRecord.id == rid,
-                        (FinancialRecord.user_email == eff_email) | (FinancialRecord.user_email == None)
+                        tenant_filter(FinancialRecord, current_user)
                     ).first()
                     if rec:
                         db.delete(rec)
@@ -4045,7 +3957,7 @@ def undo_action(
                 for rid in record_ids:
                     rec = db.query(Task).filter(
                         Task.id == rid,
-                        (Task.user_email == eff_email) | (Task.user_email == None)
+                        tenant_filter(Task, current_user)
                     ).first()
                     if rec:
                         db.delete(rec)
@@ -4053,7 +3965,7 @@ def undo_action(
                 for rid in record_ids:
                     rec = db.query(MemoryItem).filter(
                         MemoryItem.id == rid,
-                        (MemoryItem.user_email == eff_email) | (MemoryItem.user_email == None)
+                        tenant_filter(MemoryItem, current_user)
                     ).first()
                     if rec:
                         db.delete(rec)
@@ -4574,18 +4486,27 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
 TELEGRAM_PAIRING_OTPS: Dict[str, Dict[str, Any]] = {}
 
 @app.post("/api/telegram/pair-request")
-def request_telegram_pairing(user_email: Optional[str] = Depends(get_user_email)):
-    """Generates a secure 6-digit cryptographic OTP to pair a Telegram chat (AETH-P0-05)."""
+def request_telegram_pairing(
+    current_user: UserIdentity = Depends(get_current_user_identity),
+    db: Session = Depends(get_db)
+):
+    """Generates a secure 6-digit cryptographic OTP in ChannelPairingChallenge to pair a Telegram chat (AETH-P0-05)."""
     import secrets
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required to generate pairing code")
-    
     otp = f"{secrets.randbelow(900000) + 100000}"
-    TELEGRAM_PAIRING_OTPS[otp] = {
-        "user_email": eff_email,
-        "expires_at": time.time() + 600
-    }
+    otp_hash = hashlib.sha256(otp.encode()).hexdigest()
+    
+    challenge = ChannelPairingChallenge(
+        otp_hash=otp_hash,
+        owner_user_id=current_user.id,
+        user_email=current_user.email,
+        channel="telegram",
+        expires_at=time.time() + 600,
+        consumed=False,
+        attempts=0
+    )
+    db.add(challenge)
+    db.commit()
+    
     return {
         "status": "success",
         "pairing_code": otp,
@@ -4637,41 +4558,44 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
         first_name = from_user.get("first_name", "Operator")
         bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
-        # Check verified pairing from UserIntegrationPairing (AETH-P0-05)
+        # Check verified pairing strictly from UserIntegrationPairing (AETH-P0-05)
         pairing = db.query(UserIntegrationPairing).filter(
             UserIntegrationPairing.channel == "telegram",
             UserIntegrationPairing.channel_user_id == str(chat_id),
             UserIntegrationPairing.is_active == True
         ).first()
+        user_email = pairing.user_email if pairing else None
+        owner_id = pairing.owner_user_id if pairing else None
 
-        # Legacy fallback check in MemoryItem
-        if not pairing:
-            legacy_mem = db.query(MemoryItem).filter(
-                MemoryItem.category == "telegram_pairing",
-                MemoryItem.fact.like(f"{chat_id}:%")
-            ).first()
-            user_email = legacy_mem.fact.split(":", 1)[1].strip() if legacy_mem else None
-        else:
-            user_email = pairing.user_email
-
-        # 3. OTP-Only Pairing Handler (Direct email pairing is eliminated)
+        # 3. OTP-Only Pairing Handler via DB ChannelPairingChallenge (AETH-P0-05)
         clean_code = re.sub(r'[^0-9]', '', text)
-        if len(clean_code) == 6 and clean_code in TELEGRAM_PAIRING_OTPS:
-            pairing_info = TELEGRAM_PAIRING_OTPS.pop(clean_code)
-            if time.time() <= pairing_info.get("expires_at", 0):
-                target_email = pairing_info["user_email"]
+        if len(clean_code) == 6:
+            code_hash = hashlib.sha256(clean_code.encode()).hexdigest()
+            now_ts = time.time()
+            challenge = db.query(ChannelPairingChallenge).filter(
+                ChannelPairingChallenge.otp_hash == code_hash,
+                ChannelPairingChallenge.channel == "telegram",
+                ChannelPairingChallenge.consumed == False,
+                ChannelPairingChallenge.expires_at >= now_ts
+            ).first()
+            if challenge:
+                challenge.consumed = True
+                target_email = challenge.user_email
+                target_owner = challenge.owner_user_id
                 if pairing:
+                    pairing.owner_user_id = target_owner
                     pairing.user_email = target_email
                     pairing.is_active = True
                     pairing.updated_at = datetime.utcnow()
                 else:
-                    db.add(UserIntegrationPairing(
-                        owner_user_id=target_email,
+                    pairing = UserIntegrationPairing(
+                        owner_user_id=target_owner,
                         user_email=target_email,
                         channel="telegram",
                         channel_user_id=str(chat_id),
                         is_active=True
-                    ))
+                    )
+                    db.add(pairing)
                 db.commit()
 
                 welcome_reply = (
@@ -5196,18 +5120,27 @@ PHONE_PAIRING_OTPS: Dict[str, Dict[str, Any]] = {}
 PAIRED_PHONE_NUMBERS: Dict[str, str] = {} # { phone_clean: user_email }
 
 @app.post("/api/whatsapp/pair-request")
-def request_phone_pairing(user_email: Optional[str] = Depends(get_user_email)):
-    """Generates a cryptographically secure 6-digit OTP to pair a WhatsApp number (AETH-P0-05)."""
+def request_phone_pairing(
+    current_user: UserIdentity = Depends(get_current_user_identity),
+    db: Session = Depends(get_db)
+):
+    """Generates a cryptographically secure 6-digit OTP in ChannelPairingChallenge to pair WhatsApp (AETH-P0-05)."""
     import secrets
-    eff_email = get_effective_email(user_email)
-    if not eff_email:
-        raise HTTPException(status_code=401, detail="Authentication required to generate pairing code")
-    
     otp = f"{secrets.randbelow(900000) + 100000}"
-    PHONE_PAIRING_OTPS[otp] = {
-        "user_email": eff_email,
-        "expires_at": time.time() + 600  # 10 minute expiration
-    }
+    otp_hash = hashlib.sha256(otp.encode()).hexdigest()
+    
+    challenge = ChannelPairingChallenge(
+        otp_hash=otp_hash,
+        owner_user_id=current_user.id,
+        user_email=current_user.email,
+        channel="whatsapp",
+        expires_at=time.time() + 600,
+        consumed=False,
+        attempts=0
+    )
+    db.add(challenge)
+    db.commit()
+    
     return {
         "status": "success",
         "pairing_code": otp,
@@ -5295,13 +5228,21 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         wa_token = os.environ.get("WHATSAPP_TOKEN", "").strip()
         wa_phone_id = os.environ.get("WHATSAPP_PHONE_ID", "").strip()
 
-        # 3. Check if message is a 6-digit OTP for secure pairing (AETH-P0-05)
+        # 3. Check if message is a 6-digit OTP for secure pairing via ChannelPairingChallenge (AETH-P0-05)
         clean_code = re.sub(r'[^0-9]', '', user_text)
-        if len(clean_code) == 6 and clean_code in PHONE_PAIRING_OTPS:
-            pairing_info = PHONE_PAIRING_OTPS.pop(clean_code)
-            if time.time() <= pairing_info.get("expires_at", 0):
-                paired_user_email = pairing_info["user_email"]
-                PAIRED_PHONE_NUMBERS[sender] = paired_user_email
+        if len(clean_code) == 6:
+            code_hash = hashlib.sha256(clean_code.encode()).hexdigest()
+            now_ts = time.time()
+            challenge = db.query(ChannelPairingChallenge).filter(
+                ChannelPairingChallenge.otp_hash == code_hash,
+                ChannelPairingChallenge.channel == "whatsapp",
+                ChannelPairingChallenge.consumed == False,
+                ChannelPairingChallenge.expires_at >= now_ts
+            ).first()
+            if challenge:
+                challenge.consumed = True
+                paired_user_email = challenge.user_email
+                paired_owner_id = challenge.owner_user_id
 
                 # Persist verified pairing in UserIntegrationPairing table
                 existing = db.query(UserIntegrationPairing).filter(
@@ -5309,13 +5250,13 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
                     UserIntegrationPairing.channel_user_id == str(sender)
                 ).first()
                 if existing:
-                    existing.owner_user_id = paired_user_email
+                    existing.owner_user_id = paired_owner_id
                     existing.user_email = paired_user_email
                     existing.is_active = True
                     existing.updated_at = datetime.utcnow()
                 else:
                     db.add(UserIntegrationPairing(
-                        owner_user_id=paired_user_email,
+                        owner_user_id=paired_owner_id,
                         user_email=paired_user_email,
                         channel="whatsapp",
                         channel_user_id=str(sender),
@@ -5334,7 +5275,7 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
                     pass
                 return {"status": "ok", "message": "phone successfully paired"}
 
-        # 4. Check verified pairing
+        # 4. Check verified pairing strictly from UserIntegrationPairing (AETH-P0-05)
         verified_pairing = db.query(UserIntegrationPairing).filter(
             UserIntegrationPairing.channel == "whatsapp",
             UserIntegrationPairing.channel_user_id == str(sender),
@@ -5342,13 +5283,6 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
         ).first()
 
         user_email = verified_pairing.user_email if verified_pairing else None
-        if not user_email:
-            # Fallback legacy check
-            link_mem = db.query(MemoryItem).filter(
-                MemoryItem.category == "whatsapp_pairing",
-                MemoryItem.fact.like(f"{sender}:%")
-            ).first()
-            user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
 
         # 5. Insecure email commands are rejected and guided to OTP
         if user_text.lower().startswith("/login") or user_text.lower().startswith("/start"):
@@ -5564,27 +5498,75 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
 # ----------------- Twilio WhatsApp Sandbox Webhook Support -----------------
 @app.post("/api/whatsapp/twilio")
 async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
-    """Receives and processes incoming WhatsApp messages from Twilio Sandbox."""
+    """Receives and processes incoming WhatsApp messages from Twilio with signature validation (AETH-P0-05)."""
+    twilio_auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+    env = os.environ.get("ENVIRONMENT", "production").lower()
+    is_prod = env in ["prod", "production"]
+
+    form = await req.form()
+    form_dict = {k: str(v) for k, v in form.items()}
+
+    # Cryptographic Twilio signature verification (AETH-P0-05)
+    if twilio_auth_token or is_prod:
+        sig_header = req.headers.get("X-Twilio-Signature", "").strip()
+        if not sig_header:
+            raise HTTPException(status_code=403, detail="Missing X-Twilio-Signature header")
+        s = str(req.url)
+        for k in sorted(form_dict.keys()):
+            s += k + form_dict[k]
+        computed_sig = base64.b64encode(hmac.new(twilio_auth_token.encode("utf-8"), s.encode("utf-8"), hashlib.sha1).digest()).decode("utf-8")
+        if not hmac.compare_digest(sig_header, computed_sig):
+            raise HTTPException(status_code=403, detail="Twilio webhook signature verification failed")
+
     try:
-        form = await req.form()
         sender_full = form.get("From", "")  # e.g. "whatsapp:+919876543210"
         sender = sender_full.replace("whatsapp:", "").strip()
         body = form.get("Body", "").strip()
 
-        link_mem = db.query(MemoryItem).filter(
-            MemoryItem.category == "whatsapp_pairing",
-            MemoryItem.fact.like(f"{sender}:%")
+        # Check verified pairing from UserIntegrationPairing (AETH-P0-05)
+        pairing = db.query(UserIntegrationPairing).filter(
+            UserIntegrationPairing.channel == "whatsapp",
+            UserIntegrationPairing.channel_user_id == str(sender),
+            UserIntegrationPairing.is_active == True
         ).first()
-        user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
+        user_email = pairing.user_email if pairing else None
 
-        if body.lower().startswith("/login") or ("@" in body and len(body.split()) == 1):
-            target_email = body.split()[-1].strip().lower()
-            if link_mem:
-                link_mem.fact = f"{sender}:{target_email}"
-            else:
-                db.add(MemoryItem(user_email=target_email, category="whatsapp_pairing", fact=f"{sender}:{target_email}"))
-            db.commit()
-            reply = f"⚡ Aether WhatsApp Linked with {target_email}! Ab aap reminders aur kharch direct WhatsApp par bhej sakte hain."
+        # Check 6-digit OTP pairing
+        clean_code = re.sub(r'[^0-9]', '', body)
+        if len(clean_code) == 6:
+            code_hash = hashlib.sha256(clean_code.encode()).hexdigest()
+            now_ts = time.time()
+            challenge = db.query(ChannelPairingChallenge).filter(
+                ChannelPairingChallenge.otp_hash == code_hash,
+                ChannelPairingChallenge.channel == "whatsapp",
+                ChannelPairingChallenge.consumed == False,
+                ChannelPairingChallenge.expires_at >= now_ts
+            ).first()
+            if challenge:
+                challenge.consumed = True
+                target_email = challenge.user_email
+                target_owner = challenge.owner_user_id
+                if pairing:
+                    pairing.owner_user_id = target_owner
+                    pairing.user_email = target_email
+                    pairing.is_active = True
+                    pairing.updated_at = datetime.utcnow()
+                else:
+                    pairing = UserIntegrationPairing(
+                        owner_user_id=target_owner,
+                        user_email=target_email,
+                        channel="whatsapp",
+                        channel_user_id=str(sender),
+                        is_active=True
+                    )
+                    db.add(pairing)
+                db.commit()
+                reply = f"✅ Aether WhatsApp Linked with {target_email}! Ab aap reminders aur kharch direct WhatsApp par bhej sakte hain."
+                return Response(content=f"<Response><Message>{reply}</Message></Response>", media_type="application/xml")
+
+        if body.lower().startswith("/login") or body.lower().startswith("/start"):
+            reply = "⚡ Aether WhatsApp: सुरक्षा कारणों से सीधा ईमेल लिंक बंद कर दिया गया है। कृपया Aether ऐप से 6-अंकों का पेयरिंग कोड प्राप्त करें और उसे यहाँ भेजें।"
+            return Response(content=f"<Response><Message>{reply}</Message></Response>", media_type="application/xml")
         elif not user_email:
             operator_mem = db.query(MemoryItem).filter(MemoryItem.category == "whatsapp_pairing").first()
             operator_email = operator_mem.fact.split(":", 1)[1].strip() if operator_mem else "e.pawandixit@gmail.com"

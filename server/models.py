@@ -226,5 +226,24 @@ class UserIntegrationPairing(Base):
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ChannelPairingChallenge(Base):
+    """
+    Durable DB-persisted OTP pairing challenges for Telegram and WhatsApp (AETH-P0-05).
+    Replaces process-local in-memory dictionaries so pairing works across workers and restarts.
+    """
+    __tablename__ = "channel_pairing_challenges"
+
+    id = Column(Integer, primary_key=True, index=True)
+    otp_hash = Column(String, index=True, nullable=False)
+    owner_user_id = Column(String, index=True, nullable=False)
+    user_email = Column(String, index=True, nullable=True)
+    channel = Column(String, index=True, nullable=False)  # "telegram", "whatsapp"
+    expires_at = Column(Float, nullable=False)
+    consumed = Column(Boolean, default=False, nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+
 
 

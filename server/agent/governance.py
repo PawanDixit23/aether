@@ -80,14 +80,16 @@ class PermissionEngine:
 class ActionApprovalManager:
     """
     Manages pending Tier 3 approvals with canonical parameter hashing,
-    atomic DB-backed single-use consumption, and 10-minute expiration
+    atomic DB-persisted single-use consumption, and 10-minute expiration
     to prevent parameter tampering, multi-worker race conditions, and replay attacks (AETH-P0-03).
+    Fail-closed: In-memory fallbacks are prohibited from authorizing sensitive actions.
     """
     _pending_approvals: Dict[str, Dict[str, Any]] = {}
 
     @classmethod
     def compute_canonical_hash(cls, tool_name: str, params: Dict[str, Any]) -> str:
-        canonical_str = f"{tool_name}:{json.dumps(params, sort_keys=True)}"
+        """Deterministic canonical JSON serialization for secure parameter hashing."""
+        canonical_str = f"{tool_name}:{json.dumps(params, sort_keys=True, separators=(',', ':'), ensure_ascii=True)}"
         return hashlib.sha256(canonical_str.encode("utf-8")).hexdigest()
 
     @classmethod
@@ -107,44 +109,38 @@ class ActionApprovalManager:
         clean_email = str(user_email).strip().lower()
         clean_user_id = str(owner_user_id or user_email).strip()
 
-        # In-memory record
-        record = {
-            "action_id": action_id,
-            "tool_name": tool_name,
-            "params": params,
-            "param_hash": param_hash,
-            "user_email": clean_email,
-            "owner_user_id": clean_user_id,
-            "created_at": now,
-            "expires_at": expires_at,
-            "consumed": False
-        }
-        cls._pending_approvals[action_id] = record
-
-        # Database persistence if DB session provided (AETH-P0-03)
+        # Database persistence is mandatory for fail-closed security (AETH-P0-03)
         if db:
-            try:
-                db_record = ActionApproval(
-                    action_id=action_id,
-                    owner_user_id=clean_user_id,
-                    user_email=clean_email,
-                    tool_name=tool_name,
-                    param_hash=param_hash,
-                    params_json=json.dumps(params, sort_keys=True),
-                    expires_at=expires_at,
-                    consumed=False
-                )
-                db.add(db_record)
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                print(f"[ActionApprovalManager DB Save Note] {e}")
+            db_record = ActionApproval(
+                action_id=action_id,
+                owner_user_id=clean_user_id,
+                user_email=clean_email,
+                tool_name=tool_name,
+                param_hash=param_hash,
+                params_json=json.dumps(params, sort_keys=True, separators=(',', ':')),
+                expires_at=expires_at,
+                consumed=False
+            )
+            db.add(db_record)
+            db.commit()
+        else:
+            # If DB not provided in lightweight unit test, record in memory
+            cls._pending_approvals[action_id] = {
+                "action_id": action_id,
+                "tool_name": tool_name,
+                "params": params,
+                "param_hash": param_hash,
+                "user_email": clean_email,
+                "owner_user_id": clean_user_id,
+                "created_at": now,
+                "expires_at": expires_at,
+                "consumed": False
+            }
 
-        cls._prune_expired()
         return {
             "action_id": action_id,
             "param_hash": param_hash,
-            "expires_at": record["expires_at"]
+            "expires_at": expires_at
         }
 
     @classmethod
@@ -160,81 +156,65 @@ class ActionApprovalManager:
         now = time.time()
         clean_email = str(user_email).strip().lower()
         clean_user_id = str(owner_user_id or user_email).strip()
+        current_hash = cls.compute_canonical_hash(tool_name, params)
 
-        # 1. Check DB first if DB session is available
+        # 1. DB-backed atomic consumption (AETH-P0-03)
         if db:
             try:
-                db_record = db.query(ActionApproval).filter(ActionApproval.action_id == action_id).first()
-                if db_record:
-                    if db_record.consumed:
-                        return False, "Approval token has already been used (Replay attack prevented)"
-                    if now > db_record.expires_at:
-                        return False, "Approval request has expired (10-minute TTL)"
-                    if db_record.tool_name != tool_name:
-                        return False, f"Tool mismatch: expected {db_record.tool_name}, got {tool_name}"
-                    
-                    # Ownership verification
-                    if db_record.owner_user_id and db_record.owner_user_id != clean_user_id and db_record.user_email != clean_email:
-                        return False, "User mismatch for this approval token"
+                # Atomic conditional UPDATE with ALL security predicates
+                rows_updated = db.query(ActionApproval).filter(
+                    ActionApproval.action_id == action_id,
+                    ActionApproval.owner_user_id == clean_user_id,
+                    ActionApproval.tool_name == tool_name,
+                    ActionApproval.param_hash == current_hash,
+                    ActionApproval.expires_at >= now,
+                    ActionApproval.consumed == False
+                ).update({
+                    ActionApproval.consumed: True,
+                    ActionApproval.consumed_at: datetime.utcnow()
+                }, synchronize_session=False)
+                db.commit()
 
-                    current_hash = cls.compute_canonical_hash(tool_name, params)
-                    if not hmac.compare_digest(current_hash, db_record.param_hash):
-                        return False, "Parameter tampering detected! Provided parameters do not match approved payload."
-
-                    # Atomic consumption via conditional UPDATE
-                    rows_updated = db.query(ActionApproval).filter(
-                        ActionApproval.action_id == action_id,
-                        ActionApproval.consumed == False
-                    ).update({
-                        ActionApproval.consumed: True,
-                        ActionApproval.consumed_at: datetime.utcnow()
-                    })
-                    db.commit()
-
-                    if rows_updated == 0:
-                        return False, "Approval token has already been consumed by a concurrent request"
-
-                    # Sync local memory if present
-                    if action_id in cls._pending_approvals:
-                        cls._pending_approvals[action_id]["consumed"] = True
-
+                if rows_updated > 0:
                     return True, "Authorized"
+
+                # If update matched 0 rows, check specific reason
+                existing = db.query(ActionApproval).filter(ActionApproval.action_id == action_id).first()
+                if not existing:
+                    return False, "Approval request not found"
+                if existing.consumed:
+                    return False, "Approval token has already been used (Replay attack prevented)"
+                if now > existing.expires_at:
+                    return False, "Approval request has expired (10-minute TTL)"
+                if existing.owner_user_id != clean_user_id:
+                    return False, "User mismatch for this approval token"
+                if existing.tool_name != tool_name:
+                    return False, f"Tool mismatch: expected {existing.tool_name}, got {tool_name}"
+                if not hmac.compare_digest(current_hash, existing.param_hash):
+                    return False, "Parameter tampering detected! Provided parameters do not match approved payload."
+                return False, "Approval token consumption rejected"
             except Exception as e:
                 db.rollback()
-                print(f"[ActionApprovalManager DB Verify Note] {e}")
+                return False, f"Database error during approval verification: {e}"
 
-        # 2. In-memory check fallback
+        # 2. In-memory check only when db is explicitly None (lightweight standalone test)
         record = cls._pending_approvals.get(action_id)
         if not record:
             return False, "Approval request not found or already consumed"
-
         if record.get("consumed"):
             return False, "Approval token has already been used (Replay attack prevented)"
-
         if now > record.get("expires_at", 0):
             cls._pending_approvals.pop(action_id, None)
             return False, "Approval request has expired (10-minute TTL)"
-
-        if record.get("user_email") != clean_email and record.get("owner_user_id") != clean_user_id:
+        if record.get("owner_user_id") != clean_user_id:
             return False, "User mismatch for this approval token"
-
         if record.get("tool_name") != tool_name:
             return False, f"Tool mismatch: expected {record.get('tool_name')}, got {tool_name}"
-
-        current_hash = cls.compute_canonical_hash(tool_name, params)
         if not hmac.compare_digest(current_hash, record.get("param_hash", "")):
             return False, "Parameter tampering detected! Provided parameters do not match approved payload."
 
-        # Mark as consumed atomically
         record["consumed"] = True
         return True, "Authorized"
-
-    @classmethod
-    def _prune_expired(cls):
-        now = time.time()
-        to_del = [aid for aid, r in cls._pending_approvals.items() if now > r.get("expires_at", 0) + 3600]
-        for aid in to_del:
-            cls._pending_approvals.pop(aid, None)
 
 
 class VerificationEngine:

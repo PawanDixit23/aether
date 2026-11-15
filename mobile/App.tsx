@@ -314,14 +314,15 @@ export default function App() {
           mediaCapturePermissionGrantType="grant"
           {...({
             onPermissionRequest: (event: any) => {
-              if (isTrustedOrigin(event?.origin || AETHER_URL)) {
+              // Deny if origin is missing or untrusted (AETH-P0-04)
+              if (event?.origin && isTrustedOrigin(event.origin)) {
                 event?.grant?.(event.resources);
               } else {
                 event?.deny?.();
               }
             },
             onGeolocationPermissionsShowPrompt: (event: any) => {
-              if (isTrustedOrigin(event?.origin || AETHER_URL)) {
+              if (event?.origin && isTrustedOrigin(event.origin)) {
                 if (event && typeof event.allow === 'function') {
                   event.allow(event.origin, true, false);
                 } else if (event && typeof event.grant === 'function') {
@@ -344,9 +345,17 @@ export default function App() {
           onShouldStartLoadWithRequest={(request) => {
             const url = request.url;
 
-            // 1. NEVER block or hijack iframe subrequests (such as embedded YouTube video player)
+            // 1. Enforce strict origin policy for iframe subrequests (AETH-P0-04)
             if (request.isTopFrame === false) {
-              return true;
+              const subUrl = url || '';
+              if (
+                subUrl.startsWith('https://www.youtube.com/embed/') ||
+                subUrl.startsWith('https://www.youtube-nocookie.com/embed/') ||
+                isTrustedOrigin(subUrl)
+              ) {
+                return true;
+              }
+              return false; // Deny arbitrary untrusted 3rd party iframes
             }
 
             // 2. Allow embedded YouTube players and media to load smoothly inside the WebView
@@ -404,34 +413,38 @@ export default function App() {
             }
 
             // 6. Open all external news links and 3rd-party websites in external device browser (Chrome)
-            // This prevents external news sites from replacing the app or failing inside WebView
             if (url.includes('/export-csv') || url.includes('/download') || url.endsWith('.csv')) {
               Linking.openURL(url).catch(() => {});
               return false;
             }
 
-            // 7. Allow Google OAuth and Supabase authentication to complete seamlessly INSIDE the app!
-            // This prevents Google Sign-In from throwing the user into an external browser!
-            if (
-              url.includes('supabase.co') ||
-              url.includes('accounts.google.com') ||
-              url.includes('google.com/accounts') ||
-              url.includes('google.com/signin') ||
-              url.includes('google.com/o/oauth') ||
-              url.includes('oauth')
-            ) {
-              return true;
-            }
+            // 7. Strict OAuth Provider Origin Validation (AETH-P0-04)
+            // Replaced insecure substring check 'oauth' with exact provider origin and path validation
+            try {
+              const parsedUrl = new URL(url);
+              const hostname = parsedUrl.hostname.toLowerCase();
+              if (
+                (hostname === 'accounts.google.com' || hostname.endsWith('.google.com')) &&
+                (parsedUrl.pathname.startsWith('/o/oauth2') || parsedUrl.pathname.startsWith('/signin') || parsedUrl.pathname.startsWith('/accounts'))
+              ) {
+                return true;
+              }
+              if (
+                hostname === 'dwyiledlboolxywizkbm.supabase.co' &&
+                parsedUrl.pathname.startsWith('/auth/v1')
+              ) {
+                return true;
+              }
+            } catch {}
 
             if (
-              !url.startsWith(AETHER_URL) &&
-              !url.startsWith('http://localhost') &&
-              !url.startsWith('http://127.0.0.1') &&
+              !isTrustedOrigin(url) &&
               !url.startsWith('about:') &&
               !url.startsWith('data:')
             ) {
               Linking.openURL(url).catch(() => {});
               return false;
+            }
             }
 
             // If OAuth provider falls back to localhost redirect, redirect back to cloud AETHER_URL with token intact

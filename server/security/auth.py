@@ -52,13 +52,23 @@ def _decode_jwt_unverified(token: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def verify_supabase_jwt(token: str, jwt_secret: str) -> Optional[Dict[str, Any]]:
+UUID_REGEX = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+
+def verify_supabase_jwt(
+    token: str,
+    jwt_secret: str,
+    expected_iss: Optional[str] = None,
+    expected_aud: Optional[str] = "authenticated"
+) -> Optional[Dict[str, Any]]:
     """
-    Cryptographically verifies Supabase JWT:
-    - Pins accepted algorithm to HS256 (strictly rejects 'none' or unexpected algorithms)
+    Cryptographically verifies Supabase JWT (AETH-P0-01):
+    - Pins accepted algorithm strictly to HS256 (rejects 'none' or unexpected algorithms)
     - Validates HMAC-SHA256 signature in constant time
-    - Enforces mandatory 'sub' (UUID) and 'exp' (expiry) claims
-    - Validates clock-skew (max 30s allowance)
+    - Enforces mandatory 'sub' with strict UUID format validation
+    - Validates expected Supabase issuer ('iss') when configured
+    - Validates expected audience ('aud') supporting string and list claims
+    - Validates numeric 'exp' with 30s clock skew allowance
+    - Validates 'nbf' when present
     """
     parts = token.split(".")
     if len(parts) != 3:
@@ -75,12 +85,11 @@ def verify_supabase_jwt(token: str, jwt_secret: str) -> Optional[Dict[str, Any]]
     except Exception:
         return None
 
-    # 2. Verify signature
+    # 2. Verify HMAC signature in constant time
     signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
     expected_sig = hmac.new(jwt_secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
     expected_b64 = base64.urlsafe_b64encode(expected_sig).rstrip(b"=").decode("utf-8")
 
-    # Constant-time signature comparison to defeat timing attacks
     if not hmac.compare_digest(expected_b64, sig_b64):
         return None
 
@@ -93,12 +102,12 @@ def verify_supabase_jwt(token: str, jwt_secret: str) -> Optional[Dict[str, Any]]
 
     now = time.time()
 
-    # Mandatory 'sub' claim (user UUID)
-    sub = payload.get("sub") or payload.get("user_id")
-    if not sub or not str(sub).strip():
+    # Mandatory 'sub' claim with strict UUID format check (AETH-P0-01)
+    sub = payload.get("sub")
+    if not sub or not UUID_REGEX.match(str(sub).strip()):
         return None
 
-    # Mandatory 'exp' claim with 30s clock skew tolerance
+    # Mandatory numeric 'exp' claim with 30s clock skew tolerance
     exp = payload.get("exp")
     if exp is None:
         return None
@@ -117,6 +126,24 @@ def verify_supabase_jwt(token: str, jwt_secret: str) -> Optional[Dict[str, Any]]
         except (ValueError, TypeError):
             return None
 
+    # Issuer validation ('iss')
+    if expected_iss:
+        token_iss = payload.get("iss")
+        if not token_iss or token_iss.rstrip("/") != expected_iss.rstrip("/"):
+            return None
+
+    # Audience validation ('aud')
+    if expected_aud:
+        token_aud = payload.get("aud")
+        if isinstance(token_aud, list):
+            if expected_aud not in token_aud:
+                return None
+        elif isinstance(token_aud, str):
+            if token_aud != expected_aud:
+                return None
+        else:
+            return None
+
     return payload
 
 
@@ -130,8 +157,13 @@ def get_current_user_identity(
     """
     jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
     default_dev_email = os.environ.get("DEFAULT_USER_EMAIL", "e.pawandixit@gmail.com").strip().lower()
-    env = os.environ.get("ENVIRONMENT", "development").lower()
+    
+    # ENVIRONMENT defaults to production for fail-closed security (AETH-P0-01)
+    env = os.environ.get("ENVIRONMENT", "production").lower()
     is_production = env in ["prod", "production"]
+    
+    expected_iss = os.environ.get("SUPABASE_JWT_ISSUER", "").strip() or None
+    expected_aud = os.environ.get("SUPABASE_JWT_AUDIENCE", "authenticated").strip() or "authenticated"
 
     if authorization and authorization.startswith("Bearer "):
         token = authorization[7:].strip()
@@ -140,16 +172,16 @@ def get_current_user_identity(
 
         # 1. Cryptographic Supabase JWT Verification
         if jwt_secret:
-            payload = verify_supabase_jwt(token, jwt_secret)
+            payload = verify_supabase_jwt(token, jwt_secret, expected_iss=expected_iss, expected_aud=expected_aud)
             if not payload:
                 raise HTTPException(status_code=401, detail="Invalid, expired, or tampered authentication token")
 
-            user_id = payload.get("sub") or payload.get("user_id")
-            email = payload.get("email") or default_dev_email
+            user_id = str(payload.get("sub")).strip()
+            email = str(payload.get("email") or default_dev_email).strip().lower()
 
             return UserIdentity(
-                user_id=str(user_id),
-                email=str(email),
+                user_id=user_id,
+                email=email,
                 role=payload.get("role", "authenticated"),
                 issuer=payload.get("iss", "supabase"),
                 audience=payload.get("aud", "authenticated"),
@@ -163,37 +195,44 @@ def get_current_user_identity(
                 detail="Production authentication configuration missing (SUPABASE_JWT_SECRET required)"
             )
 
-        # 2. Local Dev/Test Mode (Only when NOT in production and secret is unconfigured)
-        payload = _decode_jwt_unverified(token)
-        if payload and (payload.get("sub") or payload.get("email")):
-            sub = payload.get("sub") or f"dev_usr_{hashlib.md5(token.encode()).hexdigest()[:12]}"
-            email = payload.get("email") or default_dev_email
-            return UserIdentity(
-                user_id=str(sub),
-                email=str(email),
-                role=payload.get("role", "authenticated"),
-                issuer=payload.get("iss", "dev"),
-                audience=payload.get("aud", "authenticated"),
-                exp=float(payload.get("exp", time.time() + 3600))
-            )
+        # 2. Local Dev/Test Mode ONLY (Strictly forbidden in production)
+        if not is_production:
+            payload = _decode_jwt_unverified(token)
+            if payload and payload.get("sub"):
+                sub = str(payload.get("sub")).strip()
+                email = str(payload.get("email") or default_dev_email).strip().lower()
+                return UserIdentity(
+                    user_id=sub,
+                    email=email,
+                    role=payload.get("role", "authenticated"),
+                    issuer=payload.get("iss", "dev"),
+                    audience=payload.get("aud", "authenticated"),
+                    exp=float(payload.get("exp", time.time() + 3600))
+                )
 
-        # Test token prefixes for test client (AETH-P0-01 / AETH-P0-02 Multi-User Testing)
-        if token.startswith("test_") or token.startswith("dev_"):
-            ident = token.split("_", 1)[1]
-            test_email = ident if "@" in ident else f"{ident}@aether.local"
-            return UserIdentity(
-                user_id=f"usr_{ident}",
-                email=test_email,
-                role="authenticated"
-            )
+            # Test token prefixes for test client in dev/test mode
+            if token.startswith("test_") or token.startswith("dev_"):
+                ident = token.split("_", 1)[1]
+                test_email = ident if "@" in ident else f"{ident}@aether.local"
+                # If ident is not already a UUID, generate stable deterministic UUID from ident
+                if UUID_REGEX.match(ident):
+                    test_uuid = ident
+                else:
+                    test_uuid = hashlib.md5(ident.encode()).hexdigest()
+                    test_uuid = f"{test_uuid[:8]}-{test_uuid[8:12]}-{test_uuid[12:16]}-{test_uuid[16:20]}-{test_uuid[20:32]}"
+                return UserIdentity(
+                    user_id=test_uuid,
+                    email=test_email,
+                    role="authenticated"
+                )
 
         raise HTTPException(status_code=401, detail="Malformed Bearer token")
 
-    # Local development fallback only when NOT in production
+    # Local development fallback only when explicitly in local/dev/test mode AND NOT production
     is_dev = env in ["dev", "development", "local", "test"]
     if is_dev and not is_production and not jwt_secret:
         return UserIdentity(
-            user_id="dev_operator_uuid",
+            user_id="00000000-0000-0000-0000-000000000001",
             email=default_dev_email,
             role="authenticated"
         )
