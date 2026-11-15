@@ -767,8 +767,8 @@ export default function GeminiLiveModal({
       color: '#ffffff',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif',
       padding: '0 16px',
-      paddingTop: 'max(env(safe-area-inset-top, 16px), 16px)',
-      paddingBottom: 'max(env(safe-area-inset-bottom, 10px), 10px)',
+      paddingTop: 'max(env(safe-area-inset-top, 48px), 48px)',
+      paddingBottom: 'max(env(safe-area-inset-bottom, 14px), 14px)',
       boxSizing: 'border-box',
       overflow: 'hidden'
     }}>

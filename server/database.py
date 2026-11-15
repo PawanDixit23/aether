@@ -49,8 +49,15 @@ def get_db():
         db.close()
 
 def ensure_schema_migrations():
-    """Ensure user_email, recurrence, and session_id columns exist on tables even if existing SQLite/Postgres is used."""
+    """Ensure all required columns and tables exist across both SQLite and PostgreSQL."""
     is_pg = "postgres" in str(engine.url).lower()
+
+    # Ensure all tables from Base metadata exist
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"[Schema Migration Warning] create_all error: {e}")
+
     migration_statements = [
         "ALTER TABLE tasks ADD COLUMN user_email VARCHAR",
         "ALTER TABLE financial_records ADD COLUMN user_email VARCHAR",
@@ -74,21 +81,22 @@ def ensure_schema_migrations():
         "ALTER TABLE chat_messages ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE whatsapp_messages ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE tasks ADD COLUMN dependency_task_ids TEXT DEFAULT '[]'",
-        "ALTER TABLE financial_records ADD COLUMN is_recurring BOOLEAN DEFAULT 0",
+        "ALTER TABLE financial_records ADD COLUMN is_recurring BOOLEAN DEFAULT FALSE",
         "ALTER TABLE financial_records ADD COLUMN recurrence_interval VARCHAR",
-        "ALTER TABLE financial_records ADD COLUMN next_due_date DATETIME",
+        "ALTER TABLE financial_records ADD COLUMN next_due_date TIMESTAMP",
         "ALTER TABLE memory_vault ADD COLUMN importance FLOAT DEFAULT 1.0",
-        "ALTER TABLE memory_vault ADD COLUMN last_accessed_at DATETIME",
+        "ALTER TABLE memory_vault ADD COLUMN last_accessed_at TIMESTAMP",
         "ALTER TABLE scheduled_jobs ADD COLUMN idempotency_key VARCHAR",
     ]
 
     for stmt in migration_statements:
         try:
             with engine.connect() as conn:
-                # In PostgreSQL, ADD COLUMN IF NOT EXISTS avoids aborting transaction
-                target_sql = stmt.replace("ADD COLUMN", "ADD COLUMN IF NOT EXISTS") if is_pg else stmt
+                target_sql = stmt
+                if is_pg:
+                    target_sql = target_sql.replace("ADD COLUMN", "ADD COLUMN IF NOT EXISTS")
                 conn.execute(text(target_sql))
                 conn.commit()
-        except Exception:
-            # Column already exists in SQLite or already added
-            pass
+        except Exception as e:
+            if is_pg and "already exists" not in str(e).lower() and "duplicate column" not in str(e).lower():
+                print(f"[Postgres Migration Note] {stmt}: {e}")

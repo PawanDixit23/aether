@@ -328,9 +328,9 @@ export const ChatHistoryDrawer = ({
           overflow: 'hidden'
         }}
       >
-        {/* Header - Generous Safe Area for Mobile Notch */}
+        {/* Header - Generous Safe Area for Mobile Notch & Status Bar */}
         <div style={{
-          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 28px)',
+          paddingTop: 'max(env(safe-area-inset-top, 48px), 48px)',
           paddingBottom: '14px',
           paddingLeft: '18px',
           paddingRight: '18px',

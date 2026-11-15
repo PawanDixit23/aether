@@ -3620,14 +3620,27 @@ _BRIEFING_CACHE_TTL = 5 * 60  # 5 minutes
 def get_executive_briefing(
     user_email: Optional[str] = Depends(get_user_email),
     user_name: Optional[str] = "Operator",
-    lat: Optional[float] = None,
-    lon: Optional[float] = None,
+    lat: Optional[str] = None,
+    lon: Optional[str] = None,
     city: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     global _BRIEFING_CACHE
-    # Rapid repeated calls पर cached response return करो
-    loc_key = f"{round(lat, 2) if lat else ''}_{round(lon, 2) if lon else ''}_{(city or '').strip().lower()}"
+    parsed_lat = None
+    if lat is not None and str(lat).strip():
+        try:
+            parsed_lat = float(lat)
+        except (ValueError, TypeError):
+            parsed_lat = None
+
+    parsed_lon = None
+    if lon is not None and str(lon).strip():
+        try:
+            parsed_lon = float(lon)
+        except (ValueError, TypeError):
+            parsed_lon = None
+
+    loc_key = f"{round(parsed_lat, 2) if parsed_lat else ''}_{round(parsed_lon, 2) if parsed_lon else ''}_{(city or '').strip().lower()}"
     _cache_key = f"{user_email or 'guest'}_{loc_key}"
     _cached = _BRIEFING_CACHE.get(_cache_key)
     if _cached and (_briefing_time.time() - _cached["ts"] < _BRIEFING_CACHE_TTL):
@@ -3728,15 +3741,27 @@ def get_executive_briefing(
 @app.get("/api/location/city-guide")
 def get_location_city_guide(
     city: Optional[str] = None,
-    lat: Optional[float] = None,
-    lon: Optional[float] = None
+    lat: Optional[str] = None,
+    lon: Optional[str] = None
 ):
     """Retrieve curated places to visit, famous food, and activities for any city."""
     try:
         from ai_engine import get_city_travel_guide
     except ImportError:
         from .ai_engine import get_city_travel_guide
-    return get_city_travel_guide(city_name=city, lat=lat, lon=lon)
+    parsed_lat = None
+    if lat is not None and str(lat).strip():
+        try:
+            parsed_lat = float(lat)
+        except (ValueError, TypeError):
+            parsed_lat = None
+    parsed_lon = None
+    if lon is not None and str(lon).strip():
+        try:
+            parsed_lon = float(lon)
+        except (ValueError, TypeError):
+            parsed_lon = None
+    return get_city_travel_guide(city_name=city, lat=parsed_lat, lon=parsed_lon)
 
 # ----------------- 2-Minute Executive Audio Briefing -----------------
 @app.get("/api/briefing/executive")
