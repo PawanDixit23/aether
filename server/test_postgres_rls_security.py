@@ -389,7 +389,7 @@ def test_postgres_rls_suite():
             set_db_rls_context(sess, user_a)
             auth_ok, auth_msg = ActionApprovalManager.verify_and_consume(
                 action_id=action_id,
-                tool_name="execute_wire_transfer",
+                tool_name="transfer_money",
                 params=tampered_params,
                 user_email="usera@example.com",
                 owner_user_id=user_a,
@@ -404,7 +404,7 @@ def test_postgres_rls_suite():
             set_db_rls_context(sess, user_b)
             auth_ok, auth_msg = ActionApprovalManager.verify_and_consume(
                 action_id=action_id,
-                tool_name="execute_wire_transfer",
+                tool_name="transfer_money",
                 params=test_params,
                 user_email="userb@example.com",
                 owner_user_id=user_b,
@@ -422,7 +422,7 @@ def test_postgres_rls_suite():
                 set_db_rls_context(w_sess, user_a)
                 ok, msg = ActionApprovalManager.verify_and_consume(
                     action_id=action_id,
-                    tool_name="execute_wire_transfer",
+                    tool_name="transfer_money",
                     params=test_params,
                     user_email="usera@example.com",
                     owner_user_id=user_a,
@@ -471,17 +471,17 @@ def test_postgres_rls_suite():
             tier = None
             try:
                 from agent.governance import PermissionEngine
-                tier = PermissionEngine.classify_action("execute_wire_transfer", {"amount": 50000, "to": "external_account"})
+                tier = PermissionEngine.classify_action("transfer_money", {"amount": 50000, "to": "external_account"})
             except Exception:
                 tier = ActionTier.TIER_3_CRITICAL  # fallback if classify_action unavailable
 
             assert tier == ActionTier.TIER_3_CRITICAL, f"Wire transfer should be Tier-3, got: {tier}"
-            print(f"✅ P0-03: execute_wire_transfer correctly classified as TIER_3_CRITICAL (tier={tier})")
+            print(f"✅ P0-03: transfer_money correctly classified as TIER_3_CRITICAL (tier={tier})")
 
             # Create a real approval, then verify it gates execution
             test_params = {"amount": 50000, "to": "external_account"}
             approval_result = ActionApprovalManager.create_approval_request(
-                tool_name="execute_wire_transfer",
+                tool_name="transfer_money",
                 params=test_params,
                 user_email="usera@example.com",
                 owner_user_id=user_a,
@@ -511,7 +511,7 @@ def test_postgres_rls_suite():
             # Verify & consume with correct params succeeds
             ok, msg = ActionApprovalManager.verify_and_consume(
                 action_id=approval_id,
-                tool_name="execute_wire_transfer",
+                tool_name="transfer_money",
                 params=test_params,
                 user_email="usera@example.com",
                 owner_user_id=user_a,
@@ -523,7 +523,7 @@ def test_postgres_rls_suite():
             # Replay attempt: Same approval_id cannot be consumed again (one-time use)
             ok2, msg2 = ActionApprovalManager.verify_and_consume(
                 action_id=approval_id,
-                tool_name="execute_wire_transfer",
+                tool_name="transfer_money",
                 params=test_params,
                 user_email="usera@example.com",
                 owner_user_id=user_a,
