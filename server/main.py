@@ -2558,6 +2558,8 @@ def get_due_reminders(
     ).order_by(Task.due_date.asc().nullslast(), Task.id.asc()).limit(200).all()
     due_tasks = []
     for task in tasks:
+        if not is_task_due_for_notification(task, now):
+            continue
         dt = task.due_date
         try:
             if isinstance(dt, str):
@@ -4823,6 +4825,8 @@ def _run_push_check_internal(db: Session):
                 ).order_by(Task.due_date.asc().nullslast(), Task.id.asc()).limit(200).all()
 
                 for task in due_tasks:
+                    if not is_task_due_for_notification(task, now):
+                        continue
                     title = f"⏰ AETHER रिमाइंडर: {task.title}"
                     body = f"समय: {task.reminder_time or 'अभी'} • कार्य का समय हो गया है!"
                     task_pushed_success = False
