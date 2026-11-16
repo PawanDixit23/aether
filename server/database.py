@@ -94,8 +94,6 @@ def get_db(request: Request = None):
             db.info["is_owner"] = user_email.strip().lower() == owner_email
         if getattr(request.state, "is_worker", False):
             db.info["is_worker"] = True
-        if request.url.path in {"/api/telegram/webhook", "/api/whatsapp/webhook", "/api/whatsapp/twilio"}:
-            db.info["is_webhook_service"] = True
     try:
         yield db
     finally:
@@ -150,3 +148,10 @@ def set_worker_context(db: Session):
     db.info["is_worker"] = True
     if db.bind is not None and db.bind.dialect.name == "postgresql":
         db.execute(text("SELECT set_config('app.is_worker', 'true', true)"))
+
+
+def set_webhook_service_context(db: Session):
+    """Enable pairing lookup only after the route has verified the provider signature."""
+    db.info["is_webhook_service"] = True
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db.execute(text("SELECT set_config('app.is_webhook_service', 'true', true)"))
