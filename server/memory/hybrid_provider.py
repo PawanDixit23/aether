@@ -180,11 +180,48 @@ class HybridMemoryProvider:
         q_embedding = get_embedding(q_clean)
         now = datetime.utcnow()
 
-        # Enforce strict tenant isolation: Never return NULL/unowned records as personal memory
-        all_memories = db.query(MemoryItem).filter(
-            (MemoryItem.user_email == user_email) | 
+        # Candidate retrieval is deliberately bounded. The current schema stores
+        # embeddings as JSON text (not a pgvector column), so loading/scoring the
+        # entire vault here would transfer every memory on every AI request.
+        # Until pgvector is enabled, rank a capped candidate window in SQL and
+        # score only those rows in Python.
+        candidate_limit = max(100, min(int(limit) * 40, 500))
+        token_filters = [
+            MemoryItem.fact.ilike(f"%{token}%")
+            for token in dict.fromkeys(q_tokens[:8])
+        ]
+        from sqlalchemy import or_
+        tenant_scope = (
+            (MemoryItem.user_email == user_email) |
             (MemoryItem.category == "system_knowledge")
-        ).all()
+        )
+        candidate_query = db.query(MemoryItem).filter(tenant_scope)
+        if token_filters:
+            keyword_candidates = candidate_query.filter(or_(*token_filters)).order_by(
+                MemoryItem.importance.desc(),
+                MemoryItem.last_accessed_at.desc(),
+                MemoryItem.id.desc()
+            ).limit(candidate_limit).all()
+        else:
+            keyword_candidates = []
+
+        # Fill remaining slots with a bounded recency/importance sample. Merge
+        # by ID so keyword candidates retain priority without duplicates.
+        remaining = max(0, candidate_limit - len(keyword_candidates))
+        recent_candidates = (
+            candidate_query.order_by(
+                MemoryItem.importance.desc(),
+                MemoryItem.last_accessed_at.desc(),
+                MemoryItem.id.desc()
+            ).limit(candidate_limit).all()
+            if remaining else []
+        )
+        candidate_by_id = {item.id: item for item in keyword_candidates}
+        for item in recent_candidates:
+            if len(candidate_by_id) >= candidate_limit:
+                break
+            candidate_by_id.setdefault(item.id, item)
+        all_memories = list(candidate_by_id.values())
 
         if not all_memories:
             return {"relevant_facts": [], "formatted_context": ""}
