@@ -153,8 +153,8 @@ except ImportError:
         )
         from .ai_engine import parse_intent_with_llm
 
-# Initialize tables & run automated schema migrations
-Base.metadata.create_all(bind=engine)
+# The versioned migration runner owns table bootstrap and serializes it across
+# Render instances. Do not call create_all separately on every process startup.
 ensure_schema_migrations()
 
 from security.auth import validate_security_config_at_startup
@@ -726,7 +726,11 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
             try:
                 from memory import HybridMemoryProvider
                 recalled = HybridMemoryProvider.recall_context(
-                    prompt_query, user_email or owner_user_id, db, limit=AI_CONTEXT_MEMORY_LIMIT
+                    prompt_query,
+                    user_email or owner_user_id,
+                    db,
+                    limit=AI_CONTEXT_MEMORY_LIMIT,
+                    owner_user_id=owner_user_id,
                 )
                 recalled_facts = list(dict.fromkeys(recalled.get("relevant_facts", [])))[:AI_CONTEXT_MEMORY_LIMIT]
             except Exception as recall_error:
@@ -2444,8 +2448,26 @@ def get_chat_history(
         if before_id is not None:
             query = query.filter(ChatMessage.id < before_id)
             safe_offset = 0
+
+        # Chat-history clients need message content and action metadata, not the
+        # server-side embedding vector. Avoid transferring that large vector on
+        # every history page while retaining the existing response fields.
+        history_query = query.with_entities(
+            ChatMessage.id,
+            ChatMessage.user_email,
+            ChatMessage.owner_user_id,
+            ChatMessage.session_id,
+            ChatMessage.role,
+            ChatMessage.content,
+            ChatMessage.action_type,
+            ChatMessage.action_data,
+            ChatMessage.confidence,
+            ChatMessage.importance,
+            ChatMessage.last_accessed_at,
+            ChatMessage.created_at,
+        )
         page_rows = (
-            query.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            history_query.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .offset(safe_offset)
             .limit(safe_limit + 1)
             .all()
@@ -2455,7 +2477,23 @@ def get_chat_history(
         if response is not None:
             response.headers["X-Has-More"] = "true" if has_more else "false"
             response.headers["X-Next-Offset"] = str(safe_offset + len(msgs))
-        return list(reversed(msgs))
+        return [
+            {
+                "id": row.id,
+                "user_email": row.user_email,
+                "owner_user_id": row.owner_user_id,
+                "session_id": row.session_id,
+                "role": row.role,
+                "content": row.content,
+                "action_type": row.action_type,
+                "action_data": row.action_data,
+                "confidence": row.confidence,
+                "importance": row.importance,
+                "last_accessed_at": row.last_accessed_at,
+                "created_at": row.created_at,
+            }
+            for row in reversed(msgs)
+        ]
     except Exception:
         db.rollback()
         raise
@@ -3921,11 +3959,29 @@ def list_memory(
         raise HTTPException(status_code=400, detail=str(exc))
     memory_query = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user))
     total_count = memory_query.count()
+
+    # The Memory Vault UI does not use the stored embedding vector. Returning the
+    # full ORM entity caused every page to transfer a large JSON vector per row,
+    # even though embeddings are only needed by server-side recall/deduplication.
+    # Keep the existing public fields for compatibility, but deliberately omit
+    # embedding from the list response.
+    memory_rows_query = memory_query.with_entities(
+        MemoryItem.id,
+        MemoryItem.user_email,
+        MemoryItem.owner_user_id,
+        MemoryItem.category,
+        MemoryItem.fact,
+        MemoryItem.confidence,
+        MemoryItem.importance,
+        MemoryItem.last_accessed_at,
+        MemoryItem.created_at,
+        MemoryItem.updated_at,
+    )
     if before_id is not None:
-        memory_query = memory_query.filter(MemoryItem.id < before_id)
-        rows = memory_query.order_by(MemoryItem.id.desc()).limit(safe_limit + 1).all()
+        memory_rows_query = memory_rows_query.filter(MemoryItem.id < before_id)
+        rows = memory_rows_query.order_by(MemoryItem.id.desc()).limit(safe_limit + 1).all()
     else:
-        rows = memory_query.order_by(MemoryItem.id.desc()).offset(safe_offset).limit(safe_limit + 1).all()
+        rows = memory_rows_query.order_by(MemoryItem.id.desc()).offset(safe_offset).limit(safe_limit + 1).all()
     has_more = len(rows) > safe_limit
     rows = rows[:safe_limit]
     if response is not None:
@@ -3933,7 +3989,22 @@ def list_memory(
         response.headers["X-Next-Offset"] = str(safe_offset + len(rows))
         response.headers["X-Next-Cursor"] = str(rows[-1].id) if rows else ""
         response.headers["X-Total-Count"] = str(total_count)
-    return rows
+
+    return [
+        {
+            "id": row.id,
+            "user_email": row.user_email,
+            "owner_user_id": row.owner_user_id,
+            "category": row.category,
+            "fact": row.fact,
+            "confidence": row.confidence,
+            "importance": row.importance,
+            "last_accessed_at": row.last_accessed_at,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        for row in rows
+    ]
 
 @app.post("/api/memory")
 def create_memory(

@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Optional, Any, Dict, List
 from fastapi import Request
 from sqlalchemy import create_engine, text, event
@@ -106,7 +107,7 @@ def get_db(request: Request = None):
     finally:
         db.close()
 
-def ensure_schema_migrations():
+def _run_schema_migrations_once():
     """Ensure all required columns and tables exist across both SQLite and PostgreSQL."""
     is_pg = "postgres" in str(engine.url).lower()
 
@@ -198,24 +199,26 @@ def ensure_schema_migrations():
     ]
 
     for stmt in migration_statements:
-        parts = stmt.split()
-        if len(parts) >= 6:
-            tbl = parts[2].lower()
-            col = parts[5].lower()
-            if tbl in table_columns and col in table_columns[tbl]:
-                continue  # Column already exists: skip ALTER TABLE to prevent lock contention
+        target = _parse_add_column_target(stmt)
+        if target:
+            tbl, col = target
+            if col in table_columns.get(tbl, set()):
+                continue  # Column already exists: skip ALTER TABLE and avoid repeated DDL work.
 
         try:
             with engine.connect() as conn:
                 target_sql = stmt
                 if is_pg:
-                    target_sql = target_sql.replace("ADD COLUMN", "ADD COLUMN IF NOT EXISTS")
+                    target_sql = target_sql.replace("ADD COLUMN", "ADD COLUMN IF NOT EXISTS", 1)
                 conn.execute(text(target_sql))
                 conn.commit()
+            if target:
+                table_columns.setdefault(target[0], set()).add(target[1])
         except Exception as e:
             err_str = str(e).lower()
-            if "already exists" not in err_str and "duplicate column" not in err_str and "canceled" not in err_str:
-                print(f"[Postgres Migration Note] {stmt}: {e}")
+            if "already exists" in err_str or "duplicate column" in err_str:
+                continue
+            raise RuntimeError(f"CRITICAL: Schema migration failed for statement: {stmt}") from e
 
     # ─────────────────────────────────────────────────────────────────────────
     # AETH-P0-05: Ensure unique constraint on sender_pairing_rate_limits
@@ -398,6 +401,109 @@ def ensure_schema_migrations():
                 if env in ["prod", "production"] or is_pg:
                     raise RuntimeError(f"CRITICAL: Failed to enforce RLS policy on table {t}: {e}")
 
+
+
+def _parse_add_column_target(statement: str):
+    """Return (table, column) for an ALTER TABLE ... ADD COLUMN statement."""
+    match = re.match(
+        r'^\s*ALTER\s+TABLE\s+"?([A-Za-z_][\w$]*)"?\s+ADD\s+COLUMN'
+        r'(?:\s+IF\s+NOT\s+EXISTS)?\s+"?([A-Za-z_][\w$]*)"?',
+        statement or "",
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return match.group(1).lower(), match.group(2).lower()
+
+
+SCHEMA_MIGRATION_VERSION = "2026_11_16_01"
+
+
+def ensure_schema_migrations():
+    """Run the legacy schema/bootstrap migration exactly once per version.
+
+    PostgreSQL advisory locking serializes startup across Render instances.
+    A version is recorded only after the migration body completes successfully.
+    Existing application data is never truncated or deleted.
+    """
+    is_pg = "postgres" in str(engine.url).lower()
+    lock_connection = engine.connect() if is_pg else None
+    lock_transaction = None
+    ledger_table = "public.aether_schema_migrations" if is_pg else "aether_schema_migrations"
+    try:
+        if is_pg:
+            # Use a transaction-scoped advisory lock. Keep this transaction open
+            # until the migration finishes so it remains pinned to the same backend
+            # when DATABASE_URL uses Supavisor/PgBouncer transaction pooling.
+            lock_transaction = lock_connection.begin()
+            lock_connection.exec_driver_sql("SET LOCAL lock_timeout = 0")
+            lock_connection.exec_driver_sql("SET LOCAL statement_timeout = 0")
+            lock_connection.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext('aether.schema_migrations.v1'))")
+            )
+
+        # Keep the migration ledger out of the Supabase Data API for anon/authenticated clients.
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                f"""
+                CREATE TABLE IF NOT EXISTS {ledger_table} (
+                    version VARCHAR(64) PRIMARY KEY,
+                    applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            if is_pg:
+                conn.exec_driver_sql(
+                    "REVOKE ALL ON TABLE public.aether_schema_migrations FROM PUBLIC"
+                )
+                # Supabase defines these API roles; plain PostgreSQL test/development
+                # clusters may not. Revoke only for roles that actually exist.
+                for api_role in ("anon", "authenticated", "service_role"):
+                    role_exists = conn.execute(
+                        text("SELECT 1 FROM pg_roles WHERE rolname = :role_name"),
+                        {"role_name": api_role},
+                    ).first()
+                    if role_exists:
+                        conn.exec_driver_sql(
+                            f"REVOKE ALL ON TABLE public.aether_schema_migrations FROM {api_role}"
+                        )
+
+        with engine.connect() as conn:
+            already_applied = conn.execute(
+                text(f"SELECT 1 FROM {ledger_table} WHERE version = :version"),
+                {"version": SCHEMA_MIGRATION_VERSION},
+            ).first()
+
+        if already_applied:
+            print(f"[Schema Migration] {SCHEMA_MIGRATION_VERSION} already applied; skipping startup DDL.")
+            return
+
+        print(f"[Schema Migration] Applying {SCHEMA_MIGRATION_VERSION}.")
+        _run_schema_migrations_once()
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f"INSERT INTO {ledger_table} (version) VALUES (:version) "
+                    "ON CONFLICT (version) DO NOTHING"
+                ),
+                {"version": SCHEMA_MIGRATION_VERSION},
+            )
+        print(f"[Schema Migration] {SCHEMA_MIGRATION_VERSION} applied successfully.")
+    finally:
+        if lock_connection is not None:
+            if lock_transaction is not None and lock_transaction.is_active:
+                try:
+                    # The transaction contains only SET LOCAL + the xact lock.
+                    # Commit releases the lock; rollback is the fallback if commit fails.
+                    lock_transaction.commit()
+                except Exception as lock_release_error:
+                    print(f"[Schema Migration] Lock release note: {type(lock_release_error).__name__}")
+                    try:
+                        lock_transaction.rollback()
+                    except Exception:
+                        pass
+            lock_connection.close()
 
 def set_webhook_service_rls_context(db: Session, authorized_provider: str):
     """

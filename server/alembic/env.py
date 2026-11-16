@@ -24,6 +24,13 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+
+def include_object(object_, name, type_, reflected, compare_to):
+    """Exclude the internal runtime migration ledger from Alembic model drift checks."""
+    if type_ == "table" and name == "aether_schema_migrations":
+        return False
+    return True
+
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
@@ -48,6 +55,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -60,7 +68,8 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection, 
             target_metadata=target_metadata,
-            render_as_batch=True
+            render_as_batch=True,
+            include_object=include_object,
         )
 
         with context.begin_transaction():

@@ -96,3 +96,21 @@ The cross-tenant reminder worker is a privileged maintenance principal and must 
 - The API rejects missing configuration with HTTP 503 and missing/invalid bearer credentials with HTTP 401. The legacy `X-GitHub-Actions` header is not accepted.
 - PostgreSQL RLS grants cross-tenant maintenance access only when the transaction-local `request.worker_authorized` flag is set by the authenticated worker dependency or the trusted in-process reminder worker. The flag is reset when a tenant identity context is applied.
 - The background worker explicitly establishes the same transaction-local context before processing reminders. No database superuser or BYPASSRLS runtime role is required.
+
+
+## Startup migration ledger and egress-safe projections
+
+- Startup schema/bootstrap work is guarded by a version row in `aether_schema_migrations`; PostgreSQL instances serialize the first application of a version with a transaction-scoped advisory lock held in an open transaction. This is compatible with Supavisor/PgBouncer transaction pooling and avoids leaking a session-level lock across pooled backend connections.
+- The migration version is written only after the migration function returns successfully. A failed migration must leave the version unapplied so the next deployment can retry.
+- The migration ledger is revoked from Supabase API roles. The SQLite development path uses an unqualified local ledger table.
+- The `ADD COLUMN` parser explicitly recognizes both plain and PostgreSQL `ADD COLUMN IF NOT EXISTS` syntax and compares the parsed column against inspected schema metadata before executing DDL.
+- Memory Vault list pages and chat-history pages select only fields required by the UI and omit server-side embedding vectors. Embeddings remain stored and available to server-side recall; no memory or chat records are deleted.
+- The shared desktop/WebView API client coalesces identical in-flight authenticated GET requests to the same API URL and headers. It does not cache completed responses, and it bypasses mutations, streaming/media/export endpoints, range requests, no-store requests, and requests with abort signals.
+- Any future schema change must introduce a new migration version and an incremental migration rather than re-running the entire legacy bootstrap routine.
+
+## Quota interpretation and verification
+
+- Supabase uncached Egress includes data returned through PostgREST and the shared pooler; database buffer-cache hit rate is not a network-egress metric.
+- Query Performance / `pg_stat_statements` totals are cumulative since their last reset. A report exported after a deployment can still include statements executed by older application versions. Establish a new baseline only after deploying the candidate and recording a fresh statistics window.
+- Application changes can prevent unbounded reads and reduce future egress, but cannot retroactively remove bytes already transmitted or guarantee that a provider will never enforce a quota under arbitrary external traffic, backups, or infrastructure events.
+- After deployment, compare project-specific uncached Egress, Shared Pooler Egress, API Gateway request volume, query calls/rows, and Render pool occupancy over the same observation window.
