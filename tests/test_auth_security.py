@@ -84,6 +84,24 @@ class TestVerifiedIdentityMiddleware(unittest.TestCase):
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
 
+    def test_telegram_webhook_rejects_missing_provider_secret(self):
+        with patch.dict(os.environ, {"TELEGRAM_WEBHOOK_SECRET": ""}, clear=False):
+            response = self.client.post("/api/telegram/webhook", json={"message": {"chat": {"id": 1}}})
+        self.assertEqual(response.status_code, 401)
+
+    def test_meta_whatsapp_webhook_rejects_missing_signature_secret(self):
+        with patch.dict(os.environ, {"WHATSAPP_APP_SECRET": ""}, clear=False):
+            response = self.client.post("/api/whatsapp/webhook", json={"entry": []})
+        self.assertEqual(response.status_code, 401)
+
+    def test_twilio_webhook_rejects_missing_signature_configuration(self):
+        with patch.dict(os.environ, {"TWILIO_AUTH_TOKEN": "", "TWILIO_WEBHOOK_URL": ""}, clear=False):
+            response = self.client.post(
+                "/api/whatsapp/twilio",
+                data={"From": "whatsapp:+10000000000", "Body": "hello"}
+            )
+        self.assertEqual(response.status_code, 401)
+
 
 if __name__ == "__main__":
     unittest.main()
