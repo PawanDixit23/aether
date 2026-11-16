@@ -4350,13 +4350,18 @@ def update_briefing_preferences(
 # ----------------- Audit Logs & Undo -----------------
 @app.get("/api/audit-logs")
 def list_audit_logs(
-    limit: int = 60, 
+    limit: int = 60,
+    offset: int = 0,
     date: Optional[str] = None,
+    response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
     query = db.query(AuditLog).filter(tenant_filter(AuditLog, current_user))
-    safe_limit = max(1, min(int(limit), 100))
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if date and date.strip():
         try:
             target_date = datetime.strptime(date.strip(), "%Y-%m-%d").date()
@@ -4365,7 +4370,14 @@ def list_audit_logs(
             query = query.filter(AuditLog.executed_at >= start_dt, AuditLog.executed_at <= end_dt)
         except Exception as exc:
             print(f"[Audit Log Date Filter Error] {exc}")
-    logs = query.order_by(AuditLog.executed_at.desc(), AuditLog.id.desc()).limit(safe_limit).all()
+    page_rows = query.order_by(AuditLog.executed_at.desc(), AuditLog.id.desc()).offset(
+        safe_offset
+    ).limit(safe_limit + 1).all()
+    has_more = len(page_rows) > safe_limit
+    logs = page_rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(logs))
 
     # Always ensure executed_at string carries ISO 8601 UTC indicator 'Z' so browser parses in local time
     results = []
