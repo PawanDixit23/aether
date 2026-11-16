@@ -47,6 +47,7 @@ class FinancialRecord(Base):
     is_recurring = Column(Boolean, default=False)
     recurrence_interval = Column(String, nullable=True) # "monthly", "yearly", "weekly"
     next_due_date = Column(DateTime, nullable=True)
+    backup_key = Column(String, nullable=True, index=True) # Idempotency key for chunked client-backup restore
     date = Column(DateTime, default=datetime.utcnow)
 
 class MemoryItem(Base):
