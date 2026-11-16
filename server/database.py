@@ -243,6 +243,19 @@ def ensure_schema_migrations():
         except Exception as e:
             print(f"[Resource Index Migration Note] {index_sql.split(' ON ')[0]}: {e}")
 
+    # Trigram index accelerates bounded keyword retrieval over the memory vault.
+    if is_pg:
+        try:
+            with engine.connect() as conn:
+                conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+                conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+                conn.exec_driver_sql(
+                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_memory_fact_trgm "
+                    "ON memory_vault USING gin (fact gin_trgm_ops)"
+                )
+        except Exception as e:
+            print(f"[Memory Search Index Note] pg_trgm index was not created: {e}")
+
     # ─────────────────────────────────────────────────────────────────────────
     # AETH-P0-02: Trusted Supabase Auth Identity Mapping & Quarantining
     # ─────────────────────────────────────────────────────────────────────────
