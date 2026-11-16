@@ -217,7 +217,10 @@ async def security_and_observability_middleware(request: Request, call_next):
             content_length = int(request.headers.get("content-length", "0"))
         except (TypeError, ValueError):
             content_length = 0
-        max_json_bytes = int(os.environ.get("MAX_JSON_REQUEST_BYTES", str(2 * 1024 * 1024)))
+        try:
+            max_json_bytes = max(64 * 1024, int(os.environ.get("MAX_JSON_REQUEST_BYTES", str(2 * 1024 * 1024))))
+        except (TypeError, ValueError):
+            max_json_bytes = 2 * 1024 * 1024
         if content_length > max_json_bytes:
             from fastapi.responses import JSONResponse
             return JSONResponse(
