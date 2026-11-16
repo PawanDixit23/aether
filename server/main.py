@@ -5350,8 +5350,13 @@ async def trigger_whatsapp_digest(
     user_phone = pairing.channel_user_id
 
     if time_of_day == "morning":
-        p_tasks = db.query(Task).filter(Task.owner_user_id == current_user.id, Task.status == "pending", Task.parent_id == None).all()
-        top_tasks = ", ".join([f"'{t.title}'" for t in p_tasks[:3]]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
+        pending_task_count = db.query(func.count(Task.id)).filter(
+            Task.owner_user_id == current_user.id, Task.status == "pending", Task.parent_id == None
+        ).scalar() or 0
+        p_tasks = db.query(Task).filter(
+            Task.owner_user_id == current_user.id, Task.status == "pending", Task.parent_id == None
+        ).order_by(Task.due_date.asc().nullslast(), Task.id.desc()).limit(3).all()
+        top_tasks = ", ".join([f"'{t.title}'" for t in p_tasks]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
         digest_msg = (
             f"☀️ *सुप्रभात! Aether Morning Digest*\n\n"
             f"🎯 *आज के कार्य ({len(p_tasks)})*: {top_tasks}\n\n"
