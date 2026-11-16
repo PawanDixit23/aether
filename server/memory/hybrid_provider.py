@@ -181,7 +181,8 @@ class HybridMemoryProvider:
         user_email: str,
         db: Session,
         limit: int = 10,
-        min_similarity: float = 0.25
+        min_similarity: float = 0.25,
+        owner_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Rank a bounded retrieval candidate window; the full vault stays in PostgreSQL."""
         if not query or not query.strip():
@@ -193,7 +194,12 @@ class HybridMemoryProvider:
         q_embedding = get_embedding(q_clean)
         now = datetime.utcnow()
 
+        # Prefer the immutable authenticated owner ID. Keep the email fallback
+        # only for legacy call sites that do not yet supply an owner ID.
         tenant_scope = or_(
+            MemoryItem.owner_user_id == owner_user_id,
+            MemoryItem.category == "system_knowledge"
+        ) if owner_user_id else or_(
             MemoryItem.user_email == user_email,
             MemoryItem.category == "system_knowledge"
         )
