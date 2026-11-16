@@ -12,7 +12,7 @@ This is an application-level protection layer, not a promise that provider-level
 - Maximum page size: 100 records.
 - Backup/contact/finance bulk write batch: 200 records.
 - AI context: up to 30 pending tasks, 15 memories, 60 recent finance records, and 40 recent chat messages.
-- Semantic memory recall: up to 200 keyword candidates plus 200 importance/recency candidates, then return at most 20 matches.
+- Semantic memory recall: up to 100 keyword candidates plus 100 importance/recency candidates, then return at most 20 matches.
 - PostgreSQL pool: 3 base connections + 2 overflow per process by default; configurable with DB_POOL_SIZE, DB_POOL_MAX_OVERFLOW, DB_POOL_TIMEOUT_SECONDS, and DB_POOL_RECYCLE_SECONDS.
 - PostgreSQL statement timeout: 10 seconds; lock timeout: 3 seconds.
 - JSON request body: 2 MiB by default, configurable with MAX_JSON_REQUEST_BYTES. Multipart file uploads are not subject to this JSON-only guard.
@@ -32,7 +32,7 @@ The following endpoints now use bounded pages and accept limit/offset:
 
 Responses retain their existing list/map payload shapes for compatibility. Pagination state is exposed through X-Has-More and X-Next-Offset response headers. CORS exposes these headers to the web client.
 
-The desktop client now loads more tasks, subtasks, memories, and finance records on demand. A page is never treated as the entire dataset merely because the first response completed.
+The desktop client now loads more tasks, subtasks, memories, finance records, chat sessions, and older chat messages on demand. A page is never treated as the entire dataset merely because the first response completed.
 
 ## Query and write changes
 
@@ -43,7 +43,7 @@ The desktop client now loads more tasks, subtasks, memories, and finance records
 - Task/subtask serialization and task status propagation avoid unbounded ORM hydration.
 - Recurring-task and overdue-task maintenance use keyset batches.
 - Reminder worker processes owners, due tasks, and push subscriptions in bounded windows.
-- Backup restore accepts no more than 200 rows per module per request. The client sends chunks sequentially.
+- Backup restore accepts no more than 200 rows per module per request. The desktop client sends 50-row chunks sequentially (the API rejects more than 200 rows per module per request), keeping payloads comfortably below the 2 MiB JSON limit.
 - Task and finance backup rows carry per-owner idempotency keys so interrupted/retried chunks do not duplicate imported rows. Existing database IDs and rows are not modified.
 - Bulk contacts and finance requests are capped at 200 rows; the desktop client chunks contact sync.
 
