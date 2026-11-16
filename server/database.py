@@ -21,11 +21,29 @@ elif DATABASE_URL.startswith("postgresql://") and not DATABASE_URL.startswith("p
 
 connect_args = {"check_same_thread": False, "timeout": 15} if DATABASE_URL.startswith("sqlite") else {}
 
-engine = create_engine(
-    DATABASE_URL, 
-    connect_args=connect_args,
-    pool_pre_ping=True
-)
+# Keep each API worker's database footprint predictable. The application runs a
+# single Uvicorn worker on the Render 512 MB service; a small bounded pool prevents
+# request bursts from opening an unbounded number of PostgreSQL connections.
+engine_options = {
+    "connect_args": connect_args,
+    "pool_pre_ping": True,
+}
+if DATABASE_URL.startswith(("postgresql://", "postgresql+")):
+    engine_options.update({
+        "pool_size": int(os.environ.get("DB_POOL_SIZE", "3")),
+        "max_overflow": int(os.environ.get("DB_POOL_MAX_OVERFLOW", "2")),
+        "pool_timeout": int(os.environ.get("DB_POOL_TIMEOUT_SECONDS", "10")),
+        "pool_recycle": int(os.environ.get("DB_POOL_RECYCLE_SECONDS", "1800")),
+        "pool_use_lifo": True,
+        # Bound runaway SQL and lock waits at the database connection level.
+        "connect_args": {
+            **connect_args,
+            "options": "-c statement_timeout=10000 -c lock_timeout=3000",
+            "connect_timeout": 10,
+        },
+    })
+
+engine = create_engine(DATABASE_URL, **engine_options)
 
 # Concurrency & Reliability Hardening for SQLite:
 # Configure WAL once per process. Re-running PRAGMA journal_mode=WAL on every
