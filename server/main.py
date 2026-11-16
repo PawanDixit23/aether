@@ -3959,6 +3959,7 @@ def sync_bulk_contacts(
     failure_samples = []
     for batch_start in range(0, len(contacts_list), WRITE_BATCH_SIZE):
         batch = contacts_list[batch_start:batch_start + WRITE_BATCH_SIZE]
+        batch_synced = 0
         for local_index, contact in enumerate(batch):
             try:
                 name = str(contact.get("name") or "").strip()
@@ -4002,6 +4003,7 @@ def sync_bulk_contacts(
                         embedding=emb_json
                     ))
                 synced += 1
+                batch_synced += 1
             except Exception as exc:
                 failed += 1
                 if len(failure_samples) < 25:
@@ -4010,8 +4012,8 @@ def sync_bulk_contacts(
             db.commit()
         except Exception as exc:
             db.rollback()
-            failed += len(batch)
-            synced = max(0, synced - len(batch))
+            failed += batch_synced
+            synced = max(0, synced - batch_synced)
             if len(failure_samples) < 25:
                 failure_samples.append({"batch_start": batch_start, "error": str(exc)[:240]})
 
