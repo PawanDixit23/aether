@@ -67,3 +67,12 @@ Composite tenant-scoped indexes support the new access patterns for tasks, finan
 - Semantic recall is intentionally bounded. It does not load every historical memory into an LLM prompt; exact/keyword retrieval can still find matching older facts, while semantic-only recall is ranked within the candidate window.
 - The JSON Content-Length guard only rejects requests whose clients send a Content-Length header. Reverse-proxy limits should also be configured for chunked transfer requests.
 - No finite application can guarantee zero provider errors under arbitrary load. This architecture makes per-request work bounded and materially lowers the chance of memory exhaustion; capacity planning and monitoring remain necessary.
+
+
+## PostgreSQL trigram index prerequisite
+
+The resource-guard ORM metadata includes a GIN index using `pg_trgm`. Before deploying with the restricted runtime role, enable the extension using the Supabase database migration/admin connection:
+
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+The API startup check verifies that the extension is present before ORM schema initialization. Do not grant the application runtime role superuser or BYPASSRLS privileges to work around a missing extension.
