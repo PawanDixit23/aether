@@ -119,147 +119,141 @@ def find_city_in_text(text: str):
 
     return None
 
-# Cached Live Weather with timestamp — per-coordinate caching + global fallback
-# FIX: lat/lon pass होने पर भी cache use करो, 15 min TTL, 429 on backoff
-WEATHER_CACHE = {"data": None, "timestamp": 0}
-WEATHER_COORD_CACHE = {}   # key: "lat,lon" → {"data": ..., "timestamp": ...}
-WEATHER_BACKOFF_UNTIL = 0  # 429 मिलने पर इस timestamp तक API call बंद रहे
-
-WEATHER_CACHE_TTL = 15 * 60        # 15 minutes default TTL
-WEATHER_429_BACKOFF = 20 * 60      # 429 मिलने पर 20 min के लिए API calls रोको
+# Live weather: cache is strictly scoped to coordinates and never crosses users/locations.
+WEATHER_COORD_CACHE = {}
+WEATHER_CACHE_TTL = 10 * 60
+WEATHER_STALE_MAX_AGE = 6 * 60 * 60
 
 def get_live_weather_data(lat: float = None, lon: float = None, city_name: str = None) -> dict:
-    """Fetch live accurate weather from Open-Meteo with per-coordinate caching (15 min TTL).
-    
-    FIX: 429 rate-limit handled with:
-    1. Per-coordinate cache — same lat/lon पर repeat calls cache से serve होंगी
-    2. Global backoff — 429 मिलने पर 20 min के लिए API calls बंद
-    3. Stale cache fallback — network error / rate limit पर cached data return करो
-    """
-    global WEATHER_CACHE, WEATHER_COORD_CACHE, WEATHER_BACKOFF_UNTIL
     import time
     now_ts = time.time()
-
+    location_name = (city_name or "").strip()
     try:
-        use_lat = round(float(lat), 4) if lat is not None and str(lat).strip() else 26.85
+        use_lat = float(lat) if lat is not None and str(lat).strip() else None
+        use_lon = float(lon) if lon is not None and str(lon).strip() else None
     except (ValueError, TypeError):
-        use_lat = 26.85
+        use_lat = use_lon = None
+
+    if use_lat is None or use_lon is None:
+        geocoded = geocode_city(location_name) if location_name else None
+        if geocoded:
+            use_lat, use_lon = float(geocoded["lat"]), float(geocoded["lon"])
+            location_name = geocoded.get("name") or location_name
+        elif not location_name:
+            detected = get_user_location()
+            use_lat, use_lon = float(detected["lat"]), float(detected["lon"])
+            location_name = detected.get("city") or "Current location"
+
+    if not (-90 <= use_lat <= 90 and -180 <= use_lon <= 180):
+        return {"status": "unavailable", "city": location_name or "Unknown location", "error": "Invalid coordinates"}
+
+    coord_key = f"{use_lat:.4f},{use_lon:.4f}"
+    cached = WEATHER_COORD_CACHE.get(coord_key)
+    if cached and now_ts - cached["timestamp"] < WEATHER_CACHE_TTL:
+        return dict(cached["data"])
 
     try:
-        use_lon = round(float(lon), 4) if lon is not None and str(lon).strip() else 75.72
-    except (ValueError, TypeError):
-        use_lon = 75.72
-    coord_key = f"{use_lat},{use_lon}_{city_name or ''}"
+        params = urllib.parse.urlencode({
+            "latitude": use_lat,
+            "longitude": use_lon,
+            "current": "temperature_2m,apparent_temperature,relative_humidity_2m,is_day,precipitation,rain,showers,weather_code,wind_speed_10m,wind_direction_10m",
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset",
+            "forecast_days": 1,
+            "timezone": "auto"
+        })
+        req = urllib.request.Request(
+            f"https://api.open-meteo.com/v1/forecast?{params}",
+            headers={"User-Agent": "AetherAI/2.0"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Open-Meteo returned HTTP {resp.status}")
+            payload = json.loads(resp.read().decode("utf-8"))
 
-    # 1. Per-coordinate cache check (15 min TTL)
-    coord_entry = WEATHER_COORD_CACHE.get(coord_key)
-    if coord_entry and (now_ts - coord_entry["timestamp"] < WEATHER_CACHE_TTL):
-        return coord_entry["data"]
+        current = payload.get("current") or {}
+        daily = payload.get("daily") or {}
+        if current.get("temperature_2m") is None or current.get("weather_code") is None:
+            raise ValueError("Weather provider returned incomplete current conditions")
 
-    # 2. Global cache fallback (no lat — same as before, also 15 min)
-    if not lat and WEATHER_CACHE["data"] and (now_ts - WEATHER_CACHE["timestamp"] < WEATHER_CACHE_TTL):
-        return WEATHER_CACHE["data"]
+        code = int(current.get("weather_code", 0))
+        conditions = {
+            0: ("☀️", "Clear sky", "आसमान साफ़ है"),
+            1: ("🌤️", "Mainly clear", "मुख्यतः साफ़"),
+            2: ("⛅", "Partly cloudy", "आंशिक बादल"),
+            3: ("☁️", "Overcast", "बादल छाए हुए हैं"),
+            45: ("🌫️", "Fog", "कोहरा"),
+            48: ("🌫️", "Depositing rime fog", "घना कोहरा"),
+            51: ("🌦️", "Light drizzle", "हल्की बूंदाबांदी"),
+            53: ("🌦️", "Moderate drizzle", "मध्यम बूंदाबांदी"),
+            55: ("🌧️", "Dense drizzle", "तेज़ बूंदाबांदी"),
+            56: ("🌧️", "Freezing drizzle", "जमने वाली बूंदाबांदी"),
+            57: ("🌧️", "Heavy freezing drizzle", "भारी जमने वाली बूंदाबांदी"),
+            61: ("🌧️", "Slight rain", "हल्की बारिश"),
+            63: ("🌧️", "Moderate rain", "मध्यम बारिश"),
+            65: ("🌧️", "Heavy rain", "तेज़ बारिश"),
+            66: ("🌧️", "Freezing rain", "जमने वाली बारिश"),
+            67: ("🌧️", "Heavy freezing rain", "भारी जमने वाली बारिश"),
+            71: ("🌨️", "Slight snow", "हल्की बर्फ़बारी"),
+            73: ("🌨️", "Moderate snow", "मध्यम बर्फ़बारी"),
+            75: ("❄️", "Heavy snow", "भारी बर्फ़बारी"),
+            77: ("🌨️", "Snow grains", "बर्फ़ के कण"),
+            80: ("🌦️", "Slight rain showers", "हल्की बौछारें"),
+            81: ("🌧️", "Moderate rain showers", "मध्यम बौछारें"),
+            82: ("⛈️", "Violent rain showers", "तेज़ बारिश की बौछारें"),
+            85: ("🌨️", "Slight snow showers", "हल्की बर्फ़ीली बौछारें"),
+            86: ("❄️", "Heavy snow showers", "भारी बर्फ़ीली बौछारें"),
+            95: ("⛈️", "Thunderstorm", "गरज के साथ तूफ़ान"),
+            96: ("⛈️", "Thunderstorm with hail", "ओलों के साथ तूफ़ान"),
+            99: ("⛈️", "Severe thunderstorm with hail", "ओलों के साथ तेज़ तूफ़ान")
+        }
+        icon, condition_en, condition_hi = conditions.get(code, ("🌡️", "Conditions unavailable", "मौसम की स्थिति उपलब्ध नहीं"))
+        def first_daily(key):
+            values = daily.get(key) or []
+            return values[0] if values else None
 
-    # 3. 429 backoff check — rate limit मिला था तो अभी API call नहीं करेंगे
-    if now_ts < WEATHER_BACKOFF_UNTIL:
-        remaining = int(WEATHER_BACKOFF_UNTIL - now_ts)
-        print(f"[Aether Weather] ⏳ Rate-limit backoff active — {remaining}s remaining, serving stale cache")
-        # Stale cache से serve करो
-        if coord_entry and coord_entry.get("data"):
-            return coord_entry["data"]
-        if WEATHER_CACHE["data"]:
-            return WEATHER_CACHE["data"]
-
-    try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={use_lat}&longitude={use_lon}&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m"
-        req = urllib.request.Request(url, headers={'User-Agent': 'AetherAI/1.0'})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            # 429 check on response status
-            if resp.status == 429:
-                WEATHER_BACKOFF_UNTIL = now_ts + WEATHER_429_BACKOFF
-                print(f"[Aether Engine] ℹ️ Weather API rate-limited (429) — gracefully serving cached weather ({WEATHER_429_BACKOFF//60} min backoff)")
-                if coord_entry and coord_entry.get("data"):
-                    return coord_entry["data"]
-                if WEATHER_CACHE["data"]:
-                    return WEATHER_CACHE["data"]
-                raise Exception("HTTP Error 429: Too Many Requests")
-            data = json.loads(resp.read().decode())
-            current = data.get('current', {})
-            temp = round(current.get('temperature_2m', 31.4), 1)
-            code = current.get('weather_code', 0)
-            wind = round(current.get('wind_speed_10m', 4.0), 1)
-            humidity = f"{current.get('relative_humidity_2m', 35)}%"
-            
-            icon = "☀️"
-            condition_en = "Mostly Sunny & Clear"
-            condition_hi = "धूप खिली हुई और मौसम साफ़"
-
-            if code in [1, 2]:
-                icon = "🌤️"
-                condition_en = "Partly Cloudy"
-                condition_hi = "हल्के बादलों के साथ धूप"
-            elif code == 3:
-                icon = "☁️"
-                condition_en = "Cloudy"
-                condition_hi = "बादल छाए हुए हैं"
-            elif code >= 50:
-                icon = "🌧️"
-                condition_en = "Rain Showers"
-                condition_hi = "बारिश / बूंदाबांदी"
-
-            clean_city = (city_name or "").strip()
-            if not clean_city:
-                clean_city = "Jaipur"
-
-            result = {
-                "temp": temp,
-                "wind": f"{wind} km/h",
-                "humidity": humidity,
-                "icon": icon,
-                "condition_en": condition_en,
-                "condition_hi": condition_hi,
-                "city": clean_city,
-                "city_en": clean_city,
-                "city_hi": clean_city,
-                "city_hinglish": clean_city
-            }
-            # Per-coordinate cache save (Memory capped)
-            if len(WEATHER_COORD_CACHE) > 15:
-                WEATHER_COORD_CACHE.clear()
-            WEATHER_COORD_CACHE[coord_key] = {"data": result, "timestamp": now_ts}
-            # Global cache भी update (default location के लिए)
-            if not lat:
-                WEATHER_CACHE["data"] = result
-                WEATHER_CACHE["timestamp"] = now_ts
-            return result
-    except Exception as e:
-        err_str = str(e)
-        # 429 urllib error
-        if "429" in err_str or "Too Many Requests" in err_str:
-            WEATHER_BACKOFF_UNTIL = now_ts + WEATHER_429_BACKOFF
-            print(f"[Aether Engine] ℹ️ Weather API rate-limited (429) — gracefully serving cached weather ({WEATHER_429_BACKOFF//60} min backoff)")
-        else:
-            print(f"[Aether Engine] Live weather fetch error: {e}")
-        # Stale cache से serve करो (any age)
-        if coord_entry and coord_entry.get("data"):
-            return coord_entry["data"]
-        if WEATHER_CACHE["data"]:
-            return WEATHER_CACHE["data"]
-        import datetime
-        cur_hour = datetime.datetime.now().hour
-        dynamic_temp = 31.4 if 12 <= cur_hour <= 17 else (25.0 if cur_hour >= 20 or cur_hour <= 6 else 28.5)
-        fallback_city = (city_name or "").strip() or "Jaipur"
+        result = {
+            "status": "success",
+            "source": "Open-Meteo",
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+            "is_stale": False,
+            "temp": round(float(current["temperature_2m"]), 1),
+            "feels_like": round(float(current.get("apparent_temperature", current["temperature_2m"])), 1),
+            "wind": f'{round(float(current.get("wind_speed_10m", 0)), 1)} km/h',
+            "wind_direction": current.get("wind_direction_10m"),
+            "humidity": f'{int(current.get("relative_humidity_2m", 0))}%',
+            "precipitation_mm": round(float(current.get("precipitation", 0)), 1),
+            "rain_mm": round(float(current.get("rain", 0)), 1),
+            "showers_mm": round(float(current.get("showers", 0)), 1),
+            "precipitation_probability": first_daily("precipitation_probability_max"),
+            "today_high": first_daily("temperature_2m_max"),
+            "today_low": first_daily("temperature_2m_min"),
+            "sunrise": first_daily("sunrise"),
+            "sunset": first_daily("sunset"),
+            "icon": icon,
+            "condition_en": condition_en,
+            "condition_hi": condition_hi,
+            "city": location_name or f"{use_lat:.3f}, {use_lon:.3f}",
+            "city_en": location_name or f"{use_lat:.3f}, {use_lon:.3f}",
+            "city_hi": location_name or f"{use_lat:.3f}, {use_lon:.3f}",
+            "city_hinglish": location_name or f"{use_lat:.3f}, {use_lon:.3f}"
+        }
+        if len(WEATHER_COORD_CACHE) >= 64:
+            oldest = min(WEATHER_COORD_CACHE, key=lambda key: WEATHER_COORD_CACHE[key]["timestamp"])
+            WEATHER_COORD_CACHE.pop(oldest, None)
+        WEATHER_COORD_CACHE[coord_key] = {"data": result, "timestamp": now_ts}
+        return result
+    except Exception as exc:
+        if cached and now_ts - cached["timestamp"] <= WEATHER_STALE_MAX_AGE:
+            stale = dict(cached["data"])
+            stale["is_stale"] = True
+            stale["stale_reason"] = str(exc)[:180]
+            return stale
         return {
-            "temp": dynamic_temp,
-            "wind": "4.2 km/h",
-            "humidity": "36%",
-            "icon": "☀️",
-            "condition_en": "Sunny & Clear",
-            "condition_hi": "धूप खिली हुई",
-            "city": fallback_city,
-            "city_en": fallback_city,
-            "city_hi": fallback_city,
-            "city_hinglish": fallback_city
+            "status": "unavailable",
+            "source": "Open-Meteo",
+            "city": location_name or "Requested location",
+            "error": str(exc)[:180],
+            "is_stale": False
         }
 
 def fetch_live_weather(user_query: str = "", lat: float = None, lon: float = None, city_name: str = None) -> str:
