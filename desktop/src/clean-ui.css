@@ -161,3 +161,93 @@ button:not(.btn-share):not(.btn-send-circle):not(.btn-stream-toggle) { transitio
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+
+/* Premium product-wide refinement — consistent hierarchy across every feature surface. */
+:root {
+  --ui-bg: #080d15;
+  --ui-surface: #101824;
+  --ui-surface-raised: #151f2d;
+  --ui-surface-soft: #0c131d;
+  --ui-border: rgba(168, 187, 207, .12);
+  --ui-border-strong: rgba(168, 187, 207, .2);
+  --ui-text: #edf3f8;
+  --ui-muted: #94a3b8;
+  --ui-subtle: #718096;
+  --ui-accent: #71c8d8;
+  --ui-accent-soft: rgba(113, 200, 216, .11);
+  --ui-radius: 18px;
+  --ui-shadow: 0 12px 32px rgba(0, 0, 0, .2);
+}
+#root { min-height: 100dvh; }
+body { color: var(--ui-text); background: var(--ui-bg); }
+button, input, textarea, select { font-family: inherit; }
+button { color: inherit; }
+a { color: var(--ui-accent); }
+hr { border: 0; border-top: 1px solid var(--ui-border); }
+
+/* Shared component language for dashboard, chat, memory, finance, tasks, agents and settings. */
+.card-briefing, .news-card, .ask-aether-card, .action-module-card,
+.stat-card, .dashboard-weather-card, [role="dialog"], .modal-content,
+.modal-container, [class*="drawer-panel"], [class*="settings-card"],
+[class*="memory-card"], [class*="finance-card"], [class*="agent-card"],
+[class*="task-card"] {
+  border-color: var(--ui-border) !important;
+  border-radius: var(--ui-radius) !important;
+}
+[class*="modal"], [class*="drawer"] {
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+[class*="section-title"], [class*="page-title"], [class*="module-title"] {
+  letter-spacing: -.025em;
+}
+input, textarea, select, [contenteditable="true"] {
+  background: #0d1520 !important;
+  border: 1px solid var(--ui-border-strong) !important;
+  color: var(--ui-text) !important;
+  border-radius: 12px !important;
+  min-height: 42px;
+}
+input:focus, textarea:focus, select:focus, [contenteditable="true"]:focus {
+  border-color: rgba(113, 200, 216, .55) !important;
+  box-shadow: 0 0 0 3px rgba(113, 200, 216, .1) !important;
+  outline: none !important;
+}
+button { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--ui-accent) !important;
+  outline-offset: 3px !important;
+}
+button:disabled { cursor: not-allowed; opacity: .58; }
+[class*="empty-state"], [class*="EmptyState"] { color: var(--ui-muted); }
+.dashboard-weather-card { cursor: pointer; }
+.dashboard-weather-card:hover { border-color: rgba(113, 200, 216, .32) !important; }
+.dashboard-weather-card button { min-width: 36px; min-height: 36px; }
+.dashboard-greeting { align-items: flex-start; }
+.dashboard-greeting h1 { line-height: 1.18; }
+.dashboard-main-view { gap: 0; }
+.dashboard-orb-section { margin-top: 18px !important; margin-bottom: 22px !important; }
+.dashboard-quick-actions { gap: 12px !important; margin-top: 8px; }
+.dashboard-quick-actions > button {
+  min-height: 84px;
+  border-radius: 16px !important;
+  background: var(--ui-surface) !important;
+  border: 1px solid var(--ui-border) !important;
+}
+.dashboard-quick-actions > button:hover { border-color: var(--ui-border-strong) !important; background: var(--ui-surface-raised) !important; }
+@media (min-width: 769px) {
+  .aether-main-content { max-width: 1180px; }
+  .dashboard-main-view { max-width: 820px !important; }
+}
+@media (max-width: 768px) {
+  .aether-main-content { padding: 16px 14px calc(100px + env(safe-area-inset-bottom)); }
+  .dashboard-main-view { padding: 14px 14px calc(36px + env(safe-area-inset-bottom)) !important; }
+  .dashboard-quick-actions { gap: 10px !important; }
+  .dashboard-quick-actions > button { min-height: 82px; }
+  [role="dialog"], .modal-content, .modal-container { max-height: calc(100dvh - 24px); overflow-y: auto; }
+}
+@media (max-width: 380px) {
+  .dashboard-greeting { flex-wrap: wrap; }
+  .dashboard-quick-actions > button { min-height: 76px; }
+}

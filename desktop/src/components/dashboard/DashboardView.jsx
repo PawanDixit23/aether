@@ -46,6 +46,7 @@ export const DashboardView = ({
   onPlayBriefing,
   onRefreshWeather,
   weatherLoading = false,
+  weatherError = '',
   setAgendaFilter,
   setRemindersViewMode
 }) => {
@@ -155,7 +156,7 @@ export const DashboardView = ({
     : '—';
   const weatherUnavailable = weatherData?.status === 'unavailable' || weatherData?.temp == null;
   const weatherDesc = weatherUnavailable
-    ? 'Live weather temporarily unavailable'
+    ? (weatherLoading ? 'Fetching current conditions…' : 'Live weather temporarily unavailable')
     : `${weatherData?.condition_en || weatherData?.condition_hi || weatherData?.condition || "Current conditions"}${weatherData?.is_stale ? " • Last known update" : ""}`;
   const weatherHumidity = weatherData?.humidity || '—';
   const weatherWind = weatherData?.wind || '—';
@@ -579,7 +580,7 @@ export const DashboardView = ({
       <section
         className="dashboard-weather-card"
         aria-label="Live weather"
-        onClick={() => setActiveSubModal?.('permissions')}
+        onClick={() => onRefreshWeather?.()}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -616,7 +617,7 @@ export const DashboardView = ({
               )}
             </div>
             <div style={{ color: '#9aa8b8', fontSize: '.76rem', marginTop: '4px', lineHeight: 1.4 }}>
-              {weatherUnavailable ? (weatherLoading ? 'Fetching current conditions…' : weatherDesc) : weatherDesc}
+              {weatherUnavailable ? (weatherLoading ? 'Fetching live conditions…' : (weatherError ? `Unable to load: ${weatherError}` : weatherDesc)) : weatherDesc}
             </div>
             {!weatherUnavailable && (weatherData?.today_high != null || weatherData?.today_low != null) && (
               <div style={{ color: '#8190a2', fontSize: '.70rem', marginTop: '4px' }}>
