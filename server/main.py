@@ -2458,9 +2458,12 @@ def serialize_task(t: Task, db: Optional[Session] = None) -> dict:
         "subtasks": []
     }
     if db:
-        subs = db.query(Task).filter(Task.parent_id == t.id, Task.owner_user_id == t.owner_user_id).order_by(Task.id.asc()).all()
-        if subs:
-            res["subtasks"] = [serialize_task(st) for st in subs]
+        child_query = db.query(Task).filter(
+            Task.parent_id == t.id, Task.owner_user_id == t.owner_user_id
+        ).order_by(Task.id.asc())
+        subs = child_query.limit(101).all()
+        res["subtasks"] = [serialize_task(st) for st in subs[:100]]
+        res["subtasks_has_more"] = len(subs) > 100
     return res
 
 @app.get("/api/tasks")
@@ -2741,17 +2744,17 @@ def toggle_task(
     if getattr(task, "parent_id", None):
         parent = db.query(Task).filter(Task.id == task.parent_id, tenant_filter(Task, current_user)).first()
         if parent:
-            all_subs = db.query(Task).filter(Task.parent_id == parent.id, tenant_filter(Task, current_user)).all()
-            if all(s.status == "completed" for s in all_subs):
-                parent.status = "completed"
-            else:
-                parent.status = "pending"
-                
-    # If this task is a parent task, toggle all child subtasks to match
-    subs = db.query(Task).filter(Task.parent_id == task.id, tenant_filter(Task, current_user)).all()
-    if subs:
-        for s in subs:
-            s.status = new_status
+            incomplete_subtasks = db.query(func.count(Task.id)).filter(
+                Task.parent_id == parent.id,
+                Task.status != "completed",
+                tenant_filter(Task, current_user)
+            ).scalar() or 0
+            parent.status = "pending" if incomplete_subtasks else "completed"
+
+    # Bulk-update child rows in PostgreSQL; do not hydrate an arbitrarily large tree.
+    db.query(Task).filter(
+        Task.parent_id == task.id, tenant_filter(Task, current_user)
+    ).update({"status": new_status}, synchronize_session=False)
 
     db.commit()
     db.refresh(task)
