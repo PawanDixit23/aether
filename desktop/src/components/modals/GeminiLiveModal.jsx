@@ -431,6 +431,7 @@ export default function GeminiLiveModal({
       try { recognitionRef.current.abort(); } catch (e) {}
     }
 
+    let liveTimeoutId = null;
     try {
       const cleanBase = (apiBase || '').replace(/\/+$/, '');
       const chatEndpoint = cleanBase.endsWith('/api') ? `${cleanBase}/chat` : (cleanBase ? `${cleanBase}/api/chat` : '/api/chat');
@@ -443,7 +444,7 @@ export default function GeminiLiveModal({
 
       let data = null;
       const liveAbortController = new AbortController();
-      const liveTimeoutId = setTimeout(() => {
+      liveTimeoutId = setTimeout(() => {
         try { liveAbortController.abort('timeout'); } catch (e) {}
       }, 180000); // 3-minute (180s) watchdog
 
