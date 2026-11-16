@@ -44,6 +44,8 @@ export const DashboardView = ({
   onClose,
   onToggleTask,
   onPlayBriefing,
+  onRefreshWeather,
+  weatherLoading = false,
   setAgendaFilter,
   setRemindersViewMode
 }) => {
@@ -268,7 +270,7 @@ export const DashboardView = ({
     >
       
       {/* 1. GREETING & DATE HEADLINE */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', paddingTop: '4px', gap: '12px' }}>
+      <div className="dashboard-greeting" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', paddingTop: '4px', gap: '12px' }}>
         <div>
           <h1 style={{ fontSize: '1.32rem', fontWeight: 700, color: '#ffffff', margin: '0 0 4px 0', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span>{getGreeting()}, {userName || 'Pawan Dixit'}</span>
@@ -310,7 +312,7 @@ export const DashboardView = ({
       </div>
 
       {/* 2. CENTER ORB (Refined Human-Crafted Pulse Sphere) */}
-      <div style={{ position: 'relative', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', margin: '6px 0 14px' }}>
+      <div className="dashboard-orb-section" style={{ position: 'relative', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', margin: '6px 0 14px' }}>
         
         <div 
           onClick={() => {
@@ -460,7 +462,7 @@ export const DashboardView = ({
       </div>
 
       {/* 3. QUICK ACTION CARDS (4 Columns) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '10px' }}>
+      <div className="dashboard-quick-actions" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '10px' }}>
         
         {/* Card 1: Add Task */}
         <button
@@ -573,64 +575,86 @@ export const DashboardView = ({
         </div>
       </div>
 
-      {/* 4. PROMINENT LIVE WEATHER CARD (Fully Visible & High Contrast) */}
-      <div 
-        onClick={() => {
-          if (setActiveSubModal) setActiveSubModal('permissions');
-        }}
-        title="Tap to manage Location & Weather settings"
+      {/* Live weather: placed directly below the greeting so it is visible without hunting. */}
+      <section
+        className="dashboard-weather-card"
+        aria-label="Live weather"
+        onClick={() => setActiveSubModal?.('permissions')}
         style={{
-          background: 'linear-gradient(135deg, rgba(14, 165, 233, 0.14) 0%, rgba(30, 58, 138, 0.28) 100%)',
-          border: '1px solid rgba(56, 189, 248, 0.3)',
-          borderRadius: '18px',
-          padding: '11px 14px',
-          marginBottom: '10px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          gap: '12px',
-          boxShadow: '0 4px 16px rgba(0, 0, 0, 0.25)',
+          gap: '14px',
+          padding: '16px 18px',
+          margin: '4px 0 18px',
+          borderRadius: '18px',
+          background: '#111b27',
+          border: '1px solid rgba(226,232,240,.10)',
           cursor: 'pointer',
-          transition: 'all 0.15s ease'
+          minWidth: 0
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: 1 }}>
           <div style={{
-            width: '40px',
-            height: '40px',
-            borderRadius: '12px',
-            background: 'rgba(56, 189, 248, 0.2)',
-            border: '1px solid rgba(56, 189, 248, 0.35)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '1.35rem',
-            flexShrink: 0
+            width: '44px', height: '44px', borderRadius: '14px', flexShrink: 0,
+            display: 'grid', placeItems: 'center',
+            background: 'rgba(99,199,216,.12)', color: '#78d2df', fontSize: '1.35rem'
           }}>
-            {weatherTemp.includes('-') || parseInt(weatherTemp) < 15 ? '❄️' : (parseInt(weatherTemp) > 28 ? '☀️' : '⛅')}
+            {weatherUnavailable ? '☁️' : (weatherTemp.includes('-') || parseInt(weatherTemp, 10) < 15 ? '❄️' : (parseInt(weatherTemp, 10) > 28 ? '☀️' : '⛅'))}
           </div>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.74rem', color: '#94a3b8' }}>
-              <MapPin size={12} color="#38bdf8" />
-              <span style={{ fontWeight: 600, color: '#f1f5f9', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+              <MapPin size={13} color="#78d2df" />
+              <span style={{ color: '#eef3f8', fontSize: '.88rem', fontWeight: 650, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {weatherCity}
               </span>
+              {!weatherUnavailable && !weatherData?.is_stale && (
+                <span style={{ color: '#70c9a4', fontSize: '.65rem', fontWeight: 600, flexShrink: 0 }}>LIVE</span>
+              )}
+              {weatherData?.is_stale && (
+                <span style={{ color: '#d8b56b', fontSize: '.65rem', fontWeight: 600, flexShrink: 0 }}>LAST UPDATE</span>
+              )}
             </div>
-            <div style={{ fontSize: '0.76rem', color: '#7dd3fc', fontWeight: 500, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {weatherDesc}
+            <div style={{ color: '#9aa8b8', fontSize: '.76rem', marginTop: '4px', lineHeight: 1.4 }}>
+              {weatherUnavailable ? (weatherLoading ? 'Fetching current conditions…' : weatherDesc) : weatherDesc}
             </div>
+            {!weatherUnavailable && (weatherData?.today_high != null || weatherData?.today_low != null) && (
+              <div style={{ color: '#8190a2', fontSize: '.70rem', marginTop: '4px' }}>
+                H: {weatherData?.today_high ?? '—'}° · L: {weatherData?.today_low ?? '—'}°
+              </div>
+            )}
           </div>
         </div>
-
-        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#ffffff', lineHeight: 1 }}>
-            {weatherTemp}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ color: '#f3f6fa', fontSize: '1.55rem', fontWeight: 700, lineHeight: 1.1 }}>
+              {weatherTemp}
+            </div>
+            <div style={{ color: '#9aa8b8', fontSize: '.68rem', marginTop: '5px', whiteSpace: 'nowrap' }}>
+              💧 {weatherHumidity} · 💨 {weatherWind}
+            </div>
           </div>
-          <div style={{ fontSize: '0.66rem', color: '#94a3b8', marginTop: '3px' }}>
-            💧 {weatherHumidity} • 💨 {weatherWind}
-          </div>
+          <button
+            type="button"
+            aria-label="Refresh weather"
+            title="Refresh live weather"
+            disabled={weatherLoading}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRefreshWeather?.();
+            }}
+            style={{
+              width: '34px', height: '34px', borderRadius: '11px',
+              border: '1px solid rgba(226,232,240,.12)',
+              background: 'rgba(255,255,255,.035)', color: '#a9bac9',
+              display: 'grid', placeItems: 'center', cursor: weatherLoading ? 'wait' : 'pointer',
+              opacity: weatherLoading ? .55 : 1
+            }}
+          >
+            <span style={{ display: 'inline-block', animation: weatherLoading ? 'spinSlow 1s linear infinite' : 'none' }}>↻</span>
+          </button>
         </div>
-      </div>
+      </section>
 
       {/* 4.5 LOCAL CITY EXPLORER & DISCOVERY GUIDE */}
       {cityGuide && (
