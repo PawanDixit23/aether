@@ -1,5 +1,7 @@
 import os
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, event
+from sqlalchemy.orm import Session
+from fastapi import Request
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -41,8 +43,57 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
-def get_db():
+@event.listens_for(Session, "after_begin")
+def apply_tenant_context(session, transaction, connection):
+    """Apply request identity as transaction-local PostgreSQL RLS context."""
+    if connection.dialect.name != "postgresql":
+        return
+    user_id = session.info.get("tenant_user_id") or ""
+    user_email = session.info.get("tenant_user_email") or ""
+    is_worker = "true" if session.info.get("is_worker") else "false"
+    is_owner = "true" if session.info.get("is_owner") else "false"
+    is_webhook_service = "true" if session.info.get("is_webhook_service") else "false"
+    connection.execute(
+        text(
+            "SELECT set_config('app.current_user_id', :user_id, true), "
+            "set_config('app.current_user_email', :user_email, true), "
+            "set_config('app.is_worker', :is_worker, true), "
+            "set_config('app.is_owner', :is_owner, true), "
+            "set_config('app.is_webhook_service', :is_webhook_service, true)"
+        ),
+        {
+            "user_id": user_id,
+            "user_email": user_email,
+            "is_worker": is_worker,
+            "is_owner": is_owner,
+            "is_webhook_service": is_webhook_service,
+        },
+    )
+
+
+@event.listens_for(Session, "before_flush")
+def assign_owner_user_id(session, flush_context, instances):
+    """Stamp newly-created tenant rows with the verified Supabase UUID."""
+    user_id = session.info.get("tenant_user_id")
+    if not user_id:
+        return
+    for obj in session.new:
+        if hasattr(obj, "owner_user_id") and getattr(obj, "owner_user_id", None) is None:
+            obj.owner_user_id = user_id
+
+
+def get_db(request: Request = None):
     db = SessionLocal()
+    if request is not None:
+        user_id = getattr(request.state, "user_id", None)
+        user_email = getattr(request.state, "user_email", None)
+        if user_id and user_email:
+            db.info["tenant_user_id"] = user_id
+            db.info["tenant_user_email"] = user_email
+            owner_email = os.environ.get("DEFAULT_USER_EMAIL", "e.pawandixit@gmail.com").strip().lower()
+            db.info["is_owner"] = user_email.strip().lower() == owner_email
+        if getattr(request.state, "is_worker", False):
+            db.info["is_worker"] = True
     try:
         yield db
     finally:
@@ -72,3 +123,35 @@ def ensure_schema_migrations():
                 pass
     except Exception as e:
         print(f"[Schema Migration Note] {e}")
+
+
+def set_tenant_context(db: Session, user_email: str, user_id: str = None):
+    """Bind a verified or provider-paired tenant to the current and next DB transactions."""
+    normalized_email = (user_email or "").strip().lower()
+    if not normalized_email:
+        raise ValueError("Tenant email is required")
+    db.info["tenant_user_email"] = normalized_email
+    if user_id:
+        db.info["tenant_user_id"] = user_id
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db.execute(
+            text(
+                "SELECT set_config('app.current_user_email', :email, true), "
+                "set_config('app.current_user_id', :user_id, true)"
+            ),
+            {"email": normalized_email, "user_id": user_id or ""},
+        )
+
+
+def set_worker_context(db: Session):
+    """Grant cross-tenant access only to the internal reminder worker."""
+    db.info["is_worker"] = True
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db.execute(text("SELECT set_config('app.is_worker', 'true', true)"))
+
+
+def set_webhook_service_context(db: Session):
+    """Enable pairing lookup only after the route has verified the provider signature."""
+    db.info["is_webhook_service"] = True
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db.execute(text("SELECT set_config('app.is_webhook_service', 'true', true)"))

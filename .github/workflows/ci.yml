@@ -10,6 +10,20 @@ jobs:
   backend-tests:
     name: 🐍 Backend Test Suite & Linting
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aether_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aether_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout Code
@@ -33,11 +47,29 @@ jobs:
           alembic upgrade head || python -c "from database import engine, Base; import models; Base.metadata.create_all(bind=engine)"
           cd ..
           python tests/test_agent_orchestrator.py
+          python tests/test_auth_security.py
+          python tests/test_webhook_auth.py
+
+      - name: PostgreSQL RLS Tests (non-superuser runtime role)
+        run: |
+          cd server
+          PG_ADMIN_URL="postgresql+psycopg2://postgres:postgres@localhost:5432/aether_test"
+          DATABASE_URL="$PG_ADMIN_URL" alembic upgrade head
+          PGPASSWORD=postgres psql -h localhost -U postgres -d aether_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE aether_app_runtime LOGIN PASSWORD 'test-only-runtime'
+            NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+          GRANT CONNECT ON DATABASE aether_test TO aether_app_runtime;
+          GRANT USAGE ON SCHEMA public TO aether_app_runtime;
+          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO aether_app_runtime;
+          GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO aether_app_runtime;
+          SQL
+          DATABASE_URL="postgresql+psycopg2://aether_app_runtime:test-only-runtime@localhost:5432/aether_test" \
+            python ../tests/test_postgres_rls.py
 
       - name: Verify Alembic Migrations
         run: |
           cd server
-          alembic check || echo "Alembic schema verified"
+          alembic check
 
   frontend-build:
     name: ⚛️ Frontend Build & Asset Verification

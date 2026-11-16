@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { authenticatedFetch } from '../../supabase';
 import { 
   Wallet, 
   Plus, 
@@ -130,7 +131,7 @@ export const FinanceModal = ({
     setIsParsingSms(true);
     setParsedSmsResult(null);
     try {
-      const resp = await fetch(`${API_BASE}/finance/parse-sms`, {
+      const resp = await authenticatedFetch(`${API_BASE}/finance/parse-sms`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1625,7 +1626,7 @@ export const FinanceModal = ({
                   return;
                 }
                 try {
-                  const resp = await fetch(`${API_BASE}/action/quick-capture`, {
+                  const resp = await authenticatedFetch(`${API_BASE}/action/quick-capture`, {
                     method: 'POST',
                     headers: {
                       'Content-Type': 'application/json',

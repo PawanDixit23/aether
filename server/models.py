@@ -11,6 +11,7 @@ class Task(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String(36), nullable=True, index=True)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     priority = Column(String, default="medium")  # low, medium, high, urgent
@@ -27,6 +28,7 @@ class FinancialRecord(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String(36), nullable=True, index=True)
     type = Column(String, nullable=False)        # expense, income, emi, investment
     category = Column(String, default="general") # food, rent, fuel, client, etc.
     amount = Column(Float, nullable=False)
@@ -40,6 +42,7 @@ class MemoryItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String(36), nullable=True, index=True)
     category = Column(String, default="general") # preference, personal_rule, contact, context
     fact = Column(Text, nullable=False)
     confidence = Column(Float, default=1.0)
@@ -51,6 +54,7 @@ class AuditLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String(36), nullable=True, index=True)
     action_type = Column(String, nullable=False) # create_task, log_expense, etc.
     details = Column(Text, nullable=False)
     confidence_score = Column(Float, default=1.0)
@@ -63,6 +67,7 @@ class ChatMessage(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String(36), nullable=True, index=True)
     role = Column(String, nullable=False)        # "user" or "aether"
     content = Column(Text, nullable=False)
     action_type = Column(String, default="query")# "task", "expense", "income", "memory", "query"
@@ -74,6 +79,7 @@ class PushSubscription(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=False)
+    owner_user_id = Column(String(36), nullable=True, index=True)
     endpoint = Column(Text, nullable=False)
     p256dh = Column(Text, nullable=False)
     auth = Column(Text, nullable=False)
@@ -84,6 +90,7 @@ class ScheduledJob(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
+    owner_user_id = Column(String(36), nullable=True, index=True)
     job_type = Column(String, nullable=False)   # e.g. "reminder", "task_notify", "whatsapp_digest"
     payload = Column(Text, nullable=True)       # JSON string
     scheduled_at = Column(DateTime, nullable=False)

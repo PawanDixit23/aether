@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import hmac
 
 # Ensure server module directory is in sys.path regardless of execution root
 _SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -14,11 +15,11 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import FastAPI, Depends, HTTPException, Header, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 import httpx
 import re
 import traceback
@@ -69,16 +70,16 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
 # ──────────────────────────────────────────────────────────────────────────────
 
 try:
-    from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
+    from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_tenant_context, set_worker_context, set_webhook_service_context
     from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
     from ai_engine import parse_intent_with_llm
 except ImportError:
     try:
-        from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
+        from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_tenant_context, set_worker_context, set_webhook_service_context
         from server.models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
         from server.ai_engine import parse_intent_with_llm
     except ImportError:
-        from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
+        from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_tenant_context, set_worker_context, set_webhook_service_context
         from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
         from .ai_engine import parse_intent_with_llm
 
@@ -87,6 +88,75 @@ Base.metadata.create_all(bind=engine)
 ensure_schema_migrations()
 
 app = FastAPI(title="Aether Executive Core", version="0.1.0")
+
+@app.on_event("startup")
+def enforce_postgres_runtime_role():
+    """Refuse PostgreSQL superuser/BYPASSRLS connections in the API runtime."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.connect() as connection:
+        role_flags = connection.execute(
+            text(
+                "SELECT rolsuper, rolbypassrls "
+                "FROM pg_roles WHERE rolname = current_user"
+            )
+        ).first()
+    if role_flags is None or bool(role_flags[0]) or bool(role_flags[1]):
+        raise RuntimeError(
+            "Aether API must use a PostgreSQL runtime role with NOSUPERUSER and NOBYPASSRLS"
+        )
+
+try:
+    from auth import verify_supabase_access_token, verify_telegram_webhook_request, verify_meta_whatsapp_webhook_request, verify_twilio_webhook_request
+except ImportError:
+    from .auth import verify_supabase_access_token, verify_telegram_webhook_request, verify_meta_whatsapp_webhook_request, verify_twilio_webhook_request
+
+_PUBLIC_API_PATHS = {
+    "/api/health", "/api/metrics", "/api/news", "/api/cricket/live",
+    "/api/location/detect", "/api/translate", "/api/auth/validate-key",
+    "/api/push/vapid-public-key",
+}
+_PUBLIC_API_PREFIXES = ("/api/cricket/match/",)
+_PROVIDER_WEBHOOK_PATHS = {
+    "/api/telegram/webhook", "/api/whatsapp/webhook", "/api/whatsapp/twilio",
+}
+
+@app.middleware("http")
+async def verified_identity_middleware(request: Request, call_next):
+    path = request.url.path
+    is_api = path.startswith("/api/")
+    is_public = (
+        path in _PUBLIC_API_PATHS
+        or path in _PROVIDER_WEBHOOK_PATHS
+        or any(path.startswith(prefix) for prefix in _PUBLIC_API_PREFIXES)
+    )
+    if is_api and not is_public:
+        authorization = request.headers.get("Authorization", "")
+        scheme, _, token = authorization.partition(" ")
+
+        # The global reminder worker is authenticated with a dedicated secret,
+        # never with a spoofable X-GitHub-Actions header or a user email.
+        if path == "/api/reminders/push-check":
+            expected_worker_token = os.environ.get("AETHER_WORKER_TOKEN", "").strip()
+            if not expected_worker_token:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=503, content={"detail": "Reminder worker authentication is not configured"})
+            if scheme.lower() != "bearer" or not hmac.compare_digest(token.strip(), expected_worker_token):
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=401, content={"detail": "Invalid worker credentials"})
+            request.state.is_worker = True
+        else:
+            if scheme.lower() != "bearer" or not token.strip():
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=401, content={"detail": "Bearer authentication required"})
+            try:
+                identity = await verify_supabase_access_token(token.strip())
+            except HTTPException as exc:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+            request.state.user_id = identity["id"]
+            request.state.user_email = identity["email"]
+    return await call_next(request)
 
 # Enable CORS for local desktop & web apps
 app.add_middleware(
@@ -148,14 +218,12 @@ def get_system_metrics():
 # In-memory deduplication cache for WhatsApp incoming webhooks (prevents duplicate replies)
 PROCESSED_WABA_MSG_IDS = set()
 
-def get_user_email(
-    x_user_email: Optional[str] = Header(None, alias="X-User-Email"),
-    user_email: Optional[str] = None
-) -> Optional[str]:
-    email = x_user_email or user_email
-    if email and email.strip():
-        return email.strip().lower()
-    return None
+def get_user_email(request: Request) -> str:
+    """Return only the identity verified by Supabase Auth middleware."""
+    email = getattr(request.state, "user_email", None)
+    if not email:
+        raise HTTPException(status_code=401, detail="Authenticated user required")
+    return email
 
 DEFAULT_OWNER_EMAIL = os.environ.get("DEFAULT_USER_EMAIL", "e.pawandixit@gmail.com").strip().lower()
 
@@ -349,17 +417,19 @@ async def validate_gemini_key(req: KeyValidationRequest):
         return {"valid": False, "error": str(e)}
 
 @app.post("/api/auth/record-login")
-def record_user_login(req: AuthRecordRequest, db: Session = Depends(get_db)):
+def record_user_login(req: AuthRecordRequest, request: Request, db: Session = Depends(get_db)):
     """Log user authentication in local audit log and claim legacy unassigned tenant data."""
-    email = req.email.strip().lower()
+    email = request.state.user_email
+    if req.email.strip().lower() != email:
+        raise HTTPException(status_code=403, detail="Authenticated email does not match login event")
     try:
         # Migrate any previously unassigned records ONLY if primary environment owner
         if is_owner_email(email):
-            db.query(Task).filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai")).update({Task.user_email: email})
-            db.query(FinancialRecord).filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == "") | (FinancialRecord.user_email == "operator@aether.ai")).update({FinancialRecord.user_email: email})
-            db.query(MemoryItem).filter((MemoryItem.user_email == None) | (MemoryItem.user_email == "") | (MemoryItem.user_email == "operator@aether.ai")).update({MemoryItem.user_email: email})
-            db.query(ChatMessage).filter((ChatMessage.user_email == None) | (ChatMessage.user_email == "") | (ChatMessage.user_email == "operator@aether.ai")).update({ChatMessage.user_email: email})
-            db.query(AuditLog).filter((AuditLog.user_email == None) | (AuditLog.user_email == "") | (AuditLog.user_email == "operator@aether.ai")).update({AuditLog.user_email: email})
+            db.query(Task).filter((Task.user_email == None) | (Task.user_email == "") | (Task.user_email == "operator@aether.ai")).update({Task.user_email: email, Task.owner_user_id: request.state.user_id})
+            db.query(FinancialRecord).filter((FinancialRecord.user_email == None) | (FinancialRecord.user_email == "") | (FinancialRecord.user_email == "operator@aether.ai")).update({FinancialRecord.user_email: email, FinancialRecord.owner_user_id: request.state.user_id})
+            db.query(MemoryItem).filter((MemoryItem.user_email == None) | (MemoryItem.user_email == "") | (MemoryItem.user_email == "operator@aether.ai")).update({MemoryItem.user_email: email, MemoryItem.owner_user_id: request.state.user_id})
+            db.query(ChatMessage).filter((ChatMessage.user_email == None) | (ChatMessage.user_email == "") | (ChatMessage.user_email == "operator@aether.ai")).update({ChatMessage.user_email: email, ChatMessage.owner_user_id: request.state.user_id})
+            db.query(AuditLog).filter((AuditLog.user_email == None) | (AuditLog.user_email == "") | (AuditLog.user_email == "operator@aether.ai")).update({AuditLog.user_email: email, AuditLog.owner_user_id: request.state.user_id})
             db.commit()
     except Exception as e:
         print(f"[Record Login Auto-claim Note] {e}")
@@ -379,9 +449,9 @@ def record_user_login(req: AuthRecordRequest, db: Session = Depends(get_db)):
 
 # ----------------- Client Sync & Resilience Engine -----------------
 @app.post("/api/sync/backup")
-def client_backup_sync(req: ClientSyncBackup, db: Session = Depends(get_db)):
+def client_backup_sync(req: ClientSyncBackup, request: Request, db: Session = Depends(get_db)):
     """Intelligently restore and merge client persistent cache into the database with zero duplication."""
-    email = req.user_email.strip().lower()
+    email = request.state.user_email
     if not email:
         return {"status": "skipped", "message": "No email provided"}
     
@@ -488,7 +558,7 @@ async def run_agent_workflow(
     and reversible audit logging as defined in AETHER_RECOMMENDED_ARCHITECTURE.md
     """
     from agent import AgentOrchestrator
-    eff_email = req.user_email or user_email or "operator@aether.local"
+    eff_email = user_email or "operator@aether.local"
     orchestrator = AgentOrchestrator(db=db, user_email=eff_email, lang=req.language or "auto")
     result_state = await orchestrator.run(req.prompt)
     return {
@@ -518,7 +588,7 @@ def create_calendar_event(
 ):
     """Creates a Google Calendar event and returns direct integration template links."""
     from calendar_sync import GoogleCalendarService
-    eff_email = req.user_email or user_email or "operator@aether.local"
+    eff_email = user_email or "operator@aether.local"
     event_info = GoogleCalendarService.schedule_event(
         title=req.title,
         start_time_str=req.start_time_str,
@@ -598,7 +668,7 @@ async def _execute_quick_capture(
     if not user_msg and req.image_data:
         user_msg = "कृपया इस फ़ोटो का विश्लेषण करें (यदि यह बिल/रसीद/खर्च है तो राशि और विवरण दर्ज करें, अन्यथा सामान्य जानकारी दें)।"
 
-    eff_email = (req.user_email or user_email or "").strip().lower() or None
+    eff_email = (user_email or "").strip().lower() or None
 
     # Security: Content Quarantine & Prompt Injection Sanitization (AETHER_SECURITY_REVIEW.md)
     _, is_suspicious = ContentQuarantine.sanitize_input(user_msg, source="user_quick_capture")
@@ -1998,7 +2068,7 @@ async def parse_and_log_bank_sms(
         from .ai_engine import parse_bank_sms
 
     raw_list = req.sms_list or ([req.sms_text] if req.sms_text else [])
-    eff_email = (req.user_email or user_email or "").strip().lower() or None
+    eff_email = (user_email or "").strip().lower() or None
     created_records = []
 
     for text in raw_list:
@@ -2107,7 +2177,7 @@ def create_memory(
     user_email: Optional[str] = Depends(get_user_email),
     db: Session = Depends(get_db)
 ):
-    eff_email = get_effective_email(req.user_email or user_email)
+    eff_email = get_effective_email(user_email)
     fact_str = (req.fact or "").strip()
     if not fact_str:
         raise HTTPException(status_code=400, detail="Empty fact")
@@ -2464,9 +2534,9 @@ def get_vapid_public_key():
     return {"publicKey": VAPID_PUBLIC_KEY}
 
 @app.post("/api/push/subscribe")
-def subscribe_push(req: PushSubscribeRequest, db: Session = Depends(get_db)):
+def subscribe_push(req: PushSubscribeRequest, request: Request, db: Session = Depends(get_db)):
     """Browser push subscription server पर store करें (Strict User Isolation)."""
-    email = (req.user_email or "").strip().lower()
+    email = request.state.user_email
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Valid user email required to register push subscription")
     if not req.subscription or not req.subscription.get("endpoint"):
@@ -2505,9 +2575,9 @@ def subscribe_push(req: PushSubscribeRequest, db: Session = Depends(get_db)):
     return {"status": "subscribed", "user": email, "total_subscriptions": len(_push_subscriptions[email])}
 
 @app.post("/api/push/test")
-def send_test_push(user_email: str, db: Session = Depends(get_db)):
+def send_test_push(request: Request, db: Session = Depends(get_db)):
     """Send an immediate test VAPID push notification strictly to the verified requesting user's devices."""
-    email = (user_email or "").strip().lower()
+    email = request.state.user_email
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Valid user email required for targeted test push")
     
@@ -2540,19 +2610,24 @@ def send_test_push(user_email: str, db: Session = Depends(get_db)):
     return {"status": "success", "sent": sent, "total": len(subs), "errors": errors}
 
 @app.delete("/api/push/subscribe")
-def unsubscribe_push(user_email: str, endpoint: str, db: Session = Depends(get_db)):
-    """Push subscription हटाएं (logout पर)।"""
-    email = user_email.strip().lower()
+def unsubscribe_push(request: Request, endpoint: str, db: Session = Depends(get_db)):
+    """Remove only the authenticated user's push subscription."""
+    email = request.state.user_email
     if email in _push_subscriptions:
         _push_subscriptions[email] = [
-            s for s in _push_subscriptions[email]
-            if s.get("endpoint") != endpoint
+            subscription for subscription in _push_subscriptions[email]
+            if subscription.get("endpoint") != endpoint
         ]
     try:
-        db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint).delete()
+        db.query(PushSubscription).filter(
+            PushSubscription.user_email == email,
+            PushSubscription.endpoint == endpoint,
+        ).delete()
         db.commit()
     except Exception as dbe:
+        db.rollback()
         print(f"[PushUnsubscribe DB Error] {dbe}")
+        raise HTTPException(status_code=500, detail="Unable to remove push subscription")
     return {"status": "unsubscribed"}
 
 class PushRefreshRequest(BaseModel):
@@ -2560,7 +2635,11 @@ class PushRefreshRequest(BaseModel):
     subscription: dict
 
 @app.post("/api/push/refresh-subscription")
-def refresh_push_subscription(req: PushRefreshRequest, db: Session = Depends(get_db)):
+def refresh_push_subscription(
+    req: PushRefreshRequest,
+    user_email: Optional[str] = Depends(get_user_email),
+    db: Session = Depends(get_db),
+):
     """Service Worker pushsubscriptionchange event से automatically new subscription update करें।"""
     sub_data = req.subscription
     new_endpoint = sub_data.get("endpoint", "")
@@ -2575,9 +2654,9 @@ def refresh_push_subscription(req: PushRefreshRequest, db: Session = Depends(get
     
     existing = None
     if old_endpoint:
-        existing = db.query(PushSubscription).filter(PushSubscription.endpoint == old_endpoint).first()
+        existing = db.query(PushSubscription).filter(PushSubscription.user_email == user_email, PushSubscription.endpoint == old_endpoint).first()
     if not existing:
-        existing = db.query(PushSubscription).filter(PushSubscription.endpoint == new_endpoint).first()
+        existing = db.query(PushSubscription).filter(PushSubscription.user_email == user_email, PushSubscription.endpoint == new_endpoint).first()
         
     if existing:
         email = existing.user_email
@@ -2763,6 +2842,7 @@ async def start_reminder_background_worker():
         while True:
             try:
                 db = SessionLocal()
+                set_worker_context(db)
                 try:
                     _run_push_check_internal(db)
                 finally:
@@ -2858,6 +2938,9 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
 @app.post("/api/telegram/webhook")
 async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
     """Receives and processes real-time Telegram messages from user to Aether."""
+    if not verify_telegram_webhook_request(req):
+        return JSONResponse(status_code=401, content={"detail": "Invalid Telegram webhook signature"})
+    set_webhook_service_context(db)
     try:
         data = await req.json()
         message = data.get("message") or data.get("edited_message")
@@ -2875,6 +2958,8 @@ async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
             MemoryItem.fact.like(f"{chat_id}:%")
         ).first()
         user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
+        if user_email:
+            set_tenant_context(db, user_email)
 
         bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
@@ -3013,7 +3098,7 @@ async def _send_whatsapp_message(to_number: str, message_body: str, phone_id: st
         print(f"[WhatsApp Outgoing Error] {e}")
 
 @app.get("/api/whatsapp/sync-waba")
-async def sync_whatsapp_waba(db: Session = Depends(get_db)):
+async def sync_whatsapp_waba(user_email: str = Depends(get_user_email), db: Session = Depends(get_db)):
     """Subscribes WABA to the app and sends a direct test ping."""
     token = os.environ.get("WHATSAPP_TOKEN", "").strip()
     phone_id = os.environ.get("WHATSAPP_PHONE_ID", "1432995866556035").strip()
@@ -3022,7 +3107,7 @@ async def sync_whatsapp_waba(db: Session = Depends(get_db)):
     
     # Pre-pair the user's phone with their account
     user_phone = "918741838653"
-    user_email = "e.pawandixit@gmail.com"
+    user_email = user_email.strip().lower()
     link_mem = db.query(MemoryItem).filter(
         MemoryItem.category == "whatsapp_pairing",
         MemoryItem.fact.like(f"{user_phone}:%")
@@ -3125,6 +3210,9 @@ def whatsapp_verify(request: Request):
 @app.post("/api/whatsapp/webhook")
 async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
     """Receives and processes incoming WhatsApp messages from Meta Cloud API."""
+    if not await verify_meta_whatsapp_webhook_request(req):
+        return JSONResponse(status_code=401, content={"detail": "Invalid Meta WhatsApp webhook signature"})
+    set_webhook_service_context(db)
     try:
         payload = await req.json()
         entry = payload.get("entry", [{}])[0]
@@ -3160,6 +3248,8 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             MemoryItem.fact.like(f"{sender}:%")
         ).first()
         user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
+        if user_email:
+            set_tenant_context(db, user_email)
 
         wa_token = os.environ.get("WHATSAPP_TOKEN", "").strip()
         wa_phone_id = os.environ.get("WHATSAPP_PHONE_ID", "").strip()
@@ -3184,6 +3274,7 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
                     f"Aether तुरंत आपके ऐप में सिंक कर देगा! 🚀"
                 )
                 try:
+                    set_tenant_context(db, target_email)
                     db.add(ChatMessage(user_email=target_email, role="user", content=f"📱 {user_text}", action_type="query"))
                     db.add(ChatMessage(user_email=target_email, role="aether", content=reply_text, action_type="query"))
                     db.commit()
@@ -3204,6 +3295,7 @@ async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
             operator_mem = db.query(MemoryItem).filter(MemoryItem.category == "whatsapp_pairing").first()
             operator_email = operator_mem.fact.split(":", 1)[1].strip() if operator_mem else "e.pawandixit@gmail.com"
             operator_phone = operator_mem.fact.split(":", 1)[0].strip() if operator_mem else None
+            set_tenant_context(db, operator_email)
             
             operator_context = build_context(db, user_email=operator_email)
             safe_context = {
@@ -3394,6 +3486,9 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
     """Receives and processes incoming WhatsApp messages from Twilio Sandbox."""
     try:
         form = await req.form()
+        if not verify_twilio_webhook_request(req, form):
+            return JSONResponse(status_code=401, content={"detail": "Invalid Twilio webhook signature"})
+        set_webhook_service_context(db)
         sender_full = form.get("From", "")  # e.g. "whatsapp:+919876543210"
         sender = sender_full.replace("whatsapp:", "").strip()
         body = form.get("Body", "").strip()
@@ -3403,6 +3498,8 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
             MemoryItem.fact.like(f"{sender}:%")
         ).first()
         user_email = link_mem.fact.split(":", 1)[1].strip() if link_mem else None
+        if user_email:
+            set_tenant_context(db, user_email)
 
         if body.lower().startswith("/login") or ("@" in body and len(body.split()) == 1):
             target_email = body.split()[-1].strip().lower()
@@ -3415,6 +3512,7 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
         elif not user_email:
             operator_mem = db.query(MemoryItem).filter(MemoryItem.category == "whatsapp_pairing").first()
             operator_email = operator_mem.fact.split(":", 1)[1].strip() if operator_mem else "e.pawandixit@gmail.com"
+            set_tenant_context(db, operator_email)
             operator_context = build_context(db, user_email=operator_email)
             safe_context = {
                 "tasks": operator_context.get("tasks", []),
@@ -3481,7 +3579,6 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
                 reply = data_inner.get("response", "Done.")
 
         twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{reply}</Message></Response>'
-        from fastapi.responses import Response
         return Response(content=twiml, media_type="application/xml")
     except Exception as e:
         print(f"[Twilio WA Error] {e}")
