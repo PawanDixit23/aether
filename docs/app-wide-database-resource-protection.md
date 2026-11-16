@@ -100,7 +100,7 @@ The cross-tenant reminder worker is a privileged maintenance principal and must 
 
 ## Startup migration ledger and egress-safe projections
 
-- Startup schema/bootstrap work is guarded by a version row in `aether_schema_migrations`; PostgreSQL instances serialize the first application of a version with a session advisory lock.
+- Startup schema/bootstrap work is guarded by a version row in `aether_schema_migrations`; PostgreSQL instances serialize the first application of a version with a transaction-scoped advisory lock held in an open transaction. This is compatible with Supavisor/PgBouncer transaction pooling and avoids leaking a session-level lock across pooled backend connections.
 - The migration version is written only after the migration function returns successfully. A failed migration must leave the version unapplied so the next deployment can retry.
 - The migration ledger is revoked from Supabase API roles. The SQLite development path uses an unqualified local ledger table.
 - The `ADD COLUMN` parser explicitly recognizes both plain and PostgreSQL `ADD COLUMN IF NOT EXISTS` syntax and compares the parsed column against inspected schema metadata before executing DDL.
