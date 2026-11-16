@@ -3484,12 +3484,11 @@ def create_finance_record(
     budget_alert = None
     if rec_type == "expense" and req.monthly_budget and req.monthly_budget > 0:
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        month_expenses = db.query(FinancialRecord).filter(
+        total_spent = float(db.query(func.coalesce(func.sum(FinancialRecord.amount), 0.0)).filter(
             tenant_filter(FinancialRecord, current_user),
             FinancialRecord.type == "expense",
             FinancialRecord.date >= month_start
-        ).all()
-        total_spent = sum(round_currency(r.amount) for r in month_expenses)
+        ).scalar() or 0.0)
         pct = round((total_spent / float(req.monthly_budget)) * 100.0, 1)
         if pct >= 100.0:
             budget_alert = f"Alert: You have exhausted {pct}% of your monthly budget (₹{total_spent:,.0f} / ₹{req.monthly_budget:,.0f})"
