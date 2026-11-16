@@ -429,6 +429,7 @@ def ensure_schema_migrations():
     is_pg = "postgres" in str(engine.url).lower()
     lock_connection = engine.connect()
     lock_acquired = False
+    ledger_table = "public.aether_schema_migrations" if is_pg else "aether_schema_migrations"
     try:
         if is_pg:
             # The connection-level defaults bound normal application queries. A
@@ -445,8 +446,8 @@ def ensure_schema_migrations():
         # Keep the migration ledger out of the Supabase Data API for anon/authenticated clients.
         with engine.begin() as conn:
             conn.exec_driver_sql(
-                """
-                CREATE TABLE IF NOT EXISTS public.aether_schema_migrations (
+                f"""
+                CREATE TABLE IF NOT EXISTS {ledger_table} (
                     version VARCHAR(64) PRIMARY KEY,
                     applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
@@ -462,7 +463,7 @@ def ensure_schema_migrations():
 
         with engine.connect() as conn:
             already_applied = conn.execute(
-                text("SELECT 1 FROM public.aether_schema_migrations WHERE version = :version"),
+                text(f"SELECT 1 FROM {ledger_table} WHERE version = :version"),
                 {"version": SCHEMA_MIGRATION_VERSION},
             ).first()
 
@@ -476,7 +477,7 @@ def ensure_schema_migrations():
         with engine.begin() as conn:
             conn.execute(
                 text(
-                    "INSERT INTO public.aether_schema_migrations (version) VALUES (:version) "
+                    f"INSERT INTO {ledger_table} (version) VALUES (:version) "
                     "ON CONFLICT (version) DO NOTHING"
                 ),
                 {"version": SCHEMA_MIGRATION_VERSION},
