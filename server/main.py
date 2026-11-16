@@ -1462,7 +1462,7 @@ async def _execute_quick_capture(
             if clean_res and len(clean_res) > 3:
                 result_message = clean_res
             else:
-                result_message = fallback_greeting
+                result_message = "" if req.live_voice else fallback_greeting
             data["response"] = result_message
         executed = True
         
