@@ -5020,11 +5020,11 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
         print(f"[WhatsApp Digest Cron Notice] {e_dig}")
     
     return {
-        "status": "ok",
+        "status": result.get("status", "ok"),
         "checked_users": len(_push_subscriptions),
-        "pushed_count": pushed_count,
-        "errors": errors,
-        "timestamp": now.isoformat()
+        "pushed_count": int(result.get("pushed", 0) or 0),
+        "errors": result.get("errors", []),
+        "timestamp": (datetime.now(DEFAULT_TZ).isoformat() if DEFAULT_TZ else datetime.utcnow().isoformat())
     }
 
 # ----------------- Telegram Executive Bot Webhook -----------------
