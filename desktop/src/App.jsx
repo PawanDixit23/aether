@@ -9627,6 +9627,9 @@ export default function App() {
         isOpen={isChatDrawerOpen}
         onClose={() => setIsChatDrawerOpen(false)}
         sessions={chatSessions}
+        hasMoreSessions={chatSessionsHasMore}
+        onLoadMoreSessions={handleLoadMoreChatSessions}
+        isLoadingMoreSessions={chatSessionsLoadingMore}
         activeSessionId={activeSessionId}
         onSelectSession={handleSelectSession}
         onNewChat={handleStartNewChat}
