@@ -1051,7 +1051,7 @@ export const SettingsSubModals = ({
             }}
           >
             <div 
-              className="aether-edge-content-container aether-edge-modal-container"
+              className="aether-edge-content-container aether-edge-modal-container memory-vault-container"
               style={{ 
                 background: '#080f1d', 
                 border: isMobile ? 'none' : '1px solid rgba(255, 255, 255, 0.1)', 
@@ -1071,8 +1071,8 @@ export const SettingsSubModals = ({
                 gap: '12px'
               }}
             >
-              {/* Header: Clean Edge to Edge matching Finance Tab */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, gap: '10px' }}>
+              {/* Header: compact Memory Vault toolbar */}
+              <div className="memory-vault-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, gap: '10px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '10px', minWidth: 0, flex: 1 }}>
                   <div style={{ width: '38px', height: '38px', borderRadius: '12px', background: 'rgba(56, 189, 248, 0.14)', border: '1px solid rgba(56, 189, 248, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', flexShrink: 0 }}>
                     <Database size={19} />
@@ -1165,7 +1165,7 @@ export const SettingsSubModals = ({
               </div>
 
               {/* 1-Click Phone Contacts Sync Banner */}
-              <div style={{
+              <div className="memory-vault-sync" style={{
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
@@ -1264,7 +1264,7 @@ export const SettingsSubModals = ({
               />
 
               {/* Auto-Learn Status Banner */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
+              <div className="memory-vault-learning" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
                 <div>
                   <div style={{ fontSize: '0.80rem', fontWeight: 600, color: '#e2e8f0' }}>
                     Auto-Learn from Chat
@@ -1298,6 +1298,7 @@ export const SettingsSubModals = ({
 
               {/* Add Fact Form - Sleek Edge-to-Edge Single Row Container */}
               <form 
+                className="memory-vault-add-form"
                 onSubmit={handleDirectAddMemory} 
                 style={{ 
                   display: 'flex', 
@@ -1509,7 +1510,7 @@ export const SettingsSubModals = ({
               )}
 
               {/* Search & Filter Pills */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
+              <div className="memory-vault-search-filter" style={{ display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
                 <div style={{ 
                   display: 'flex', 
                   alignItems: 'center', 
@@ -1582,7 +1583,7 @@ export const SettingsSubModals = ({
               </div>
 
               {/* Memory List with Fixed Edit Form */}
-              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', minHeight: 0 }}>
+              <div className="memory-vault-list" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', minHeight: 0 }}>
                 {filteredMemories.length === 0 ? (
                   <div style={{ color: '#64748b', fontSize: '0.84rem', textAlign: 'center', padding: '36px 0' }}>
                     No matching memories found.
@@ -1596,6 +1597,7 @@ export const SettingsSubModals = ({
                     return (
                       <div 
                         key={mem.id} 
+                        className="memory-vault-item"
                         style={{ 
                           display: 'flex', 
                           flexDirection: 'column', 
