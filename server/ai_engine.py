@@ -229,96 +229,96 @@ def get_live_weather_data(lat: float = None, lon: float = None, city_name: str =
             }
 
         try:
-        params = urllib.parse.urlencode({
-            "latitude": use_lat,
-            "longitude": use_lon,
-            "current": "temperature_2m,apparent_temperature,relative_humidity_2m,is_day,precipitation,rain,showers,weather_code,wind_speed_10m,wind_direction_10m",
-            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset",
-            "forecast_days": 1,
-            "timezone": "auto"
-        })
-        req = urllib.request.Request(
-            f"https://api.open-meteo.com/v1/forecast?{params}",
-            headers={"User-Agent": "AetherAI/2.0"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"Open-Meteo returned HTTP {resp.status}")
-            payload = json.loads(resp.read().decode("utf-8"))
+            params = urllib.parse.urlencode({
+                "latitude": use_lat,
+                "longitude": use_lon,
+                "current": "temperature_2m,apparent_temperature,relative_humidity_2m,is_day,precipitation,rain,showers,weather_code,wind_speed_10m,wind_direction_10m",
+                "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset",
+                "forecast_days": 1,
+                "timezone": "auto"
+            })
+            req = urllib.request.Request(
+                f"https://api.open-meteo.com/v1/forecast?{params}",
+                headers={"User-Agent": "AetherAI/2.0"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"Open-Meteo returned HTTP {resp.status}")
+                payload = json.loads(resp.read().decode("utf-8"))
 
-        current = payload.get("current") or {}
-        daily = payload.get("daily") or {}
-        if current.get("temperature_2m") is None or current.get("weather_code") is None:
-            raise ValueError("Weather provider returned incomplete current conditions")
+            current = payload.get("current") or {}
+            daily = payload.get("daily") or {}
+            if current.get("temperature_2m") is None or current.get("weather_code") is None:
+                raise ValueError("Weather provider returned incomplete current conditions")
 
-        code = int(current.get("weather_code", 0))
-        conditions = {
-            0: ("☀️", "Clear sky", "आसमान साफ़ है"),
-            1: ("🌤️", "Mainly clear", "मुख्यतः साफ़"),
-            2: ("⛅", "Partly cloudy", "आंशिक बादल"),
-            3: ("☁️", "Overcast", "बादल छाए हुए हैं"),
-            45: ("🌫️", "Fog", "कोहरा"),
-            48: ("🌫️", "Depositing rime fog", "घना कोहरा"),
-            51: ("🌦️", "Light drizzle", "हल्की बूंदाबांदी"),
-            53: ("🌦️", "Moderate drizzle", "मध्यम बूंदाबांदी"),
-            55: ("🌧️", "Dense drizzle", "तेज़ बूंदाबांदी"),
-            56: ("🌧️", "Freezing drizzle", "जमने वाली बूंदाबांदी"),
-            57: ("🌧️", "Heavy freezing drizzle", "भारी जमने वाली बूंदाबांदी"),
-            61: ("🌧️", "Slight rain", "हल्की बारिश"),
-            63: ("🌧️", "Moderate rain", "मध्यम बारिश"),
-            65: ("🌧️", "Heavy rain", "तेज़ बारिश"),
-            66: ("🌧️", "Freezing rain", "जमने वाली बारिश"),
-            67: ("🌧️", "Heavy freezing rain", "भारी जमने वाली बारिश"),
-            71: ("🌨️", "Slight snow", "हल्की बर्फ़बारी"),
-            73: ("🌨️", "Moderate snow", "मध्यम बर्फ़बारी"),
-            75: ("❄️", "Heavy snow", "भारी बर्फ़बारी"),
-            77: ("🌨️", "Snow grains", "बर्फ़ के कण"),
-            80: ("🌦️", "Slight rain showers", "हल्की बौछारें"),
-            81: ("🌧️", "Moderate rain showers", "मध्यम बौछारें"),
-            82: ("⛈️", "Violent rain showers", "तेज़ बारिश की बौछारें"),
-            85: ("🌨️", "Slight snow showers", "हल्की बर्फ़ीली बौछारें"),
-            86: ("❄️", "Heavy snow showers", "भारी बर्फ़ीली बौछारें"),
-            95: ("⛈️", "Thunderstorm", "गरज के साथ तूफ़ान"),
-            96: ("⛈️", "Thunderstorm with hail", "ओलों के साथ तूफ़ान"),
-            99: ("⛈️", "Severe thunderstorm with hail", "ओलों के साथ तेज़ तूफ़ान")
-        }
-        icon, condition_en, condition_hi = conditions.get(code, ("🌡️", "Conditions unavailable", "मौसम की स्थिति उपलब्ध नहीं"))
-        def first_daily(key):
-            values = daily.get(key) or []
-            return values[0] if values else None
+            code = int(current.get("weather_code", 0))
+            conditions = {
+                0: ("☀️", "Clear sky", "आसमान साफ़ है"),
+                1: ("🌤️", "Mainly clear", "मुख्यतः साफ़"),
+                2: ("⛅", "Partly cloudy", "आंशिक बादल"),
+                3: ("☁️", "Overcast", "बादल छाए हुए हैं"),
+                45: ("🌫️", "Fog", "कोहरा"),
+                48: ("🌫️", "Depositing rime fog", "घना कोहरा"),
+                51: ("🌦️", "Light drizzle", "हल्की बूंदाबांदी"),
+                53: ("🌦️", "Moderate drizzle", "मध्यम बूंदाबांदी"),
+                55: ("🌧️", "Dense drizzle", "तेज़ बूंदाबांदी"),
+                56: ("🌧️", "Freezing drizzle", "जमने वाली बूंदाबांदी"),
+                57: ("🌧️", "Heavy freezing drizzle", "भारी जमने वाली बूंदाबांदी"),
+                61: ("🌧️", "Slight rain", "हल्की बारिश"),
+                63: ("🌧️", "Moderate rain", "मध्यम बारिश"),
+                65: ("🌧️", "Heavy rain", "तेज़ बारिश"),
+                66: ("🌧️", "Freezing rain", "जमने वाली बारिश"),
+                67: ("🌧️", "Heavy freezing rain", "भारी जमने वाली बारिश"),
+                71: ("🌨️", "Slight snow", "हल्की बर्फ़बारी"),
+                73: ("🌨️", "Moderate snow", "मध्यम बर्फ़बारी"),
+                75: ("❄️", "Heavy snow", "भारी बर्फ़बारी"),
+                77: ("🌨️", "Snow grains", "बर्फ़ के कण"),
+                80: ("🌦️", "Slight rain showers", "हल्की बौछारें"),
+                81: ("🌧️", "Moderate rain showers", "मध्यम बौछारें"),
+                82: ("⛈️", "Violent rain showers", "तेज़ बारिश की बौछारें"),
+                85: ("🌨️", "Slight snow showers", "हल्की बर्फ़ीली बौछारें"),
+                86: ("❄️", "Heavy snow showers", "भारी बर्फ़ीली बौछारें"),
+                95: ("⛈️", "Thunderstorm", "गरज के साथ तूफ़ान"),
+                96: ("⛈️", "Thunderstorm with hail", "ओलों के साथ तूफ़ान"),
+                99: ("⛈️", "Severe thunderstorm with hail", "ओलों के साथ तेज़ तूफ़ान")
+            }
+            icon, condition_en, condition_hi = conditions.get(code, ("🌡️", "Conditions unavailable", "मौसम की स्थिति उपलब्ध नहीं"))
+            def first_daily(key):
+                values = daily.get(key) or []
+                return values[0] if values else None
 
-        result = {
-            "status": "success",
-            "source": "Open-Meteo",
-            "updated_at": datetime.utcnow().isoformat() + "Z",
-            "is_stale": False,
-            "temp": round(float(current["temperature_2m"]), 1),
-            "feels_like": round(float(current.get("apparent_temperature", current["temperature_2m"])), 1),
-            "wind": f'{round(float(current.get("wind_speed_10m", 0)), 1)} km/h',
-            "wind_direction": current.get("wind_direction_10m"),
-            "humidity": f'{int(current.get("relative_humidity_2m", 0))}%',
-            "precipitation_mm": round(float(current.get("precipitation", 0)), 1),
-            "rain_mm": round(float(current.get("rain", 0)), 1),
-            "showers_mm": round(float(current.get("showers", 0)), 1),
-            "precipitation_probability": first_daily("precipitation_probability_max"),
-            "today_high": first_daily("temperature_2m_max"),
-            "today_low": first_daily("temperature_2m_min"),
-            "sunrise": first_daily("sunrise"),
-            "sunset": first_daily("sunset"),
-            "icon": icon,
-            "condition_en": condition_en,
-            "condition_hi": condition_hi,
-            "city": location_name or f"{use_lat:.3f}, {use_lon:.3f}",
-            "city_en": location_name or f"{use_lat:.3f}, {use_lon:.3f}",
-            "city_hi": location_name or f"{use_lat:.3f}, {use_lon:.3f}",
-            "city_hinglish": location_name or f"{use_lat:.3f}, {use_lon:.3f}"
-        }
-        if len(WEATHER_COORD_CACHE) >= 64:
-            oldest = min(WEATHER_COORD_CACHE, key=lambda key: WEATHER_COORD_CACHE[key]["timestamp"])
-            WEATHER_COORD_CACHE.pop(oldest, None)
-        WEATHER_COORD_CACHE[coord_key] = {"data": result, "timestamp": now_ts}
-        WEATHER_FAILURES.pop(coord_key, None)
-        return result
+            result = {
+                "status": "success",
+                "source": "Open-Meteo",
+                "updated_at": datetime.utcnow().isoformat() + "Z",
+                "is_stale": False,
+                "temp": round(float(current["temperature_2m"]), 1),
+                "feels_like": round(float(current.get("apparent_temperature", current["temperature_2m"])), 1),
+                "wind": f'{round(float(current.get("wind_speed_10m", 0)), 1)} km/h',
+                "wind_direction": current.get("wind_direction_10m"),
+                "humidity": f'{int(current.get("relative_humidity_2m", 0))}%',
+                "precipitation_mm": round(float(current.get("precipitation", 0)), 1),
+                "rain_mm": round(float(current.get("rain", 0)), 1),
+                "showers_mm": round(float(current.get("showers", 0)), 1),
+                "precipitation_probability": first_daily("precipitation_probability_max"),
+                "today_high": first_daily("temperature_2m_max"),
+                "today_low": first_daily("temperature_2m_min"),
+                "sunrise": first_daily("sunrise"),
+                "sunset": first_daily("sunset"),
+                "icon": icon,
+                "condition_en": condition_en,
+                "condition_hi": condition_hi,
+                "city": location_name or f"{use_lat:.3f}, {use_lon:.3f}",
+                "city_en": location_name or f"{use_lat:.3f}, {use_lon:.3f}",
+                "city_hi": location_name or f"{use_lat:.3f}, {use_lon:.3f}",
+                "city_hinglish": location_name or f"{use_lat:.3f}, {use_lon:.3f}"
+            }
+            if len(WEATHER_COORD_CACHE) >= 64:
+                oldest = min(WEATHER_COORD_CACHE, key=lambda key: WEATHER_COORD_CACHE[key]["timestamp"])
+                WEATHER_COORD_CACHE.pop(oldest, None)
+            WEATHER_COORD_CACHE[coord_key] = {"data": result, "timestamp": now_ts}
+            WEATHER_FAILURES.pop(coord_key, None)
+            return result
         except Exception as exc:
             error_text = str(exc)[:180]
             is_rate_limited = "429" in error_text or "Too Many Requests" in error_text
