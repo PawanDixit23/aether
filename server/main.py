@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from data_access import bounded_page, chunks, validate_sync_count, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, SYNC_BATCH_SIZE
 import httpx
@@ -2363,7 +2363,12 @@ def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = Non
 
         now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
         today = now.date()
-        query = db.query(Task).filter(Task.recurrence != None, Task.owner_user_id == str(owner_user_id).strip())
+        query = db.query(Task).filter(
+            Task.recurrence != None,
+            Task.owner_user_id == str(owner_user_id).strip(),
+            Task.status != "completed",
+            or_(Task.due_date == None, Task.due_date < now)
+        )
         rec_tasks = query.order_by(Task.id.asc()).limit(500).all()
         updated = False
         for dt in rec_tasks:
@@ -2722,14 +2727,14 @@ def toggle_task(
     if getattr(task, "parent_id", None):
         parent = db.query(Task).filter(Task.id == task.parent_id, tenant_filter(Task, current_user)).first()
         if parent:
-            all_subs = db.query(Task).filter(Task.parent_id == parent.id, tenant_filter(Task, current_user)).all()
+            all_subs = db.query(Task).filter(Task.parent_id == parent.id, tenant_filter(Task, current_user)).limit(500).all()
             if all(s.status == "completed" for s in all_subs):
                 parent.status = "completed"
             else:
                 parent.status = "pending"
                 
     # If this task is a parent task, toggle all child subtasks to match
-    subs = db.query(Task).filter(Task.parent_id == task.id, tenant_filter(Task, current_user)).all()
+    subs = db.query(Task).filter(Task.parent_id == task.id, tenant_filter(Task, current_user)).limit(500).all()
     if subs:
         for s in subs:
             s.status = new_status
@@ -2932,7 +2937,7 @@ def reschedule_all_overdue(
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     today = now.date()
     query = db.query(Task).filter(tenant_filter(Task, current_user), Task.status == "pending", Task.recurrence == None, Task.due_date != None)
-    tasks = query.all()
+    tasks = query.order_by(Task.id.asc()).limit(500).all()
     count = 0
     for t in tasks:
         dt = t.due_date
@@ -3289,12 +3294,14 @@ def create_finance_record(
     budget_alert = None
     if rec_type == "expense" and req.monthly_budget and req.monthly_budget > 0:
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        month_expenses = db.query(FinancialRecord).filter(
+        total_spent = db.query(
+            func.coalesce(func.sum(FinancialRecord.amount), 0.0)
+        ).filter(
             tenant_filter(FinancialRecord, current_user),
             FinancialRecord.type == "expense",
             FinancialRecord.date >= month_start
-        ).all()
-        total_spent = sum(round_currency(r.amount) for r in month_expenses)
+        ).scalar() or 0.0
+        total_spent = round_currency(total_spent)
         pct = round((total_spent / float(req.monthly_budget)) * 100.0, 1)
         if pct >= 100.0:
             budget_alert = f"Alert: You have exhausted {pct}% of your monthly budget (₹{total_spent:,.0f} / ₹{req.monthly_budget:,.0f})"
@@ -3854,8 +3861,12 @@ def get_executive_briefing(
         return _cached["data"]
 
     eff_email = current_user.email
-    tasks = db.query(Task).filter(tenant_filter(Task, current_user), Task.status == "pending").all()
-    memories = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user)).limit(5).all()
+    tasks = db.query(Task).filter(
+        tenant_filter(Task, current_user), Task.status == "pending"
+    ).order_by(Task.due_date.asc(), Task.id.asc()).limit(100).all()
+    memories = db.query(MemoryItem).filter(
+        tenant_filter(MemoryItem, current_user)
+    ).order_by(MemoryItem.importance.desc(), MemoryItem.last_accessed_at.desc()).limit(5).all()
     urgent_tasks = [t for t in tasks if t.priority in ["high", "urgent"]]
     finance = get_finance_summary(current_user=current_user, db=db)
 
@@ -3982,7 +3993,7 @@ def get_executive_audio_briefing(
     auto_advance_recurring_tasks(db, owner_user_id=current_user.id)
     task_query = db.query(Task).filter(tenant_filter(Task, current_user), Task.status == "pending", (Task.parent_id == None) | (Task.parent_id == 0))
     
-    all_pending = task_query.all()
+    all_pending = task_query.order_by(Task.due_date.asc(), Task.id.asc()).limit(100).all()
     today_tasks = []
     for t in all_pending:
         t_due = t.due_date.date() if t.due_date else None
