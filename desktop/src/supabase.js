@@ -44,12 +44,17 @@ const inFlightApiGets = new Map();
 
 function responseFromSnapshot(snapshot) {
   const noBodyStatus = [204, 205, 304].includes(snapshot.status);
+  const headers = new Headers(snapshot.headers);
+  // Fetch exposes decoded response bytes; do not retain transport-level length/encoding headers.
+  headers.delete('Content-Length');
+  headers.delete('Content-Encoding');
+  headers.delete('Transfer-Encoding');
   return new Response(
     noBodyStatus ? null : snapshot.body.slice(0),
     {
       status: snapshot.status,
       statusText: snapshot.statusText,
-      headers: snapshot.headers,
+      headers,
     }
   );
 }
