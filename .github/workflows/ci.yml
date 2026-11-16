@@ -68,7 +68,7 @@ jobs:
       - name: Verify Alembic Migrations
         run: |
           cd server
-          alembic check || echo "Alembic schema verified"
+          alembic check
 
   frontend-build:
     name: ⚛️ Frontend Build & Asset Verification
