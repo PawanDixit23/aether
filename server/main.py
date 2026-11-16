@@ -519,7 +519,7 @@ class FinancialRecordCreate(BaseModel):
     next_due_date: Optional[str] = None
 
 class FinancialRecordBulkCreate(BaseModel):
-    records: List[FinancialRecordCreate]
+    records: List[FinancialRecordCreate] = Field(..., max_length=200)
     user_email: Optional[str] = None
 
 class FinancialRecordUpdate(BaseModel):
@@ -3903,7 +3903,7 @@ def create_memory(
     return {"id": item.id, "fact": item.fact, "category": item.category, "created": True}
 
 class BulkContactsSyncRequest(BaseModel):
-    contacts: List[Dict[str, Any]]
+    contacts: List[Dict[str, Any]] = Field(..., max_length=200)
     user_email: Optional[str] = None
 
 @app.post("/api/memory/bulk-contacts")
