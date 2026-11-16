@@ -144,6 +144,8 @@ def get_live_weather_data(lat: float = None, lon: float = None, city_name: str =
             use_lat, use_lon = float(detected["lat"]), float(detected["lon"])
             location_name = detected.get("city") or "Current location"
 
+    if use_lat is None or use_lon is None:
+        return {"status": "unavailable", "city": location_name or "Unknown location", "error": "Could not resolve the requested location"}
     if not (-90 <= use_lat <= 90 and -180 <= use_lon <= 180):
         return {"status": "unavailable", "city": location_name or "Unknown location", "error": "Invalid coordinates"}
 
@@ -885,7 +887,7 @@ def fetch_cricinfo_live_matches(force: bool = False) -> list:
             return _cricket_cache["data"]
         elif age < 120.0:
             _trigger_async_live_cricket()
-            return _cricket_cache["data"]
+            return [{**match, "is_stale": True, "stale_age_seconds": int(age)} for match in _cricket_cache["data"]]
 
     matches = []
     
