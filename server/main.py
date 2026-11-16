@@ -1928,7 +1928,7 @@ async def _execute_quick_capture(
             if (lang == "hi" or lang == "auto")
             else f"Hello {req.user_name or 'Pawan'}! I am listening. How can I assist you right now?"
         )
-        result_message = data.get("response") or data.get("explanation") or data.get("message") or fallback_greeting
+        result_message = data.get("response") or data.get("explanation") or data.get("message") or ("" if req.live_voice else fallback_greeting)
         data["response"] = result_message
         executed = True
 
