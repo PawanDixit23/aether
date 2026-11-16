@@ -279,8 +279,22 @@ async def security_and_observability_middleware(request: Request, call_next):
 
 @app.get("/api/metrics")
 def get_system_metrics():
-    """Returns real-time observability telemetry and operational health."""
-    return obs_tracker.get_summary()
+    """Return operational telemetry, including safe SQLAlchemy pool occupancy."""
+    summary = obs_tracker.get_summary()
+    if not isinstance(summary, dict):
+        summary = {"requests": summary}
+    try:
+        pool = engine.pool
+        summary["database_pool"] = {
+            "checked_out": int(pool.checkedout()) if hasattr(pool, "checkedout") else None,
+            "pool_size": int(pool.size()) if hasattr(pool, "size") else None,
+            "overflow": int(pool.overflow()) if hasattr(pool, "overflow") else None,
+            "status": str(pool.status()) if hasattr(pool, "status") else "unavailable",
+        }
+    except Exception as exc:
+        # Diagnostics must never make the metrics endpoint unavailable.
+        summary["database_pool"] = {"status": "unavailable", "error": type(exc).__name__}
+    return summary
 
 # In-memory deduplication cache for WhatsApp incoming webhooks (prevents duplicate replies)
 PROCESSED_WABA_MSG_IDS = set()
