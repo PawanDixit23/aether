@@ -825,51 +825,80 @@ def client_backup_sync(
 
     for batch_start in range(0, len(req.tasks or []), WRITE_BATCH_SIZE):
         batch = (req.tasks or [])[batch_start:batch_start + WRITE_BATCH_SIZE]
-        candidate_titles = list({
-            str(item.get("title") or "").strip().lower()
-            for item in batch if str(item.get("title") or "").strip()
-        })
-        existing_titles = set()
-        if candidate_titles:
-            existing_titles = {
-                value for (value,) in db.query(func.lower(Task.title)).filter(
-                    tenant_filter(Task, current_user), func.lower(Task.title).in_(candidate_titles)
-                ).all() if value
-            }
-        batch_inserted = 0
+        prepared = []
+        numeric_ids = []
         for local_index, item in enumerate(batch):
             try:
+                raw_id = item.get("id")
+                numeric_id = int(raw_id) if raw_id is not None and str(raw_id).isdigit() else None
+                if numeric_id and numeric_id > 0:
+                    numeric_ids.append(numeric_id)
+                stable_key = (
+                    f"client:{str(raw_id).strip()}" if raw_id is not None and str(raw_id).strip()
+                    else "hash:" + hashlib.sha256(json.dumps(item, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+                )
                 title = str(item.get("title") or "").strip()
                 if not title:
                     skipped["invalid_tasks"] += 1
                     continue
-                if title.lower() in existing_titles:
-                    skipped["duplicate_tasks"] += 1
-                    continue
                 due_dt = None
                 if item.get("due_date"):
                     try:
-                        due_dt = datetime.fromisoformat(str(item["due_date"]).replace("Z", "").replace(" ", "T"))
+                        due_dt = datetime.fromisoformat(str(item["due_date"]).replace("Z", "+00:00")).replace(tzinfo=None)
                     except (TypeError, ValueError):
                         pass
                 created_dt = None
                 if item.get("created_at"):
                     try:
-                        created_dt = datetime.fromisoformat(str(item["created_at"]).replace("Z", "").replace(" ", "T"))
+                        created_dt = datetime.fromisoformat(str(item["created_at"]).replace("Z", "+00:00")).replace(tzinfo=None)
                     except (TypeError, ValueError):
                         pass
-                db.add(Task(
-                    user_email=email, owner_user_id=current_user.id, title=title,
-                    priority=item.get("priority", "medium"), status=item.get("status", "pending"),
-                    reminder_time=item.get("reminder_time"), recurrence=item.get("recurrence"),
-                    completion_comment=item.get("completion_comment"), attachments=item.get("attachments"),
-                    due_date=due_dt, created_at=created_dt or datetime.utcnow(),
-                    notified=item.get("notified", False)
-                ))
-                existing_titles.add(title.lower())
-                batch_inserted += 1
+                prepared.append({
+                    "index": batch_start + local_index, "key": stable_key,
+                    "numeric_id": numeric_id, "item": item, "title": title,
+                    "due_date": due_dt, "created_at": created_dt
+                })
             except Exception as exc:
                 note_failure("task", batch_start + local_index, exc)
+
+        candidate_keys = [entry["key"] for entry in prepared]
+        existing_keys = set()
+        if candidate_keys:
+            existing_keys = {
+                key for (key,) in db.query(Task.backup_key).filter(
+                    tenant_filter(Task, current_user), Task.backup_key.in_(candidate_keys)
+                ).all() if key
+            }
+        existing_ids = set()
+        if numeric_ids:
+            existing_ids = {
+                task_id for (task_id,) in db.query(Task.id).filter(
+                    tenant_filter(Task, current_user), Task.id.in_(numeric_ids)
+                ).all()
+            }
+
+        batch_inserted = 0
+        for entry in prepared:
+            if entry["key"] in existing_keys or (
+                entry["numeric_id"] is not None and entry["numeric_id"] in existing_ids
+            ):
+                skipped["duplicate_tasks"] += 1
+                continue
+            item = entry["item"]
+            try:
+                db.add(Task(
+                    user_email=email, owner_user_id=current_user.id,
+                    title=entry["title"], priority=item.get("priority", "medium"),
+                    status=item.get("status", "pending"), reminder_time=item.get("reminder_time"),
+                    recurrence=item.get("recurrence"), completion_comment=item.get("completion_comment"),
+                    attachments=item.get("attachments"), due_date=entry["due_date"],
+                    created_at=entry["created_at"] or datetime.utcnow(),
+                    notified=item.get("notified", False), backup_key=entry["key"]
+                ))
+                batch_inserted += 1
+                existing_keys.add(entry["key"])
+            except Exception as exc:
+                note_failure("task", entry["index"], exc)
         try:
             db.commit()
             restored["tasks"] += batch_inserted
