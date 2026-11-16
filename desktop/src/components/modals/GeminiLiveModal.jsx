@@ -465,8 +465,8 @@ export default function GeminiLiveModal({
           user_name: localStorage.getItem('aether_user_name') || 'Pawan',
           client_time: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
-          latitude: Number.isFinite(Number(latitude)) ? Number(latitude) : null,
-          longitude: Number.isFinite(Number(longitude)) ? Number(longitude) : null,
+          latitude: latitude != null && Number.isFinite(Number(latitude)) ? Number(latitude) : null,
+          longitude: longitude != null && Number.isFinite(Number(longitude)) ? Number(longitude) : null,
           city: (city || '').trim()
         };
 
