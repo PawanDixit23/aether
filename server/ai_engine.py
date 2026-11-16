@@ -257,36 +257,29 @@ def get_live_weather_data(lat: float = None, lon: float = None, city_name: str =
         }
 
 def fetch_live_weather(user_query: str = "", lat: float = None, lon: float = None, city_name: str = None) -> str:
-    """Fetch and format a proper, executive-grade weather report."""
+    """Return a current, location-specific weather report without inventing fallback values."""
     extracted = find_city_in_text(user_query) if user_query else None
     if extracted:
-        lat = extracted["lat"]
-        lon = extracted["lon"]
+        lat, lon = extracted["lat"], extracted["lon"]
         location_name = extracted["name"]
-    elif city_name:
-        location_name = city_name
     else:
-        loc = get_user_location()
-        lat = lat or loc["lat"]
-        lon = lon or loc["lon"]
-        location_name = loc.get("city", "Your Location")
+        location_name = city_name
+    weather = get_live_weather_data(lat, lon, city_name=location_name)
+    if weather.get("status") != "success":
+        return (
+            f"अभी {weather.get('city') or 'आपके स्थान'} का verified weather data उपलब्ध नहीं है। "
+            "कृपया कुछ देर बाद दोबारा प्रयास करें।"
+        )
+    stale_note = " (पिछला उपलब्ध अपडेट; live refresh असफल रहा)" if weather.get("is_stale") else ""
+    return f"""{weather.get('icon', '🌡️')} **Weather Report: {weather.get('city', location_name or 'Your location')}**{stale_note}
 
-    w = get_live_weather_data(lat, lon, city_name=location_name)
-    temp = w["temp"]
-    wind = w["wind"]
-    humidity = w.get("humidity", "35%")
-    icon = w["icon"]
-    condition_en = w["condition_en"]
-    condition_hi = w["condition_hi"]
-
-    return f"""{icon} **Weather Report for {location_name}:**
-
-• **Temperature (तापमान):** {temp}°C
-• **Condition (मौसम):** {condition_en} ({condition_hi})
-• **Wind Speed (हवा की गति):** {wind}
-• **Humidity (नमी):** {humidity}
-
-*Summary: Currently in {location_name}, it is {temp}°C with {condition_en.lower()}.*"""
+• **तापमान:** {weather['temp']}°C (महसूस: {weather.get('feels_like', weather['temp'])}°C)
+• **स्थिति:** {weather.get('condition_en')} ({weather.get('condition_hi')})
+• **आज का अधिकतम / न्यूनतम:** {weather.get('today_high', '—')}°C / {weather.get('today_low', '—')}°C
+• **हवा:** {weather.get('wind', '—')}
+• **नमी:** {weather.get('humidity', '—')}
+• **बारिश की संभावना:** {weather.get('precipitation_probability', '—')}%
+• **अपडेट:** {weather.get('updated_at', '—')}"""
 
 # ----------------- Dynamic City Explorer & Local Discovery Guide -----------------
 CITY_GUIDE_CACHE = {}
