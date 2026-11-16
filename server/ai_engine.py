@@ -697,43 +697,50 @@ def fetch_live_news_items(query: str = "", limit: int = 5, lang: str = "en") -> 
         print(f"[Aether Engine] Live news RSS error: {e}")
         return ""
 
+NEWS_CACHE = {"all": {"data": [], "timestamp": 0}, "sports": {"data": [], "timestamp": 0}}
+NEWS_CACHE_TTL = 5 * 60
+NEWS_STALE_MAX_AGE = 30 * 60
+
 def get_structured_news(limit: int = 5, category: str = None) -> list:
-    """Fetch live top headlines as structured JSON objects for the Aether UI."""
+    """Fetch verified Google News RSS items; never replace a feed failure with invented headlines."""
+    import time
+    key = "sports" if category == "sports" else "all"
+    cache = NEWS_CACHE[key]
+    now_ts = time.time()
+    if cache["data"] and now_ts - cache["timestamp"] < NEWS_CACHE_TTL:
+        return cache["data"][:max(1, min(int(limit), 20))]
     try:
-        if category == 'sports':
-            url = 'https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-IN&gl=IN&ceid=IN:en'
+        if key == "sports":
+            url = "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-IN&gl=IN&ceid=IN:en"
         else:
-            url = 'https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en'
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+            url = "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; Aether/2.0)"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Google News returned HTTP {resp.status}")
             root = ET.fromstring(resp.read())
-            items = root.findall('.//item')[:limit]
-            results = []
-            for item in items:
-                raw_title = item.find('title').text.strip() if item.find('title') is not None else ""
-                link = item.find('link').text.strip() if item.find('link') is not None else ""
-                pubDate = item.find('pubDate').text.strip() if item.find('pubDate') is not None else ""
-                
-                source = "Google News"
-                clean_title = raw_title
-                if " - " in raw_title:
-                    parts = raw_title.rsplit(" - ", 1)
-                    clean_title = parts[0]
-                    source = parts[1]
-                
-                results.append({
-                    "title": clean_title,
-                    "source": source,
-                    "link": link,
-                    "pubDate": pubDate
-                })
+        results = []
+        for item in root.findall(".//item")[:max(1, min(int(limit), 20))]:
+            raw_title = item.find("title").text.strip() if item.find("title") is not None and item.find("title").text else ""
+            link = item.find("link").text.strip() if item.find("link") is not None and item.find("link").text else ""
+            pub_date = item.find("pubDate").text.strip() if item.find("pubDate") is not None and item.find("pubDate").text else ""
+            if not raw_title or not link:
+                continue
+            source = "Google News"
+            clean_title = raw_title
+            if " - " in raw_title:
+                clean_title, source = [part.strip() for part in raw_title.rsplit(" - ", 1)]
+            results.append({"title": clean_title, "source": source, "link": link, "pubDate": pub_date})
+        if results:
+            cache["data"] = results
+            cache["timestamp"] = now_ts
             return results
-    except Exception as e:
-        print(f"[Aether Engine] Structured news error: {e}")
-        return [
-            {"title": "देश और दुनिया की महत्वपूर्ण राष्ट्रीय व अंतर्राष्ट्रीय खबरें", "source": "लाइव फीड", "link": "https://news.google.com", "pubDate": "ताज़ा अपडेट"},
-            {"title": "तकनीक, AI, कारोबार और शेयर बाजार के मुख्य समाचार", "source": "मार्केट वॉच", "link": "https://news.google.com", "pubDate": "ताज़ा अपडेट"}
-        ]
+        raise RuntimeError("Google News RSS returned no usable articles")
+    except Exception as exc:
+        print(f"[Aether Engine] Structured news error: {exc}")
+        if cache["data"] and now_ts - cache["timestamp"] <= NEWS_STALE_MAX_AGE:
+            return cache["data"][:max(1, min(int(limit), 20))]
+        return []
 
 # In-memory cache for live cricket scorecards (15s TTL to prevent rate limits)
 _cricket_cache = {
@@ -897,7 +904,7 @@ def fetch_cricinfo_live_matches(force: bool = False) -> list:
             'https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket',
             headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         )
-        with urllib.request.urlopen(req, timeout=2.5) as resp:
+        with urllib.request.urlopen(req, timeout=7.5) as resp:
             data = json.loads(resp.read().decode('utf-8'))
         
         sports = data.get('sports', [])
@@ -1056,7 +1063,7 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
         url = f'https://site.api.espn.com/apis/site/v2/sports/cricket/{lid}/summary?event={match_id}'
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-            with urllib.request.urlopen(req, timeout=2.0) as resp:
+            with urllib.request.urlopen(req, timeout=8.0) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 if 'matchcards' in data or 'rosters' in data or 'notes' in data:
                     matchcards = data.get('matchcards', [])
