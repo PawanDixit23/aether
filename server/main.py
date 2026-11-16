@@ -2465,6 +2465,7 @@ def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = Non
         today_start = datetime.combine(today, datetime.min.time())
         batch = db.query(Task).filter(
             Task.recurrence != None,
+            Task.status != "completed",
             Task.owner_user_id == str(owner_user_id).strip(),
             or_(Task.due_date == None, Task.due_date < today_start)
         ).order_by(Task.id.asc()).limit(100).all()
@@ -3096,9 +3097,11 @@ def reschedule_all_overdue(
     safe_limit = max(1, min(int(limit), 200))
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     today = now.date()
+    today_start = datetime.combine(today, datetime.min.time())
     rows = db.query(Task).filter(
         tenant_filter(Task, current_user), Task.status == "pending",
-        Task.recurrence == None, Task.due_date != None, Task.id > max(0, int(after_id))
+        Task.recurrence == None, Task.due_date != None,
+        Task.due_date < today_start, Task.id > max(0, int(after_id))
     ).order_by(Task.id.asc()).limit(safe_limit + 1).all()
     has_more = len(rows) > safe_limit
     batch = rows[:safe_limit]
