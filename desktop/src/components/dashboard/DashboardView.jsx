@@ -148,12 +148,15 @@ export const DashboardView = ({
 
   // 4. Dynamic Live Weather from real briefing API
   const weatherCity = userLocationName || weatherData?.city_en || weatherData?.city || 'Your Location';
-  const weatherTemp = weatherData?.temp !== undefined && weatherData?.temp !== null 
-    ? `${Math.round(weatherData.temp)}°C` 
-    : '25°C';
-  const weatherDesc = weatherData?.condition_en || weatherData?.condition_hi || weatherData?.condition || 'Sunny & Clear';
-  const weatherHumidity = weatherData?.humidity || '36%';
-  const weatherWind = weatherData?.wind || '4.2 km/h';
+  const weatherTemp = weatherData?.temp !== undefined && weatherData?.temp !== null
+    ? `${Math.round(weatherData.temp)}°C`
+    : '—';
+  const weatherUnavailable = weatherData?.status === 'unavailable' || weatherData?.temp == null;
+  const weatherDesc = weatherUnavailable
+    ? 'Live weather temporarily unavailable'
+    : `${weatherData?.condition_en || weatherData?.condition_hi || weatherData?.condition || "Current conditions"}${weatherData?.is_stale ? " • Last known update" : ""}`;
+  const weatherHumidity = weatherData?.humidity || '—';
+  const weatherWind = weatherData?.wind || '—';
 
   // 5. Dynamic Next Event from real tasks
   const pendingUpcoming = allTasksList.filter(t => !getIsTaskDoneForDate(t, todayDateStr));
