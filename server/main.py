@@ -808,10 +808,10 @@ def client_backup_sync(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Merge client cache in bounded DB batches without scanning whole tenant tables."""
+    """Merge client cache in bounded batches without scanning tenant history."""
     email = current_user.email
-    restored_counts = {"tasks": 0, "memories": 0, "finances": 0}
-    skipped_counts = {"duplicate_tasks": 0, "duplicate_memories": 0, "finances_already_present": 0}
+    restored = {"tasks": 0, "memories": 0, "finances": 0}
+    skipped = {"duplicate_tasks": 0, "invalid_tasks": 0, "duplicate_memories": 0, "invalid_memories": 0, "finances_already_present": 0}
     failed_count = 0
     failure_samples = []
 
@@ -821,8 +821,6 @@ def client_backup_sync(
         if len(failure_samples) < 25:
             failure_samples.append({"type": kind, "index": index, "error": str(error)[:240]})
 
-    # Look up only candidate keys in bounded IN clauses. Existing rows are never
-    # materialized into Python, regardless of how large the tenant's history grows.
     for batch_start in range(0, len(req.tasks or []), WRITE_BATCH_SIZE):
         batch = (req.tasks or [])[batch_start:batch_start + WRITE_BATCH_SIZE]
         candidate_titles = list({
@@ -833,18 +831,18 @@ def client_backup_sync(
         if candidate_titles:
             existing_titles = {
                 value for (value,) in db.query(func.lower(Task.title)).filter(
-                    tenant_filter(Task, current_user),
-                    func.lower(Task.title).in_(candidate_titles)
+                    tenant_filter(Task, current_user), func.lower(Task.title).in_(candidate_titles)
                 ).all() if value
             }
+        batch_inserted = 0
         for local_index, item in enumerate(batch):
             try:
                 title = str(item.get("title") or "").strip()
                 if not title:
-                    skipped_counts["duplicate_tasks"] += 1
+                    skipped["invalid_tasks"] += 1
                     continue
                 if title.lower() in existing_titles:
-                    skipped_counts["duplicate_tasks"] += 1
+                    skipped["duplicate_tasks"] += 1
                     continue
                 due_dt = None
                 if item.get("due_date"):
@@ -867,15 +865,16 @@ def client_backup_sync(
                     notified=item.get("notified", False)
                 ))
                 existing_titles.add(title.lower())
-                restored_counts["tasks"] += 1
+                batch_inserted += 1
             except Exception as exc:
-                db.rollback()
                 note_failure("task", batch_start + local_index, exc)
         try:
             db.commit()
+            restored["tasks"] += batch_inserted
         except Exception as exc:
             db.rollback()
             note_failure("task_batch", batch_start, exc)
+            failed_count += max(0, batch_inserted - 1)
 
     for batch_start in range(0, len(req.memories or []), WRITE_BATCH_SIZE):
         batch = (req.memories or [])[batch_start:batch_start + WRITE_BATCH_SIZE]
@@ -887,30 +886,34 @@ def client_backup_sync(
         if candidate_facts:
             existing_facts = {
                 value for (value,) in db.query(func.lower(MemoryItem.fact)).filter(
-                    tenant_filter(MemoryItem, current_user),
-                    func.lower(MemoryItem.fact).in_(candidate_facts)
+                    tenant_filter(MemoryItem, current_user), func.lower(MemoryItem.fact).in_(candidate_facts)
                 ).all() if value
             }
+        batch_inserted = 0
         for local_index, item in enumerate(batch):
             try:
                 fact_text = str(item.get("fact") or item.get("content") or "").strip()
-                if not fact_text or fact_text.lower() in existing_facts:
-                    skipped_counts["duplicate_memories"] += 1
+                if not fact_text:
+                    skipped["invalid_memories"] += 1
+                    continue
+                if fact_text.lower() in existing_facts:
+                    skipped["duplicate_memories"] += 1
                     continue
                 db.add(MemoryItem(
                     owner_user_id=current_user.id, user_email=email,
                     category=item.get("category", "preference"), fact=fact_text
                 ))
                 existing_facts.add(fact_text.lower())
-                restored_counts["memories"] += 1
+                batch_inserted += 1
             except Exception as exc:
-                db.rollback()
                 note_failure("memory", batch_start + local_index, exc)
         try:
             db.commit()
+            restored["memories"] += batch_inserted
         except Exception as exc:
             db.rollback()
             note_failure("memory_batch", batch_start, exc)
+            failed_count += max(0, batch_inserted - 1)
 
     existing_finance_count = db.query(func.count(FinancialRecord.id)).filter(
         tenant_filter(FinancialRecord, current_user)
@@ -918,6 +921,7 @@ def client_backup_sync(
     if existing_finance_count == 0 and req.finances:
         for batch_start in range(0, len(req.finances), WRITE_BATCH_SIZE):
             batch = req.finances[batch_start:batch_start + WRITE_BATCH_SIZE]
+            batch_inserted = 0
             for local_index, item in enumerate(batch):
                 try:
                     db.add(FinancialRecord(
@@ -926,21 +930,22 @@ def client_backup_sync(
                         amount=item.get("amount", 0.0), payment_mode=item.get("payment_mode", "upi"),
                         note=item.get("note", "")
                     ))
-                    restored_counts["finances"] += 1
+                    batch_inserted += 1
                 except Exception as exc:
-                    db.rollback()
                     note_failure("finance", batch_start + local_index, exc)
             try:
                 db.commit()
+                restored["finances"] += batch_inserted
             except Exception as exc:
                 db.rollback()
                 note_failure("finance_batch", batch_start, exc)
+                failed_count += max(0, batch_inserted - 1)
     elif req.finances:
-        skipped_counts["finances_already_present"] = len(req.finances)
+        skipped["finances_already_present"] = len(req.finances)
 
     return {
-        "status": "synced", "user": email, "restored": restored_counts,
-        "skipped": skipped_counts, "failed_count": failed_count,
+        "status": "synced", "user": email, "restored": restored,
+        "skipped": skipped, "failed_count": failed_count,
         "failure_samples": failure_samples
     }
 
