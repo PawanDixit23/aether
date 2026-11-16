@@ -99,7 +99,9 @@ export function CricketScorecardModal({
       const res = await fetch(`${effectiveApiBase}/cricket/live${isForce ? '?force=true' : ''}`);
       if (res.ok) {
         const data = await res.json();
-        if (data && data.matches && data.matches.length > 0) {
+        if (data && Array.isArray(data.matches)) {
+          // An empty verified feed means there are no matches available right now;
+          // do not keep displaying an old list indefinitely.
           setInternalMatches(data.matches);
         }
       }
