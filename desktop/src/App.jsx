@@ -707,10 +707,9 @@ export default function App() {
       seenIds.add(idKey);
 
       const dKey = getDedupKey(t);
-      if (dKey !== '____') {
-        if (seenTitleDate.has(dKey)) continue;
-        seenTitleDate.add(dKey);
-      }
+      // Distinct Aether tasks may intentionally share title/date/time. Only use this
+      // fingerprint to prevent importing a duplicate Google Calendar event.
+      if (dKey !== '____') seenTitleDate.add(dKey);
       cleanList.push(t);
     }
 
