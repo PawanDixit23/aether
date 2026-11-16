@@ -3752,8 +3752,8 @@ export default function App() {
           });
         });
 
-        setTaskFetchedCount(cleanTasks.length);
-        setTaskHasMore(cleanTasks.length === 50);
+        setTaskFetchedCount(Array.isArray(loadedTasks) ? loadedTasks.length : 0);
+        setTaskHasMore(Array.isArray(loadedTasks) && loadedTasks.length === 50);
 
         if (cleanTasks.length > 0) {
           const priorBackupText = currentEmail ? localStorage.getItem(`aether_backup_${currentEmail}`) : null;
@@ -3872,8 +3872,8 @@ export default function App() {
           ? loadedFinances.filter(f => !deletedFinanceIdsRef.current.has(String(f.id)))
           : [];
         setFinanceRecords(validFinances);
-        setFinanceFetchedCount(validFinances.length);
-        setFinanceHasMore(validFinances.length === 100);
+        setFinanceFetchedCount(Array.isArray(loadedFinances) ? loadedFinances.length : 0);
+        setFinanceHasMore(Array.isArray(loadedFinances) && loadedFinances.length === 100);
       }
       if (resFinSum.ok) setFinanceSummary(await resFinSum.json());
       if (resMem.ok) {
@@ -5716,8 +5716,8 @@ export default function App() {
         rows.forEach(task => byId.set(String(task.id), task));
         return Array.from(byId.values());
       });
-      setTaskFetchedCount(offset + rows.length);
-      setTaskHasMore(rows.length === 50);
+      setTaskFetchedCount(offset + (Array.isArray(page) ? page.length : 0));
+      setTaskHasMore(Array.isArray(page) && page.length === 50);
     } catch (err) {
       console.error('Failed to load more tasks:', err);
       showToast('Could not load more tasks. Please try again.', 'error');
@@ -5740,8 +5740,8 @@ export default function App() {
         rows.forEach(record => byId.set(String(record.id), record));
         return Array.from(byId.values());
       });
-      setFinanceFetchedCount(offset + rows.length);
-      setFinanceHasMore(rows.length === 100);
+      setFinanceFetchedCount(offset + (Array.isArray(page) ? page.length : 0));
+      setFinanceHasMore(Array.isArray(page) && page.length === 100);
     } catch (err) {
       console.error('Failed to load more finance records:', err);
       showToast('Could not load more transactions. Please try again.', 'error');
