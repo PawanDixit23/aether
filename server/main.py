@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, false
 from resource_limits import AI_CONTEXT_CHAT_LIMIT, AI_CONTEXT_FINANCE_LIMIT, AI_CONTEXT_MEMORY_LIMIT, AI_CONTEXT_TASK_LIMIT, bounded_page, chunks, WRITE_BATCH_SIZE
 from sqlalchemy.exc import IntegrityError
 import httpx
@@ -631,7 +631,7 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
     elif session_id:
         chat_q = chat_q.filter(ChatMessage.session_id == session_id)
     else:
-        chat_q = chat_q.filter(sqlalchemy.sql.false())
+        chat_q = chat_q.filter(false())
     if session_id:
         chat_q = chat_q.filter(ChatMessage.session_id == session_id)
     if exclude_chat_id:
