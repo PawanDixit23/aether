@@ -7008,7 +7008,7 @@ export default function App() {
                 <span>Memory</span>
               </div>
               <div className="settings-row-right">
-                <span>{memories.length} facts</span>
+                <span>{(memoryTotalCount ?? memories.length).toLocaleString()} facts</span>
                 <ChevronRight size={16} />
               </div>
             </div>
