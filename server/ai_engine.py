@@ -34,6 +34,26 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3:8b")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini")
 
+
+def get_gemini_model_cascade(preferred_model: Optional[str] = None) -> List[str]:
+    """Return unique current Gemini model IDs, excluding retired API models."""
+    retired = {
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+        "gemini-2.0-flash",
+    }
+    candidates = [
+        preferred_model or GEMINI_MODEL,
+        "gemini-3.8-flash",
+        "gemini-2.5-flash",
+        "gemini-flash-lite-latest",
+    ]
+    return list(dict.fromkeys(
+        model.strip() for model in candidates
+        if model and model.strip() and model.strip() not in retired
+    ))
+
+
 # Cached IP Location
 CACHED_LOCATION = None
 
@@ -2421,25 +2441,9 @@ async def parse_intent_with_llm(
         if len(conversation_contents) > 10:
             conversation_contents = conversation_contents[-10:]
 
-        # Retired model IDs were producing repeated 404s in Render logs.
-        # Prefer the model explicitly recommended by Google's current API error,
-        # then use supported fallbacks. Keep the lightweight model last because
-        # it can return transient 503s during demand spikes.
-        retired_models = {
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-8b",
-            "gemini-2.0-flash",
-        }
-        models_to_try = [
-            GEMINI_MODEL,
-            "gemini-3.8-flash",
-            "gemini-2.5-flash",
-            "gemini-flash-lite-latest",
-        ]
-        unique_models = list(dict.fromkeys(
-            model.strip() for model in models_to_try
-            if model and model.strip() and model.strip() not in retired_models
-        ))
+        # Retired IDs caused repeated 404s; the preferred current model is
+        # followed by supported fallbacks, with the rate-limited lite model last.
+        unique_models = get_gemini_model_cascade()
 
         key_blocked_notice = None
         for active_gemini_key in candidate_keys:
