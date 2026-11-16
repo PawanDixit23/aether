@@ -4773,7 +4773,7 @@ def _run_push_check_internal(db: Session):
                     # Stream device subscriptions; never load every device into a list.
                     subscriptions = db.query(PushSubscription).filter(
                         PushSubscription.owner_user_id == owner_id
-                    ).yield_per(50)
+                    ).limit(50).all()
                     for subscription in subscriptions:
                         found_subscription = True
                         sub = {
