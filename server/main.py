@@ -4856,11 +4856,19 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
                 digest_type = "morning" if is_morning_window else "evening"
                 digest_key = f"{today_str}:{digest_type}"
 
-                pairings = db.query(UserIntegrationPairing).filter(
+                pairing_query = db.query(UserIntegrationPairing).filter(
                     UserIntegrationPairing.channel == "whatsapp",
                     UserIntegrationPairing.is_active == True
-                ).yield_per(100)
-                for p in pairings:
+                )
+                last_pairing_id = 0
+                while True:
+                    pairings = pairing_query.filter(
+                        UserIntegrationPairing.id > last_pairing_id
+                    ).order_by(UserIntegrationPairing.id.asc()).limit(100).all()
+                    if not pairings:
+                        break
+                    last_pairing_id = pairings[-1].id
+                    for p in pairings:
                     try:
                         p_phone = p.channel_user_id
                         p_owner_id = p.owner_user_id
