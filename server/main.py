@@ -3718,9 +3718,9 @@ def export_finance_csv(
             for record in stream_query.order_by(FinancialRecord.date.desc(), FinancialRecord.id.desc()).yield_per(500):
                 date_text = record.date.strftime("%d/%m/%Y") if hasattr(record.date, "strftime") else str(record.date or "")
                 writer.writerow([
-                record.id, date_text, record.type or "expense", record.category or "general",
-                record.amount or 0, record.payment_mode or "upi", record.note or ""
-            ])
+                    record.id, date_text, record.type or "expense", record.category or "general",
+                    record.amount or 0, record.payment_mode or "upi", record.note or ""
+                ])
                 yield output.getvalue()
                 output.seek(0)
                 output.truncate(0)
