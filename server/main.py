@@ -2612,6 +2612,11 @@ def list_tasks(
             .order_by(TaskDateCompletion.id.desc())
             .limit(5000).all()
         )
+        completion_counts = dict(
+            db.query(TaskDateCompletion.task_id, func.count(TaskDateCompletion.id))
+            .filter(tenant_filter(TaskDateCompletion, current_user), TaskDateCompletion.task_id.in_(task_ids))
+            .group_by(TaskDateCompletion.task_id).all()
+        )
         for item in completion_rows:
             date_completions_map.setdefault(item.task_id, {})[item.date_str] = item.completed
 
@@ -2651,6 +2656,7 @@ def list_tasks(
         serialized["subtasks"] = [serialize_task(child) for child in children]
         serialized["subtasks_has_more"] = subtask_counts.get(task.id, 0) > len(children)
         serialized["date_completions"] = date_completions_map.get(task.id, {})
+        serialized["date_completions_has_more"] = completion_counts.get(task.id, 0) > len(serialized["date_completions"])
         tasks_out.append(serialized)
     return tasks_out
 
