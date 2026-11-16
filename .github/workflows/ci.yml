@@ -48,6 +48,7 @@ jobs:
           cd ..
           python tests/test_agent_orchestrator.py
           python tests/test_auth_security.py
+          python tests/test_webhook_auth.py
 
       - name: PostgreSQL RLS Tests (non-superuser runtime role)
         run: |
