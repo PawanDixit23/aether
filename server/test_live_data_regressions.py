@@ -87,5 +87,26 @@ class LiveDataRegressionTests(unittest.TestCase):
         self.assertEqual(results, [])
 
 
+
+
+class WeatherIntentRoutingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_weather_question_returns_provider_text_without_llm_guessing(self):
+        verified = "LIVE WEATHER: Sanganer 24.1 C, clear sky, updated 2026-11-16T06:00:00Z"
+        with patch.object(ai_engine, "fetch_live_weather", return_value=verified), patch.object(
+            ai_engine, "generate_contextual_follow_ups", return_value=[]
+        ):
+            result = await ai_engine.parse_intent_with_llm(
+                "How weather today?",
+                context={"city_guide": {"city": "Sanganer"}},
+                user_lat=26.85,
+                user_lon=75.77,
+                language="en",
+                user_city="Sanganer, Rajasthan",
+            )
+        self.assertEqual(result["action"], "query")
+        self.assertEqual(result["data"]["response"], verified)
+        self.assertIn("Deterministic live weather", result["explanation"])
+
+
 if __name__ == "__main__":
     unittest.main()

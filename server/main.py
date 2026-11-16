@@ -279,8 +279,22 @@ async def security_and_observability_middleware(request: Request, call_next):
 
 @app.get("/api/metrics")
 def get_system_metrics():
-    """Returns real-time observability telemetry and operational health."""
-    return obs_tracker.get_summary()
+    """Return operational telemetry, including safe SQLAlchemy pool occupancy."""
+    summary = obs_tracker.get_summary()
+    if not isinstance(summary, dict):
+        summary = {"requests": summary}
+    try:
+        pool = engine.pool
+        summary["database_pool"] = {
+            "checked_out": int(pool.checkedout()) if hasattr(pool, "checkedout") else None,
+            "pool_size": int(pool.size()) if hasattr(pool, "size") else None,
+            "overflow": int(pool.overflow()) if hasattr(pool, "overflow") else None,
+            "status": str(pool.status()) if hasattr(pool, "status") else "unavailable",
+        }
+    except Exception as exc:
+        # Diagnostics must never make the metrics endpoint unavailable.
+        summary["database_pool"] = {"status": "unavailable", "error": type(exc).__name__}
+    return summary
 
 # In-memory deduplication cache for WhatsApp incoming webhooks (prevents duplicate replies)
 PROCESSED_WABA_MSG_IDS = set()
@@ -3906,6 +3920,7 @@ def list_memory(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     memory_query = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user))
+    total_count = memory_query.count()
     if before_id is not None:
         memory_query = memory_query.filter(MemoryItem.id < before_id)
         rows = memory_query.order_by(MemoryItem.id.desc()).limit(safe_limit + 1).all()
@@ -3917,6 +3932,7 @@ def list_memory(
         response.headers["X-Has-More"] = "true" if has_more else "false"
         response.headers["X-Next-Offset"] = str(safe_offset + len(rows))
         response.headers["X-Next-Cursor"] = str(rows[-1].id) if rows else ""
+        response.headers["X-Total-Count"] = str(total_count)
     return rows
 
 @app.post("/api/memory")

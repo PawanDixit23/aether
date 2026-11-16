@@ -13,7 +13,7 @@ This is an application-level protection layer, not a promise that provider-level
 - Backup/contact/finance bulk write batch: 200 records.
 - AI context: up to 30 pending tasks, 15 memories, 60 recent finance records, and 40 recent chat messages.
 - Semantic memory recall: up to 100 keyword candidates plus 100 importance/recency candidates, then return at most 20 matches.
-- PostgreSQL pool: 3 base connections + 2 overflow per process by default; configurable with DB_POOL_SIZE, DB_POOL_MAX_OVERFLOW, DB_POOL_TIMEOUT_SECONDS, and DB_POOL_RECYCLE_SECONDS.
+- PostgreSQL pool: 5 base connections + 5 overflow per process by default (10 maximum per process); configurable with DB_POOL_SIZE, DB_POOL_MAX_OVERFLOW, DB_POOL_TIMEOUT_SECONDS, and DB_POOL_RECYCLE_SECONDS. Render's single-process blueprint sets these to 5/5/20 seconds; account for every running instance when checking the Supabase connection budget.
 - PostgreSQL statement timeout: 10 seconds; lock timeout: 3 seconds.
 - JSON request body: 2 MiB by default, configurable with MAX_JSON_REQUEST_BYTES. Multipart file uploads are not subject to this JSON-only guard.
 
@@ -33,6 +33,15 @@ The following endpoints now use bounded pages and accept limit/offset:
 Responses retain their existing list/map payload shapes for compatibility. Pagination state is exposed through X-Has-More and X-Next-Offset response headers. CORS exposes these headers to the web client.
 
 The desktop client now loads more tasks, subtasks, memories, finance records, chat sessions, and older chat messages on demand. A page is never treated as the entire dataset merely because the first response completed.
+
+## Connection-pool and RLS lifecycle
+
+- Tenant and trusted-worker RLS identities are stored on the SQLAlchemy Session first; dependency setup does not execute SQL or check out a PostgreSQL connection.
+- The SQLAlchemy `after_begin` hook applies transaction-local RLS settings on the exact connection immediately before the first query. This preserves tenant isolation while avoiding eager connection checkout for requests that do not reach the database.
+- If a context is explicitly changed after a transaction has begun, the helper applies it immediately to that active transaction.
+- Tenant/worker transaction setup explicitly clears the webhook bridge flag.
+- `GET /api/metrics` reports safe pool occupancy (checked-out connections, configured size, overflow and SQLAlchemy pool status), without exposing connection strings or credentials.
+- Pool limits are per process, not global. Keep Render instance count and other services using the same Supabase database within the provider's connection budget; do not increase pool limits blindly.
 
 ## Query and write changes
 
