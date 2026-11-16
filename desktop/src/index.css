@@ -2775,3 +2775,37 @@ body.theme-oled .settings-user-card {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
 }
+
+
+/* Chat: remove the heavy rectangular assistant message panel; keep the text itself. */
+.gemini-chat-feed {
+  max-width: 760px !important;
+  padding: 14px 4px 22px !important;
+  gap: 22px !important;
+}
+.gemini-msg-assistant {
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  align-self: stretch !important;
+  padding: 4px 2px 8px !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: #e7edf5 !important;
+}
+.gemini-msg-user {
+  max-width: 84% !important;
+  padding: 11px 15px !important;
+  border: 0 !important;
+  border-radius: 18px 18px 5px 18px !important;
+  background: rgba(105, 133, 164, .17) !important;
+  box-shadow: none !important;
+}
+.gemini-msg-assistant a { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .gemini-chat-feed { padding: 10px 2px 18px !important; gap: 18px !important; }
+  .gemini-msg-assistant { font-size: .96rem !important; line-height: 1.62 !important; }
+  .gemini-msg-user { max-width: 88% !important; }
+}

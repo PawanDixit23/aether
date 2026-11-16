@@ -439,3 +439,233 @@ button:disabled { cursor: not-allowed; opacity: .58; }
   .dashboard-weather-card > div:first-child { gap: 8px !important; }
   .dashboard-weather-card > div:last-child > div > div:last-child { white-space: normal !important; }
 }
+
+
+/* Dashboard: content-first, calm and compact. Remove the "card inside a card" look. */
+.dashboard-main-view {
+  max-width: 780px !important;
+  padding: 8px 16px 32px !important;
+}
+.dashboard-greeting { margin: 2px 0 12px !important; }
+.dashboard-greeting h1 {
+  font-size: clamp(1.25rem, 4.2vw, 1.65rem) !important;
+  line-height: 1.16 !important;
+  letter-spacing: -.04em !important;
+}
+.dashboard-greeting button { min-height: 34px !important; padding: 6px 10px !important; }
+.dashboard-weather-card {
+  min-height: 72px !important;
+  padding: 10px 12px !important;
+  margin: 0 0 6px !important;
+  border-radius: 14px !important;
+  background: rgba(17, 27, 39, .72) !important;
+}
+.dashboard-weather-card > div:first-child > div:first-child {
+  width: 36px !important; height: 36px !important; border-radius: 11px !important;
+}
+.dashboard-weather-card > div:last-child > div > div:first-child { font-size: 1.28rem !important; }
+.dashboard-orb-section { margin: 6px 0 12px !important; padding-top: 0 !important; }
+.dashboard-orb-section > div:first-child { width: 108px !important; height: 108px !important; }
+.dashboard-orb-section > div:first-child > div:nth-child(2) { width: 88px !important; height: 88px !important; }
+.dashboard-orb-section > div:nth-child(2) { margin: 8px 0 10px !important; }
+.dashboard-orb-section > div:nth-child(3) {
+  background: transparent !important;
+  border: 0 !important;
+  padding: 0 !important;
+  gap: 8px !important;
+}
+.dashboard-orb-section > div:nth-child(3) button {
+  border: 1px solid var(--ui-border) !important;
+  background: rgba(255,255,255,.035) !important;
+  border-radius: 999px !important;
+  min-height: 36px !important;
+}
+.dashboard-quick-actions { gap: 8px !important; margin: 0 0 10px !important; }
+.dashboard-quick-actions > button {
+  min-height: 64px !important;
+  padding: 9px 11px !important;
+  border-radius: 13px !important;
+  background: rgba(16,24,36,.72) !important;
+}
+.dashboard-quick-actions > button > div {
+  width: 34px !important; height: 34px !important; border-radius: 10px !important;
+}
+.dashboard-quick-actions > button > span { font-size: .82rem !important; }
+.dashboard-social-hub {
+  min-height: 54px !important;
+  padding: 9px 12px !important;
+  margin-top: 2px !important;
+  border-radius: 13px !important;
+  background: rgba(16,24,36,.62) !important;
+  border-color: var(--ui-border) !important;
+}
+@media (max-width: 600px) {
+  .dashboard-main-view { padding: 6px 12px 28px !important; }
+  .dashboard-greeting { gap: 8px !important; }
+  .dashboard-weather-card { min-height: 66px !important; }
+  .dashboard-quick-actions > button { min-height: 62px !important; padding: 8px 9px !important; }
+}
+
+
+/* --------------------------------------------------------------------------
+   Aether product-wide UI polish (mobile-first, restrained Obsidian surfaces)
+   -------------------------------------------------------------------------- */
+:root {
+  --aether-bg: #080d15;
+  --aether-surface: #101925;
+  --aether-surface-2: #141f2d;
+  --aether-line: rgba(164, 184, 204, .12);
+  --aether-line-strong: rgba(164, 184, 204, .2);
+  --aether-text: #edf2f7;
+  --aether-muted: #91a0b2;
+  --aether-accent: #79c9d8;
+}
+body { background: var(--aether-bg); color: var(--aether-text); }
+button, input, textarea, select { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--aether-accent) !important;
+  outline-offset: 3px !important;
+}
+
+/* Dashboard: less dashboard-as-a-feed, more calm personal command center. */
+.dashboard-main-view { max-width: 760px !important; padding: 8px 14px 28px !important; }
+.dashboard-greeting { margin: 2px 0 10px !important; gap: 8px !important; }
+.dashboard-greeting h1 { font-size: clamp(1.2rem, 4vw, 1.55rem) !important; letter-spacing: -.04em !important; line-height: 1.14 !important; }
+.dashboard-greeting button { min-height: 34px !important; padding: 6px 10px !important; border-radius: 11px !important; box-shadow: none !important; }
+.dashboard-weather-card {
+  min-height: 66px !important; padding: 10px 12px !important; margin: 0 0 10px !important;
+  border-radius: 14px !important; background: rgba(16, 25, 37, .72) !important;
+  border: 1px solid var(--aether-line) !important; box-shadow: none !important;
+}
+.dashboard-weather-card > div:first-child > div:first-child { width: 36px !important; height: 36px !important; border-radius: 11px !important; }
+.dashboard-weather-card button { min-width: 34px !important; min-height: 34px !important; border-radius: 10px !important; }
+.dashboard-orb-section { margin: 8px 0 14px !important; padding-top: 0 !important; }
+.dashboard-orb-section > div:first-child { width: 112px !important; height: 112px !important; }
+.dashboard-orb-section > div:first-child > div:nth-child(2) { width: 92px !important; height: 92px !important; }
+.dashboard-orb-section > div:nth-child(2) { margin: 8px 0 10px !important; font-size: .78rem !important; }
+.dashboard-orb-section > div:nth-child(3) { padding: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; gap: 8px !important; }
+.dashboard-orb-section > div:nth-child(3) button { min-height: 36px !important; border-radius: 999px !important; padding: 7px 14px !important; }
+.dashboard-quick-actions { gap: 8px !important; margin: 0 0 10px !important; }
+.dashboard-quick-actions > button {
+  min-height: 62px !important; padding: 8px 10px !important; border-radius: 13px !important;
+  background: rgba(16, 25, 37, .72) !important; border: 1px solid var(--aether-line) !important; box-shadow: none !important;
+}
+.dashboard-quick-actions > button > div { width: 34px !important; height: 34px !important; border-radius: 10px !important; box-shadow: none !important; }
+.dashboard-quick-actions > button > span { font-size: .8rem !important; font-weight: 600 !important; }
+.dashboard-social-hub {
+  min-height: 56px !important; padding: 10px 12px !important; margin: 0 0 10px !important;
+  border-radius: 14px !important; background: rgba(16, 25, 37, .56) !important;
+  border: 1px solid var(--aether-line) !important; box-shadow: none !important;
+}
+.dashboard-city-discovery {
+  display: flex !important; align-items: center !important; gap: 10px !important; width: 100% !important;
+  box-sizing: border-box !important; margin: 0 0 12px !important; padding: 10px 12px !important;
+  border: 1px solid var(--aether-line) !important; border-radius: 13px !important;
+  background: rgba(16, 25, 37, .55) !important; color: var(--aether-text) !important;
+  text-align: left !important; cursor: pointer !important; box-shadow: none !important;
+}
+.dashboard-city-discovery-icon { width: 32px; height: 32px; display: grid; place-items: center; flex: 0 0 32px; border-radius: 10px; color: var(--aether-accent); background: rgba(121,201,216,.1); }
+.dashboard-city-discovery-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.dashboard-city-discovery-copy strong { font-size: .82rem; font-weight: 650; }
+.dashboard-city-discovery-copy small { font-size: .7rem; color: var(--aether-muted); }
+.dashboard-city-discovery-action { display: inline-flex; align-items: center; gap: 2px; color: var(--aether-accent); font-size: .72rem; font-weight: 650; white-space: nowrap; }
+.dashboard-today-overview {
+  padding: 10px 0 4px !important; margin: 0 0 10px !important;
+  background: transparent !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important;
+  border-top: 1px solid var(--aether-line) !important;
+}
+.dashboard-today-overview > div:nth-child(2) > div {
+  border: 1px solid var(--aether-line) !important; background: rgba(16,25,37,.55) !important;
+  box-shadow: none !important; border-radius: 12px !important;
+}
+@media (max-width: 600px) {
+  .dashboard-main-view { padding: 6px 12px 24px !important; }
+  .dashboard-greeting h1 { font-size: 1.22rem !important; }
+  .dashboard-quick-actions { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
+  .dashboard-quick-actions > button { min-height: 60px !important; flex-direction: row !important; justify-content: flex-start !important; }
+  .dashboard-quick-actions > button > span { text-align: left !important; white-space: normal !important; }
+  .dashboard-social-hub { margin-bottom: 8px !important; }
+}
+
+/* Chat: assistant answers must be plain content, never a giant rounded rectangle.
+   Keep user turns visually distinct and preserve rich/code blocks inside responses. */
+.gemini-chat-feed { max-width: 760px !important; padding: 12px 6px 20px !important; gap: 20px !important; }
+.gemini-msg-assistant {
+  align-self: stretch !important; width: 100% !important; max-width: 100% !important;
+  box-sizing: border-box !important; padding: 2px 2px 8px !important;
+  background: transparent !important; border: 0 !important; border-radius: 0 !important;
+  box-shadow: none !important; color: #e7edf5 !important;
+}
+.gemini-msg-user {
+  max-width: 86% !important; padding: 11px 15px !important;
+  background: rgba(105, 133, 164, .16) !important; border: 1px solid rgba(164,184,204,.1) !important;
+  border-radius: 18px 18px 5px 18px !important; box-shadow: none !important;
+}
+.gemini-msg-assistant > div:not(:first-child) { max-width: 100%; }
+.gemini-msg-assistant pre, .gemini-msg-assistant .formatted-code-block {
+  background: rgba(16,25,37,.9) !important; border: 1px solid var(--aether-line) !important;
+  border-radius: 12px !important;
+}
+@media (max-width: 600px) {
+  .gemini-chat-feed { padding: 8px 2px 16px !important; gap: 18px !important; }
+  .gemini-msg-assistant { font-size: .96rem !important; line-height: 1.62 !important; }
+  .gemini-msg-user { max-width: 88% !important; }
+}
+
+/* Memory Vault: remove nested panel feeling; create one clear toolbar, controls and list. */
+.memory-vault-container {
+  max-width: 620px !important; width: 100% !important; gap: 10px !important;
+  background: #090f19 !important; border-color: transparent !important;
+  padding: max(48px, env(safe-area-inset-top)) 14px max(20px, env(safe-area-inset-bottom)) !important;
+}
+.memory-vault-header { padding: 2px 0 8px !important; border-bottom: 1px solid var(--aether-line); }
+.memory-vault-header > div:first-child > div:first-child > div:first-child { font-size: 1.12rem !important; letter-spacing: -.035em; }
+.memory-vault-sync {
+  padding: 10px 11px !important; border-radius: 14px !important;
+  background: rgba(16,25,37,.78) !important; border: 1px solid var(--aether-line) !important;
+  box-shadow: none !important; gap: 8px !important;
+}
+.memory-vault-sync > div:first-child > div:first-child { width: 32px !important; height: 32px !important; border-radius: 9px !important; }
+.memory-vault-sync button { min-height: 34px !important; padding: 6px 10px !important; box-shadow: none !important; }
+.memory-vault-learning {
+  padding: 9px 11px !important; border-radius: 12px !important;
+  background: rgba(16,25,37,.46) !important; border: 1px solid var(--aether-line) !important;
+}
+.memory-vault-learning button { min-height: 32px !important; padding: 5px 11px !important; }
+.memory-vault-add-form {
+  display: grid !important; grid-template-columns: auto minmax(0,1fr) auto !important;
+  gap: 7px !important; padding: 6px !important; border-radius: 13px !important;
+  background: rgba(16,25,37,.7) !important; border: 1px solid var(--aether-line) !important;
+}
+.memory-vault-add-form input { min-width: 0 !important; width: 100% !important; box-sizing: border-box !important; border: 0 !important; background: transparent !important; }
+.memory-vault-add-form button { min-height: 36px !important; }
+.memory-vault-search-filter { gap: 8px !important; }
+.memory-vault-search-filter > div:first-child {
+  min-height: 42px !important; padding: 0 12px !important; border-radius: 12px !important;
+  background: rgba(16,25,37,.68) !important; border: 1px solid var(--aether-line) !important;
+}
+.memory-vault-search-filter input { min-width: 0 !important; border: 0 !important; background: transparent !important; }
+.memory-vault-search-filter > div:last-child { gap: 6px !important; padding: 1px 0 4px !important; }
+.memory-vault-search-filter > div:last-child button { min-height: 32px !important; padding: 6px 11px !important; border-radius: 999px !important; }
+.memory-vault-list { gap: 0 !important; border-top: 1px solid var(--aether-line); }
+.memory-vault-item {
+  gap: 8px !important; padding: 12px 2px !important; border: 0 !important;
+  border-bottom: 1px solid var(--aether-line) !important; border-radius: 0 !important;
+  background: transparent !important; box-shadow: none !important;
+}
+.memory-vault-item > div:first-child { gap: 8px !important; flex-wrap: wrap; }
+.memory-vault-item > div:first-child > div:first-child { min-width: 0; flex-wrap: wrap; }
+.memory-vault-item button { min-height: 32px !important; border-radius: 9px !important; box-shadow: none !important; }
+.memory-vault-item > div:last-child { overflow-wrap: anywhere; line-height: 1.5 !important; }
+@media (max-width: 600px) {
+  .memory-vault-container { padding: max(48px, env(safe-area-inset-top)) 12px max(18px, env(safe-area-inset-bottom)) !important; gap: 9px !important; }
+  .memory-vault-header { gap: 8px !important; }
+  .memory-vault-sync { flex-wrap: wrap !important; }
+  .memory-vault-sync > div:first-child { flex: 1 1 100% !important; }
+  .memory-vault-sync > div:last-child { width: 100% !important; justify-content: flex-end !important; }
+  .memory-vault-add-form { grid-template-columns: minmax(0,1fr) auto !important; }
+  .memory-vault-add-form > button:first-child { grid-column: 1 / -1; justify-self: start; }
+  .memory-vault-add-form input { min-height: 38px !important; }
+  .memory-vault-item > div:first-child { align-items: flex-start !important; }
+}
