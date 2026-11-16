@@ -1,0 +1,145 @@
+/* Aether Clean UI System
+   Shared visual layer for every desktop/webview screen.
+   Keep feature layouts intact while standardising spacing, surfaces and controls. */
+:root {
+  --ui-bg: #090d14;
+  --ui-surface: #101722;
+  --ui-surface-raised: #141e2b;
+  --ui-border: rgba(226, 232, 240, .09);
+  --ui-border-strong: rgba(226, 232, 240, .15);
+  --ui-text: #eef3f8;
+  --ui-muted: #9aa8b8;
+  --ui-dim: #718096;
+  --ui-accent: #63c7d8;
+  --ui-accent-soft: rgba(99, 199, 216, .12);
+  --ui-radius: 18px;
+  --ui-shadow: 0 10px 30px rgba(0, 0, 0, .18);
+}
+html, body, #root { background: var(--ui-bg); color: var(--ui-text); }
+body {
+  background-image: radial-gradient(ellipse 70% 28% at 50% 0%, rgba(99,199,216,.055), transparent 72%);
+  letter-spacing: -.01em;
+}
+button, input, textarea, select { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--ui-accent) !important;
+  outline-offset: 3px !important;
+}
+::selection { background: rgba(99,199,216,.28); color: #fff; }
+
+/* Calm surfaces: reduce nested-card and neon/glass noise across feature screens. */
+.card-briefing, .news-card, .ask-aether-card, .action-module-card,
+.stat-card, [role="dialog"], .modal-content, .modal-container,
+[class*="modal-content"], [class*="ModalContent"], [class*="drawer-panel"] {
+  box-shadow: var(--ui-shadow);
+}
+.card-briefing, .news-card, .ask-aether-card, .action-module-card {
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+}
+.card-briefing, .news-card, .ask-aether-card { padding: 20px; }
+.action-module-card { padding: 18px; gap: 9px; }
+.action-module-card:hover { transform: translateY(-1px); box-shadow: var(--ui-shadow); border-color: var(--ui-border-strong); }
+.action-module-card.active { background: var(--ui-surface-raised); border-color: rgba(99,199,216,.45); box-shadow: none; }
+.news-item-row { background: transparent; border: 0; border-bottom: 1px solid var(--ui-border); border-radius: 0; padding: 14px 2px; }
+.news-item-row:hover { background: rgba(255,255,255,.025); transform: none; }
+.chat-bubble-user { background: rgba(99,199,216,.13); border: 1px solid rgba(99,199,216,.18); box-shadow: none; }
+.chat-bubble-aether { background: var(--ui-surface); border: 1px solid var(--ui-border); box-shadow: none; }
+
+/* Consistent page rhythm and readable line lengths. */
+.aether-main-content { width: min(100%, 1120px); margin-inline: auto; padding: 28px 28px 88px; gap: 24px; }
+.dashboard-main-view { width: min(100%, 760px) !important; margin-inline: auto !important; padding: 12px 20px 44px !important; gap: 0; }
+.aether-header { background: rgba(9,13,20,.92); border-bottom: 1px solid var(--ui-border); padding: 14px 24px; box-shadow: none; }
+.header-brand-title { background: none; -webkit-text-fill-color: var(--ui-text); letter-spacing: -.035em; font-weight: 700; }
+.header-subtitle { color: var(--ui-muted); }
+.bot-squircle { background: var(--ui-surface-raised); border-color: var(--ui-border); box-shadow: none; }
+.module-icon-wrap { background: var(--ui-accent-soft); border: 1px solid rgba(99,199,216,.14); }
+.module-title { font-size: 1rem; font-weight: 650; }
+.module-desc, .stat-card-title { color: var(--ui-muted); line-height: 1.45; }
+.stat-card { background: var(--ui-surface); border: 1px solid var(--ui-border); box-shadow: none; }
+.stat-card-emerald, .stat-card-blue, .stat-card-purple { background: var(--ui-surface); border-color: var(--ui-border); }
+.stat-card:hover { transform: none; box-shadow: none; border-color: var(--ui-border-strong); }
+
+/* Dashboard: clearer hierarchy, more breathing room, less rainbow-card treatment. */
+.dashboard-main-view > div[style*="repeat(4, 1fr)"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 10px !important;
+  margin: 8px 0 18px !important;
+}
+.dashboard-main-view > div[style*="repeat(4, 1fr)"] > button {
+  min-height: 82px;
+  padding: 13px 10px !important;
+  flex-direction: row !important;
+  justify-content: flex-start !important;
+  gap: 12px !important;
+  border-radius: 14px !important;
+  background: var(--ui-surface) !important;
+  border-color: var(--ui-border) !important;
+}
+.dashboard-main-view > div[style*="repeat(4, 1fr)"] > button > div {
+  width: 38px !important; height: 38px !important; flex: 0 0 38px;
+  background: var(--ui-accent-soft) !important; color: var(--ui-accent) !important;
+  box-shadow: none !important; border: 1px solid rgba(99,199,216,.12);
+}
+.dashboard-main-view > div[style*="repeat(4, 1fr)"] > button > span {
+  font-size: .84rem !important; white-space: normal !important; text-align: left;
+}
+.dashboard-main-view h1 { letter-spacing: -.04em !important; }
+.dashboard-main-view button { box-shadow: none; }
+.dashboard-main-view button:active { transform: scale(.985); }
+.dashboard-main-view > div[style*="linear-gradient"] { box-shadow: none !important; }
+.dashboard-main-view > div[style*="linear-gradient(135deg"] {
+  border-color: var(--ui-border) !important;
+}
+
+/* Inputs and controls use one quiet shape language. */
+input, textarea, select, [contenteditable="true"] {
+  color: var(--ui-text);
+  background: #0d141e;
+  border-color: var(--ui-border-strong);
+  border-radius: 12px;
+}
+input::placeholder, textarea::placeholder { color: #748296; }
+button:not(.btn-share):not(.btn-send-circle):not(.btn-stream-toggle) { transition: background-color .18s ease, border-color .18s ease, transform .18s ease; }
+.btn-share { border-radius: 10px; box-shadow: none; background: var(--ui-text); }
+.btn-send-circle, .btn-stream-toggle { box-shadow: none; }
+.header-btn-lang, .header-btn-push { border-radius: 10px; }
+
+/* Dialogs and drawers: consistent edge, padding and readable headers. */
+[role="dialog"], .modal-content, .modal-container, [class*="modal-content"], [class*="ModalContent"] {
+  border-color: var(--ui-border) !important;
+  border-radius: 20px !important;
+}
+[class*="modal-header"], [class*="ModalHeader"] { border-bottom-color: var(--ui-border) !important; }
+[class*="drawer"], [class*="Drawer"] { border-color: var(--ui-border) !important; }
+
+/* Tablet and phone layouts. Avoid three tiny stat columns and compressed headers. */
+@media (max-width: 768px) {
+  .aether-header { padding: 10px 16px; gap: 10px; }
+  .aether-main-content { padding: 18px 16px 96px; gap: 18px; }
+  .dashboard-main-view { padding: 14px 16px 36px !important; }
+  .card-briefing, .news-card, .ask-aether-card { padding: 17px; border-radius: 16px; }
+  .stat-card-row { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
+  .stat-card { min-height: 92px; padding: 14px !important; border-radius: 14px !important; }
+  .stat-card-top span { display: inline !important; }
+  .stat-card-number { font-size: 1.55rem !important; }
+  .grid-modules { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
+  .action-module-card { min-height: 112px; padding: 15px !important; }
+  .module-title { font-size: .94rem !important; }
+  .module-desc { font-size: .76rem !important; }
+  .chat-bubble-user, .chat-bubble-aether { max-width: 92% !important; }
+  .header-actions { gap: 5px; }
+  .header-btn-lang { padding: 6px 8px; }
+}
+@media (max-width: 380px) {
+  .header-brand-title { font-size: 1rem; }
+  .header-actions { gap: 3px; }
+  .aether-header { padding-inline: 12px; }
+  .aether-main-content, .dashboard-main-view { padding-inline: 12px !important; }
+  .dashboard-main-view > div[style*="repeat(4, 1fr)"] > button { min-height: 76px; gap: 8px !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
