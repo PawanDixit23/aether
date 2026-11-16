@@ -34,7 +34,10 @@ class Task(Base):
 
 class FinancialRecord(Base):
     __tablename__ = "financial_records"
-    __table_args__ = (Index("ix_financial_owner_date_id", "owner_user_id", "date", "id"),)
+    __table_args__ = (
+        Index("ix_financial_owner_date_id", "owner_user_id", "date", "id"),
+        Index("ix_financial_owner_type_date", "owner_user_id", "type", "date"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
@@ -53,7 +56,10 @@ class FinancialRecord(Base):
 
 class MemoryItem(Base):
     __tablename__ = "memory_vault"
-    __table_args__ = (Index("ix_memory_owner_importance_created", "owner_user_id", "importance", "created_at"),)
+    __table_args__ = (
+        Index("ix_memory_owner_importance_created", "owner_user_id", "importance", "created_at"),
+        Index("ix_memory_owner_category_importance", "owner_user_id", "category", "importance", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
@@ -69,6 +75,7 @@ class MemoryItem(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    __table_args__ = (Index("ix_audit_owner_executed", "owner_user_id", "executed_at", "id"),)
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
@@ -82,6 +89,7 @@ class AuditLog(Base):
 
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
+    __table_args__ = (Index("ix_chat_sessions_owner_updated", "owner_user_id", "updated_at", "id"),)
 
     id = Column(String, primary_key=True, index=True) # e.g. sess_20261102_123456
     user_email = Column(String, index=True, nullable=False)
