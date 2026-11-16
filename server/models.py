@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text, UniqueConstraint, Index
 
 try:
     from .database import Base
@@ -8,6 +8,11 @@ except ImportError:
 
 class Task(Base):
     __tablename__ = "tasks"
+    __table_args__ = (
+        Index("ix_tasks_owner_created_id", "owner_user_id", "created_at", "id"),
+        Index("ix_tasks_owner_parent_id", "owner_user_id", "parent_id", "id"),
+        Index("ix_tasks_owner_status_due", "owner_user_id", "status", "due_date"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
@@ -28,6 +33,7 @@ class Task(Base):
 
 class FinancialRecord(Base):
     __tablename__ = "financial_records"
+    __table_args__ = (Index("ix_financial_owner_date_id", "owner_user_id", "date", "id"),)
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
@@ -45,6 +51,7 @@ class FinancialRecord(Base):
 
 class MemoryItem(Base):
     __tablename__ = "memory_vault"
+    __table_args__ = (Index("ix_memory_owner_importance_created", "owner_user_id", "importance", "created_at"),)
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
@@ -85,6 +92,7 @@ class ChatSession(Base):
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
+    __table_args__ = (Index("ix_chat_owner_session_id", "owner_user_id", "session_id", "id"),)
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
@@ -128,6 +136,7 @@ class ScheduledJob(Base):
 
 class TaskDateCompletion(Base):
     __tablename__ = "task_date_completions"
+    __table_args__ = (Index("ix_task_completions_owner_task_id", "owner_user_id", "task_id", "id"),)
 
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, index=True, nullable=False)
