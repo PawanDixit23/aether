@@ -155,6 +155,7 @@ def ensure_schema_migrations():
         "ALTER TABLE push_subscriptions ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE scheduled_jobs ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE tasks ADD COLUMN dependency_task_ids TEXT DEFAULT '[]'",
+        "ALTER TABLE tasks ADD COLUMN backup_key VARCHAR",
         "ALTER TABLE chat_messages ADD COLUMN importance FLOAT DEFAULT 1.0",
         "ALTER TABLE chat_messages ADD COLUMN last_accessed_at TIMESTAMP",
         "ALTER TABLE financial_records ADD COLUMN is_recurring BOOLEAN DEFAULT FALSE",
@@ -216,6 +217,7 @@ def ensure_schema_migrations():
     # ─────────────────────────────────────────────────────────────────────────
     resource_indexes = [
         "CREATE INDEX IF NOT EXISTS ix_tasks_owner_created_id ON tasks (owner_user_id, created_at, id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_owner_backup_key ON tasks (owner_user_id, backup_key) WHERE backup_key IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS ix_tasks_owner_parent_id ON tasks (owner_user_id, parent_id, id)",
         "CREATE INDEX IF NOT EXISTS ix_tasks_owner_status_due ON tasks (owner_user_id, status, due_date)",
         "CREATE INDEX IF NOT EXISTS ix_financial_owner_date_id ON financial_records (owner_user_id, date, id)",
