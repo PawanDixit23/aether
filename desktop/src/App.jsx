@@ -724,6 +724,7 @@ export default function App() {
   }, [tasks, googleTasks]);
   const [newTaskInput, setNewTaskInput] = useState('');
   const [expandedTaskIds, setExpandedTaskIds] = useState({});
+  const [subtaskLoadingIds, setSubtaskLoadingIds] = useState({});
   const toggleSubtasksExpand = (taskId) => {
     setExpandedTaskIds(prev => ({
       ...prev,
@@ -5636,6 +5637,33 @@ export default function App() {
     }
   };
 
+  const handleLoadMoreSubtasks = async (taskId) => {
+    const parent = tasks.find(task => String(task.id) === String(taskId));
+    if (!parent || !parent.subtasks_has_more || subtaskLoadingIds[String(taskId)]) return;
+    setSubtaskLoadingIds(prev => ({ ...prev, [String(taskId)]: true }));
+    try {
+      const offset = (parent.subtasks || []).length;
+      const resp = await apiFetch(`${API_BASE}/tasks/${taskId}/subtasks?limit=100&offset=${offset}`, { headers: {} });
+      if (!resp.ok) throw new Error(`Subtask page request failed (${resp.status})`);
+      const page = await resp.json();
+      const rows = Array.isArray(page) ? page : [];
+      setTasks(prev => prev.map(task => {
+        if (String(task.id) !== String(taskId)) return task;
+        const existing = new Set((task.subtasks || []).map(subtask => String(subtask.id)));
+        return {
+          ...task,
+          subtasks: [...(task.subtasks || []), ...rows.filter(subtask => !existing.has(String(subtask.id)))],
+          subtasks_has_more: rows.length === 100
+        };
+      }));
+    } catch (err) {
+      console.error('Failed to load more subtasks:', err);
+      showToast('Could not load more subtasks. Please try again.', 'error');
+    } finally {
+      setSubtaskLoadingIds(prev => ({ ...prev, [String(taskId)]: false }));
+    }
+  };
+
   const handleLoadMoreMemories = async () => {
     if (memoryLoadingMore || !memoryHasMore) return;
     setMemoryLoadingMore(true);
@@ -9049,6 +9077,16 @@ export default function App() {
                                           </div>
                                         );
                                       })}
+                                      {task.subtasks_has_more && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); handleLoadMoreSubtasks(task.id); }}
+                                            disabled={!!subtaskLoadingIds[String(task.id)]}
+                                            style={{ alignSelf: 'flex-start', background: 'rgba(192, 132, 252, 0.1)', border: '1px solid rgba(192, 132, 252, 0.25)', color: '#c084fc', padding: '3px 8px', borderRadius: '6px', fontSize: '0.68rem', cursor: subtaskLoadingIds[String(task.id)] ? 'wait' : 'pointer' }}
+                                          >
+                                            {subtaskLoadingIds[String(task.id)] ? 'Loading...' : 'Load more subtasks'}
+                                          </button>
+                                        )}
                                     </div>
                                   )}
                                 </div>
@@ -9148,6 +9186,16 @@ export default function App() {
                                             </div>
                                           );
                                         })}
+                                        {task.subtasks_has_more && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => { e.stopPropagation(); handleLoadMoreSubtasks(task.id); }}
+                                              disabled={!!subtaskLoadingIds[String(task.id)]}
+                                              style={{ alignSelf: 'flex-start', background: 'rgba(192, 132, 252, 0.1)', border: '1px solid rgba(192, 132, 252, 0.25)', color: '#c084fc', padding: '3px 8px', borderRadius: '6px', fontSize: '0.68rem', cursor: subtaskLoadingIds[String(task.id)] ? 'wait' : 'pointer' }}
+                                            >
+                                              {subtaskLoadingIds[String(task.id)] ? 'Loading...' : 'Load more subtasks'}
+                                            </button>
+                                        )}
                                       </div>
                                     )}
                                   </div>
