@@ -2660,7 +2660,7 @@ def list_tasks(
         query = query.filter(Task.status == status)
 
     page_rows = (
-        query.order_by(case((Task.recurrence.isnot(None), 0), else_=1), Task.created_at.desc(), Task.id.desc())
+        query.order_by(case((and_(Task.recurrence.isnot(None), Task.recurrence != "", Task.recurrence != "none"), 0), else_=1), Task.created_at.desc(), Task.id.desc())
         .offset(safe_offset).limit(safe_limit + 1).all()
     )
     has_more = len(page_rows) > safe_limit
