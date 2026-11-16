@@ -103,7 +103,7 @@ The cross-tenant reminder worker is a privileged maintenance principal and must 
 - Startup schema/bootstrap work is guarded by a version row in `aether_schema_migrations`; PostgreSQL instances serialize the first application of a version with a session advisory lock.
 - The migration version is written only after the migration function returns successfully. A failed migration must leave the version unapplied so the next deployment can retry.
 - The migration ledger is revoked from Supabase API roles. The SQLite development path uses an unqualified local ledger table.
-- The `ADD COLUMN` parser recognizes both plain and PostgreSQL `ADD COLUMN IF NOT EXISTS` syntax. It must identify the actual column name, not the `IF` token.
+- The `ADD COLUMN` parser explicitly recognizes both plain and PostgreSQL `ADD COLUMN IF NOT EXISTS` syntax and compares the parsed column against inspected schema metadata before executing DDL.
 - Memory Vault list pages and chat-history pages select only fields required by the UI and omit server-side embedding vectors. Embeddings remain stored and available to server-side recall; no memory or chat records are deleted.
 - The shared desktop/WebView API client coalesces identical in-flight authenticated GET requests to the same API URL and headers. It does not cache completed responses, and it bypasses mutations, streaming/media/export endpoints, range requests, no-store requests, and requests with abort signals.
 - Any future schema change must introduce a new migration version and an incremental migration rather than re-running the entire legacy bootstrap routine.
