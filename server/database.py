@@ -405,8 +405,8 @@ def _run_schema_migrations_once():
 def _parse_add_column_target(statement: str):
     """Return (table, column) for an ALTER TABLE ... ADD COLUMN statement."""
     match = re.match(
-        r'^\\s*ALTER\\s+TABLE\\s+"?([A-Za-z_][\\w$]*)"?\\s+ADD\\s+COLUMN'
-        r'(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+"?([A-Za-z_][\\w$]*)"?',
+        r'^\s*ALTER\s+TABLE\s+"?([A-Za-z_][\w$]*)"?\s+ADD\s+COLUMN'
+        r'(?:\s+IF\s+NOT\s+EXISTS)?\s+"?([A-Za-z_][\w$]*)"?',
         statement or "",
         flags=re.IGNORECASE,
     )
