@@ -125,7 +125,7 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
 # ──────────────────────────────────────────────────────────────────────────────
 
 try:
-    from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_db_rls_context, set_webhook_service_rls_context
+    from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_db_rls_context, set_webhook_service_rls_context, set_worker_rls_context
     from models import (
         Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
         ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
@@ -230,6 +230,20 @@ async def security_and_observability_middleware(request: Request, call_next):
                     "max_bytes": max_json_bytes
                 }
             )
+
+    # The global reminder worker is the only cross-tenant API operation. It
+    # requires a dedicated secret; caller-controlled headers are never trusted.
+    if request.method == "POST" and request.url.path == "/api/reminders/push-check":
+        expected_worker_token = os.environ.get("AETHER_WORKER_TOKEN", "").strip()
+        authorization = request.headers.get("Authorization", "")
+        scheme, _, supplied_worker_token = authorization.partition(" ")
+        if not expected_worker_token:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=503, content={"detail": "Reminder worker authentication is not configured"})
+        if scheme.lower() != "bearer" or not hmac.compare_digest(supplied_worker_token.strip(), expected_worker_token):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=401, content={"detail": "Invalid worker credentials"})
+        request.state.is_worker = True
 
     # Rate Limiting Guard on API routes
     if request.url.path.startswith("/api/"):
@@ -4903,6 +4917,7 @@ async def start_reminder_background_worker():
             try:
                 db = SessionLocal()
                 try:
+                    set_worker_rls_context(db)
                     _run_push_check_internal(db)
                 finally:
                     db.close()
