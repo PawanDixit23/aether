@@ -32,6 +32,9 @@ export const ChatHistoryDrawer = ({
   isOpen,
   onClose,
   sessions = [],
+  hasMoreSessions = false,
+  onLoadMoreSessions,
+  isLoadingMoreSessions = false,
   activeSessionId,
   onSelectSession,
   onNewChat,
@@ -815,6 +818,18 @@ export const ChatHistoryDrawer = ({
               {renderGroup("Yesterday", groupedSessions.yesterday)}
               {renderGroup("Previous 7 Days", groupedSessions.last7Days)}
               {renderGroup("Older", groupedSessions.older)}
+              {hasMoreSessions && (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0' }}>
+                  <button
+                    type="button"
+                    onClick={onLoadMoreSessions}
+                    disabled={isLoadingMoreSessions}
+                    style={{ background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.25)', color: '#7dd3fc', borderRadius: '10px', padding: '8px 14px', fontSize: '0.78rem', fontWeight: 600, cursor: isLoadingMoreSessions ? 'wait' : 'pointer', opacity: isLoadingMoreSessions ? 0.65 : 1 }}
+                  >
+                    {isLoadingMoreSessions ? 'Loading conversations...' : 'Load more conversations'}
+                  </button>
+                </div>
+              )}
             </>
           )}
 

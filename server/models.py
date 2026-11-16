@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text, UniqueConstraint, Index, text
 
 try:
     from .database import Base
@@ -8,6 +8,12 @@ except ImportError:
 
 class Task(Base):
     __tablename__ = "tasks"
+    __table_args__ = (
+        Index("ix_tasks_owner_created_id", "owner_user_id", "created_at", "id"),
+        Index("ix_tasks_owner_parent_id", "owner_user_id", "parent_id", "id"),
+        Index("ix_tasks_owner_status_due", "owner_user_id", "status", "due_date"),
+        Index("uq_tasks_owner_backup_key", "owner_user_id", "backup_key", unique=True, postgresql_where=text("backup_key IS NOT NULL"), sqlite_where=text("backup_key IS NOT NULL")),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
@@ -24,10 +30,16 @@ class Task(Base):
     notified = Column(Boolean, default=False)
     completion_comment = Column(Text, nullable=True) # Comments / notes on completion
     attachments = Column(Text, nullable=True) # JSON array string of attached files [{name, url, type, size}]
+    backup_key = Column(String, nullable=True, index=True) # Idempotency key for chunked client-backup restore
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class FinancialRecord(Base):
     __tablename__ = "financial_records"
+    __table_args__ = (
+        Index("ix_financial_owner_date_id", "owner_user_id", "date", "id"),
+        Index("ix_financial_owner_type_date", "owner_user_id", "type", "date"),
+        Index("uq_financial_owner_backup_key", "owner_user_id", "backup_key", unique=True, postgresql_where=text("backup_key IS NOT NULL"), sqlite_where=text("backup_key IS NOT NULL")),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
@@ -41,10 +53,16 @@ class FinancialRecord(Base):
     is_recurring = Column(Boolean, default=False)
     recurrence_interval = Column(String, nullable=True) # "monthly", "yearly", "weekly"
     next_due_date = Column(DateTime, nullable=True)
+    backup_key = Column(String, nullable=True, index=True) # Idempotency key for chunked client-backup restore
     date = Column(DateTime, default=datetime.utcnow)
 
 class MemoryItem(Base):
     __tablename__ = "memory_vault"
+    __table_args__ = (
+        Index("ix_memory_owner_importance_created", "owner_user_id", "importance", "created_at"),
+        Index("ix_memory_owner_category_importance", "owner_user_id", "category", "importance", "created_at"),
+        Index("ix_memory_fact_trgm", "fact", postgresql_using="gin", postgresql_ops={"fact": "gin_trgm_ops"}),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
@@ -60,6 +78,7 @@ class MemoryItem(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    __table_args__ = (Index("ix_audit_owner_executed", "owner_user_id", "executed_at", "id"),)
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
@@ -73,6 +92,7 @@ class AuditLog(Base):
 
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
+    __table_args__ = (Index("ix_chat_sessions_owner_updated", "owner_user_id", "updated_at", "id"),)
 
     id = Column(String, primary_key=True, index=True) # e.g. sess_20261102_123456
     user_email = Column(String, index=True, nullable=False)
@@ -85,6 +105,7 @@ class ChatSession(Base):
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
+    __table_args__ = (Index("ix_chat_owner_session_id", "owner_user_id", "session_id", "id"),)
 
     id = Column(Integer, primary_key=True, index=True)
     user_email = Column(String, index=True, nullable=True)
@@ -128,6 +149,7 @@ class ScheduledJob(Base):
 
 class TaskDateCompletion(Base):
     __tablename__ = "task_date_completions"
+    __table_args__ = (Index("ix_task_completions_owner_task_id", "owner_user_id", "task_id", "id"),)
 
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, index=True, nullable=False)

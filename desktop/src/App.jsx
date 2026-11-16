@@ -613,6 +613,9 @@ export default function App() {
   // App data states
   const [briefing, setBriefing] = useState(null);
   const [cityGuide, setCityGuide] = useState(null);
+  const [chatSessionsHasMore, setChatSessionsHasMore] = useState(false);
+  const [chatSessionsFetchedCount, setChatSessionsFetchedCount] = useState(0);
+  const [chatSessionsLoadingMore, setChatSessionsLoadingMore] = useState(false);
   const [chatSessions, setChatSessions] = useState(() => {
     try {
       const email = localStorage.getItem('aether_user_email');
@@ -645,6 +648,10 @@ export default function App() {
   const [showGeminiLive, setShowGeminiLive] = useState(false);
   const [isChatDrawerOpen, setIsChatDrawerOpen] = useState(false);
   const [isTemporaryChat, setIsTemporaryChat] = useState(false);
+  const [chatHistoryHasMore, setChatHistoryHasMore] = useState(false);
+  const [chatHistoryOldestId, setChatHistoryOldestId] = useState(null);
+  const [chatHistoryLoadingMore, setChatHistoryLoadingMore] = useState(false);
+  const chatHistorySessionRef = useRef(null);
   const [chatHistory, setChatHistory] = useState(() => {
     try {
       const email = localStorage.getItem('aether_user_email');
@@ -657,6 +664,10 @@ export default function App() {
   });
   const isClearingChatRef = useRef(false);
   const handledDueIdsRef = useRef(new Set());
+  const [taskHasMore, setTaskHasMore] = useState(false);
+  const [taskFetchedCount, setTaskFetchedCount] = useState(0);
+  const [taskLoadingMore, setTaskLoadingMore] = useState(false);
+  const [rescheduleCursor, setRescheduleCursor] = useState(0);
   const [tasks, setTasks] = useState(() => {
     try {
       const email = localStorage.getItem('aether_user_email');
@@ -721,6 +732,7 @@ export default function App() {
   }, [tasks, googleTasks]);
   const [newTaskInput, setNewTaskInput] = useState('');
   const [expandedTaskIds, setExpandedTaskIds] = useState({});
+  const [subtaskLoadingIds, setSubtaskLoadingIds] = useState({});
   const toggleSubtasksExpand = (taskId) => {
     setExpandedTaskIds(prev => ({
       ...prev,
@@ -741,6 +753,9 @@ export default function App() {
     );
   };
   const [financeRecords, setFinanceRecords] = useState([]);
+  const [financeHasMore, setFinanceHasMore] = useState(false);
+  const [financeFetchedCount, setFinanceFetchedCount] = useState(0);
+  const [financeLoadingMore, setFinanceLoadingMore] = useState(false);
   const [financeSummary, setFinanceSummary] = useState({ total_income: 0, total_expense: 0, balance: 0 });
   const [memories, setMemories] = useState([]);
   const [memoryHasMore, setMemoryHasMore] = useState(false);
@@ -1088,27 +1103,38 @@ export default function App() {
       return;
     }
     try {
-      showToast(`Saving ${contactsList.length} contacts to Memory Vault... ⚡`, "info");
-      const resp = await apiFetch(`${API_BASE}/memory/bulk-contacts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(userEmail ? { 'X-User-Email': userEmail } : {})
-        },
-        body: JSON.stringify({
-          contacts: contactsList,
-          user_email: userEmail
-        })
-      });
-      const data = await resp.json();
-      if (data.status === 'ok') {
-        showToast(`✅ ${data.message || 'Contacts saved!'}`, "success");
-        fetchMemories();
-      } else {
-        showToast("Contacts sync error", "error");
+      let synced = 0;
+      let skipped = 0;
+      let failed = 0;
+      showToast(`Saving ${contactsList.length} contacts in safe batches... ⚡`, "info");
+      for (let offset = 0; offset < contactsList.length; offset += 200) {
+        const resp = await apiFetch(`${API_BASE}/memory/bulk-contacts`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(userEmail ? { 'X-User-Email': userEmail } : {})
+          },
+          body: JSON.stringify({
+            contacts: contactsList.slice(offset, offset + 200),
+            user_email: userEmail
+          })
+        });
+        if (!resp.ok) throw new Error(`Contacts batch failed (${resp.status})`);
+        const data = await resp.json();
+        if (data.status !== 'ok') throw new Error(data.message || 'Contacts sync error');
+        synced += Number(data.synced_count || 0);
+        skipped += Number(data.skipped_count || 0);
+        failed += Number(data.failed_count || 0);
       }
+      if (failed > 0) {
+        showToast(`Partial contact sync: ${synced} saved, ${skipped} skipped, ${failed} failed. Retry to continue.`, "error");
+      } else {
+        showToast(`✅ Contacts sync complete: ${synced} saved, ${skipped} already present or invalid.`, "success");
+      }
+      fetchMemories();
     } catch (e) {
-      showToast("Could not reach server to sync contacts", "error");
+      console.error('Chunked contact sync failed:', e);
+      showToast("Contact sync stopped. Retry to continue; saved batches are safe to retry.", "error");
     } finally {
       setIsSyncingContacts(false);
     }
@@ -3118,15 +3144,33 @@ export default function App() {
   const handleRescheduleAllOverdue = async () => {
     try {
       const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
-      const res = await apiFetch(`${API_BASE}/tasks/reschedule-overdue`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders }
-      });
-      const data = await res.json();
+      let cursor = rescheduleCursor;
+      let totalRescheduled = 0;
+      let hasMore = true;
+      let batches = 0;
+      while (hasMore && batches < 20) {
+        const res = await apiFetch(`${API_BASE}/tasks/reschedule-overdue?limit=200&after_id=${cursor}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders }
+        });
+        if (!res.ok) throw new Error(`Reschedule batch failed (${res.status})`);
+        const data = await res.json();
+        totalRescheduled += Number(data.rescheduled_count || 0);
+        cursor = Number(data.next_after_id || cursor);
+        hasMore = !!data.has_more;
+        batches += 1;
+      }
+      setRescheduleCursor(hasMore ? cursor : 0);
       refreshAllData();
-      showToast(`${data.rescheduled_count || 0} overdue tasks rescheduled to today!`, 'success');
+      showToast(
+        hasMore
+          ? `${totalRescheduled} overdue tasks processed. Tap again to continue the remaining batches.`
+          : `${totalRescheduled} overdue tasks rescheduled to today!`,
+        hasMore ? 'info' : 'success'
+      );
     } catch (e) {
-      showToast('Failed to reschedule', 'error');
+      console.error('Reschedule batches failed:', e);
+      showToast('Reschedule paused. Tap again to retry from the saved cursor.', 'error');
     }
   };
 
@@ -3574,9 +3618,9 @@ export default function App() {
       const [resBrief, resChat, resSessions, resTasks, resFin, resFinSum, resMem, resAudit, resNews, resDue, resCricket] = await Promise.all([
         apiFetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}${briefLocParams}`, { headers: authHeaders }),
         opts.skipChatHistory ? Promise.resolve({ ok: false }) : apiFetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(curSessionId)}&limit=60`, { headers: authHeaders }),
-        apiFetch(`${API_BASE}/chat/sessions`, { headers: authHeaders }),
-        apiFetch(`${API_BASE}/tasks`, { headers: authHeaders }),
-        apiFetch(`${API_BASE}/finance/records`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/chat/sessions?limit=50&offset=0`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/tasks?limit=50&offset=0`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/finance/records?limit=100&offset=0`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/finance/summary`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/memory?limit=50&offset=0`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/audit-logs`, { headers: authHeaders }),
@@ -3597,9 +3641,17 @@ export default function App() {
             // Drop any session that was intentionally deleted or temporary
             const validSessions = sessData.filter(s => !deletedSessionIdsRef.current.has(s.id) && !s.id.startsWith('temp_') && s.id !== 'temporary');
             setChatSessions(validSessions);
+            setChatSessionsFetchedCount(sessData.length);
+            setChatSessionsHasMore(sessData.length === 50);
             if (currentEmail) {
               try {
-                localStorage.setItem(`aether_chat_sessions_${currentEmail}`, JSON.stringify(validSessions));
+                const cacheKey = `aether_chat_sessions_${currentEmail}`;
+                const cachedRows = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+                const byId = new Map((Array.isArray(cachedRows) ? cachedRows : [])
+                  .filter(session => session && session.id && !deletedSessionIdsRef.current.has(session.id))
+                  .map(session => [String(session.id), session]));
+                validSessions.forEach(session => byId.set(String(session.id), session));
+                localStorage.setItem(cacheKey, JSON.stringify(Array.from(byId.values())));
               } catch (e) {}
             }
           }
@@ -3612,6 +3664,11 @@ export default function App() {
           ...c,
           role: c.role === 'aether' ? 'assistant' : c.role
         })) : [];
+        if (chatHistorySessionRef.current !== curSessionId) {
+          chatHistorySessionRef.current = curSessionId;
+          setChatHistoryHasMore(Array.isArray(chats) && chats.length === 60);
+          setChatHistoryOldestId(normalizedChats.length ? normalizedChats[0].id : null);
+        }
 
         // Guard against race conditions: only update if activeSessionId hasn't changed during fetch
         if (activeSessionIdRef.current === curSessionId) {
@@ -3734,17 +3791,35 @@ export default function App() {
           });
         });
 
+        setTaskFetchedCount(Array.isArray(loadedTasks) ? loadedTasks.length : 0);
+        setTaskHasMore(Array.isArray(loadedTasks) && loadedTasks.length === 50);
+
         if (cleanTasks.length > 0) {
-          localStorage.setItem('aether_cached_tasks', JSON.stringify(cleanTasks));
+          const priorBackupText = currentEmail ? localStorage.getItem(`aether_backup_${currentEmail}`) : null;
+          let priorBackup = {};
+          try { priorBackup = priorBackupText ? JSON.parse(priorBackupText) : {}; } catch (e) {}
+          const cachedTaskRows = Array.isArray(priorBackup.tasks) ? priorBackup.tasks : [];
+          const mergedTaskBackup = Array.from(new Map(
+            [...cachedTaskRows, ...cleanTasks]
+              .filter(task => task && task.id != null && !deletedTaskIdsRef.current.has(String(task.id)))
+              .map(task => [String(task.id), task])
+          ).values());
+          localStorage.setItem('aether_cached_tasks', JSON.stringify(mergedTaskBackup));
           setOnboardingDone(true);
           try {
             localStorage.setItem('aether_onboarding_done', 'true');
           } catch (e) {}
           if (currentEmail) {
+            const cachedFinanceRows = Array.isArray(priorBackup.finances) ? priorBackup.finances : [];
+            const mergedFinanceBackup = Array.from(new Map(
+              [...cachedFinanceRows, ...loadedFinances]
+                .filter(record => record && record.id != null && !deletedFinanceIdsRef.current.has(String(record.id)))
+                .map(record => [String(record.id), record])
+            ).values());
             localStorage.setItem(`aether_backup_${currentEmail}`, JSON.stringify({
-              tasks: cleanTasks,
+              tasks: mergedTaskBackup,
               memories: mergeMemoryBackup(currentEmail, loadedMemories),
-              finances: loadedFinances
+              finances: mergedFinanceBackup
             }));
           }
 
@@ -3836,6 +3911,8 @@ export default function App() {
           ? loadedFinances.filter(f => !deletedFinanceIdsRef.current.has(String(f.id)))
           : [];
         setFinanceRecords(validFinances);
+        setFinanceFetchedCount(Array.isArray(loadedFinances) ? loadedFinances.length : 0);
+        setFinanceHasMore(Array.isArray(loadedFinances) && loadedFinances.length === 100);
       }
       if (resFinSum.ok) setFinanceSummary(await resFinSum.json());
       if (resMem.ok) {
@@ -3857,12 +3934,28 @@ export default function App() {
       // Auto-backup / restore client data so memory never disappears across Render container reboots
       if (currentEmail) {
         if (loadedTasks.length > 0 || loadedMemories.length > 0 || loadedFinances.length > 0) {
+          let previousBackup = {};
+          try {
+            const previousText = localStorage.getItem(`aether_backup_${currentEmail}`);
+            previousBackup = previousText ? JSON.parse(previousText) : {};
+          } catch (e) {}
+          const previousTasks = Array.isArray(previousBackup.tasks) ? previousBackup.tasks : [];
+          const previousFinances = Array.isArray(previousBackup.finances) ? previousBackup.finances : [];
+          const backupTasks = Array.from(new Map(
+            [...previousTasks, ...loadedTasks]
+              .filter(task => task && task.id != null && !deletedTaskIdsRef.current.has(String(task.id)))
+              .map(task => [String(task.id), task])
+          ).values());
+          const backupFinances = Array.from(new Map(
+            [...previousFinances, ...loadedFinances]
+              .filter(record => record && record.id != null && !deletedFinanceIdsRef.current.has(String(record.id)))
+              .map(record => [String(record.id), record])
+          ).values());
+          const backupMemories = mergeMemoryBackup(currentEmail, loadedMemories);
           localStorage.setItem(`aether_backup_${currentEmail}`, JSON.stringify({
-            tasks: loadedTasks,
-            memories: mergeMemoryBackup(currentEmail, loadedMemories),
-            finances: loadedFinances
+            tasks: backupTasks, memories: backupMemories, finances: backupFinances
           }));
-          localStorage.setItem('aether_cached_tasks', JSON.stringify(loadedTasks));
+          localStorage.setItem('aether_cached_tasks', JSON.stringify(backupTasks));
 
           // Also persist in mobile device native AsyncStorage via bridge
           if (typeof window !== 'undefined' && window.ReactNativeWebView) {
@@ -3871,15 +3964,17 @@ export default function App() {
                 type: 'STORE_NATIVE_BACKUP',
                 payload: {
                   email: currentEmail,
-                  tasks: loadedTasks,
-                  memories: mergeMemoryBackup(currentEmail, loadedMemories),
-                  finances: loadedFinances
+                  tasks: backupTasks,
+                  memories: backupMemories,
+                  finances: backupFinances
                 }
               }));
             } catch (e) {}
           }
-        } else {
-          // If server returned 0 records, try restoring from local backup or native bridge backup ONLY for this exact user
+        }
+
+        {
+          // Restore only modules that are empty on the server, without overwriting populated modules.
           let backupData = null;
           const cachedBackupStr = currentEmail ? localStorage.getItem(`aether_backup_${currentEmail}`) : null;
           if (cachedBackupStr) {
@@ -3896,54 +3991,73 @@ export default function App() {
           }
 
           if (backupData && currentEmail) {
-            const bTasks = Array.isArray(backupData) ? backupData : (backupData.tasks || []);
-            const bMems = backupData.memories || [];
-            const bFin = backupData.finances || [];
+            const savedTasks = Array.isArray(backupData) ? backupData : (backupData.tasks || []);
+            const savedMemories = Array.isArray(backupData) ? [] : (backupData.memories || []);
+            const savedFinances = Array.isArray(backupData) ? [] : (backupData.finances || []);
+            const taskRestoreBlockedKey = `aether_backup_task_restore_blocked_${currentEmail}`;
+            const taskRestoreAlreadyBlocked = localStorage.getItem(taskRestoreBlockedKey) === 'true';
+            const bTasks = loadedTasks.length === 0 && !taskRestoreAlreadyBlocked ? savedTasks : [];
+            const bMems = loadedMemories.length === 0 ? savedMemories : [];
+            const bFin = loadedFinances.length === 0 ? savedFinances : [];
 
             if (bTasks.length > 0 || bMems.length > 0 || bFin.length > 0) {
-              try {
-                const backupSyncResp = await apiFetch(`${API_BASE}/sync/backup`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
-                  body: JSON.stringify({
-                    user_email: currentEmail,
-                    tasks: bTasks,
-                    memories: bMems,
-                    finances: bFin
-                  })
-                });
-                if (!backupSyncResp.ok) throw new Error(`Backup restore failed (${backupSyncResp.status})`);
-
-                if (bTasks.length > 0) setTasks(bTasks);
-                if (bFin.length > 0) setFinanceRecords(bFin);
-
-                // Re-read the restored server page so Memory Vault pagination state
-                // reflects server records, not just the local/native backup cache.
-                if (bMems.length > 0) {
-                  const restoredMemResp = await apiFetch(`${API_BASE}/memory?limit=50&offset=0`, { headers: authHeaders });
-                  if (restoredMemResp.ok) {
-                    const restoredMemories = await restoredMemResp.json();
-                    if (Array.isArray(restoredMemories)) {
-                      loadedMemories = restoredMemories;
-                      const validRestoredMemories = restoredMemories.filter(
-                        m => !deletedMemoryIdsRef.current.has(String(m.id))
-                      );
-                      setMemories(validRestoredMemories);
-                      setMemoryFetchedCount(restoredMemories.length);
-                      setMemoryHasMore(restoredMemories.length === 50);
-                    } else {
-                      setMemories(bMems.filter(m => !deletedMemoryIdsRef.current.has(String(m.id))));
-                    }
-                  } else {
-                    setMemories(bMems.filter(m => !deletedMemoryIdsRef.current.has(String(m.id))));
+              const flattenBackupTasks = (source, parentClientId = null) => {
+                const flattened = [];
+                for (const task of (Array.isArray(source) ? source : [])) {
+                  const children = Array.isArray(task.subtasks) ? task.subtasks : [];
+                  const row = { ...task, parent_client_id: parentClientId ?? task.parent_client_id ?? task.parent_id ?? null };
+                  delete row.subtasks;
+                  delete row.subtasks_has_more;
+                  flattened.push(row);
+                  flattened.push(...flattenBackupTasks(children, task.id));
+                }
+                return flattened;
+              };
+              const backupTaskRows = flattenBackupTasks(bTasks);
+              const hasUnloadedSubtasks = (rows) => (rows || []).some(task =>
+                task?.subtasks_has_more || hasUnloadedSubtasks(task?.subtasks)
+              );
+              const taskRestoreBlocked = hasUnloadedSubtasks(bTasks);
+              if (taskRestoreBlocked) {
+                localStorage.setItem(taskRestoreBlockedKey, 'true');
+                showToast('Task backup has unloaded subtasks; task restore was paused to avoid losing child records. Other empty modules will still restore.', 'error');
+              }
+              const uploadBackupChunks = async (field, records) => {
+                for (let offset = 0; offset < records.length; offset += 50) {
+                  const payload = { user_email: currentEmail, [field]: records.slice(offset, offset + 50) };
+                  const resp = await apiFetch(`${API_BASE}/sync/backup`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
+                    body: JSON.stringify(payload)
+                  });
+                  if (!resp.ok) {
+                    const detail = await resp.text().catch(() => '');
+                    throw new Error(`Backup ${field} batch failed (${resp.status}): ${detail.slice(0, 200)}`);
+                  }
+                  const result = await resp.json();
+                  if (result.failed_count > 0) {
+                    throw new Error(`Backup ${field} batch had ${result.failed_count} failed records`);
                   }
                 }
-              } catch (restoreErr) {
-                console.error('Failed to restore client backup:', restoreErr);
-                if (bMems.length > 0) {
-                  setMemories(bMems.filter(m => !deletedMemoryIdsRef.current.has(String(m.id))));
+              };
+              (async () => {
+                try {
+                  if (!taskRestoreBlocked) await uploadBackupChunks('tasks', backupTaskRows);
+                  await uploadBackupChunks('memories', bMems);
+                  await uploadBackupChunks('finances', bFin);
+                  if (taskRestoreBlocked) {
+                    showToast('Other missing modules were restored. Task restore remains paused because the local task tree is incomplete.', 'error');
+                  } else {
+                    showToast('Local backup restored safely in batches', 'success');
+                  }
+                  if (!taskRestoreBlocked || bMems.length > 0 || bFin.length > 0) {
+                    await refreshAllData({ force: true });
+                  }
+                } catch (restoreError) {
+                  console.error('Chunked backup restore failed:', restoreError);
+                  showToast('Backup restore is incomplete. Retry sync; completed batches are safe to retry.', 'error');
                 }
-              }
+              })();
             }
           }
         }
@@ -5607,6 +5721,32 @@ export default function App() {
     }
   };
 
+  const handleLoadMoreSubtasks = async (taskId) => {
+    const parent = tasks.find(task => String(task.id) === String(taskId));
+    if (!parent || !parent.subtasks_has_more || subtaskLoadingIds[String(taskId)]) return;
+    setSubtaskLoadingIds(prev => ({ ...prev, [String(taskId)]: true }));
+    try {
+      const offset = (parent.subtasks || []).length;
+      const resp = await apiFetch(`${API_BASE}/tasks/${taskId}/subtasks?limit=100&offset=${offset}`, { headers: {} });
+      if (!resp.ok) throw new Error(`Subtask page request failed (${resp.status})`);
+      const page = await resp.json();
+      const rows = Array.isArray(page) ? page : [];
+      const existing = new Set((parent.subtasks || []).map(subtask => String(subtask.id)));
+      const updatedParent = {
+        ...parent,
+        subtasks: [...(parent.subtasks || []), ...rows.filter(subtask => !existing.has(String(subtask.id)))],
+        subtasks_has_more: rows.length === 100
+      };
+      setTasks(prev => prev.map(task => String(task.id) === String(taskId) ? updatedParent : task));
+      mergeLocalBackupRecords('tasks', [updatedParent]);
+    } catch (err) {
+      console.error('Failed to load more subtasks:', err);
+      showToast('Could not load more subtasks. Please try again.', 'error');
+    } finally {
+      setSubtaskLoadingIds(prev => ({ ...prev, [String(taskId)]: false }));
+    }
+  };
+
   const handleLoadMoreMemories = async () => {
     if (memoryLoadingMore || !memoryHasMore) return;
     setMemoryLoadingMore(true);
@@ -5631,6 +5771,137 @@ export default function App() {
       showToast('Could not load more memories. Please try again.', 'error');
     } finally {
       setMemoryLoadingMore(false);
+    }
+  };
+
+  const handleLoadOlderChatMessages = async () => {
+    if (chatHistoryLoadingMore || !chatHistoryHasMore || !chatHistoryOldestId) return;
+    const sessionId = activeSessionIdRef.current || 'default';
+    if (sessionId.startsWith('temp_') || sessionId === 'temporary') return;
+    setChatHistoryLoadingMore(true);
+    try {
+      const resp = await apiFetch(
+        `${API_BASE}/chat/history?session_id=${encodeURIComponent(sessionId)}&limit=60&before_id=${chatHistoryOldestId}`,
+        { headers: {} }
+      );
+      if (!resp.ok) throw new Error(`Older chat history request failed (${resp.status})`);
+      const page = await resp.json();
+      const older = Array.isArray(page) ? page.map(message => ({
+        ...message, role: message.role === 'aether' ? 'assistant' : message.role
+      })) : [];
+      setChatHistory(prev => {
+        const existingIds = new Set(prev.filter(message => message.id != null).map(message => String(message.id)));
+        const uniqueOlder = older.filter(message => message.id == null || !existingIds.has(String(message.id)));
+        return [...uniqueOlder, ...prev];
+      });
+      if (older.length > 0) setChatHistoryOldestId(older[0].id || chatHistoryOldestId);
+      setChatHistoryHasMore(older.length === 60);
+    } catch (err) {
+      console.error('Failed to load older chat messages:', err);
+      showToast('Could not load older messages. Please try again.', 'error');
+    } finally {
+      setChatHistoryLoadingMore(false);
+    }
+  };
+
+  const handleLoadMoreChatSessions = async () => {
+    if (chatSessionsLoadingMore || !chatSessionsHasMore) return;
+    setChatSessionsLoadingMore(true);
+    try {
+      const offset = chatSessionsFetchedCount;
+      const resp = await apiFetch(`${API_BASE}/chat/sessions?limit=50&offset=${offset}`, { headers: {} });
+      if (!resp.ok) throw new Error(`Chat session page failed (${resp.status})`);
+      const page = await resp.json();
+      const rows = Array.isArray(page) ? page.filter(session =>
+        !deletedSessionIdsRef.current.has(session.id) && !String(session.id).startsWith('temp_') && session.id !== 'temporary'
+      ) : [];
+      setChatSessions(prev => {
+        const byId = new Map(prev.map(session => [String(session.id), session]));
+        rows.forEach(session => byId.set(String(session.id), session));
+        return Array.from(byId.values());
+      });
+      if (userEmail && rows.length) {
+        try {
+          const cacheKey = `aether_chat_sessions_${userEmail}`;
+          const cachedRows = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+          const byId = new Map((Array.isArray(cachedRows) ? cachedRows : []).map(session => [String(session.id), session]));
+          rows.forEach(session => byId.set(String(session.id), session));
+          localStorage.setItem(cacheKey, JSON.stringify(Array.from(byId.values())));
+        } catch (e) {}
+      }
+      setChatSessionsFetchedCount(offset + (Array.isArray(page) ? page.length : 0));
+      setChatSessionsHasMore(Array.isArray(page) && page.length === 50);
+    } catch (err) {
+      console.error('Failed to load more chat sessions:', err);
+      showToast('Could not load more conversations. Please try again.', 'error');
+    } finally {
+      setChatSessionsLoadingMore(false);
+    }
+  };
+
+  const mergeLocalBackupRecords = (field, rows) => {
+    if (!userEmail || !Array.isArray(rows) || rows.length === 0) return;
+    try {
+      const key = `aether_backup_${userEmail}`;
+      const current = JSON.parse(localStorage.getItem(key) || '{}');
+      const existing = Array.isArray(current[field]) ? current[field] : [];
+      const byId = new Map(existing.filter(row => row && row.id != null).map(row => [String(row.id), row]));
+      rows.filter(row => row && row.id != null).forEach(row => byId.set(String(row.id), row));
+      current[field] = Array.from(byId.values());
+      localStorage.setItem(key, JSON.stringify(current));
+      if (field === 'tasks') localStorage.setItem('aether_cached_tasks', JSON.stringify(current.tasks));
+    } catch (err) {
+      console.warn(`Could not update local ${field} backup cache:`, err);
+    }
+  };
+
+  const handleLoadMoreTasks = async () => {
+    if (taskLoadingMore || !taskHasMore) return;
+    setTaskLoadingMore(true);
+    try {
+      const offset = taskFetchedCount;
+      const resp = await apiFetch(`${API_BASE}/tasks?limit=50&offset=${offset}`, { headers: {} });
+      if (!resp.ok) throw new Error(`Task page request failed (${resp.status})`);
+      const page = await resp.json();
+      const rows = Array.isArray(page) ? page.filter(task => !deletedTaskIdsRef.current.has(String(task.id))) : [];
+      setTasks(prev => {
+        const byId = new Map(prev.map(task => [String(task.id), task]));
+        rows.forEach(task => byId.set(String(task.id), task));
+        return Array.from(byId.values());
+      });
+      mergeLocalBackupRecords('tasks', rows);
+      setTaskFetchedCount(offset + (Array.isArray(page) ? page.length : 0));
+      setTaskHasMore(Array.isArray(page) && page.length === 50);
+    } catch (err) {
+      console.error('Failed to load more tasks:', err);
+      showToast('Could not load more tasks. Please try again.', 'error');
+    } finally {
+      setTaskLoadingMore(false);
+    }
+  };
+
+  const handleLoadMoreFinance = async () => {
+    if (financeLoadingMore || !financeHasMore) return;
+    setFinanceLoadingMore(true);
+    try {
+      const offset = financeFetchedCount;
+      const resp = await apiFetch(`${API_BASE}/finance/records?limit=100&offset=${offset}`, { headers: {} });
+      if (!resp.ok) throw new Error(`Finance page request failed (${resp.status})`);
+      const page = await resp.json();
+      const rows = Array.isArray(page) ? page.filter(record => !deletedFinanceIdsRef.current.has(String(record.id))) : [];
+      setFinanceRecords(prev => {
+        const byId = new Map(prev.map(record => [String(record.id), record]));
+        rows.forEach(record => byId.set(String(record.id), record));
+        return Array.from(byId.values());
+      });
+      mergeLocalBackupRecords('finances', rows);
+      setFinanceFetchedCount(offset + (Array.isArray(page) ? page.length : 0));
+      setFinanceHasMore(Array.isArray(page) && page.length === 100);
+    } catch (err) {
+      console.error('Failed to load more finance records:', err);
+      showToast('Could not load more transactions. Please try again.', 'error');
+    } finally {
+      setFinanceLoadingMore(false);
     }
   };
 
@@ -7089,6 +7360,18 @@ export default function App() {
                 </div>
               ) : (
                 <div className="gemini-chat-feed" ref={geminiChatFeedRef}>
+                  {chatHistoryHasMore && (
+                    <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 18px' }}>
+                      <button
+                        type="button"
+                        onClick={handleLoadOlderChatMessages}
+                        disabled={chatHistoryLoadingMore}
+                        style={{ background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.25)', color: '#7dd3fc', borderRadius: '10px', padding: '8px 14px', fontSize: '0.78rem', fontWeight: 600, cursor: chatHistoryLoadingMore ? 'wait' : 'pointer', opacity: chatHistoryLoadingMore ? 0.65 : 1 }}
+                      >
+                        {chatHistoryLoadingMore ? 'Loading older messages...' : 'Load older messages'}
+                      </button>
+                    </div>
+                  )}
                   {chatHistory.map((msg, idx) => (
                     <div 
                       key={msg.id ? `msg-${msg.id}` : (msg.created_at ? `msg-${msg.created_at}-${idx}` : `msg-${idx}`)} 
@@ -8972,6 +9255,16 @@ export default function App() {
                                           </div>
                                         );
                                       })}
+                                      {task.subtasks_has_more && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); handleLoadMoreSubtasks(task.id); }}
+                                            disabled={!!subtaskLoadingIds[String(task.id)]}
+                                            style={{ alignSelf: 'flex-start', background: 'rgba(192, 132, 252, 0.1)', border: '1px solid rgba(192, 132, 252, 0.25)', color: '#c084fc', padding: '3px 8px', borderRadius: '6px', fontSize: '0.68rem', cursor: subtaskLoadingIds[String(task.id)] ? 'wait' : 'pointer' }}
+                                          >
+                                            {subtaskLoadingIds[String(task.id)] ? 'Loading...' : 'Load more subtasks'}
+                                          </button>
+                                        )}
                                     </div>
                                   )}
                                 </div>
@@ -9071,6 +9364,16 @@ export default function App() {
                                             </div>
                                           );
                                         })}
+                                        {task.subtasks_has_more && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => { e.stopPropagation(); handleLoadMoreSubtasks(task.id); }}
+                                              disabled={!!subtaskLoadingIds[String(task.id)]}
+                                              style={{ alignSelf: 'flex-start', background: 'rgba(192, 132, 252, 0.1)', border: '1px solid rgba(192, 132, 252, 0.25)', color: '#c084fc', padding: '3px 8px', borderRadius: '6px', fontSize: '0.68rem', cursor: subtaskLoadingIds[String(task.id)] ? 'wait' : 'pointer' }}
+                                            >
+                                              {subtaskLoadingIds[String(task.id)] ? 'Loading...' : 'Load more subtasks'}
+                                            </button>
+                                        )}
                                       </div>
                                     )}
                                   </div>
@@ -9154,6 +9457,19 @@ export default function App() {
                   </>
                 );
               })()}
+
+              {taskHasMore && (
+                <div style={{ display: 'flex', justifyContent: 'center', margin: '8px 0 18px' }}>
+                  <button
+                    type="button"
+                    onClick={handleLoadMoreTasks}
+                    disabled={taskLoadingMore}
+                    style={{ background: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.3)', color: '#c084fc', borderRadius: '10px', padding: '9px 16px', fontSize: '0.8rem', fontWeight: 600, cursor: taskLoadingMore ? 'wait' : 'pointer', opacity: taskLoadingMore ? 0.65 : 1 }}
+                  >
+                    {taskLoadingMore ? 'Loading tasks...' : 'Load more tasks'}
+                  </button>
+                </div>
+              )}
 
               {/* Cricinfo Live Match Scorecards Widget */}
               {cricketMatches.length > 0 && (
@@ -9391,6 +9707,9 @@ export default function App() {
         isOpen={isChatDrawerOpen}
         onClose={() => setIsChatDrawerOpen(false)}
         sessions={chatSessions}
+        hasMoreSessions={chatSessionsHasMore}
+        onLoadMoreSessions={handleLoadMoreChatSessions}
+        isLoadingMoreSessions={chatSessionsLoadingMore}
         activeSessionId={activeSessionId}
         onSelectSession={handleSelectSession}
         onNewChat={handleStartNewChat}
@@ -9558,6 +9877,9 @@ export default function App() {
           onClose={() => { setActiveSubModal(null); setEditingFinanceRecord(null); setIsAddingExpense(false); }}
           financeSummary={financeSummary}
           financeRecords={financeRecords}
+          financeHasMore={financeHasMore}
+          onLoadMoreFinance={handleLoadMoreFinance}
+          financeLoadingMore={financeLoadingMore}
           isAddingExpense={isAddingExpense}
           setIsAddingExpense={setIsAddingExpense}
           newExpenseForm={newExpenseForm}

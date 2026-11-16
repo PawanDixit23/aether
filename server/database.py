@@ -21,11 +21,29 @@ elif DATABASE_URL.startswith("postgresql://") and not DATABASE_URL.startswith("p
 
 connect_args = {"check_same_thread": False, "timeout": 15} if DATABASE_URL.startswith("sqlite") else {}
 
-engine = create_engine(
-    DATABASE_URL, 
-    connect_args=connect_args,
-    pool_pre_ping=True
-)
+# Keep each API worker's database footprint predictable. The application runs a
+# single Uvicorn worker on the Render 512 MB service; a small bounded pool prevents
+# request bursts from opening an unbounded number of PostgreSQL connections.
+engine_options = {
+    "connect_args": connect_args,
+    "pool_pre_ping": True,
+}
+if DATABASE_URL.startswith(("postgresql://", "postgresql+")):
+    engine_options.update({
+        "pool_size": int(os.environ.get("DB_POOL_SIZE", "3")),
+        "max_overflow": int(os.environ.get("DB_POOL_MAX_OVERFLOW", "2")),
+        "pool_timeout": int(os.environ.get("DB_POOL_TIMEOUT_SECONDS", "10")),
+        "pool_recycle": int(os.environ.get("DB_POOL_RECYCLE_SECONDS", "1800")),
+        "pool_use_lifo": True,
+        # Bound runaway SQL and lock waits at the database connection level.
+        "connect_args": {
+            **connect_args,
+            "options": "-c statement_timeout=10000 -c lock_timeout=3000",
+            "connect_timeout": 10,
+        },
+    })
+
+engine = create_engine(DATABASE_URL, **engine_options)
 
 # Concurrency & Reliability Hardening for SQLite:
 # Configure WAL once per process. Re-running PRAGMA journal_mode=WAL on every
@@ -50,11 +68,19 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def receive_after_begin(session, transaction, connection):
     """Re-applies transaction-local PostgreSQL RLS context whenever a new transaction begins (AETH-P0-02)."""
     user_id = session.info.get("rls_user_id")
-    if user_id and "postgres" in str(engine.url).lower():
+    worker_authorized = bool(session.info.get("rls_worker_authorized"))
+    if (user_id or worker_authorized) and "postgres" in str(engine.url).lower():
         try:
-            connection.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": str(user_id).strip()})
+            connection.execute(
+                text("SELECT set_config('request.jwt.claim.sub', :sub, true)"),
+                {"sub": str(user_id).strip() if user_id else ""}
+            )
+            connection.execute(
+                text("SELECT set_config('request.worker_authorized', :enabled, true)"),
+                {"enabled": "true" if worker_authorized else "false"}
+            )
         except Exception as e:
-            raise RuntimeError(f"Failed to apply transaction-local RLS security context: {e}")
+            raise RuntimeError(f"Failed to apply transaction-local PostgreSQL RLS context: {e}")
 
 Base = declarative_base()
 
@@ -65,7 +91,9 @@ def get_db(request: Request = None):
         if request and hasattr(request, "state"):
             request.state.db = db
             user_id = getattr(request.state, "current_user_id", None)
-            if user_id:
+            if getattr(request.state, "is_worker", False):
+                set_worker_rls_context(db)
+            elif user_id:
                 set_db_rls_context(db, user_id)
         yield db
     finally:
@@ -74,6 +102,19 @@ def get_db(request: Request = None):
 def ensure_schema_migrations():
     """Ensure all required columns and tables exist across both SQLite and PostgreSQL."""
     is_pg = "postgres" in str(engine.url).lower()
+
+    # The ORM metadata contains a PostgreSQL GIN/trigram index. The extension
+    # must exist before create_all attempts to create that index. Production
+    # deployments should apply this with the migration/admin connection first;
+    # CREATE EXTENSION IF NOT EXISTS is harmless when it is already installed.
+    if is_pg:
+        try:
+            with engine.begin() as extension_conn:
+                extension_conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        except Exception as exc:
+            raise RuntimeError(
+                "CRITICAL: PostgreSQL extension pg_trgm must be enabled by the migration/admin role before startup"
+            ) from exc
 
     # Register every ORM model before create_all. This function is also invoked
     # from a fresh Python process by CI/CLI, where Alembic's earlier "import models"
@@ -137,11 +178,13 @@ def ensure_schema_migrations():
         "ALTER TABLE push_subscriptions ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE scheduled_jobs ADD COLUMN owner_user_id VARCHAR",
         "ALTER TABLE tasks ADD COLUMN dependency_task_ids TEXT DEFAULT '[]'",
+        "ALTER TABLE tasks ADD COLUMN backup_key VARCHAR",
         "ALTER TABLE chat_messages ADD COLUMN importance FLOAT DEFAULT 1.0",
         "ALTER TABLE chat_messages ADD COLUMN last_accessed_at TIMESTAMP",
         "ALTER TABLE financial_records ADD COLUMN is_recurring BOOLEAN DEFAULT FALSE",
         "ALTER TABLE financial_records ADD COLUMN recurrence_interval VARCHAR",
         "ALTER TABLE financial_records ADD COLUMN next_due_date TIMESTAMP",
+        "ALTER TABLE financial_records ADD COLUMN backup_key VARCHAR",
         "ALTER TABLE memory_vault ADD COLUMN importance FLOAT DEFAULT 1.0",
         "ALTER TABLE memory_vault ADD COLUMN last_accessed_at TIMESTAMP",
         "ALTER TABLE scheduled_jobs ADD COLUMN idempotency_key VARCHAR",
@@ -189,6 +232,60 @@ def ensure_schema_migrations():
                 conn.commit()
     except Exception as e:
         print(f"[Unique Constraint Migration Note] sender_pairing_rate_limits: {e}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # App-wide bounded-read indexes. Build PostgreSQL indexes CONCURRENTLY so
+    # existing user data remains readable while production indexes are created.
+    # SQLite uses the equivalent idempotent CREATE INDEX statement.
+    # ─────────────────────────────────────────────────────────────────────────
+    resource_indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_tasks_owner_created_id ON tasks (owner_user_id, created_at, id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_owner_backup_key ON tasks (owner_user_id, backup_key) WHERE backup_key IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS ix_tasks_owner_parent_id ON tasks (owner_user_id, parent_id, id)",
+        "CREATE INDEX IF NOT EXISTS ix_tasks_owner_status_due ON tasks (owner_user_id, status, due_date)",
+        "CREATE INDEX IF NOT EXISTS ix_financial_owner_date_id ON financial_records (owner_user_id, date, id)",
+        "CREATE INDEX IF NOT EXISTS ix_financial_owner_type_date ON financial_records (owner_user_id, type, date)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_financial_owner_backup_key ON financial_records (owner_user_id, backup_key) WHERE backup_key IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS ix_memory_owner_importance_created ON memory_vault (owner_user_id, importance, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_memory_owner_category_importance ON memory_vault (owner_user_id, category, importance, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_chat_owner_session_id ON chat_messages (owner_user_id, session_id, id)",
+        "CREATE INDEX IF NOT EXISTS ix_audit_owner_executed ON audit_logs (owner_user_id, executed_at, id)",
+        "CREATE INDEX IF NOT EXISTS ix_chat_sessions_owner_updated ON chat_sessions (owner_user_id, updated_at, id)",
+        "CREATE INDEX IF NOT EXISTS ix_task_completions_owner_task_id ON task_date_completions (owner_user_id, task_id, id)",
+    ]
+    for index_sql in resource_indexes:
+        try:
+            with engine.connect() as conn:
+                if is_pg:
+                    conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+                    try:
+                        conn.exec_driver_sql("SET statement_timeout = 0")
+                        concurrent_sql = index_sql.replace("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS", 1)
+                        concurrent_sql = concurrent_sql.replace("CREATE INDEX IF NOT EXISTS", "CREATE INDEX CONCURRENTLY IF NOT EXISTS", 1)
+                        conn.exec_driver_sql(concurrent_sql)
+                    finally:
+                        conn.exec_driver_sql("SET statement_timeout = 10000")
+                else:
+                    conn.exec_driver_sql(index_sql)
+        except Exception as e:
+            print(f"[Resource Index Migration Note] {index_sql.split(' ON ')[0]}: {e}")
+
+    # Trigram index accelerates bounded keyword retrieval over the memory vault.
+    if is_pg:
+        try:
+            with engine.connect() as conn:
+                conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+                try:
+                    conn.exec_driver_sql("SET statement_timeout = 0")
+                    conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+                    conn.exec_driver_sql(
+                        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_memory_fact_trgm "
+                        "ON memory_vault USING gin (fact gin_trgm_ops)"
+                    )
+                finally:
+                    conn.exec_driver_sql("SET statement_timeout = 10000")
+        except Exception as e:
+            print(f"[Memory Search Index Note] pg_trgm index was not created: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # AETH-P0-02: Trusted Supabase Auth Identity Mapping & Quarantining
@@ -254,6 +351,7 @@ def ensure_schema_migrations():
                                     FOR ALL
                                     USING (
                                         owner_user_id = current_setting('request.jwt.claim.sub', true)
+                                        OR current_setting('request.worker_authorized', true) = 'true'
                                         OR (
                                             current_setting('request.webhook_service_authorized', true) = 'true'
                                             AND channel = current_setting('request.webhook_provider', true)
@@ -261,6 +359,7 @@ def ensure_schema_migrations():
                                     )
                                     WITH CHECK (
                                         owner_user_id = current_setting('request.jwt.claim.sub', true)
+                                        OR current_setting('request.worker_authorized', true) = 'true'
                                         OR (
                                             current_setting('request.webhook_service_authorized', true) = 'true'
                                             AND channel = current_setting('request.webhook_provider', true)
@@ -272,14 +371,17 @@ def ensure_schema_migrations():
                         conn.execute(text(f"""
                             DO $$
                             BEGIN
-                                IF NOT EXISTS (
-                                    SELECT 1 FROM pg_policies WHERE tablename = '{t}' AND policyname = '{t}_tenant_isolation'
-                                ) THEN
-                                    CREATE POLICY {t}_tenant_isolation ON {t}
-                                        FOR ALL
-                                        USING (owner_user_id = current_setting('request.jwt.claim.sub', true))
-                                        WITH CHECK (owner_user_id = current_setting('request.jwt.claim.sub', true));
-                                END IF;
+                                DROP POLICY IF EXISTS {t}_tenant_isolation ON {t};
+                                CREATE POLICY {t}_tenant_isolation ON {t}
+                                    FOR ALL
+                                    USING (
+                                        owner_user_id = current_setting('request.jwt.claim.sub', true)
+                                        OR current_setting('request.worker_authorized', true) = 'true'
+                                    )
+                                    WITH CHECK (
+                                        owner_user_id = current_setting('request.jwt.claim.sub', true)
+                                        OR current_setting('request.worker_authorized', true) = 'true'
+                                    );
                             END $$;
                         """))
                     conn.commit()
@@ -312,12 +414,27 @@ def set_db_rls_context(db: Session, user_id: Optional[str]):
     """
     clean_sub = str(user_id).strip() if user_id else ""
     db.info["rls_user_id"] = clean_sub
+    db.info["rls_worker_authorized"] = False
     try:
         is_pg = "postgres" in str(engine.url).lower()
         if is_pg:
             db.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": clean_sub})
             # Clear webhook bridge authorization so subsequent business operations are strictly scoped to the tenant
             db.execute(text("SELECT set_config('request.webhook_service_authorized', 'false', true)"))
+            db.execute(text("SELECT set_config('request.worker_authorized', 'false', true)"))
     except Exception as e:
         raise RuntimeError(f"Database security context initialization failed: {e}")
 
+
+
+def set_worker_rls_context(db: Session):
+    """Authorize only the trusted in-process reminder worker for cross-tenant maintenance."""
+    db.info["rls_worker_authorized"] = True
+    db.info.pop("rls_user_id", None)
+    try:
+        if "postgres" in str(engine.url).lower():
+            db.execute(text("SELECT set_config('request.jwt.claim.sub', '', true)"))
+            db.execute(text("SELECT set_config('request.webhook_service_authorized', 'false', true)"))
+            db.execute(text("SELECT set_config('request.worker_authorized', 'true', true)"))
+    except Exception as exc:
+        raise RuntimeError(f"Reminder worker RLS context initialization failed: {exc}") from exc

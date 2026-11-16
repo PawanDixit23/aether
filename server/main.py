@@ -18,11 +18,12 @@ import hmac
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, UploadFile, File
 from document_parser import extract_text_from_file
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_, and_, false
+from resource_limits import AI_CONTEXT_CHAT_LIMIT, AI_CONTEXT_FINANCE_LIMIT, AI_CONTEXT_MEMORY_LIMIT, AI_CONTEXT_TASK_LIMIT, bounded_page, WRITE_BATCH_SIZE
 from sqlalchemy.exc import IntegrityError
 import httpx
 import re
@@ -124,7 +125,7 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
 # ──────────────────────────────────────────────────────────────────────────────
 
 try:
-    from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_db_rls_context, set_webhook_service_rls_context
+    from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_db_rls_context, set_webhook_service_rls_context, set_worker_rls_context
     from models import (
         Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
         ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
@@ -134,7 +135,7 @@ try:
     from ai_engine import parse_intent_with_llm
 except ImportError:
     try:
-        from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_db_rls_context, set_webhook_service_rls_context
+        from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_db_rls_context, set_webhook_service_rls_context, set_worker_rls_context
         from server.models import (
             Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
             ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
@@ -143,7 +144,7 @@ except ImportError:
         )
         from server.ai_engine import parse_intent_with_llm
     except ImportError:
-        from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
+        from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_db_rls_context, set_webhook_service_rls_context, set_worker_rls_context
         from .models import (
             Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
             ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
@@ -195,6 +196,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["X-Has-More", "X-Next-Offset", "X-Page-Limit", "Content-Disposition"],
 )
 
 # ─── Security & Observability Subsystems ─────────────────────────────────────
@@ -207,7 +209,42 @@ _api_rate_limiter = TokenBucketRateLimiter(capacity=300, refill_rate_per_sec=10.
 async def security_and_observability_middleware(request: Request, call_next):
     start_time = time.time()
     client_ip = request.client.host if request.client else "unknown"
-    
+
+    # Reject oversized JSON payloads before FastAPI/Pydantic materializes them.
+    # File uploads use multipart and retain their separate upload policy.
+    if request.headers.get("content-type", "").lower().startswith("application/json"):
+        try:
+            content_length = int(request.headers.get("content-length", "0"))
+        except (TypeError, ValueError):
+            content_length = 0
+        try:
+            max_json_bytes = max(64 * 1024, int(os.environ.get("MAX_JSON_REQUEST_BYTES", str(2 * 1024 * 1024))))
+        except (TypeError, ValueError):
+            max_json_bytes = 2 * 1024 * 1024
+        if content_length > max_json_bytes:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "detail": "JSON request is too large. Split bulk data into batches of at most 200 records.",
+                    "max_bytes": max_json_bytes
+                }
+            )
+
+    # The global reminder worker is the only cross-tenant API operation. It
+    # requires a dedicated secret; caller-controlled headers are never trusted.
+    if request.method == "POST" and request.url.path == "/api/reminders/push-check":
+        expected_worker_token = os.environ.get("AETHER_WORKER_TOKEN", "").strip()
+        authorization = request.headers.get("Authorization", "")
+        scheme, _, supplied_worker_token = authorization.partition(" ")
+        if len(expected_worker_token) < 32:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=503, content={"detail": "Reminder worker authentication is not configured or token is shorter than 32 characters"})
+        if scheme.lower() != "bearer" or not hmac.compare_digest(supplied_worker_token.strip(), expected_worker_token):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=401, content={"detail": "Invalid worker credentials"})
+        request.state.is_worker = True
+
     # Rate Limiting Guard on API routes
     if request.url.path.startswith("/api/"):
         allowed, remaining, retry_after = _api_rate_limiter.is_allowed(client_ip)
@@ -449,8 +486,8 @@ class TaskCreate(BaseModel):
     reminder_time: Optional[str] = None
     recurrence: Optional[str] = None
     parent_id: Optional[int] = None
-    dependency_task_ids: Optional[List[int]] = None
-    subtasks: Optional[List[str]] = None
+    dependency_task_ids: Optional[List[int]] = Field(default=None, max_length=100)
+    subtasks: Optional[List[str]] = Field(default=None, max_length=100)
     completion_comment: Optional[str] = None
     attachments: Optional[str] = None
 
@@ -461,7 +498,7 @@ class TaskUpdate(BaseModel):
     due_date: Optional[datetime] = None
     reminder_time: Optional[str] = None
     recurrence: Optional[str] = None
-    dependency_task_ids: Optional[List[int]] = None
+    dependency_task_ids: Optional[List[int]] = Field(default=None, max_length=100)
     status: Optional[str] = None
     completion_comment: Optional[str] = None
     attachments: Optional[str] = None
@@ -499,7 +536,7 @@ class FinancialRecordCreate(BaseModel):
     next_due_date: Optional[str] = None
 
 class FinancialRecordBulkCreate(BaseModel):
-    records: List[FinancialRecordCreate]
+    records: List[FinancialRecordCreate] = Field(..., max_length=200)
     user_email: Optional[str] = None
 
 class FinancialRecordUpdate(BaseModel):
@@ -516,9 +553,11 @@ class MemoryCreate(BaseModel):
 
 class ClientSyncBackup(BaseModel):
     user_email: str
-    tasks: Optional[List[dict]] = []
-    memories: Optional[List[dict]] = []
-    finances: Optional[List[dict]] = []
+    # The client must upload each dataset in bounded chunks; oversized batches are rejected,
+    # never silently truncated or partially accepted.
+    tasks: List[dict] = Field(default_factory=list, max_length=200)
+    memories: List[dict] = Field(default_factory=list, max_length=200)
+    finances: List[dict] = Field(default_factory=list, max_length=200)
 
 class ICalSyncRequest(BaseModel):
     url: str
@@ -598,109 +637,106 @@ def get_current_time_str(client_time: Optional[str] = None, tz_name: Optional[st
     return datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
 
 def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None, exclude_chat_id: Optional[int] = None, prompt_query: Optional[str] = None, session_id: Optional[str] = None, user_lat: Optional[float] = None, user_lon: Optional[float] = None, user_city: Optional[str] = None, owner_user_id: Optional[str] = None) -> dict:
+    """Build a bounded AI context; aggregate history in SQL and fetch only useful recent rows."""
     user_loc = (user_city or "").strip()
     if not user_loc:
-        if user_lat and user_lon:
-            user_loc = f"{round(user_lat, 2)}, {round(user_lon, 2)}"
-        else:
-            user_loc = "Jaipur, Rajasthan"
+        user_loc = f"{round(user_lat, 2)}, {round(user_lon, 2)}" if user_lat and user_lon else "Jaipur, Rajasthan"
 
-    if not user_email:
-        # Even without user_email, retain session conversational memory!
-        recent_chat = []
-        try:
-            chat_q = db.query(ChatMessage)
-            if session_id:
-                chat_q = chat_q.filter(ChatMessage.session_id == session_id)
-            if exclude_chat_id:
-                chat_q = chat_q.filter(ChatMessage.id != exclude_chat_id)
-            recent_msgs = chat_q.order_by(ChatMessage.id.desc()).limit(40).all()
-            recent_msgs = list(reversed(recent_msgs))
-            recent_chat = [
-                {"role": ("User" if m.role == "user" else "Aether"), "content": m.content}
-                for m in recent_msgs
-            ]
-        except Exception:
-            db.rollback()
-
-        return {
-            "current_time": get_current_time_str(client_time, tz_name),
-            "tasks": [],
-            "total_income": 0,
-            "total_expense": 0,
-            "balance": 0,
-            "memories": [],
-            "recent_chat": recent_chat,
-            "user_location": user_loc,
-            "user_state": "Rajasthan",
-            "user_city": "Jaipur"
-        }
+    chat_q = db.query(ChatMessage)
     if owner_user_id:
-        tasks = db.query(Task).filter(Task.owner_user_id == owner_user_id, Task.status == "pending").all()
-        records = db.query(FinancialRecord).filter(FinancialRecord.owner_user_id == owner_user_id).all()
+        chat_q = chat_q.filter(ChatMessage.owner_user_id == owner_user_id)
+    elif session_id:
+        chat_q = chat_q.filter(ChatMessage.session_id == session_id)
     else:
-        tasks = []
-        records = []
-
-    # Hybrid Memory Retrieval: rank & surface relevant facts/contacts matching the prompt
-    recalled_mems = []
-    if prompt_query and owner_user_id:
-        try:
-            from memory import HybridMemoryProvider
-            recalled = HybridMemoryProvider.recall_context(prompt_query, user_email or owner_user_id, db, limit=12)
-            recalled_facts = set(recalled.get("relevant_facts", []))
-            all_mem_objs = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
-            # Prioritize recalled items first
-            recalled_mems = [m for m in all_mem_objs if m.fact in recalled_facts]
-            remaining_mems = [m for m in all_mem_objs if m.fact not in recalled_facts]
-            memories = recalled_mems + remaining_mems[:15]
-        except Exception:
-            memories = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
-    elif owner_user_id:
-        memories = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
-    else:
-        memories = []
-
-    # Fetch last 40 messages for comprehensive conversational memory strictly scoped to owner UUID
+        chat_q = chat_q.filter(false())
+    if session_id:
+        chat_q = chat_q.filter(ChatMessage.session_id == session_id)
+    if exclude_chat_id:
+        chat_q = chat_q.filter(ChatMessage.id != exclude_chat_id)
     try:
-        chat_q = db.query(ChatMessage)
-        if owner_user_id:
-            chat_q = chat_q.filter(ChatMessage.owner_user_id == owner_user_id)
-        elif session_id:
-            chat_q = chat_q.filter(ChatMessage.session_id == session_id)
-        else:
-            chat_q = chat_q.filter(sqlalchemy.sql.false())
-        if session_id:
-            chat_q = chat_q.filter(ChatMessage.session_id == session_id)
-        if exclude_chat_id:
-            chat_q = chat_q.filter(ChatMessage.id != exclude_chat_id)
-        recent_msgs = chat_q.order_by(ChatMessage.id.desc()).limit(40).all()
-        recent_msgs = list(reversed(recent_msgs))
-        recent_chat = [
-            {"role": ("User" if m.role == "user" else "Aether"), "content": m.content}
-            for m in recent_msgs
-        ]
+        recent_msgs = list(reversed(chat_q.order_by(ChatMessage.id.desc()).limit(AI_CONTEXT_CHAT_LIMIT).all()))
     except Exception:
         db.rollback()
-        recent_chat = []
+        recent_msgs = []
+    recent_chat = [
+        {"role": ("User" if m.role == "user" else "Aether"), "content": m.content}
+        for m in recent_msgs
+    ]
 
-    total_income = sum(float(r.amount or 0.0) for r in records if r.type == "income")
-    total_expense = sum(float(r.amount or 0.0) for r in records if r.type == "expense")
+    if not user_email:
+        return {
+            "current_time": get_current_time_str(client_time, tz_name),
+            "tasks": [], "total_income": 0, "total_expense": 0, "balance": 0,
+            "memories": [], "recent_chat": recent_chat, "user_location": user_loc,
+            "user_state": "Rajasthan", "user_city": "Jaipur"
+        }
+
+    tasks = []
+    memories = []
+    recent_finances = []
+    total_income = 0.0
+    total_expense = 0.0
+    if owner_user_id:
+        tasks = (
+            db.query(Task)
+            .filter(Task.owner_user_id == owner_user_id, Task.status == "pending")
+            .order_by(Task.due_date.asc().nullslast(), Task.id.desc())
+            .limit(AI_CONTEXT_TASK_LIMIT)
+            .all()
+        )
+
+        # Compute lifetime totals inside PostgreSQL; never materialize the user's ledger.
+        totals = db.query(
+            FinancialRecord.type,
+            func.coalesce(func.sum(FinancialRecord.amount), 0.0)
+        ).filter(
+            FinancialRecord.owner_user_id == owner_user_id
+        ).group_by(FinancialRecord.type).all()
+        for record_type, amount in totals:
+            if (record_type or "").lower() == "income":
+                total_income = float(amount or 0.0)
+            elif (record_type or "").lower() == "expense":
+                total_expense = float(amount or 0.0)
+
+        recent_finances = (
+            db.query(FinancialRecord)
+            .filter(FinancialRecord.owner_user_id == owner_user_id)
+            .order_by(FinancialRecord.date.desc(), FinancialRecord.id.desc())
+            .limit(AI_CONTEXT_FINANCE_LIMIT)
+            .all()
+        )
+
+        recalled_facts = []
+        if prompt_query:
+            try:
+                from memory import HybridMemoryProvider
+                recalled = HybridMemoryProvider.recall_context(
+                    prompt_query, user_email or owner_user_id, db, limit=AI_CONTEXT_MEMORY_LIMIT
+                )
+                recalled_facts = list(dict.fromkeys(recalled.get("relevant_facts", [])))[:AI_CONTEXT_MEMORY_LIMIT]
+            except Exception as recall_error:
+                print(f"[AI Context Memory Recall] {recall_error}")
+
+        memory_q = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id)
+        if recalled_facts:
+            memory_q = memory_q.filter(MemoryItem.fact.in_(recalled_facts))
+        memories = (
+            memory_q.order_by(MemoryItem.importance.desc(), MemoryItem.created_at.desc(), MemoryItem.id.desc())
+            .limit(AI_CONTEXT_MEMORY_LIMIT)
+            .all()
+        )
+
     balance = total_income - total_expense
-
     category_totals = {}
     fin_list = []
-    for r in sorted(records, key=lambda x: x.date or datetime.min, reverse=True)[:60]:
+    for r in recent_finances:
         r_type = (r.type or "expense").lower()
         amt = float(r.amount or 0.0)
         cat = (r.category or "general").strip().capitalize()
         if r_type == "expense":
             category_totals[cat] = category_totals.get(cat, 0.0) + amt
         fin_list.append({
-            "id": r.id,
-            "type": r_type,
-            "category": cat,
-            "amount": amt,
+            "id": r.id, "type": r_type, "category": cat, "amount": amt,
             "note": r.note or "",
             "date": r.date.strftime("%Y-%m-%d %H:%M") if r.date else ""
         })
@@ -708,16 +744,11 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
     return {
         "current_time": get_current_time_str(client_time, tz_name),
         "tasks": [{"id": t.id, "title": str(t.title or "Task"), "priority": str(t.priority or "medium"), "reminder_time": t.reminder_time} for t in tasks],
-        "total_income": total_income,
-        "total_expense": total_expense,
-        "balance": balance,
-        "financial_records": fin_list,
-        "financial_category_breakdown": category_totals,
+        "total_income": total_income, "total_expense": total_expense, "balance": balance,
+        "financial_records": fin_list, "financial_category_breakdown": category_totals,
         "memories": [{"category": str(m.category or "general"), "fact": str(m.fact or "")} for m in memories],
-        "recent_chat": recent_chat,
-        "user_location": user_loc,
-        "user_state": "India",
-        "user_city": user_loc
+        "recent_chat": recent_chat, "user_location": user_loc,
+        "user_state": "India", "user_city": user_loc
     }
 
 # ----------------- Multi-Provider Key Validation Engine (Gemini / OpenAI / Grok) -----------------
@@ -811,103 +842,274 @@ def record_user_login(req: AuthRecordRequest, db: Session = Depends(get_db)):
 # ----------------- Client Sync & Resilience Engine -----------------
 @app.post("/api/sync/backup")
 def client_backup_sync(
-    req: ClientSyncBackup, 
+    req: ClientSyncBackup,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Intelligently restore and merge client persistent cache into the database with zero duplication (AETH-P0-02)."""
+    """Merge client cache in bounded batches without scanning tenant history."""
     email = current_user.email
-    restored_counts = {"tasks": 0, "memories": 0, "finances": 0}
-    
-    # Existing task titles for this user to avoid duplicate insertions
-    existing_tasks = db.query(Task).filter(tenant_filter(Task, current_user)).all()
-    existing_titles = {t.title.strip().lower() for t in existing_tasks if t.title}
-    
-    if req.tasks:
-        for t in req.tasks:
-            try:
-                title = (t.get("title") or "").strip()
-                if not title or title.lower() in existing_titles:
-                    continue
+    restored = {"tasks": 0, "memories": 0, "finances": 0}
+    skipped = {"duplicate_tasks": 0, "invalid_tasks": 0, "duplicate_memories": 0, "invalid_memories": 0, "finances_already_present": 0}
+    failed_count = 0
+    failure_samples = []
 
+    def note_failure(kind: str, index: int, error: Exception):
+        nonlocal failed_count
+        failed_count += 1
+        if len(failure_samples) < 25:
+            failure_samples.append({"type": kind, "index": index, "error": str(error)[:240]})
+
+    for batch_start in range(0, len(req.tasks or []), WRITE_BATCH_SIZE):
+        batch = (req.tasks or [])[batch_start:batch_start + WRITE_BATCH_SIZE]
+        prepared = []
+        numeric_ids = []
+        for local_index, item in enumerate(batch):
+            try:
+                raw_id = item.get("id")
+                numeric_id = int(raw_id) if raw_id is not None and str(raw_id).isdigit() else None
+                if numeric_id and numeric_id > 0:
+                    numeric_ids.append(numeric_id)
+                stable_key = (
+                    f"client:{str(raw_id).strip()}" if raw_id is not None and str(raw_id).strip()
+                    else "hash:" + hashlib.sha256(json.dumps(item, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+                )
+                title = str(item.get("title") or "").strip()
+                if not title:
+                    skipped["invalid_tasks"] += 1
+                    continue
                 due_dt = None
-                if t.get("due_date"):
+                if item.get("due_date"):
                     try:
-                        clean_due = str(t["due_date"]).replace("Z", "").replace(" ", "T")
-                        due_dt = datetime.fromisoformat(clean_due)
-                    except Exception:
+                        due_dt = datetime.fromisoformat(str(item["due_date"]).replace("Z", "+00:00")).replace(tzinfo=None)
+                    except (TypeError, ValueError):
                         pass
-
                 created_dt = None
-                if t.get("created_at"):
+                if item.get("created_at"):
                     try:
-                        clean_created = str(t["created_at"]).replace("Z", "").replace(" ", "T")
-                        created_dt = datetime.fromisoformat(clean_created)
-                    except Exception:
+                        created_dt = datetime.fromisoformat(str(item["created_at"]).replace("Z", "+00:00")).replace(tzinfo=None)
+                    except (TypeError, ValueError):
                         pass
+                prepared.append({
+                    "index": batch_start + local_index, "key": stable_key,
+                    "numeric_id": numeric_id, "raw_id": raw_id, "parent_client_id": item.get("parent_client_id"),
+                    "item": item, "title": title, "due_date": due_dt, "created_at": created_dt
+                })
+            except Exception as exc:
+                note_failure("task", batch_start + local_index, exc)
 
-                db.add(Task(
-                    user_email=email,
-                    owner_user_id=current_user.id,
-                    title=title,
-                    priority=t.get("priority", "medium"),
-                    status=t.get("status", "pending"),
-                    reminder_time=t.get("reminder_time"),
-                    recurrence=t.get("recurrence"),
-                    completion_comment=t.get("completion_comment"),
-                    attachments=t.get("attachments"),
-                    due_date=due_dt,
-                    created_at=created_dt or datetime.utcnow(),
-                    notified=t.get("notified", False)
-                ))
-                existing_titles.add(title.lower())
-                restored_counts["tasks"] += 1
-            except Exception:
-                pass
-        db.commit()
+        candidate_keys = [entry["key"] for entry in prepared]
+        existing_by_key = {}
+        if candidate_keys:
+            existing_by_key = {
+                key: task_id for task_id, key in db.query(Task.id, Task.backup_key).filter(
+                    tenant_filter(Task, current_user), Task.backup_key.in_(candidate_keys)
+                ).all() if key
+            }
+        existing_by_id = {}
+        if numeric_ids:
+            existing_by_id = {
+                task_id: task_id for (task_id,) in db.query(Task.id).filter(
+                    tenant_filter(Task, current_user), Task.id.in_(numeric_ids)
+                ).all()
+            }
 
-    # Existing memories for this user
-    existing_mems = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user)).all()
-    existing_facts = {m.fact.strip().lower() for m in existing_mems if m.fact}
-    if req.memories:
-        for m in req.memories:
+        client_id_map = {}
+        new_task_objects = []
+        batch_inserted = 0
+        for entry in prepared:
+            if entry["key"] in existing_by_key:
+                if entry["raw_id"] is not None:
+                    client_id_map[str(entry["raw_id"])] = existing_by_key[entry["key"]]
+                skipped["duplicate_tasks"] += 1
+                continue
+            if entry["numeric_id"] is not None and entry["numeric_id"] in existing_by_id:
+                client_id_map[str(entry["raw_id"])] = existing_by_id[entry["numeric_id"]]
+                skipped["duplicate_tasks"] += 1
+                continue
+            item = entry["item"]
             try:
-                fact_text = (m.get("fact") or m.get("content") or "").strip()
-                if not fact_text or fact_text.lower() in existing_facts:
-                    continue
+                task_obj = Task(
+                    user_email=email, owner_user_id=current_user.id,
+                    title=entry["title"], priority=item.get("priority", "medium"),
+                    status=item.get("status", "pending"), reminder_time=item.get("reminder_time"),
+                    recurrence=item.get("recurrence"), completion_comment=item.get("completion_comment"),
+                    attachments=item.get("attachments"), due_date=entry["due_date"],
+                    created_at=entry["created_at"] or datetime.utcnow(),
+                    notified=item.get("notified", False), backup_key=entry["key"],
+                    parent_id=None
+                )
+                db.add(task_obj)
+                new_task_objects.append((entry, task_obj))
+                batch_inserted += 1
+            except Exception as exc:
+                note_failure("task", entry["index"], exc)
 
+        try:
+            # One bounded flush obtains generated IDs before linking children.
+            db.flush()
+            for entry, task_obj in new_task_objects:
+                if entry["raw_id"] is not None:
+                    client_id_map[str(entry["raw_id"])] = task_obj.id
+            for entry, task_obj in new_task_objects:
+                parent_client_id = entry["parent_client_id"]
+                if parent_client_id is None:
+                    continue
+                parent_db_id = client_id_map.get(str(parent_client_id))
+                if parent_db_id is None:
+                    parent_key = f"client:{str(parent_client_id).strip()}"
+                    parent_db_id = db.query(Task.id).filter(
+                        tenant_filter(Task, current_user), Task.backup_key == parent_key
+                    ).scalar()
+                if parent_db_id is None and str(parent_client_id).isdigit():
+                    parent_db_id = db.query(Task.id).filter(
+                        tenant_filter(Task, current_user), Task.id == int(parent_client_id)
+                    ).scalar()
+                if parent_db_id is None:
+                    db.delete(task_obj)
+                    batch_inserted -= 1
+                    note_failure("task_parent", entry["index"], ValueError("Parent task is missing from the backup batch/history"))
+                else:
+                    task_obj.parent_id = parent_db_id
+            db.commit()
+            restored["tasks"] += batch_inserted
+        except Exception as exc:
+            db.rollback()
+            note_failure("task_batch", batch_start, exc)
+            failed_count += max(0, batch_inserted - 1)
+
+    for batch_start in range(0, len(req.memories or []), WRITE_BATCH_SIZE):
+        batch = (req.memories or [])[batch_start:batch_start + WRITE_BATCH_SIZE]
+        candidate_facts = list({
+            str(item.get("fact") or item.get("content") or "").strip().lower()
+            for item in batch if str(item.get("fact") or item.get("content") or "").strip()
+        })
+        existing_facts = set()
+        if candidate_facts:
+            existing_facts = {
+                value for (value,) in db.query(func.lower(MemoryItem.fact)).filter(
+                    tenant_filter(MemoryItem, current_user), func.lower(MemoryItem.fact).in_(candidate_facts)
+                ).all() if value
+            }
+        batch_inserted = 0
+        for local_index, item in enumerate(batch):
+            try:
+                fact_text = str(item.get("fact") or item.get("content") or "").strip()
+                if not fact_text:
+                    skipped["invalid_memories"] += 1
+                    continue
+                if fact_text.lower() in existing_facts:
+                    skipped["duplicate_memories"] += 1
+                    continue
                 db.add(MemoryItem(
-                    owner_user_id=current_user.id,
-                    user_email=email,
-                    category=m.get("category", "preference"),
-                    fact=fact_text
+                    owner_user_id=current_user.id, user_email=email,
+                    category=item.get("category", "preference"), fact=fact_text
                 ))
                 existing_facts.add(fact_text.lower())
-                restored_counts["memories"] += 1
-            except Exception:
-                pass
-        db.commit()
+                batch_inserted += 1
+            except Exception as exc:
+                note_failure("memory", batch_start + local_index, exc)
+        try:
+            db.commit()
+            restored["memories"] += batch_inserted
+        except Exception as exc:
+            db.rollback()
+            note_failure("memory_batch", batch_start, exc)
+            failed_count += max(0, batch_inserted - 1)
 
-    # Restore finances if DB has zero for this user
-    existing_fin = db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user)).count()
-    if existing_fin == 0 and req.finances:
-        for f in req.finances:
+    for batch_start in range(0, len(req.finances or []), WRITE_BATCH_SIZE):
+        batch = (req.finances or [])[batch_start:batch_start + WRITE_BATCH_SIZE]
+        prepared = []
+        numeric_ids = []
+        for local_index, item in enumerate(batch):
+            try:
+                raw_id = item.get("id")
+                numeric_id = int(raw_id) if raw_id is not None and str(raw_id).isdigit() else None
+                if numeric_id and numeric_id > 0:
+                    numeric_ids.append(numeric_id)
+                stable_key = (
+                    f"client:{str(raw_id).strip()}" if raw_id is not None and str(raw_id).strip()
+                    else "hash:" + hashlib.sha256(json.dumps(item, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+                )
+                amount = abs(float(item.get("amount") or 0))
+                if amount <= 0:
+                    skipped.setdefault("invalid_finances", 0)
+                    skipped["invalid_finances"] += 1
+                    continue
+                record_date = None
+                raw_date = item.get("date") or item.get("created_at")
+                if raw_date:
+                    try:
+                        record_date = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00")).replace(tzinfo=None)
+                    except (TypeError, ValueError):
+                        record_date = None
+                next_due_date = None
+                if item.get("next_due_date"):
+                    try:
+                        next_due_date = datetime.fromisoformat(str(item["next_due_date"]).replace("Z", "+00:00")).replace(tzinfo=None)
+                    except (TypeError, ValueError):
+                        next_due_date = None
+                prepared.append({
+                    "index": batch_start + local_index, "key": stable_key,
+                    "numeric_id": numeric_id, "item": item, "amount": amount,
+                    "date": record_date, "next_due_date": next_due_date
+                })
+            except Exception as exc:
+                note_failure("finance", batch_start + local_index, exc)
+
+        candidate_keys = [entry["key"] for entry in prepared]
+        existing_keys = set()
+        if candidate_keys:
+            existing_keys = {
+                key for (key,) in db.query(FinancialRecord.backup_key).filter(
+                    tenant_filter(FinancialRecord, current_user),
+                    FinancialRecord.backup_key.in_(candidate_keys)
+                ).all() if key
+            }
+        existing_ids = set()
+        if numeric_ids:
+            existing_ids = {
+                record_id for (record_id,) in db.query(FinancialRecord.id).filter(
+                    tenant_filter(FinancialRecord, current_user),
+                    FinancialRecord.id.in_(numeric_ids)
+                ).all()
+            }
+
+        batch_inserted = 0
+        for entry in prepared:
+            item = entry["item"]
+            if entry["key"] in existing_keys or (
+                entry["numeric_id"] is not None and entry["numeric_id"] in existing_ids
+            ):
+                skipped["finances_already_present"] += 1
+                continue
             try:
                 db.add(FinancialRecord(
-                    owner_user_id=current_user.id,
-                    user_email=email,
-                    type=f.get("type", "expense"),
-                    category=f.get("category", "general"),
-                    amount=f.get("amount", 0.0),
-                    payment_mode=f.get("payment_mode", "upi"),
-                    note=f.get("note", "")
+                    owner_user_id=current_user.id, user_email=email,
+                    type=item.get("type", "expense"), category=item.get("category", "general"),
+                    amount=entry["amount"], currency=item.get("currency", "INR"),
+                    payment_mode=item.get("payment_mode", "upi"), note=item.get("note", ""),
+                    date=entry["date"] or datetime.utcnow(),
+                    is_recurring=bool(item.get("is_recurring", False)),
+                    recurrence_interval=item.get("recurrence_interval"),
+                    next_due_date=entry["next_due_date"], backup_key=entry["key"]
                 ))
-                restored_counts["finances"] += 1
-            except Exception:
-                pass
-        db.commit()
+                batch_inserted += 1
+                existing_keys.add(entry["key"])
+            except Exception as exc:
+                note_failure("finance", entry["index"], exc)
+        try:
+            db.commit()
+            restored["finances"] += batch_inserted
+        except Exception as exc:
+            db.rollback()
+            note_failure("finance_batch", batch_start, exc)
+            failed_count += max(0, batch_inserted - 1)
 
-    return {"status": "synced", "user": email, "restored": restored_counts}
+    return {
+        "status": "synced", "user": email, "restored": restored,
+        "skipped": skipped, "failed_count": failed_count,
+        "failure_samples": failure_samples
+    }
 
 # ----------------- Autonomous Agent & Quick Capture Engine -----------------
 class AgentRunRequest(BaseModel):
@@ -1612,7 +1814,10 @@ async def _execute_quick_capture(
         if not c_num:
             try:
                 search_terms = [c_name.lower(), c_name.replace(" ", "").lower()]
-                mems = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
+                mems = db.query(MemoryItem).filter(
+                    MemoryItem.owner_user_id == owner_user_id,
+                    or_(*[MemoryItem.fact.ilike(f"%{term}%") for term in search_terms])
+                ).order_by(MemoryItem.importance.desc(), MemoryItem.id.desc()).limit(25).all()
                 for m in mems:
                     m_fact = (m.fact or "").lower()
                     if any(st in m_fact for st in search_terms):
@@ -1961,19 +2166,31 @@ def detect_user_location(request: Request):
 # ----------------- Chat Sessions & History -----------------
 @app.get("/api/chat/sessions")
 def get_chat_sessions(
+    limit: int = 50,
+    offset: int = 0,
+    response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    # Exclude any temporary or ephemeral sessions
-    sessions = (
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    # Exclude temporary sessions and retrieve only one bounded page.
+    session_query = (
         db.query(ChatSession)
         .filter(tenant_filter(ChatSession, current_user), ~ChatSession.id.startswith("temp_"), ChatSession.id != "temporary")
-        .order_by(ChatSession.updated_at.desc())
-        .all()
+        .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
     )
+    page_rows = session_query.offset(safe_offset).limit(safe_limit + 1).all()
+    has_more = len(page_rows) > safe_limit
+    sessions = page_rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(sessions))
     
     # If no sessions exist yet but user has legacy messages without session, backfill default session
-    if not sessions:
+    if not sessions and safe_offset == 0:
         try:
             first_msg = (
                 db.query(ChatMessage)
@@ -2196,26 +2413,35 @@ def get_chat_history(
     session_id: Optional[str] = None,
     limit: int = 60,
     offset: int = 0,
+    before_id: Optional[int] = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
+    response: Response = None,
     db: Session = Depends(get_db)
 ):
-    """Return the newest bounded page, in chronological order.
+    """Return a bounded chat-history page, in chronological order; before_id enables stable keyset paging.
 
     Applying LIMIT/OFFSET in SQL avoids loading a user's entire chat history into
     the Render process just to return the last few messages.
     """
     try:
-        safe_limit = max(1, min(int(limit), 100))
-        safe_offset = max(0, int(offset))
+        safe_limit, safe_offset = bounded_page(limit, offset)
         query = db.query(ChatMessage).filter(tenant_filter(ChatMessage, current_user))
         if session_id:
             query = query.filter(ChatMessage.session_id == session_id)
-        msgs = (
+        if before_id is not None:
+            query = query.filter(ChatMessage.id < before_id)
+            safe_offset = 0
+        page_rows = (
             query.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .offset(safe_offset)
-            .limit(safe_limit)
+            .limit(safe_limit + 1)
             .all()
         )
+        has_more = len(page_rows) > safe_limit
+        msgs = page_rows[:safe_limit]
+        if response is not None:
+            response.headers["X-Has-More"] = "true" if has_more else "false"
+            response.headers["X-Next-Offset"] = str(safe_offset + len(msgs))
         return list(reversed(msgs))
     except Exception:
         db.rollback()
@@ -2284,101 +2510,89 @@ def get_next_weekday(dt: datetime) -> datetime:
     return next_day
 
 def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = None):
-    """Automatically rolls recurring tasks (daily, weekdays, weekly) forward strictly isolated by owner_user_id (AETH-P0-02). Fails closed if owner_user_id is missing."""
+    """Advance at most 100 overdue recurring tasks per call; later calls continue naturally."""
     try:
-        # AETH-P0-02: Strict fail-closed tenant boundary. Never query or advance tasks without a valid authenticated tenant UUID!
         if not owner_user_id or not str(owner_user_id).strip():
-            print("[Security Notice] auto_advance_recurring_tasks called without valid owner_user_id - failing closed to protect tenant isolation.")
+            print("[Security Notice] auto_advance_recurring_tasks called without valid owner_user_id - failing closed.")
             return
-
         now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
         today = now.date()
-        query = db.query(Task).filter(Task.recurrence != None, Task.owner_user_id == str(owner_user_id).strip())
-        rec_tasks = query.all()
-        updated = False
-        for dt in rec_tasks:
-            # If task has been marked completed by the user, never reset it or notify again
-            if dt.status == "completed":
-                dt.notified = True
-                continue
+        today_start = datetime.combine(today, datetime.min.time())
+        batch = db.query(Task).filter(
+            Task.recurrence != None,
+            Task.status != "completed",
+            Task.owner_user_id == str(owner_user_id).strip(),
+            or_(Task.due_date == None, Task.due_date < today_start)
+        ).order_by(Task.id.asc()).limit(100).all()
+        if not batch:
+            return
 
-            # Strip accidental daily recurrence from one-time tasks (like challan, fine, etc.)
-            title_lower = (dt.title or "").lower()
-            if any(w in title_lower for w in ["challan", "fine", "ticket", "one-time"]):
-                dt.recurrence = None
-                dt.notified = True
-                updated = True
+        for task in batch:
+            if task.status == "completed":
+                task.notified = True
                 continue
-
-            if not dt.due_date:
-                dt.due_date = datetime.combine(today, datetime.min.time())
-                updated = True
+            title_lower = (task.title or "").lower()
+            if any(word in title_lower for word in ["challan", "fine", "ticket", "one-time"]):
+                task.recurrence = None
+                task.notified = True
                 continue
-            due_dt = dt.due_date
+            if not task.due_date:
+                task.due_date = today_start
+                continue
+            due_dt = task.due_date
             if isinstance(due_dt, str):
-                due_dt = datetime.fromisoformat(due_dt.replace(' ', 'T'))
-            # If due date is in the past (yesterday or earlier), roll forward
-            if due_dt.date() < today:
-                if dt.recurrence == "daily":
-                    new_dt = datetime.combine(today, due_dt.time())
-                elif dt.recurrence in ["weekdays", "monday_to_friday"]:
-                    new_dt = datetime.combine(today, due_dt.time())
-                    while new_dt.weekday() >= 5:
-                        new_dt += timedelta(days=1)
-                elif str(dt.recurrence).startswith("weekly"):
-                    new_dt = due_dt
-                    while new_dt.date() < today:
-                        new_dt += timedelta(days=7)
-                else:
-                    new_dt = datetime.combine(today, due_dt.time())
-                
-                dt.due_date = new_dt
-                dt.status = "pending"
-                dt.notified = False
-                updated = True
-        if updated:
-            db.commit()
-    except Exception as e:
-        print(f"[AutoAdvanceRecurringTasks Note] {e}")
+                due_dt = datetime.fromisoformat(due_dt.replace(" ", "T"))
+            if task.recurrence == "daily":
+                new_dt = datetime.combine(today, due_dt.time())
+            elif task.recurrence in ["weekdays", "monday_to_friday"]:
+                new_dt = datetime.combine(today, due_dt.time())
+                while new_dt.weekday() >= 5:
+                    new_dt += timedelta(days=1)
+            elif str(task.recurrence).startswith("weekly"):
+                new_dt = due_dt
+                while new_dt.date() < today:
+                    new_dt += timedelta(days=7)
+            else:
+                new_dt = datetime.combine(today, due_dt.time())
+            task.due_date = new_dt
+            task.status = "pending"
+            task.notified = False
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        print(f"[AutoAdvanceRecurringTasks Note] {exc}")
 
 @app.get("/api/reminders/due")
 def get_due_reminders(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Fetch pending tasks whose reminder time has just arrived for verified user (AETH-P0-02)."""
+    """Read only the small due-time window; old pending tasks are not scanned."""
     auto_advance_recurring_tasks(db, owner_user_id=current_user.id)
-
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
+    start = now - timedelta(seconds=180)
     tasks = db.query(Task).filter(
         tenant_filter(Task, current_user),
         Task.status == "pending",
-        Task.notified == False
-    ).all()
-    
+        Task.notified == False,
+        due_task_candidate_filter(now)
+    ).order_by(Task.due_date.asc().nullslast(), Task.id.asc()).limit(200).all()
     due_tasks = []
-    for t in tasks:
-        if not t.due_date:
+    for task in tasks:
+        if not is_task_due_for_notification(task, now):
             continue
+        dt = task.due_date
         try:
-            dt = t.due_date
             if isinstance(dt, str):
-                dt = datetime.fromisoformat(dt.replace(' ', 'T'))
-            # Only alert if due time arrived within the last 3 minutes (180s) to avoid blasting old overdue tasks
-            diff = (now - dt).total_seconds()
-            if 0 <= diff <= 180:
-                due_tasks.append({
-                    "id": t.id,
-                    "title": t.title,
-                    "priority": t.priority,
-                    "reminder_time": t.reminder_time or dt.strftime("%I:%M %p"),
-                    "recurrence": getattr(t, "recurrence", None),
-                    "parent_id": getattr(t, "parent_id", None),
-                    "due_date": dt.isoformat()
-                })
-        except Exception as e:
-            print(f"[Reminder Due Filter Error] {e}")
-
+                dt = datetime.fromisoformat(dt.replace(" ", "T"))
+            due_tasks.append({
+                "id": task.id, "title": task.title, "priority": task.priority,
+                "reminder_time": task.reminder_time or dt.strftime("%I:%M %p"),
+                "recurrence": getattr(task, "recurrence", None),
+                "parent_id": getattr(task, "parent_id", None), "due_date": dt.isoformat()
+            })
+        except Exception as exc:
+            print(f"[Reminder Due Filter Error] {exc}")
     return due_tasks
 
 @app.post("/api/reminders/{task_id}/ack")
@@ -2417,68 +2631,130 @@ def serialize_task(t: Task, db: Optional[Session] = None) -> dict:
         "subtasks": []
     }
     if db:
-        subs = db.query(Task).filter(Task.parent_id == t.id, Task.owner_user_id == t.owner_user_id).order_by(Task.id.asc()).all()
-        if subs:
-            res["subtasks"] = [serialize_task(st) for st in subs]
+        child_query = db.query(Task).filter(
+            Task.parent_id == t.id, Task.owner_user_id == t.owner_user_id
+        ).order_by(Task.id.asc())
+        subs = child_query.limit(101).all()
+        res["subtasks"] = [serialize_task(st) for st in subs[:100]]
+        res["subtasks_has_more"] = len(subs) > 100
     return res
 
 @app.get("/api/tasks")
 def list_tasks(
-    status: Optional[str] = None, 
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = current_user.email
-    auto_advance_recurring_tasks(db, owner_user_id=current_user.id)
+    """Return a bounded task page; response headers expose continuation explicitly."""
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
+    auto_advance_recurring_tasks(db, owner_user_id=current_user.id)
     query = db.query(Task).filter(tenant_filter(Task, current_user))
-    
-    # Return top-level tasks by default (nested subtasks are attached inside serialize_task)
     query = query.filter((Task.parent_id == None) | (Task.parent_id == 0))
     if status:
         query = query.filter(Task.status == status)
 
-    # Fetch persistent date completions across all dates for recurring tasks
-    date_completions_map = {}
-    try:
-        records = db.query(TaskDateCompletion).filter(tenant_filter(TaskDateCompletion, current_user)).all()
-        for r in records:
-            if r.task_id not in date_completions_map:
-                date_completions_map[r.task_id] = {}
-            date_completions_map[r.task_id][r.date_str] = r.completed
-    except Exception as e:
-        print(f"[list_tasks] Error fetching task date completions: {e}")
+    page_rows = (
+        query.order_by(Task.created_at.desc(), Task.id.desc())
+        .offset(safe_offset).limit(safe_limit + 1).all()
+    )
+    has_more = len(page_rows) > safe_limit
+    top_level_tasks = page_rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(top_level_tasks))
+        response.headers["X-Page-Limit"] = str(safe_limit)
 
-    top_level_tasks = query.order_by(Task.created_at.desc(), Task.id.desc()).all()
     task_ids = [t.id for t in top_level_tasks]
-
-    # Fetch all subtasks in one tenant-scoped query instead of issuing one
-    # SELECT per parent task (the previous N+1 pattern generated hundreds of
-    # thousands of repeated parent_id queries under normal polling).
-    subtasks_by_parent = {}
+    date_completions_map = {}
     if task_ids:
+        completion_rows = (
+            db.query(TaskDateCompletion)
+            .filter(tenant_filter(TaskDateCompletion, current_user), TaskDateCompletion.task_id.in_(task_ids))
+            .order_by(TaskDateCompletion.id.desc())
+            .limit(5000).all()
+        )
+        completion_counts = dict(
+            db.query(TaskDateCompletion.task_id, func.count(TaskDateCompletion.id))
+            .filter(tenant_filter(TaskDateCompletion, current_user), TaskDateCompletion.task_id.in_(task_ids))
+            .group_by(TaskDateCompletion.task_id).all()
+        )
+        for item in completion_rows:
+            date_completions_map.setdefault(item.task_id, {})[item.date_str] = item.completed
+
+        # Keep nested children bounded per parent. The dedicated subtasks endpoint
+        # exposes the rest, and the response marks parents with additional children.
+        ranked_children = db.query(
+            Task.id.label("id"),
+            Task.parent_id.label("parent_id"),
+            func.row_number().over(partition_by=Task.parent_id, order_by=Task.id.asc()).label("row_num")
+        ).filter(
+            tenant_filter(Task, current_user), Task.parent_id.in_(task_ids)
+        ).subquery()
         subtasks = (
             db.query(Task)
-            .filter(
-                Task.owner_user_id == current_user.id,
-                Task.parent_id.in_(task_ids)
-            )
+            .join(ranked_children, Task.id == ranked_children.c.id)
+            .filter(ranked_children.c.row_num <= 100)
             .order_by(Task.parent_id.asc(), Task.id.asc())
             .all()
         )
-        for subtask in subtasks:
-            subtasks_by_parent.setdefault(subtask.parent_id, []).append(subtask)
+        subtask_counts = dict(
+            db.query(Task.parent_id, func.count(Task.id))
+            .filter(tenant_filter(Task, current_user), Task.parent_id.in_(task_ids))
+            .group_by(Task.parent_id).all()
+        )
+    else:
+        subtasks = []
+        subtask_counts = {}
+
+    subtasks_by_parent = {}
+    for subtask in subtasks:
+        subtasks_by_parent.setdefault(subtask.parent_id, []).append(subtask)
 
     tasks_out = []
     for task in top_level_tasks:
+        children = subtasks_by_parent.get(task.id, [])
         serialized = serialize_task(task)
-        serialized["subtasks"] = [
-            serialize_task(subtask)
-            for subtask in subtasks_by_parent.get(task.id, [])
-        ]
+        serialized["subtasks"] = [serialize_task(child) for child in children]
+        serialized["subtasks_has_more"] = subtask_counts.get(task.id, 0) > len(children)
         serialized["date_completions"] = date_completions_map.get(task.id, {})
+        serialized["date_completions_has_more"] = completion_counts.get(task.id, 0) > len(serialized["date_completions"])
         tasks_out.append(serialized)
     return tasks_out
+
+@app.get("/api/tasks/{task_id}/subtasks")
+def list_task_subtasks(
+    task_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    response: Response = None,
+    current_user: UserIdentity = Depends(get_current_user_identity),
+    db: Session = Depends(get_db)
+):
+    """Fetch all child tasks in bounded pages; no child records are discarded."""
+    parent = db.query(Task).filter(Task.id == task_id, tenant_filter(Task, current_user)).first()
+    if not parent:
+        raise HTTPException(status_code=404, detail="Task not found")
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    rows = (
+        db.query(Task).filter(Task.parent_id == task_id, tenant_filter(Task, current_user))
+        .order_by(Task.id.asc()).offset(safe_offset).limit(safe_limit + 1).all()
+    )
+    has_more = len(rows) > safe_limit
+    rows = rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(rows))
+    return [serialize_task(row) for row in rows]
 
 @app.post("/api/tasks")
 def create_task(
@@ -2587,10 +2863,12 @@ def toggle_task(
         try:
             dep_ids = json.loads(task.dependency_task_ids)
             if dep_ids and isinstance(dep_ids, list):
+                if len(dep_ids) > 100:
+                    raise HTTPException(status_code=400, detail="A task can have at most 100 dependencies")
                 blocking = db.query(Task).filter(
                     Task.id.in_(dep_ids),
                     Task.status != "completed"
-                ).all()
+                ).limit(100).all()
                 if blocking:
                     titles = [b.title for b in blocking]
                     raise HTTPException(
@@ -2647,17 +2925,17 @@ def toggle_task(
     if getattr(task, "parent_id", None):
         parent = db.query(Task).filter(Task.id == task.parent_id, tenant_filter(Task, current_user)).first()
         if parent:
-            all_subs = db.query(Task).filter(Task.parent_id == parent.id, tenant_filter(Task, current_user)).all()
-            if all(s.status == "completed" for s in all_subs):
-                parent.status = "completed"
-            else:
-                parent.status = "pending"
-                
-    # If this task is a parent task, toggle all child subtasks to match
-    subs = db.query(Task).filter(Task.parent_id == task.id, tenant_filter(Task, current_user)).all()
-    if subs:
-        for s in subs:
-            s.status = new_status
+            incomplete_subtasks = db.query(func.count(Task.id)).filter(
+                Task.parent_id == parent.id,
+                Task.status != "completed",
+                tenant_filter(Task, current_user)
+            ).scalar() or 0
+            parent.status = "pending" if incomplete_subtasks else "completed"
+
+    # Bulk-update child rows in PostgreSQL; do not hydrate an arbitrarily large tree.
+    db.query(Task).filter(
+        Task.parent_id == task.id, tenant_filter(Task, current_user)
+    ).update({"status": new_status}, synchronize_session=False)
 
     db.commit()
     db.refresh(task)
@@ -2670,16 +2948,34 @@ def toggle_task(
 
 @app.get("/api/tasks/date-completions")
 def get_task_date_completions(
+    task_id: Optional[int] = None,
+    limit: int = 100,
+    offset: int = 0,
+    response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    records = db.query(TaskDateCompletion).filter(tenant_filter(TaskDateCompletion, current_user)).all()
-    res = {}
-    for r in records:
-        if r.task_id not in res:
-            res[r.task_id] = {}
-        res[r.task_id][r.date_str] = r.completed
-    return res
+    """Return completion history in bounded pages; use task_id to page one task."""
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    query = db.query(TaskDateCompletion).filter(tenant_filter(TaskDateCompletion, current_user))
+    if task_id is not None:
+        owned_task = db.query(Task.id).filter(Task.id == task_id, tenant_filter(Task, current_user)).first()
+        if not owned_task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        query = query.filter(TaskDateCompletion.task_id == task_id)
+    rows = query.order_by(TaskDateCompletion.id.desc()).offset(safe_offset).limit(safe_limit + 1).all()
+    has_more = len(rows) > safe_limit
+    rows = rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(rows))
+    result = {}
+    for row in rows:
+        result.setdefault(row.task_id, {})[row.date_str] = row.completed
+    return result
 
 @app.post("/api/tasks/{task_id}/date-completion")
 def set_task_date_completion(
@@ -2848,27 +3144,43 @@ def reschedule_task(
 
 @app.post("/api/tasks/reschedule-overdue")
 def reschedule_all_overdue(
+    limit: int = 200,
+    after_id: int = 0,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Reschedules all overdue non-recurring tasks to today at their original reminder time."""
+    """Process a bounded keyset page; clients can continue with next_after_id."""
+    safe_limit = max(1, min(int(limit), 200))
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     today = now.date()
-    query = db.query(Task).filter(tenant_filter(Task, current_user), Task.status == "pending", Task.recurrence == None, Task.due_date != None)
-    tasks = query.all()
+    today_start = datetime.combine(today, datetime.min.time())
+    rows = db.query(Task).filter(
+        tenant_filter(Task, current_user), Task.status == "pending",
+        Task.recurrence == None, Task.due_date != None,
+        Task.due_date < today_start, Task.id > max(0, int(after_id))
+    ).order_by(Task.id.asc()).limit(safe_limit + 1).all()
+    has_more = len(rows) > safe_limit
+    batch = rows[:safe_limit]
     count = 0
-    for t in tasks:
-        dt = t.due_date
-        if isinstance(dt, str):
-            try: dt = datetime.fromisoformat(dt.replace(' ', 'T'))
-            except Exception: continue
-        if dt and dt.date() < today:
-            t.due_date = datetime.combine(today, dt.time())
-            t.notified = False
+    for task in batch:
+        due = task.due_date
+        if isinstance(due, str):
+            try:
+                due = datetime.fromisoformat(due.replace(" ", "T"))
+            except Exception:
+                continue
+        if due and due.date() < today:
+            task.due_date = datetime.combine(today, due.time())
+            task.notified = False
             count += 1
-    if count > 0:
+    if count:
         db.commit()
-    return {"status": "ok", "rescheduled_count": count}
+    next_after_id = batch[-1].id if batch else max(0, int(after_id))
+    return {
+        "status": "ok", "rescheduled_count": count,
+        "has_more": has_more, "next_after_id": next_after_id,
+        "processed_count": len(batch)
+    }
 
 @app.delete("/api/tasks/{task_id}")
 def delete_task(
@@ -3158,11 +3470,27 @@ def sync_ical_feed(req: ICalSyncRequest, user_email: Optional[str] = Depends(get
 # ----------------- Finance Endpoints -----------------
 @app.get("/api/finance/records")
 def list_finance_records(
-    limit: int = 100, 
+    limit: int = 100,
+    offset: int = 0,
+    response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    return db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user)).order_by(FinancialRecord.date.desc()).limit(limit).all()
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    rows = db.query(FinancialRecord).filter(
+        tenant_filter(FinancialRecord, current_user)
+    ).order_by(FinancialRecord.date.desc(), FinancialRecord.id.desc()).offset(
+        safe_offset
+    ).limit(safe_limit + 1).all()
+    has_more = len(rows) > safe_limit
+    rows = rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(rows))
+    return rows
 
 @app.post("/api/finance/records")
 def create_finance_record(
@@ -3212,12 +3540,11 @@ def create_finance_record(
     budget_alert = None
     if rec_type == "expense" and req.monthly_budget and req.monthly_budget > 0:
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        month_expenses = db.query(FinancialRecord).filter(
+        total_spent = float(db.query(func.coalesce(func.sum(FinancialRecord.amount), 0.0)).filter(
             tenant_filter(FinancialRecord, current_user),
             FinancialRecord.type == "expense",
             FinancialRecord.date >= month_start
-        ).all()
-        total_spent = sum(round_currency(r.amount) for r in month_expenses)
+        ).scalar() or 0.0)
         pct = round((total_spent / float(req.monthly_budget)) * 100.0, 1)
         if pct >= 100.0:
             budget_alert = f"Alert: You have exhausted {pct}% of your monthly budget (₹{total_spent:,.0f} / ₹{req.monthly_budget:,.0f})"
@@ -3248,52 +3575,42 @@ def get_cash_flow_forecast(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """
-    30-day forward cash flow forecast (AETH-FIN-01).
-    Computes projected balance using recurring commitments and 30-day historical daily average burn rate.
-    """
+    """Calculate forecast inputs with SQL aggregates, not materialized ledger rows."""
+    days = max(1, min(int(days), 365))
     now = datetime.utcnow()
     past_30d = now - timedelta(days=30)
-    
-    # 1. Historical 30-day expenses to calculate average daily discretionary spend
-    past_expenses = db.query(FinancialRecord).filter(
-        tenant_filter(FinancialRecord, current_user),
-        FinancialRecord.type == "expense",
+    past_expense_total = float(db.query(func.coalesce(func.sum(FinancialRecord.amount), 0.0)).filter(
+        tenant_filter(FinancialRecord, current_user), FinancialRecord.type == "expense",
         FinancialRecord.date >= past_30d
-    ).all()
-    past_expense_total = sum(round_currency(r.amount) for r in past_expenses)
-    avg_daily_spend = round_currency(past_expense_total / 30.0) if past_expenses else 0.0
-
-    # 2. Historical 30-day income
-    past_incomes = db.query(FinancialRecord).filter(
-        tenant_filter(FinancialRecord, current_user),
-        FinancialRecord.type == "income",
+    ).scalar() or 0.0)
+    past_income_total = float(db.query(func.coalesce(func.sum(FinancialRecord.amount), 0.0)).filter(
+        tenant_filter(FinancialRecord, current_user), FinancialRecord.type == "income",
         FinancialRecord.date >= past_30d
-    ).all()
-    past_income_total = sum(round_currency(r.amount) for r in past_incomes)
+    ).scalar() or 0.0)
+    recurring_totals = db.query(
+        FinancialRecord.type, func.coalesce(func.sum(FinancialRecord.amount), 0.0)
+    ).filter(
+        tenant_filter(FinancialRecord, current_user), FinancialRecord.is_recurring == True
+    ).group_by(FinancialRecord.type).all()
+    recurring_monthly_income = 0.0
+    recurring_monthly_expense = 0.0
+    for record_type, amount in recurring_totals:
+        if record_type == "income":
+            recurring_monthly_income = float(amount or 0.0)
+        elif record_type == "expense":
+            recurring_monthly_expense = float(amount or 0.0)
 
-    # 3. Recurring income & expenses
-    recurring_items = db.query(FinancialRecord).filter(
-        tenant_filter(FinancialRecord, current_user),
-        FinancialRecord.is_recurring == True
-    ).all()
-    
-    recurring_monthly_income = sum(round_currency(r.amount) for r in recurring_items if r.type == "income")
-    recurring_monthly_expense = sum(round_currency(r.amount) for r in recurring_items if r.type == "expense")
-
-    # 4. Projected 30-day cash flow
+    avg_daily_spend = round_currency(past_expense_total / 30.0)
     projected_discretionary = round_currency(avg_daily_spend * days)
     projected_total_outflow = round_currency(recurring_monthly_expense + projected_discretionary)
     projected_net_cashflow = round_currency(recurring_monthly_income - projected_total_outflow)
-
     return {
-        "status": "success",
-        "forecast_days": days,
+        "status": "success", "forecast_days": days,
         "average_daily_spend": avg_daily_spend,
-        "past_30d_income": past_income_total,
-        "past_30d_expense": past_expense_total,
-        "recurring_monthly_income": recurring_monthly_income,
-        "recurring_monthly_expense": recurring_monthly_expense,
+        "past_30d_income": round_currency(past_income_total),
+        "past_30d_expense": round_currency(past_expense_total),
+        "recurring_monthly_income": round_currency(recurring_monthly_income),
+        "recurring_monthly_expense": round_currency(recurring_monthly_expense),
         "projected_total_outflow": projected_total_outflow,
         "projected_net_cashflow": projected_net_cashflow,
         "runway_health": "positive" if projected_net_cashflow >= 0 else "burn_rate_warning"
@@ -3354,15 +3671,26 @@ def get_finance_summary(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    records = db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user)).all()
-    total_income = sum(r.amount for r in records if r.type == "income")
-    total_expense = sum(r.amount for r in records if r.type == "expense")
-    balance = total_income - total_expense
+    """Calculate lifetime totals in PostgreSQL without loading the ledger into RAM."""
+    totals = db.query(
+        FinancialRecord.type,
+        func.coalesce(func.sum(FinancialRecord.amount), 0.0)
+    ).filter(tenant_filter(FinancialRecord, current_user)).group_by(FinancialRecord.type).all()
+    total_income = 0.0
+    total_expense = 0.0
+    for record_type, amount in totals:
+        if (record_type or "").lower() == "income":
+            total_income = float(amount or 0.0)
+        elif (record_type or "").lower() == "expense":
+            total_expense = float(amount or 0.0)
+    record_count = db.query(func.count(FinancialRecord.id)).filter(
+        tenant_filter(FinancialRecord, current_user)
+    ).scalar() or 0
     return {
         "total_income": total_income,
         "total_expense": total_expense,
-        "balance": balance,
-        "record_count": len(records)
+        "balance": total_income - total_expense,
+        "record_count": int(record_count)
     }
 
 @app.get("/api/finance/export-csv")
@@ -3372,52 +3700,49 @@ def export_finance_csv(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    query = db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user))
-    records = query.order_by(FinancialRecord.date.desc()).all()
-
-    # If year and month are provided, filter records (month is 0-indexed: 0=Jan, 10=Nov)
+    """Stream CSV rows from PostgreSQL in bounded batches instead of buffering the ledger."""
+    if month is not None and (month < 0 or month > 11):
+        raise HTTPException(status_code=400, detail="month must be between 0 and 11")
+    start = end = None
     if year is not None and month is not None:
-        filtered = []
-        for r in records:
-            if not r.date:
-                continue
-            try:
-                if hasattr(r.date, 'year'):
-                    r_year = r.date.year
-                    r_month = r.date.month - 1
-                else:
-                    dt = datetime.fromisoformat(str(r.date))
-                    r_year = dt.year
-                    r_month = dt.month - 1
-                if r_year == year and r_month == month:
-                    filtered.append(r)
-            except Exception:
-                continue
-        records = filtered
+        start = datetime(year, month + 1, 1)
+        end = datetime(year + 1, 1, 1) if month == 11 else datetime(year, month + 2, 1)
+    elif year is not None:
+        start = datetime(year, 1, 1)
+        end = datetime(year + 1, 1, 1)
 
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Record ID", "Date", "Type", "Category", "Amount (INR)", "Payment Mode", "Notes"])
-    for r in records:
-        d_str = r.date.strftime("%d/%m/%Y") if hasattr(r.date, 'strftime') else str(r.date or '')
-        writer.writerow([
-            r.id,
-            d_str,
-            r.type or "expense",
-            r.category or "general",
-            r.amount or 0,
-            r.payment_mode or "upi",
-            r.note or ""
-        ])
-
-    csv_text = "\ufeff" + output.getvalue()
     month_names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
     m_name = month_names[month] if (month is not None and 0 <= month < 12) else "All"
     y_name = str(year) if year is not None else ""
     filename = f"aether_finance_{m_name}_{y_name}.csv" if y_name else f"aether_finance_{m_name}.csv"
 
-    return Response(
-        content=csv_text.encode("utf-8"),
+    def csv_stream():
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Record ID", "Date", "Type", "Category", "Amount (INR)", "Payment Mode", "Notes"])
+        yield "\ufeff" + output.getvalue()
+        output.seek(0)
+        output.truncate(0)
+        stream_db = SessionLocal()
+        try:
+            set_db_rls_context(stream_db, current_user.id)
+            stream_query = stream_db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user))
+            if start is not None and end is not None:
+                stream_query = stream_query.filter(FinancialRecord.date >= start, FinancialRecord.date < end)
+            for record in stream_query.order_by(FinancialRecord.date.desc(), FinancialRecord.id.desc()).yield_per(500):
+                date_text = record.date.strftime("%d/%m/%Y") if hasattr(record.date, "strftime") else str(record.date or "")
+                writer.writerow([
+                    record.id, date_text, record.type or "expense", record.category or "general",
+                    record.amount or 0, record.payment_mode or "upi", record.note or ""
+                ])
+                yield output.getvalue()
+                output.seek(0)
+                output.truncate(0)
+        finally:
+            stream_db.close()
+
+    return StreamingResponse(
+        csv_stream(),
         media_type="text/csv; charset=utf-8",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
@@ -3567,6 +3892,7 @@ async def draft_email_reply_endpoint(
 def list_memory(
     limit: int = 50,
     offset: int = 0,
+    response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
@@ -3575,16 +3901,22 @@ def list_memory(
     The response remains a list for backward compatibility. Clients can request
     older pages with offset; limit is capped to prevent unbounded database reads.
     """
-    safe_limit = max(1, min(int(limit), 100))
-    safe_offset = max(0, int(offset))
-    return (
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    rows = (
         db.query(MemoryItem)
         .filter(tenant_filter(MemoryItem, current_user))
         .order_by(MemoryItem.created_at.desc(), MemoryItem.id.desc())
-        .offset(safe_offset)
-        .limit(safe_limit)
-        .all()
+        .offset(safe_offset).limit(safe_limit + 1).all()
     )
+    has_more = len(rows) > safe_limit
+    rows = rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(rows))
+    return rows
 
 @app.post("/api/memory")
 def create_memory(
@@ -3598,13 +3930,18 @@ def create_memory(
         raise HTTPException(status_code=400, detail="Empty fact")
     cat = (req.category or "contact").strip().lower()
 
-    # Check if existing item exists for this contact/subject to avoid duplicates
+    # Resolve one possible match in SQL instead of loading every memory in this category.
     first_token = fact_str.split()[0].lower() if fact_str else ""
-    existing = db.query(MemoryItem).filter(
-        tenant_filter(MemoryItem, current_user),
-        MemoryItem.category == cat
-    ).all()
-    matched = next((ex for ex in existing if first_token in (ex.fact or "").lower()), None)
+    matched = (
+        db.query(MemoryItem)
+        .filter(
+            tenant_filter(MemoryItem, current_user),
+            MemoryItem.category == cat,
+            MemoryItem.fact.ilike(f"%{first_token}%")
+        )
+        .order_by(MemoryItem.updated_at.desc(), MemoryItem.id.desc())
+        .first()
+    )
     from memory.hybrid_provider import get_embedding
     emb = get_embedding(fact_str)
     emb_json = json.dumps(emb) if emb else None
@@ -3626,7 +3963,7 @@ def create_memory(
     return {"id": item.id, "fact": item.fact, "category": item.category, "created": True}
 
 class BulkContactsSyncRequest(BaseModel):
-    contacts: List[Dict[str, Any]]
+    contacts: List[Dict[str, Any]] = Field(..., max_length=200)
     user_email: Optional[str] = None
 
 @app.post("/api/memory/bulk-contacts")
@@ -3637,64 +3974,79 @@ def sync_bulk_contacts(
     db: Session = Depends(get_db)
 ):
     eff_email = current_user.email
-    from memory.hybrid_provider import get_embedding
-    
     contacts_list = req.contacts or []
     if not contacts_list:
         return {"status": "ok", "synced_count": 0, "message": "No contacts provided"}
-        
+
     synced = 0
-    existing = db.query(MemoryItem).filter(
-        tenant_filter(MemoryItem, current_user),
-        MemoryItem.category == "contact"
-    ).all()
-    existing_facts = { (e.fact or "").lower(): e for e in existing }
+    skipped = 0
+    failed = 0
+    failure_samples = []
+    for batch_start in range(0, len(contacts_list), WRITE_BATCH_SIZE):
+        batch = contacts_list[batch_start:batch_start + WRITE_BATCH_SIZE]
+        batch_synced = 0
+        for local_index, contact in enumerate(batch):
+            try:
+                name = str(contact.get("name") or "").strip()
+                phone = str(contact.get("phone") or contact.get("phoneNumber") or "").strip()
+                if not name or not phone:
+                    skipped += 1
+                    continue
+                clean_phone = re.sub(r'[^\d+]', '', phone)
+                if len(clean_phone) < 5:
+                    skipped += 1
+                    continue
 
-    for c in contacts_list:
-        name = (c.get("name") or "").strip()
-        phone = (c.get("phone") or c.get("phoneNumber") or "").strip()
-        if not name or not phone:
-            continue
-        clean_phone = re.sub(r'[^\d+]', '', phone)
-        if len(clean_phone) < 5:
-            continue
-            
-        fact_str = f"Contact: {name} - Phone: {clean_phone}"
-        if c.get("email"):
-            fact_str += f" - Email: {c.get('email').strip()}"
-        
-        # Skip if exact fact already present
-        if fact_str.lower() in existing_facts:
-            continue
-        
-        # Check if same contact name already exists, update number
-        matched = next((e for e in existing if name.lower() in (e.fact or "").lower()), None)
-        emb = get_embedding(fact_str)
-        emb_json = json.dumps(emb) if emb else None
-        
-        if matched:
-            matched.fact = fact_str
-            matched.embedding = emb_json
-            matched.updated_at = datetime.utcnow()
-        else:
-            new_item = MemoryItem(
-                owner_user_id=current_user.id,
-                user_email=eff_email,
-                category="contact",
-                fact=fact_str,
-                confidence=1.0,
-                embedding=emb_json
-            )
-            db.add(new_item)
-            existing.append(new_item)
-        synced += 1
+                fact_str = f"Contact: {name} - Phone: {clean_phone}"
+                if contact.get("email"):
+                    fact_str += f" - Email: {str(contact.get('email')).strip()}"
 
-    db.commit()
+                scoped = db.query(MemoryItem).filter(
+                    tenant_filter(MemoryItem, current_user),
+                    MemoryItem.category == "contact"
+                )
+                exact = scoped.filter(func.lower(MemoryItem.fact) == fact_str.lower()).first()
+                if exact:
+                    skipped += 1
+                    continue
+
+                safe_name = name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                matched = scoped.filter(
+                    MemoryItem.fact.ilike(f"Contact: {safe_name} - Phone:%", escape="\\")
+                ).order_by(MemoryItem.updated_at.desc(), MemoryItem.id.desc()).first()
+
+                # Contact facts are indexed lexically in PostgreSQL; do not issue one
+                # external embedding request per imported contact.
+                if matched:
+                    matched.fact = fact_str
+                    matched.embedding = None
+                    matched.updated_at = datetime.utcnow()
+                else:
+                    db.add(MemoryItem(
+                        owner_user_id=current_user.id, user_email=eff_email,
+                        category="contact", fact=fact_str, confidence=1.0,
+                        importance=1.2, embedding=None
+                    ))
+                synced += 1
+                batch_synced += 1
+            except Exception as exc:
+                failed += 1
+                if len(failure_samples) < 25:
+                    failure_samples.append({"index": batch_start + local_index, "error": str(exc)[:240]})
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            failed += batch_synced
+            synced = max(0, synced - batch_synced)
+            if len(failure_samples) < 25:
+                failure_samples.append({"batch_start": batch_start, "error": str(exc)[:240]})
+
     return {
-        "status": "ok", 
-        "synced_count": synced, 
+        "status": "ok", "synced_count": synced, "skipped_count": skipped,
+        "failed_count": failed, "failure_samples": failure_samples,
         "total_contacts": len(contacts_list),
-        "message": f"Successfully synced {synced} contacts into Memory Vault! ⚡"
+        "message": f"Processed {len(contacts_list)} contacts in bounded batches."
     }
 
 @app.put("/api/memory/{item_id}")
@@ -3772,9 +4124,16 @@ def get_executive_briefing(
         return _cached["data"]
 
     eff_email = current_user.email
-    tasks = db.query(Task).filter(tenant_filter(Task, current_user), Task.status == "pending").all()
-    memories = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user)).limit(5).all()
-    urgent_tasks = [t for t in tasks if t.priority in ["high", "urgent"]]
+    pending_tasks_count = db.query(func.count(Task.id)).filter(
+        tenant_filter(Task, current_user), Task.status == "pending"
+    ).scalar() or 0
+    memories = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user)).order_by(
+        MemoryItem.importance.desc(), MemoryItem.created_at.desc()
+    ).limit(5).all()
+    urgent_tasks = db.query(Task).filter(
+        tenant_filter(Task, current_user), Task.status == "pending",
+        Task.priority.in_(["high", "urgent"])
+    ).order_by(Task.due_date.asc().nullslast(), Task.id.desc()).limit(10).all()
     finance = get_finance_summary(current_user=current_user, db=db)
 
     now = datetime.now()
@@ -3830,8 +4189,8 @@ def get_executive_briefing(
     response_data = {
         "greeting": f"{greeting}, {display_name}!",
         "date_str": now.strftime("%d %b").upper(),
-        "pending_tasks_count": len(tasks),
-        "upcoming_count": len(tasks),
+        "pending_tasks_count": int(pending_tasks_count),
+        "upcoming_count": int(pending_tasks_count),
         "alert_count": len(urgent_tasks),
         "urgent_tasks": [{"id": t.id, "title": t.title, "priority": t.priority} for t in urgent_tasks],
         "financial_snapshot": finance,
@@ -3900,7 +4259,7 @@ def get_executive_audio_briefing(
     auto_advance_recurring_tasks(db, owner_user_id=current_user.id)
     task_query = db.query(Task).filter(tenant_filter(Task, current_user), Task.status == "pending", (Task.parent_id == None) | (Task.parent_id == 0))
     
-    all_pending = task_query.all()
+    all_pending = task_query.order_by(Task.due_date.asc().nullslast(), Task.id.desc()).limit(100).all()
     today_tasks = []
     for t in all_pending:
         t_due = t.due_date.date() if t.due_date else None
@@ -4011,25 +4370,34 @@ def update_briefing_preferences(
 # ----------------- Audit Logs & Undo -----------------
 @app.get("/api/audit-logs")
 def list_audit_logs(
-    limit: int = 60, 
+    limit: int = 60,
+    offset: int = 0,
     date: Optional[str] = None,
+    response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
     query = db.query(AuditLog).filter(tenant_filter(AuditLog, current_user))
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if date and date.strip():
         try:
             target_date = datetime.strptime(date.strip(), "%Y-%m-%d").date()
-            # Expand UTC window by 1 day before & after to account for timezone shifts (e.g. IST +05:30)
             start_dt = datetime.combine(target_date - timedelta(days=1), datetime.min.time())
             end_dt = datetime.combine(target_date + timedelta(days=1), datetime.max.time())
             query = query.filter(AuditLog.executed_at >= start_dt, AuditLog.executed_at <= end_dt)
-            logs = query.order_by(AuditLog.executed_at.desc()).all()
-        except Exception as e:
-            print(f"[Audit Log Date Filter Error] {e}")
-            logs = query.order_by(AuditLog.executed_at.desc()).limit(limit).all()
-    else:
-        logs = query.order_by(AuditLog.executed_at.desc()).limit(limit).all()
+        except Exception as exc:
+            print(f"[Audit Log Date Filter Error] {exc}")
+    page_rows = query.order_by(AuditLog.executed_at.desc(), AuditLog.id.desc()).offset(
+        safe_offset
+    ).limit(safe_limit + 1).all()
+    has_more = len(page_rows) > safe_limit
+    logs = page_rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(logs))
 
     # Always ensure executed_at string carries ISO 8601 UTC indicator 'Z' so browser parses in local time
     results = []
@@ -4275,7 +4643,7 @@ def send_test_push(
 ):
     """Send an immediate test VAPID push notification strictly to the verified requesting user's devices (AETH-P0-02)."""
     email = current_user.email
-    db_subs = db.query(PushSubscription).filter(tenant_filter(PushSubscription, current_user)).all()
+    db_subs = db.query(PushSubscription).filter(tenant_filter(PushSubscription, current_user)).limit(50).all()
     if db_subs:
         _push_subscriptions[email] = [
             {"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}}
@@ -4441,77 +4809,101 @@ def is_task_due_for_notification(task, now: datetime) -> bool:
 
     return False
 
+def due_task_candidate_filter(now: datetime):
+    """SQL prefilter for due reminders, including legacy reminder_time-only tasks."""
+    start = now - timedelta(seconds=180)
+    today_start = datetime.combine(now.date(), datetime.min.time())
+    tomorrow_start = today_start + timedelta(days=1)
+    hour12 = now.strftime("%I").lstrip("0") or "12"
+    minute = now.strftime("%M")
+    ampm = now.strftime("%p")
+    time_candidates = list({
+        now.strftime("%I:%M %p"), now.strftime("%I:%M%p"),
+        now.strftime("%H:%M"), f"{hour12}:{minute} {ampm}", f"{hour12}:{minute}{ampm}"
+    })
+    return or_(
+        and_(Task.due_date >= start, Task.due_date <= now),
+        and_(
+            Task.reminder_time.in_(time_candidates),
+            or_(
+                Task.due_date == None,
+                and_(Task.due_date >= today_start, Task.due_date < tomorrow_start)
+            )
+        )
+    )
+
+
 def _run_push_check_internal(db: Session):
+    """Process notification owners and tasks in bounded keyset windows."""
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     pushed_count = 0
     errors = []
+    last_owner_id = ""
+    due_start = now - timedelta(seconds=180)
 
-    # 1. Database से सभी active subscriptions reload करें grouped strictly by owner_user_id (AETH-P0-02)
-    subs_by_owner: Dict[str, List[dict]] = {}
-    try:
-        db_subs = db.query(PushSubscription).all()
-        for s in db_subs:
-            oid = (s.owner_user_id or "").strip()
-            if not oid:
-                continue
-            if oid not in subs_by_owner:
-                subs_by_owner[oid] = []
-            if not any(sub.get("endpoint") == s.endpoint for sub in subs_by_owner[oid]):
-                subs_by_owner[oid].append({
-                    "endpoint": s.endpoint,
-                    "keys": {
-                        "p256dh": s.p256dh,
-                        "auth": s.auth
-                    }
-                })
-    except Exception as dbe:
-        print(f"[PushCheck DB Load Error] {dbe}")
+    while True:
+        owner_rows = db.query(PushSubscription.owner_user_id).filter(
+            PushSubscription.owner_user_id.isnot(None),
+            PushSubscription.owner_user_id > last_owner_id
+        ).distinct().order_by(PushSubscription.owner_user_id.asc()).limit(100).all()
+        if not owner_rows:
+            break
+        owner_ids = [row[0] for row in owner_rows if row[0]]
+        last_owner_id = owner_ids[-1] if owner_ids else last_owner_id
 
-    # 2. सभी subscribed users के लिए strictly isolated owner UUID check करें
-    for owner_id, subscriptions in list(subs_by_owner.items()):
-        if not subscriptions or not owner_id:
-            continue
-        try:
-            tasks = db.query(Task).filter(
-                Task.owner_user_id == owner_id,
-                Task.status == "pending",
-                Task.notified == False
-            ).all()
+        for owner_id in owner_ids:
+            try:
+                due_tasks = db.query(Task).filter(
+                    Task.owner_user_id == owner_id,
+                    Task.status == "pending",
+                    Task.notified == False,
+                    due_task_candidate_filter(now)
+                ).order_by(Task.due_date.asc().nullslast(), Task.id.asc()).limit(200).all()
 
-            due_tasks = [t for t in tasks if is_task_due_for_notification(t, now)]
+                for task in due_tasks:
+                    if not is_task_due_for_notification(task, now):
+                        continue
+                    title = f"⏰ AETHER रिमाइंडर: {task.title}"
+                    body = f"समय: {task.reminder_time or 'अभी'} • कार्य का समय हो गया है!"
+                    task_pushed_success = False
+                    found_subscription = False
 
-            for task in due_tasks:
-                title = f"⏰ AETHER रिमाइंडर: {task.title}"
-                body = f"समय: {task.reminder_time or 'अभी'} • कार्य का समय हो गया है!"
+                    # Stream device subscriptions; never load every device into a list.
+                    subscriptions = db.query(PushSubscription).filter(
+                        PushSubscription.owner_user_id == owner_id
+                    ).limit(50).all()
+                    for subscription in subscriptions:
+                        found_subscription = True
+                        sub = {
+                            "endpoint": subscription.endpoint,
+                            "keys": {"p256dh": subscription.p256dh, "auth": subscription.auth}
+                        }
+                        success, is_expired = _send_web_push(sub, title, body, f"reminder-{task.id}")
+                        if success:
+                            pushed_count += 1
+                            task_pushed_success = True
+                        elif is_expired:
+                            try:
+                                db.query(PushSubscription).filter(
+                                    PushSubscription.owner_user_id == owner_id,
+                                    PushSubscription.endpoint == subscription.endpoint
+                                ).delete(synchronize_session=False)
+                                db.commit()
+                            except Exception:
+                                db.rollback()
 
-                task_pushed_success = False
-                expired_endpoints = []
-
-                for sub in subscriptions:
-                    success, is_expired = _send_web_push(sub, title, body, f"reminder-{task.id}")
-                    if success:
-                        pushed_count += 1
-                        task_pushed_success = True
-                    else:
-                        if is_expired:
-                            expired_endpoints.append(sub.get("endpoint"))
-
-                if expired_endpoints:
-                    try:
-                        db.query(PushSubscription).filter(PushSubscription.endpoint.in_(expired_endpoints)).delete(synchronize_session=False)
+                    if task_pushed_success:
+                        task.notified = True
                         db.commit()
-                        subs_by_owner[owner_id] = [s for s in subs_by_owner[owner_id] if s.get("endpoint") not in expired_endpoints]
-                    except Exception:
-                        pass
-
-                if task_pushed_success:
-                    task.notified = True
-                    db.commit()
-                else:
-                    errors.append(f"Push delivery failed for task {task.id} (owner {owner_id}).")
-        except Exception as e:
-            errors.append(f"Error for {owner_id}: {str(e)[:100]}")
-            print(f"[PushCheck Error] {email}: {e}")
+                    elif not found_subscription and len(errors) < 50:
+                        errors.append(f"No push subscriptions for owner {owner_id}.")
+                    elif len(errors) < 50:
+                        errors.append(f"Push delivery failed for task {task.id} (owner {owner_id}).")
+            except Exception as exc:
+                db.rollback()
+                if len(errors) < 50:
+                    errors.append(f"Error for {owner_id}: {str(exc)[:100]}")
+                print(f"[PushCheck Error] {owner_id}: {exc}")
 
     return {"status": "ok", "pushed": pushed_count, "errors": errors}
 
@@ -4525,6 +4917,7 @@ async def start_reminder_background_worker():
             try:
                 db = SessionLocal()
                 try:
+                    set_worker_rls_context(db)
                     _run_push_check_internal(db)
                 finally:
                     db.close()
@@ -4562,66 +4955,76 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
                 digest_type = "morning" if is_morning_window else "evening"
                 digest_key = f"{today_str}:{digest_type}"
 
-                pairings = db.query(UserIntegrationPairing).filter(
+                pairing_query = db.query(UserIntegrationPairing).filter(
                     UserIntegrationPairing.channel == "whatsapp",
                     UserIntegrationPairing.is_active == True
-                ).all()
-                for p in pairings:
-                    try:
-                        p_phone = p.channel_user_id
-                        p_owner_id = p.owner_user_id
-                        already_sent = db.query(MemoryItem).filter(
-                            MemoryItem.category == "whatsapp_digest_sent",
-                            MemoryItem.owner_user_id == p_owner_id,
-                            MemoryItem.fact == digest_key
-                        ).first()
+                )
+                last_pairing_id = 0
+                while True:
+                    pairings = pairing_query.filter(
+                        UserIntegrationPairing.id > last_pairing_id
+                    ).order_by(UserIntegrationPairing.id.asc()).limit(100).all()
+                    if not pairings:
+                        break
+                    last_pairing_id = pairings[-1].id
+                    for p in pairings:
+                        try:
+                            p_phone = p.channel_user_id
+                            p_owner_id = p.owner_user_id
+                            already_sent = db.query(MemoryItem).filter(
+                                MemoryItem.category == "whatsapp_digest_sent",
+                                MemoryItem.owner_user_id == p_owner_id,
+                                MemoryItem.fact == digest_key
+                            ).first()
 
-                        if not already_sent:
-                            if digest_type == "morning":
-                                p_tasks = db.query(Task).filter(
-                                    Task.owner_user_id == p_owner_id,
-                                    Task.status == "pending",
-                                    Task.parent_id == None
-                                ).all()
-                                task_count = len(p_tasks)
-                                top_tasks_str = ", ".join([f"'{t.title}'" for t in p_tasks[:3]]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
-                                digest_msg = (
-                                    f"☀️ *सुप्रभात! Aether Morning Digest*\n\n"
-                                    f"🎯 *आज के कार्य ({task_count})*: {top_tasks_str}\n\n"
-                                    f"दिन की शानदार शुरुआत करें! कोई भी नया काम या खर्च दर्ज करने के लिए सीधे यहाँ रिप्लाई करें। 🚀"
-                                )
-                            else:
-                                comp_count = db.query(Task).filter(Task.owner_user_id == p_owner_id, Task.status == "completed").count()
-                                pend_count = db.query(Task).filter(Task.owner_user_id == p_owner_id, Task.status == "pending").count()
-                                digest_msg = (
-                                    f"🌙 *शुभ संध्या! Aether Day Wrap-up*\n\n"
-                                    f"📊 *आज की प्रगति*:\n"
-                                    f"• पूरे हुए कार्य: ✅ {comp_count}\n"
-                                    f"• शेष कार्य: ⏳ {pend_count}\n\n"
-                                    f"क्या शेष कार्यों को कल के लिए आगे बढ़ाना है? बस मुझे यहाँ बता दें।"
-                                )
+                            if not already_sent:
+                                if digest_type == "morning":
+                                    task_count = db.query(func.count(Task.id)).filter(
+                                        Task.owner_user_id == p_owner_id,
+                                        Task.status == "pending",
+                                        Task.parent_id == None
+                                    ).scalar() or 0
+                                    p_tasks = db.query(Task).filter(
+                                        Task.owner_user_id == p_owner_id,
+                                        Task.status == "pending",
+                                        Task.parent_id == None
+                                    ).order_by(Task.due_date.asc().nullslast(), Task.id.desc()).limit(3).all()
+                                    top_tasks_str = ", ".join([f"'{t.title}'" for t in p_tasks]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
+                                    digest_msg = (
+                                        f"☀️ *सुप्रभात! Aether Morning Digest*\n\n"
+                                        f"🎯 *आज के कार्य ({task_count})*: {top_tasks_str}\n\n"
+                                        f"दिन की शानदार शुरुआत करें! कोई भी नया काम या खर्च दर्ज करने के लिए सीधे यहाँ रिप्लाई करें। 🚀"
+                                    )
+                                else:
+                                    comp_count = db.query(Task).filter(Task.owner_user_id == p_owner_id, Task.status == "completed").count()
+                                    pend_count = db.query(Task).filter(Task.owner_user_id == p_owner_id, Task.status == "pending").count()
+                                    digest_msg = (
+                                        f"🌙 *शुभ संध्या! Aether Day Wrap-up*\n\n"
+                                        f"📊 *आज की प्रगति*:\n"
+                                        f"• पूरे हुए कार्य: ✅ {comp_count}\n"
+                                        f"• शेष कार्य: ⏳ {pend_count}\n\n"
+                                        f"क्या शेष कार्यों को कल के लिए आगे बढ़ाना है? बस मुझे यहाँ बता दें।"
+                                    )
 
-                            # Synchronous dispatch for worker thread (Issue #1 fix)
-                            sent_ok = _send_whatsapp_message_sync(p_phone, digest_msg, wa_phone_id, wa_token)
-                            if sent_ok:
-                                db.add(MemoryItem(owner_user_id=p_owner_id, user_email=p.user_email, category="whatsapp_digest_sent", fact=digest_key))
-                                db.commit()
-                                print(f"[WhatsApp Digest] Successfully sent {digest_type} digest to {p_phone}")
-                            else:
-                                print(f"[WhatsApp Digest] Failed delivery to {p_phone}, will retry on next check.")
-                    except Exception as p_err:
-                        print(f"[Digest Pairing Error] {p_err}")
-                    except Exception as p_err:
-                        print(f"[Digest Pairing Error] {p_err}")
+                                # Synchronous dispatch for worker thread (Issue #1 fix)
+                                sent_ok = _send_whatsapp_message_sync(p_phone, digest_msg, wa_phone_id, wa_token)
+                                if sent_ok:
+                                    db.add(MemoryItem(owner_user_id=p_owner_id, user_email=p.user_email, category="whatsapp_digest_sent", fact=digest_key))
+                                    db.commit()
+                                    print(f"[WhatsApp Digest] Successfully sent {digest_type} digest to {p_phone}")
+                                else:
+                                    print(f"[WhatsApp Digest] Failed delivery to {p_phone}, will retry on next check.")
+                        except Exception as p_err:
+                            print(f"[Digest Pairing Error] {p_err}")
     except Exception as e_dig:
         print(f"[WhatsApp Digest Cron Notice] {e_dig}")
     
     return {
-        "status": "ok",
+        "status": result.get("status", "ok"),
         "checked_users": len(_push_subscriptions),
-        "pushed_count": pushed_count,
-        "errors": errors,
-        "timestamp": now.isoformat()
+        "pushed_count": int(result.get("pushed", 0) or 0),
+        "errors": result.get("errors", []),
+        "timestamp": (datetime.now(DEFAULT_TZ).isoformat() if DEFAULT_TZ else datetime.utcnow().isoformat())
     }
 
 # ----------------- Telegram Executive Bot Webhook -----------------
@@ -5204,11 +5607,16 @@ async def trigger_whatsapp_digest(
     user_phone = pairing.channel_user_id
 
     if time_of_day == "morning":
-        p_tasks = db.query(Task).filter(Task.owner_user_id == current_user.id, Task.status == "pending", Task.parent_id == None).all()
-        top_tasks = ", ".join([f"'{t.title}'" for t in p_tasks[:3]]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
+        pending_task_count = db.query(func.count(Task.id)).filter(
+            Task.owner_user_id == current_user.id, Task.status == "pending", Task.parent_id == None
+        ).scalar() or 0
+        p_tasks = db.query(Task).filter(
+            Task.owner_user_id == current_user.id, Task.status == "pending", Task.parent_id == None
+        ).order_by(Task.due_date.asc().nullslast(), Task.id.desc()).limit(3).all()
+        top_tasks = ", ".join([f"'{t.title}'" for t in p_tasks]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
         digest_msg = (
             f"☀️ *सुप्रभात! Aether Morning Digest*\n\n"
-            f"🎯 *आज के कार्य ({len(p_tasks)})*: {top_tasks}\n\n"
+            f"🎯 *आज के कार्य ({pending_task_count})*: {top_tasks}\n\n"
             f"दिन की शानदार शुरुआत करें! कोई भी नया काम या खर्च दर्ज करने के लिए सीधे यहाँ रिप्लाई करें। 🚀"
         )
     else:
@@ -6298,7 +6706,7 @@ def list_routines(
     jobs = db.query(ScheduledJob).filter(
         tenant_filter(ScheduledJob, current_user),
         ScheduledJob.job_type == "routine"
-    ).order_by(ScheduledJob.created_at.desc()).all()
+    ).order_by(ScheduledJob.created_at.desc(), ScheduledJob.id.desc()).limit(100).all()
     results = []
     for j in jobs:
         try:
@@ -6501,33 +6909,36 @@ def get_weekly_digest(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Returns a 7-day life & spend digest for the authenticated user (AETH-P0-02)."""
+    """Compute the weekly digest with database aggregates, never full-table ORM loads."""
     since = datetime.utcnow() - timedelta(days=7)
-    expenses = db.query(FinancialRecord).filter(
+    weekly_expense = float(db.query(func.coalesce(func.sum(FinancialRecord.amount), 0.0)).filter(
         tenant_filter(FinancialRecord, current_user),
         FinancialRecord.type == "expense",
         FinancialRecord.date >= since
-    ).all()
-    weekly_expense = sum(float(e.amount or 0) for e in expenses)
-    cat_totals: Dict[str, float] = {}
-    for e in expenses:
-        c = (e.category or "general").lower()
-        cat_totals[c] = cat_totals.get(c, 0.0) + float(e.amount or 0)
-    top_category = max(cat_totals, key=cat_totals.get) if cat_totals else "none"
+    ).scalar() or 0.0)
+    top_category_row = db.query(
+        FinancialRecord.category,
+        func.sum(FinancialRecord.amount).label("total")
+    ).filter(
+        tenant_filter(FinancialRecord, current_user),
+        FinancialRecord.type == "expense",
+        FinancialRecord.date >= since
+    ).group_by(FinancialRecord.category).order_by(func.sum(FinancialRecord.amount).desc()).first()
+    top_category = (top_category_row[0] or "general").lower() if top_category_row else "none"
 
-    all_tasks = db.query(Task).filter(tenant_filter(Task, current_user)).all()
-    tasks_completed = sum(1 for t in all_tasks if t.is_completed)
-    tasks_pending = sum(1 for t in all_tasks if not t.is_completed)
+    status_counts = dict(db.query(Task.status, func.count(Task.id)).filter(
+        tenant_filter(Task, current_user)
+    ).group_by(Task.status).all())
+    tasks_completed = int(status_counts.get("completed", 0))
+    tasks_pending = sum(int(count) for status, count in status_counts.items() if status != "completed")
 
     summary = (
         f"Last 7 days: You spent ₹{weekly_expense:,.0f} (top category: {top_category}). "
         f"You have completed {tasks_completed} task(s) with {tasks_pending} pending."
     )
     return {
-        "weekly_expense": weekly_expense,
-        "top_category": top_category,
-        "tasks_completed": tasks_completed,
-        "tasks_pending": tasks_pending,
+        "weekly_expense": weekly_expense, "top_category": top_category,
+        "tasks_completed": tasks_completed, "tasks_pending": tasks_pending,
         "summary": summary
     }
 

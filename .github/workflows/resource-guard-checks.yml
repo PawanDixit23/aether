@@ -1,0 +1,48 @@
+name: App-wide resource guard checks
+
+on:
+  push:
+    branches: [feat/app-wide-db-resource-guard]
+  pull_request:
+    branches: [dev]
+    paths:
+      - "server/**"
+      - "desktop/src/**"
+      - "desktop/package.json"
+      - "desktop/package-lock.json"
+      - ".github/workflows/resource-guard-checks.yml"
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        working-directory: server
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Compile backend Python
+        run: python -m compileall -q server
+      - name: Test resource limit helpers
+        working-directory: server
+        run: python -m unittest discover -s tests -v
+
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Build desktop client
+        working-directory: desktop
+        run: npm run build
