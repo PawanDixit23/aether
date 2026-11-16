@@ -427,7 +427,7 @@ def ensure_schema_migrations():
     Existing application data is never truncated or deleted.
     """
     is_pg = "postgres" in str(engine.url).lower()
-    lock_connection = engine.connect()
+    lock_connection = engine.connect() if is_pg else None
     lock_acquired = False
     ledger_table = "public.aether_schema_migrations" if is_pg else "aether_schema_migrations"
     try:
@@ -484,15 +484,16 @@ def ensure_schema_migrations():
             )
         print(f"[Schema Migration] {SCHEMA_MIGRATION_VERSION} applied successfully.")
     finally:
-        if lock_acquired:
-            try:
-                lock_connection.execute(
-                    text("SELECT pg_advisory_unlock(hashtext('aether.schema_migrations.v1'))")
-                )
-                lock_connection.commit()
-            except Exception as unlock_error:
-                print(f"[Schema Migration] Advisory unlock note: {type(unlock_error).__name__}")
-        lock_connection.close()
+        if lock_connection is not None:
+            if lock_acquired:
+                try:
+                    lock_connection.execute(
+                        text("SELECT pg_advisory_unlock(hashtext('aether.schema_migrations.v1'))")
+                    )
+                    lock_connection.commit()
+                except Exception as unlock_error:
+                    print(f"[Schema Migration] Advisory unlock note: {type(unlock_error).__name__}")
+            lock_connection.close()
 
 def set_webhook_service_rls_context(db: Session, authorized_provider: str):
     """
