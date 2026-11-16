@@ -1933,12 +1933,16 @@ async def _execute_quick_capture(
         executed = True
 
     if not result_message or not result_message.strip():
-        fallback_greeting = (
-            f"नमस्ते {req.user_name or 'साथी'}! मैं सुन रहा हूँ। बताइए, मैं आपकी क्या सहायता करूँ?"
-            if (lang == "hi" or lang == "auto")
-            else f"Hello {req.user_name or 'Pawan'}! I am listening. How can I assist you right now?"
-        )
-        result_message = data.get("response") or data.get("explanation") or fallback_greeting
+        if req.live_voice:
+            # Live Talk must never disguise a provider failure as a conversational answer.
+            result_message = ""
+        else:
+            fallback_greeting = (
+                f"नमस्ते {req.user_name or 'साथी'}! मैं सुन रहा हूँ। बताइए, मैं आपकी क्या सहायता करूँ?"
+                if (lang == "hi" or lang == "auto")
+                else f"Hello {req.user_name or 'Pawan'}! I am listening. How can I assist you right now?"
+            )
+            result_message = data.get("response") or data.get("explanation") or fallback_greeting
         data["response"] = result_message
 
     # Record AI Response in Chat History (resilient to schema constraints, skip for temporary chats)
