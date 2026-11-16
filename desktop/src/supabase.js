@@ -72,8 +72,8 @@ export async function apiFetch(input, options = {}) {
 
   const method = String(options.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
   const requestUrl = String(input instanceof Request ? input.url : input);
-  const isApiRequest = /(?:^|\\/)api\\//i.test(requestUrl);
-  const isStreamingOrLarge = /\\/(?:tts|audio|stream|download|export)(?:[/?]|$)/i.test(requestUrl);
+  const isApiRequest = /(?:^|\/)api\//i.test(requestUrl);
+  const isStreamingOrLarge = \/(?:tts|audio|stream|download|export)(?:[/?]|$)/i.test(requestUrl);
   const canDeduplicate = method === 'GET'
     && isApiRequest
     && !isStreamingOrLarge
@@ -88,8 +88,8 @@ export async function apiFetch(input, options = {}) {
   const headerKey = Array.from(headers.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([name, value]) => `${name}:${value}`)
-    .join('\\n');
-  const requestKey = `${requestUrl}\\n${method}\\n${headerKey}`;
+    .join('\n');
+  const requestKey = `${requestUrl}\n${method}\n${headerKey}`;
 
   let pendingSnapshot = inFlightApiGets.get(requestKey);
   if (!pendingSnapshot) {
