@@ -3901,20 +3901,38 @@ export default function App() {
             const bFin = backupData.finances || [];
 
             if (bTasks.length > 0 || bMems.length > 0 || bFin.length > 0) {
-              apiFetch(`${API_BASE}/sync/backup`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
-                body: JSON.stringify({
-                  user_email: currentEmail,
-                  tasks: bTasks,
-                  memories: bMems,
-                  finances: bFin
-                })
-              }).then(() => {
+              // Restore large backups in bounded requests so the API never has
+              // to process an unbounded sync payload in one request.
+              const backupBatchSize = 200;
+              const batchCount = Math.max(
+                Math.ceil(bTasks.length / backupBatchSize),
+                Math.ceil(bMems.length / backupBatchSize),
+                Math.ceil(bFin.length / backupBatchSize)
+              );
+              try {
+                for (let batchIndex = 0; batchIndex < batchCount; batchIndex += 1) {
+                  const start = batchIndex * backupBatchSize;
+                  const response = await apiFetch(`${API_BASE}/sync/backup`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
+                    body: JSON.stringify({
+                      user_email: currentEmail,
+                      tasks: bTasks.slice(start, start + backupBatchSize),
+                      memories: bMems.slice(start, start + backupBatchSize),
+                      finances: bFin.slice(start, start + backupBatchSize)
+                    })
+                  });
+                  if (!response.ok) {
+                    throw new Error(`Backup batch ${batchIndex + 1} failed (${response.status})`);
+                  }
+                }
                 if (bTasks.length > 0) setTasks(bTasks);
                 if (bMems.length > 0) setMemories(bMems);
                 if (bFin.length > 0) setFinanceRecords(bFin);
-              }).catch(() => {});
+              } catch (backupError) {
+                console.error('Backup restore failed:', backupError);
+                showToast('Backup restore was incomplete. Please retry sync.', 'error');
+              }
             }
           }
         }
