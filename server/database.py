@@ -68,11 +68,19 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def receive_after_begin(session, transaction, connection):
     """Re-applies transaction-local PostgreSQL RLS context whenever a new transaction begins (AETH-P0-02)."""
     user_id = session.info.get("rls_user_id")
-    if user_id and "postgres" in str(engine.url).lower():
+    worker_authorized = bool(session.info.get("rls_worker_authorized"))
+    if (user_id or worker_authorized) and "postgres" in str(engine.url).lower():
         try:
-            connection.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": str(user_id).strip()})
+            connection.execute(
+                text("SELECT set_config('request.jwt.claim.sub', :sub, true)"),
+                {"sub": str(user_id).strip() if user_id else ""}
+            )
+            connection.execute(
+                text("SELECT set_config('request.worker_authorized', :enabled, true)"),
+                {"enabled": "true" if worker_authorized else "false"}
+            )
         except Exception as e:
-            raise RuntimeError(f"Failed to apply transaction-local RLS security context: {e}")
+            raise RuntimeError(f"Failed to apply transaction-local PostgreSQL RLS context: {e}")
 
 Base = declarative_base()
 
@@ -83,7 +91,9 @@ def get_db(request: Request = None):
         if request and hasattr(request, "state"):
             request.state.db = db
             user_id = getattr(request.state, "current_user_id", None)
-            if user_id:
+            if getattr(request.state, "is_worker", False):
+                set_worker_rls_context(db)
+            elif user_id:
                 set_db_rls_context(db, user_id)
         yield db
     finally:
@@ -341,6 +351,7 @@ def ensure_schema_migrations():
                                     FOR ALL
                                     USING (
                                         owner_user_id = current_setting('request.jwt.claim.sub', true)
+                                        OR current_setting('request.worker_authorized', true) = 'true'
                                         OR (
                                             current_setting('request.webhook_service_authorized', true) = 'true'
                                             AND channel = current_setting('request.webhook_provider', true)
@@ -348,6 +359,7 @@ def ensure_schema_migrations():
                                     )
                                     WITH CHECK (
                                         owner_user_id = current_setting('request.jwt.claim.sub', true)
+                                        OR current_setting('request.worker_authorized', true) = 'true'
                                         OR (
                                             current_setting('request.webhook_service_authorized', true) = 'true'
                                             AND channel = current_setting('request.webhook_provider', true)
@@ -359,14 +371,17 @@ def ensure_schema_migrations():
                         conn.execute(text(f"""
                             DO $$
                             BEGIN
-                                IF NOT EXISTS (
-                                    SELECT 1 FROM pg_policies WHERE tablename = '{t}' AND policyname = '{t}_tenant_isolation'
-                                ) THEN
-                                    CREATE POLICY {t}_tenant_isolation ON {t}
-                                        FOR ALL
-                                        USING (owner_user_id = current_setting('request.jwt.claim.sub', true))
-                                        WITH CHECK (owner_user_id = current_setting('request.jwt.claim.sub', true));
-                                END IF;
+                                DROP POLICY IF EXISTS {t}_tenant_isolation ON {t};
+                                CREATE POLICY {t}_tenant_isolation ON {t}
+                                    FOR ALL
+                                    USING (
+                                        owner_user_id = current_setting('request.jwt.claim.sub', true)
+                                        OR current_setting('request.worker_authorized', true) = 'true'
+                                    )
+                                    WITH CHECK (
+                                        owner_user_id = current_setting('request.jwt.claim.sub', true)
+                                        OR current_setting('request.worker_authorized', true) = 'true'
+                                    );
                             END $$;
                         """))
                     conn.commit()
@@ -405,6 +420,20 @@ def set_db_rls_context(db: Session, user_id: Optional[str]):
             db.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": clean_sub})
             # Clear webhook bridge authorization so subsequent business operations are strictly scoped to the tenant
             db.execute(text("SELECT set_config('request.webhook_service_authorized', 'false', true)"))
+            db.execute(text("SELECT set_config('request.worker_authorized', 'false', true)"))
     except Exception as e:
         raise RuntimeError(f"Database security context initialization failed: {e}")
 
+
+
+def set_worker_rls_context(db: Session):
+    """Authorize only the trusted in-process reminder worker for cross-tenant maintenance."""
+    db.info["rls_worker_authorized"] = True
+    db.info.pop("rls_user_id", None)
+    try:
+        if "postgres" in str(engine.url).lower():
+            db.execute(text("SELECT set_config('request.jwt.claim.sub', '', true)"))
+            db.execute(text("SELECT set_config('request.webhook_service_authorized', 'false', true)"))
+            db.execute(text("SELECT set_config('request.worker_authorized', 'true', true)"))
+    except Exception as exc:
+        raise RuntimeError(f"Reminder worker RLS context initialization failed: {exc}") from exc
