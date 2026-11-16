@@ -3346,7 +3346,7 @@ def get_cash_flow_forecast(
         FinancialRecord.date >= past_30d
     ).scalar() or 0.0
     past_expense_total = round_currency(past_expense_total)
-    avg_daily_spend = round_currency(past_expense_total / 30.0) if past_expenses else 0.0
+    avg_daily_spend = round_currency(past_expense_total / 30.0) if past_expense_total > 0 else 0.0
 
     # 2. Historical 30-day income
     past_income_total = db.query(func.coalesce(func.sum(FinancialRecord.amount), 0.0)).filter(
@@ -6601,16 +6601,23 @@ def get_weekly_digest(
         FinancialRecord.type == "expense",
         FinancialRecord.date >= since
     ).scalar() or 0.0
-    cat_totals: Dict[str, float] = {}
-    for e in expenses:
-        c = (e.category or "general").lower()
-        cat_totals[c] = cat_totals.get(c, 0.0) + float(e.amount or 0)
+    category_rows = db.query(
+        FinancialRecord.category,
+        func.coalesce(func.sum(FinancialRecord.amount), 0.0)
+    ).filter(
+        tenant_filter(FinancialRecord, current_user),
+        FinancialRecord.type == "expense",
+        FinancialRecord.date >= since
+    ).group_by(FinancialRecord.category).all()
+    cat_totals = {(category or "general").lower(): float(amount or 0.0) for category, amount in category_rows}
     top_category = max(cat_totals, key=cat_totals.get) if cat_totals else "none"
 
     tasks_completed = db.query(func.count(Task.id)).filter(
         tenant_filter(Task, current_user), Task.status == "completed"
     ).scalar() or 0
-    tasks_pending = sum(1 for t in all_tasks if not t.is_completed)
+    tasks_pending = db.query(func.count(Task.id)).filter(
+        tenant_filter(Task, current_user), Task.status == "pending"
+    ).scalar() or 0
 
     summary = (
         f"Last 7 days: You spent ₹{weekly_expense:,.0f} (top category: {top_category}). "
