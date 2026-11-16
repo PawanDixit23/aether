@@ -414,6 +414,7 @@ def set_db_rls_context(db: Session, user_id: Optional[str]):
     """
     clean_sub = str(user_id).strip() if user_id else ""
     db.info["rls_user_id"] = clean_sub
+    db.info["rls_worker_authorized"] = False
     try:
         is_pg = "postgres" in str(engine.url).lower()
         if is_pg:
