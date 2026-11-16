@@ -3641,7 +3641,13 @@ export default function App() {
             setChatSessionsHasMore(sessData.length === 50);
             if (currentEmail) {
               try {
-                localStorage.setItem(`aether_chat_sessions_${currentEmail}`, JSON.stringify(validSessions));
+                const cacheKey = `aether_chat_sessions_${currentEmail}`;
+                const cachedRows = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+                const byId = new Map((Array.isArray(cachedRows) ? cachedRows : [])
+                  .filter(session => session && session.id && !deletedSessionIdsRef.current.has(session.id))
+                  .map(session => [String(session.id), session]));
+                validSessions.forEach(session => byId.set(String(session.id), session));
+                localStorage.setItem(cacheKey, JSON.stringify(Array.from(byId.values())));
               } catch (e) {}
             }
           }
@@ -5761,6 +5767,15 @@ export default function App() {
         rows.forEach(session => byId.set(String(session.id), session));
         return Array.from(byId.values());
       });
+      if (userEmail && rows.length) {
+        try {
+          const cacheKey = `aether_chat_sessions_${userEmail}`;
+          const cachedRows = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+          const byId = new Map((Array.isArray(cachedRows) ? cachedRows : []).map(session => [String(session.id), session]));
+          rows.forEach(session => byId.set(String(session.id), session));
+          localStorage.setItem(cacheKey, JSON.stringify(Array.from(byId.values())));
+        } catch (e) {}
+      }
       setChatSessionsFetchedCount(offset + (Array.isArray(page) ? page.length : 0));
       setChatSessionsHasMore(Array.isArray(page) && page.length === 50);
     } catch (err) {
