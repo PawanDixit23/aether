@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Optional, Any, Dict, List
 from fastapi import Request
 from sqlalchemy import create_engine, text, event
@@ -106,7 +107,7 @@ def get_db(request: Request = None):
     finally:
         db.close()
 
-def ensure_schema_migrations():
+def _run_schema_migrations_once():
     """Ensure all required columns and tables exist across both SQLite and PostgreSQL."""
     is_pg = "postgres" in str(engine.url).lower()
 
@@ -198,20 +199,21 @@ def ensure_schema_migrations():
     ]
 
     for stmt in migration_statements:
-        parts = stmt.split()
-        if len(parts) >= 6:
-            tbl = parts[2].lower()
-            col = parts[5].lower()
-            if tbl in table_columns and col in table_columns[tbl]:
-                continue  # Column already exists: skip ALTER TABLE to prevent lock contention
+        target = _parse_add_column_target(stmt)
+        if target:
+            tbl, col = target
+            if col in table_columns.get(tbl, set()):
+                continue  # Column already exists: skip ALTER TABLE and avoid repeated DDL work.
 
         try:
             with engine.connect() as conn:
                 target_sql = stmt
                 if is_pg:
-                    target_sql = target_sql.replace("ADD COLUMN", "ADD COLUMN IF NOT EXISTS")
+                    target_sql = target_sql.replace("ADD COLUMN", "ADD COLUMN IF NOT EXISTS", 1)
                 conn.execute(text(target_sql))
                 conn.commit()
+            if target:
+                table_columns.setdefault(target[0], set()).add(target[1])
         except Exception as e:
             err_str = str(e).lower()
             if "already exists" not in err_str and "duplicate column" not in err_str and "canceled" not in err_str:
@@ -398,6 +400,85 @@ def ensure_schema_migrations():
                 if env in ["prod", "production"] or is_pg:
                     raise RuntimeError(f"CRITICAL: Failed to enforce RLS policy on table {t}: {e}")
 
+
+
+def _parse_add_column_target(statement: str):
+    """Return (table, column) for an ALTER TABLE ... ADD COLUMN statement."""
+    match = re.match(
+        r'^\\s*ALTER\\s+TABLE\\s+"?([A-Za-z_][\\w$]*)"?\\s+ADD\\s+COLUMN'
+        r'(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+"?([A-Za-z_][\\w$]*)"?',
+        statement or "",
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return match.group(1).lower(), match.group(2).lower()
+
+
+SCHEMA_MIGRATION_VERSION = "2026_11_16_01"
+
+
+def ensure_schema_migrations():
+    """Run the legacy schema/bootstrap migration exactly once per version.
+
+    PostgreSQL advisory locking serializes startup across Render instances.
+    A version is recorded only after the migration body completes successfully.
+    Existing application data is never truncated or deleted.
+    """
+    is_pg = "postgres" in str(engine.url).lower()
+    lock_connection = engine.connect()
+    lock_acquired = False
+    try:
+        if is_pg:
+            lock_connection.execute(
+                text("SELECT pg_advisory_lock(hashtext('aether.schema_migrations.v1'))")
+            )
+            lock_connection.commit()
+            lock_acquired = True
+
+        # This is the only schema bookkeeping statement on normal subsequent boots.
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                """
+                CREATE TABLE IF NOT EXISTS aether_schema_migrations (
+                    version VARCHAR(64) PRIMARY KEY,
+                    applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+
+        with engine.connect() as conn:
+            already_applied = conn.execute(
+                text("SELECT 1 FROM aether_schema_migrations WHERE version = :version"),
+                {"version": SCHEMA_MIGRATION_VERSION},
+            ).first()
+
+        if already_applied:
+            print(f"[Schema Migration] {SCHEMA_MIGRATION_VERSION} already applied; skipping startup DDL.")
+            return
+
+        print(f"[Schema Migration] Applying {SCHEMA_MIGRATION_VERSION}.")
+        _run_schema_migrations_once()
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO aether_schema_migrations (version) VALUES (:version) "
+                    "ON CONFLICT (version) DO NOTHING"
+                ),
+                {"version": SCHEMA_MIGRATION_VERSION},
+            )
+        print(f"[Schema Migration] {SCHEMA_MIGRATION_VERSION} applied successfully.")
+    finally:
+        if lock_acquired:
+            try:
+                lock_connection.execute(
+                    text("SELECT pg_advisory_unlock(hashtext('aether.schema_migrations.v1'))")
+                )
+                lock_connection.commit()
+            except Exception as unlock_error:
+                print(f"[Schema Migration] Advisory unlock note: {type(unlock_error).__name__}")
+        lock_connection.close()
 
 def set_webhook_service_rls_context(db: Session, authorized_provider: str):
     """
