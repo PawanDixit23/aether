@@ -2396,11 +2396,12 @@ def get_chat_history(
     session_id: Optional[str] = None,
     limit: int = 60,
     offset: int = 0,
+    before_id: Optional[int] = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     response: Response = None,
     db: Session = Depends(get_db)
 ):
-    """Return the newest bounded page, in chronological order.
+    """Return a bounded chat-history page, in chronological order; before_id enables stable keyset paging.
 
     Applying LIMIT/OFFSET in SQL avoids loading a user's entire chat history into
     the Render process just to return the last few messages.
