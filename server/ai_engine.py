@@ -1022,9 +1022,6 @@ def fetch_cricinfo_live_matches(force: bool = False) -> list:
         _cricket_cache["timestamp"] = now_ts
         return matches
 
-    if _cricket_cache["data"]:
-        return _cricket_cache["data"]
-
     # Never fabricate a live fixture or score. Serve a clearly marked recent cache only.
     cached_age = now_ts - _cricket_cache["timestamp"] if _cricket_cache["timestamp"] else float("inf")
     if _cricket_cache["data"] and cached_age <= 300:
