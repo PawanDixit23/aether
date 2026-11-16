@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
+from data_access import bounded_page, chunks, validate_sync_count, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, SYNC_BATCH_SIZE
 import httpx
 import re
 import traceback
@@ -636,11 +637,30 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
             "user_city": "Jaipur"
         }
     if owner_user_id:
-        tasks = db.query(Task).filter(Task.owner_user_id == owner_user_id, Task.status == "pending").all()
-        records = db.query(FinancialRecord).filter(FinancialRecord.owner_user_id == owner_user_id).all()
+        tasks = (
+            db.query(Task)
+            .filter(Task.owner_user_id == owner_user_id, Task.status == "pending")
+            .order_by(Task.due_date.asc(), Task.id.asc())
+            .limit(100)
+            .all()
+        )
+        # Aggregate over the database; retrieve only a small recent sample for
+        # conversational context instead of loading every financial row.
+        finance_totals = db.query(
+            FinancialRecord.type, func.coalesce(func.sum(FinancialRecord.amount), 0.0)
+        ).filter(FinancialRecord.owner_user_id == owner_user_id).group_by(FinancialRecord.type).all()
+        finance_by_type = {str(kind).lower(): float(total or 0.0) for kind, total in finance_totals}
+        records = (
+            db.query(FinancialRecord)
+            .filter(FinancialRecord.owner_user_id == owner_user_id)
+            .order_by(FinancialRecord.date.desc(), FinancialRecord.id.desc())
+            .limit(60)
+            .all()
+        )
     else:
         tasks = []
         records = []
+        finance_by_type = {}
 
     # Hybrid Memory Retrieval: rank & surface relevant facts/contacts matching the prompt
     recalled_mems = []
@@ -649,15 +669,30 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
             from memory import HybridMemoryProvider
             recalled = HybridMemoryProvider.recall_context(prompt_query, user_email or owner_user_id, db, limit=12)
             recalled_facts = set(recalled.get("relevant_facts", []))
-            all_mem_objs = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
-            # Prioritize recalled items first
-            recalled_mems = [m for m in all_mem_objs if m.fact in recalled_facts]
-            remaining_mems = [m for m in all_mem_objs if m.fact not in recalled_facts]
-            memories = recalled_mems + remaining_mems[:15]
+            # Fetch only facts selected by the hybrid retriever. Never scan and
+            # transfer the complete memory vault into the API process.
+            memories = (
+                db.query(MemoryItem)
+                .filter(MemoryItem.owner_user_id == owner_user_id, MemoryItem.fact.in_(list(recalled_facts)[:12]))
+                .limit(12)
+                .all()
+            )
         except Exception:
-            memories = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
+            memories = (
+                db.query(MemoryItem)
+                .filter(MemoryItem.owner_user_id == owner_user_id)
+                .order_by(MemoryItem.importance.desc(), MemoryItem.last_accessed_at.desc(), MemoryItem.id.desc())
+                .limit(15)
+                .all()
+            )
     elif owner_user_id:
-        memories = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
+        memories = (
+            db.query(MemoryItem)
+            .filter(MemoryItem.owner_user_id == owner_user_id)
+            .order_by(MemoryItem.importance.desc(), MemoryItem.last_accessed_at.desc(), MemoryItem.id.desc())
+            .limit(15)
+            .all()
+        )
     else:
         memories = []
 
@@ -684,8 +719,8 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
         db.rollback()
         recent_chat = []
 
-    total_income = sum(float(r.amount or 0.0) for r in records if r.type == "income")
-    total_expense = sum(float(r.amount or 0.0) for r in records if r.type == "expense")
+    total_income = finance_by_type.get("income", 0.0)
+    total_expense = finance_by_type.get("expense", 0.0)
     balance = total_income - total_expense
 
     category_totals = {}
@@ -819,12 +854,31 @@ def client_backup_sync(
     email = current_user.email
     restored_counts = {"tasks": 0, "memories": 0, "finances": 0}
     
-    # Existing task titles for this user to avoid duplicate insertions
-    existing_tasks = db.query(Task).filter(tenant_filter(Task, current_user)).all()
-    existing_titles = {t.title.strip().lower() for t in existing_tasks if t.title}
-    
+    # Reject oversized payloads explicitly; never silently drop backup records.
+    try:
+        validate_sync_count(req.tasks, req.memories, req.finances)
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc))
+
+    # Only fetch matching titles for this backup, in bounded IN-clauses. Do not
+    # download the user's complete task table just to perform deduplication.
+    incoming_titles = {
+        (item.get("title") or "").strip().lower()
+        for item in (req.tasks or [])
+        if (item.get("title") or "").strip()
+    }
+    existing_titles = set()
+    for title_batch in chunks(incoming_titles, SYNC_BATCH_SIZE):
+        rows = (
+            db.query(Task.title)
+            .filter(tenant_filter(Task, current_user), func.lower(Task.title).in_(title_batch))
+            .all()
+        )
+        existing_titles.update((row[0] or "").strip().lower() for row in rows)
+
     if req.tasks:
-        for t in req.tasks:
+        for task_batch in chunks(req.tasks, SYNC_BATCH_SIZE):
+          for t in task_batch:
             try:
                 title = (t.get("title") or "").strip()
                 if not title or title.lower() in existing_titles:
@@ -866,11 +920,24 @@ def client_backup_sync(
                 pass
         db.commit()
 
-    # Existing memories for this user
-    existing_mems = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user)).all()
-    existing_facts = {m.fact.strip().lower() for m in existing_mems if m.fact}
+    # Fetch only facts present in this backup, not every stored memory.
+    incoming_facts = {
+        (item.get("fact") or item.get("content") or "").strip().lower()
+        for item in (req.memories or [])
+        if (item.get("fact") or item.get("content") or "").strip()
+    }
+    existing_facts = set()
+    for fact_batch in chunks(incoming_facts, SYNC_BATCH_SIZE):
+        rows = (
+            db.query(MemoryItem.fact)
+            .filter(tenant_filter(MemoryItem, current_user), func.lower(MemoryItem.fact).in_(fact_batch))
+            .all()
+        )
+        existing_facts.update((row[0] or "").strip().lower() for row in rows)
+
     if req.memories:
-        for m in req.memories:
+        for memory_batch in chunks(req.memories, SYNC_BATCH_SIZE):
+          for m in memory_batch:
             try:
                 fact_text = (m.get("fact") or m.get("content") or "").strip()
                 if not fact_text or fact_text.lower() in existing_facts:
@@ -889,8 +956,8 @@ def client_backup_sync(
         db.commit()
 
     # Restore finances if DB has zero for this user
-    existing_fin = db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user)).count()
-    if existing_fin == 0 and req.finances:
+    existing_fin = db.query(FinancialRecord.id).filter(tenant_filter(FinancialRecord, current_user)).limit(1).first()
+    if existing_fin is None and req.finances:
         for f in req.finances:
             try:
                 db.add(FinancialRecord(
@@ -1612,7 +1679,10 @@ async def _execute_quick_capture(
         if not c_num:
             try:
                 search_terms = [c_name.lower(), c_name.replace(" ", "").lower()]
-                mems = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
+                mems = db.query(MemoryItem).filter(
+                    MemoryItem.owner_user_id == owner_user_id,
+                    MemoryItem.fact.ilike(f"%{c_name}%")
+                ).order_by(MemoryItem.last_accessed_at.desc(), MemoryItem.id.desc()).limit(25).all()
                 for m in mems:
                     m_fact = (m.fact or "").lower()
                     if any(st in m_fact for st in search_terms):
@@ -2294,7 +2364,7 @@ def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = Non
         now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
         today = now.date()
         query = db.query(Task).filter(Task.recurrence != None, Task.owner_user_id == str(owner_user_id).strip())
-        rec_tasks = query.all()
+        rec_tasks = query.order_by(Task.id.asc()).limit(500).all()
         updated = False
         for dt in rec_tasks:
             # If task has been marked completed by the user, never reset it or notify again
@@ -2353,8 +2423,10 @@ def get_due_reminders(
     tasks = db.query(Task).filter(
         tenant_filter(Task, current_user),
         Task.status == "pending",
-        Task.notified == False
-    ).all()
+        Task.notified == False,
+        Task.due_date <= now,
+        Task.due_date >= now - timedelta(minutes=3)
+    ).order_by(Task.due_date.asc(), Task.id.asc()).limit(100).all()
     
     due_tasks = []
     for t in tasks:
@@ -2424,11 +2496,14 @@ def serialize_task(t: Task, db: Optional[Session] = None) -> dict:
 
 @app.get("/api/tasks")
 def list_tasks(
-    status: Optional[str] = None, 
+    status: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
     eff_email = current_user.email
+    safe_limit, safe_offset = bounded_page(limit, offset)
     auto_advance_recurring_tasks(db, owner_user_id=current_user.id)
 
     query = db.query(Task).filter(tenant_filter(Task, current_user))
@@ -2449,7 +2524,7 @@ def list_tasks(
     except Exception as e:
         print(f"[list_tasks] Error fetching task date completions: {e}")
 
-    top_level_tasks = query.order_by(Task.created_at.desc(), Task.id.desc()).all()
+    top_level_tasks = query.order_by(Task.created_at.desc(), Task.id.desc()).offset(safe_offset).limit(safe_limit).all()
     task_ids = [t.id for t in top_level_tasks]
 
     # Fetch all subtasks in one tenant-scoped query instead of issuing one
@@ -2673,7 +2748,9 @@ def get_task_date_completions(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    records = db.query(TaskDateCompletion).filter(tenant_filter(TaskDateCompletion, current_user)).all()
+    # Only return completion rows for the current bounded task page.
+    task_ids = [row.id for row in db.query(Task.id).filter(tenant_filter(Task, current_user), (Task.parent_id == None) | (Task.parent_id == 0)).order_by(Task.created_at.desc(), Task.id.desc()).limit(100).all()]
+    records = db.query(TaskDateCompletion).filter(tenant_filter(TaskDateCompletion, current_user), TaskDateCompletion.task_id.in_(task_ids)).limit(500).all() if task_ids else []
     res = {}
     for r in records:
         if r.task_id not in res:
@@ -3354,15 +3431,20 @@ def get_finance_summary(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    records = db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user)).all()
-    total_income = sum(r.amount for r in records if r.type == "income")
-    total_expense = sum(r.amount for r in records if r.type == "expense")
+    totals = db.query(
+        FinancialRecord.type,
+        func.coalesce(func.sum(FinancialRecord.amount), 0.0)
+    ).filter(tenant_filter(FinancialRecord, current_user)).group_by(FinancialRecord.type).all()
+    totals_by_type = {str(kind).lower(): float(amount or 0.0) for kind, amount in totals}
+    total_income = totals_by_type.get("income", 0.0)
+    total_expense = totals_by_type.get("expense", 0.0)
     balance = total_income - total_expense
+    record_count = db.query(func.count(FinancialRecord.id)).filter(tenant_filter(FinancialRecord, current_user)).scalar() or 0
     return {
         "total_income": total_income,
         "total_expense": total_expense,
         "balance": balance,
-        "record_count": len(records)
+        "record_count": record_count
     }
 
 @app.get("/api/finance/export-csv")
@@ -3600,11 +3682,11 @@ def create_memory(
 
     # Check if existing item exists for this contact/subject to avoid duplicates
     first_token = fact_str.split()[0].lower() if fact_str else ""
-    existing = db.query(MemoryItem).filter(
+    matched = db.query(MemoryItem).filter(
         tenant_filter(MemoryItem, current_user),
-        MemoryItem.category == cat
-    ).all()
-    matched = next((ex for ex in existing if first_token in (ex.fact or "").lower()), None)
+        MemoryItem.category == cat,
+        MemoryItem.fact.ilike(f"%{first_token}%")
+    ).order_by(MemoryItem.updated_at.desc(), MemoryItem.id.desc()).limit(1).first() if first_token else None
     from memory.hybrid_provider import get_embedding
     emb = get_embedding(fact_str)
     emb_json = json.dumps(emb) if emb else None
