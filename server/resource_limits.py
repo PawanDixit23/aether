@@ -15,10 +15,10 @@ AI_CONTEXT_FINANCE_LIMIT = 60
 AI_CONTEXT_CHAT_LIMIT = 40
 
 
-def bounded_page(limit: int, offset: int = 0, *, default: int = DEFAULT_PAGE_SIZE) -> tuple[int, int]:
+def bounded_page(limit: int | None, offset: int = 0, *, default: int = DEFAULT_PAGE_SIZE) -> tuple[int, int]:
     """Validate and clamp page parameters so a client cannot request an unbounded read."""
     try:
-        safe_limit = int(limit)
+        safe_limit = default if limit is None else int(limit)
         safe_offset = int(offset)
     except (TypeError, ValueError):
         raise ValueError("limit and offset must be integers")
