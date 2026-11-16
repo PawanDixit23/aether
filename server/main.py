@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, false
+from sqlalchemy import func, or_, and_, false
 from resource_limits import AI_CONTEXT_CHAT_LIMIT, AI_CONTEXT_FINANCE_LIMIT, AI_CONTEXT_MEMORY_LIMIT, AI_CONTEXT_TASK_LIMIT, bounded_page, chunks, WRITE_BATCH_SIZE
 from sqlalchemy.exc import IntegrityError
 import httpx
@@ -2554,9 +2554,8 @@ def get_due_reminders(
         tenant_filter(Task, current_user),
         Task.status == "pending",
         Task.notified == False,
-        Task.due_date >= start,
-        Task.due_date <= now
-    ).order_by(Task.due_date.asc(), Task.id.asc()).limit(200).all()
+        due_task_candidate_filter(now)
+    ).order_by(Task.due_date.asc().nullslast(), Task.id.asc()).limit(200).all()
     due_tasks = []
     for task in tasks:
         dt = task.due_date
@@ -4772,6 +4771,30 @@ def is_task_due_for_notification(task, now: datetime) -> bool:
 
     return False
 
+def due_task_candidate_filter(now: datetime):
+    """SQL prefilter for due reminders, including legacy reminder_time-only tasks."""
+    start = now - timedelta(seconds=180)
+    today_start = datetime.combine(now.date(), datetime.min.time())
+    tomorrow_start = today_start + timedelta(days=1)
+    hour12 = now.strftime("%I").lstrip("0") or "12"
+    minute = now.strftime("%M")
+    ampm = now.strftime("%p")
+    time_candidates = list({
+        now.strftime("%I:%M %p"), now.strftime("%I:%M%p"),
+        now.strftime("%H:%M"), f"{hour12}:{minute} {ampm}", f"{hour12}:{minute}{ampm}"
+    })
+    return or_(
+        and_(Task.due_date >= start, Task.due_date <= now),
+        and_(
+            Task.reminder_time.in_(time_candidates),
+            or_(
+                Task.due_date == None,
+                and_(Task.due_date >= today_start, Task.due_date < tomorrow_start)
+            )
+        )
+    )
+
+
 def _run_push_check_internal(db: Session):
     """Process notification owners and tasks in bounded keyset windows."""
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
@@ -4796,9 +4819,8 @@ def _run_push_check_internal(db: Session):
                     Task.owner_user_id == owner_id,
                     Task.status == "pending",
                     Task.notified == False,
-                    Task.due_date >= due_start,
-                    Task.due_date <= now
-                ).order_by(Task.due_date.asc(), Task.id.asc()).limit(100).all()
+                    due_task_candidate_filter(now)
+                ).order_by(Task.due_date.asc().nullslast(), Task.id.asc()).limit(200).all()
 
                 for task in due_tasks:
                     title = f"⏰ AETHER रिमाइंडर: {task.title}"
