@@ -651,6 +651,7 @@ export default function App() {
   const [chatHistoryHasMore, setChatHistoryHasMore] = useState(false);
   const [chatHistoryOldestId, setChatHistoryOldestId] = useState(null);
   const [chatHistoryLoadingMore, setChatHistoryLoadingMore] = useState(false);
+  const chatHistorySessionRef = useRef(null);
   const [chatHistory, setChatHistory] = useState(() => {
     try {
       const email = localStorage.getItem('aether_user_email');
@@ -3663,8 +3664,11 @@ export default function App() {
           ...c,
           role: c.role === 'aether' ? 'assistant' : c.role
         })) : [];
-        setChatHistoryHasMore(Array.isArray(chats) && chats.length === 60);
-        setChatHistoryOldestId(normalizedChats.length ? normalizedChats[0].id : null);
+        if (chatHistorySessionRef.current !== curSessionId) {
+          chatHistorySessionRef.current = curSessionId;
+          setChatHistoryHasMore(Array.isArray(chats) && chats.length === 60);
+          setChatHistoryOldestId(normalizedChats.length ? normalizedChats[0].id : null);
+        }
 
         // Guard against race conditions: only update if activeSessionId hasn't changed during fetch
         if (activeSessionIdRef.current === curSessionId) {
