@@ -216,8 +216,9 @@ def _run_schema_migrations_once():
                 table_columns.setdefault(target[0], set()).add(target[1])
         except Exception as e:
             err_str = str(e).lower()
-            if "already exists" not in err_str and "duplicate column" not in err_str and "canceled" not in err_str:
-                print(f"[Postgres Migration Note] {stmt}: {e}")
+            if "already exists" in err_str or "duplicate column" in err_str:
+                continue
+            raise RuntimeError(f"CRITICAL: Schema migration failed for statement: {stmt}") from e
 
     # ─────────────────────────────────────────────────────────────────────────
     # AETH-P0-05: Ensure unique constraint on sender_pairing_rate_limits
@@ -430,26 +431,38 @@ def ensure_schema_migrations():
     lock_acquired = False
     try:
         if is_pg:
+            # The connection-level defaults bound normal application queries. A
+            # deployment lock must wait for the active migrator rather than fail
+            # after the normal 3-second transaction lock timeout.
+            lock_connection.exec_driver_sql("SET lock_timeout = 0")
+            lock_connection.exec_driver_sql("SET statement_timeout = 0")
             lock_connection.execute(
                 text("SELECT pg_advisory_lock(hashtext('aether.schema_migrations.v1'))")
             )
             lock_connection.commit()
             lock_acquired = True
 
-        # This is the only schema bookkeeping statement on normal subsequent boots.
+        # Keep the migration ledger out of the Supabase Data API for anon/authenticated clients.
         with engine.begin() as conn:
             conn.exec_driver_sql(
                 """
-                CREATE TABLE IF NOT EXISTS aether_schema_migrations (
+                CREATE TABLE IF NOT EXISTS public.aether_schema_migrations (
                     version VARCHAR(64) PRIMARY KEY,
                     applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
+            if is_pg:
+                conn.exec_driver_sql(
+                    "REVOKE ALL ON TABLE public.aether_schema_migrations FROM PUBLIC"
+                )
+                conn.exec_driver_sql(
+                    "REVOKE ALL ON TABLE public.aether_schema_migrations FROM anon, authenticated, service_role"
+                )
 
         with engine.connect() as conn:
             already_applied = conn.execute(
-                text("SELECT 1 FROM aether_schema_migrations WHERE version = :version"),
+                text("SELECT 1 FROM public.aether_schema_migrations WHERE version = :version"),
                 {"version": SCHEMA_MIGRATION_VERSION},
             ).first()
 
@@ -463,7 +476,7 @@ def ensure_schema_migrations():
         with engine.begin() as conn:
             conn.execute(
                 text(
-                    "INSERT INTO aether_schema_migrations (version) VALUES (:version) "
+                    "INSERT INTO public.aether_schema_migrations (version) VALUES (:version) "
                     "ON CONFLICT (version) DO NOTHING"
                 ),
                 {"version": SCHEMA_MIGRATION_VERSION},
