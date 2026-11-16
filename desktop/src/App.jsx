@@ -3974,6 +3974,26 @@ export default function App() {
             const bFin = backupData.finances || [];
 
             if (bTasks.length > 0 || bMems.length > 0 || bFin.length > 0) {
+              const flattenBackupTasks = (source, parentClientId = null) => {
+                const flattened = [];
+                for (const task of (Array.isArray(source) ? source : [])) {
+                  const children = Array.isArray(task.subtasks) ? task.subtasks : [];
+                  const row = { ...task, parent_client_id: parentClientId ?? task.parent_client_id ?? task.parent_id ?? null };
+                  delete row.subtasks;
+                  delete row.subtasks_has_more;
+                  flattened.push(row);
+                  flattened.push(...flattenBackupTasks(children, task.id));
+                }
+                return flattened;
+              };
+              const backupTaskRows = flattenBackupTasks(bTasks);
+              const hasUnloadedSubtasks = (rows) => (rows || []).some(task =>
+                task?.subtasks_has_more || hasUnloadedSubtasks(task?.subtasks)
+              );
+              if (hasUnloadedSubtasks(bTasks)) {
+                showToast('Backup contains task trees with unloaded subtasks. Load all subtasks before retrying restore.', 'error');
+                return;
+              }
               const uploadBackupChunks = async (field, records) => {
                 for (let offset = 0; offset < records.length; offset += 200) {
                   const payload = { user_email: currentEmail, [field]: records.slice(offset, offset + 200) };
@@ -3994,7 +4014,7 @@ export default function App() {
               };
               (async () => {
                 try {
-                  await uploadBackupChunks('tasks', bTasks);
+                  await uploadBackupChunks('tasks', backupTaskRows);
                   await uploadBackupChunks('memories', bMems);
                   await uploadBackupChunks('finances', bFin);
                   showToast('Local backup restored safely in batches', 'success');
