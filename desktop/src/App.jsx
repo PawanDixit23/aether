@@ -3971,8 +3971,10 @@ export default function App() {
               }));
             } catch (e) {}
           }
-        } else {
-          // If server returned 0 records, try restoring from local backup or native bridge backup ONLY for this exact user
+        }
+
+        {
+          // Restore only modules that are empty on the server, without overwriting populated modules.
           let backupData = null;
           const cachedBackupStr = currentEmail ? localStorage.getItem(`aether_backup_${currentEmail}`) : null;
           if (cachedBackupStr) {
@@ -3989,9 +3991,12 @@ export default function App() {
           }
 
           if (backupData && currentEmail) {
-            const bTasks = Array.isArray(backupData) ? backupData : (backupData.tasks || []);
-            const bMems = backupData.memories || [];
-            const bFin = backupData.finances || [];
+            const savedTasks = Array.isArray(backupData) ? backupData : (backupData.tasks || []);
+            const savedMemories = Array.isArray(backupData) ? [] : (backupData.memories || []);
+            const savedFinances = Array.isArray(backupData) ? [] : (backupData.finances || []);
+            const bTasks = loadedTasks.length === 0 ? savedTasks : [];
+            const bMems = loadedMemories.length === 0 ? savedMemories : [];
+            const bFin = loadedFinances.length === 0 ? savedFinances : [];
 
             if (bTasks.length > 0 || bMems.length > 0 || bFin.length > 0) {
               const flattenBackupTasks = (source, parentClientId = null) => {
@@ -4010,9 +4015,9 @@ export default function App() {
               const hasUnloadedSubtasks = (rows) => (rows || []).some(task =>
                 task?.subtasks_has_more || hasUnloadedSubtasks(task?.subtasks)
               );
-              if (hasUnloadedSubtasks(bTasks)) {
-                showToast('Backup contains task trees with unloaded subtasks. Load all subtasks before retrying restore.', 'error');
-                return;
+              const taskRestoreBlocked = hasUnloadedSubtasks(bTasks);
+              if (taskRestoreBlocked) {
+                showToast('Task backup has unloaded subtasks; task restore was paused to avoid losing child records. Other empty modules will still restore.', 'error');
               }
               const uploadBackupChunks = async (field, records) => {
                 for (let offset = 0; offset < records.length; offset += 50) {
@@ -4034,7 +4039,7 @@ export default function App() {
               };
               (async () => {
                 try {
-                  await uploadBackupChunks('tasks', backupTaskRows);
+                  if (!taskRestoreBlocked) await uploadBackupChunks('tasks', backupTaskRows);
                   await uploadBackupChunks('memories', bMems);
                   await uploadBackupChunks('finances', bFin);
                   showToast('Local backup restored safely in batches', 'success');
