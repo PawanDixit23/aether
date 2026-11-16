@@ -41,6 +41,7 @@ export default function GeminiLiveModal({
   isOpen,
   onClose,
   apiBase,
+  apiFetch: authenticatedApiFetch,
   userEmail,
   selectedVoice = 'Kavya',
   selectedLang = 'hi',
@@ -463,7 +464,8 @@ export default function GeminiLiveModal({
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
         };
 
-        const resp = await fetch(chatEndpoint, {
+        if (typeof authenticatedApiFetch !== 'function') throw new Error('Authenticated API client is unavailable. Please sign in again.');
+        const resp = await authenticatedApiFetch(chatEndpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -472,40 +474,18 @@ export default function GeminiLiveModal({
           body: JSON.stringify(livePayload),
           signal: liveAbortController.signal
         });
-        if (resp.ok) {
-          data = await resp.json();
+        if (!resp.ok) {
+          let detail = `AI request failed (${resp.status})`;
+          try { const body = await resp.json(); detail = body.detail || body.message || detail; } catch (e) {}
+          throw new Error(detail);
         }
+        data = await resp.json();
       } catch (e) {
-        console.warn('Live chat primary endpoint error, trying fallback', e);
+        throw e;
       }
 
-      if (!data && !liveAbortController.signal.aborted) {
-        try {
-          const respFallback = await fetch(fallbackEndpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(userEmail ? { 'X-User-Email': userEmail } : {})
-            },
-            body: JSON.stringify({
-              input_text: cleanPrompt,
-              user_email: userEmail,
-              language: autoLang,
-              api_key: (localStorage.getItem('aether_gemini_key') || '').trim(),
-              openai_key: (localStorage.getItem('aether_openai_key') || '').trim(),
-              grok_key: (localStorage.getItem('aether_grok_key') || '').trim(),
-              active_provider: localStorage.getItem('aether_active_provider') || 'gemini',
-              user_name: localStorage.getItem('aether_user_name') || 'Pawan'
-            }),
-            signal: liveAbortController.signal
-          });
-          if (respFallback.ok) {
-            data = await respFallback.json();
-          }
-        } catch (e) {
-          console.warn('Live chat fallback endpoint error', e);
-        }
-      }
+      if (!data) throw new Error('AI provider returned an empty response.');
+
       clearTimeout(liveTimeoutId);
 
       if (!isSessionActiveRef.current) {
@@ -565,9 +545,10 @@ export default function GeminiLiveModal({
       speakLiveResponse(aiText);
     } catch (err) {
       console.error('[Gemini Live Dispatch Error]', err);
+      try { clearTimeout(liveTimeoutId); } catch (e) {}
       isDispatchingRef.current = false;
       latestSpokenRef.current = '';
-      const fallbackText = "नमस्ते! मैं सुन रहा हूँ, कृपया दोबारा बोलें।";
+      const fallbackText = err?.message || "अभी AI से उत्तर प्राप्त नहीं हो पाया। कृपया कनेक्शन और login जाँचकर दोबारा प्रयास करें।";
       setAiResponse(fallbackText);
       startCuratedStreamingText(fallbackText);
       speakLiveResponse(fallbackText);
