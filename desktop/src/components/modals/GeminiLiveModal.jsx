@@ -435,7 +435,6 @@ export default function GeminiLiveModal({
     try {
       const cleanBase = (apiBase || '').replace(/\/+$/, '');
       const chatEndpoint = cleanBase.endsWith('/api') ? `${cleanBase}/chat` : (cleanBase ? `${cleanBase}/api/chat` : '/api/chat');
-      const fallbackEndpoint = cleanBase.endsWith('/api') ? `${cleanBase}/action/quick-capture` : (cleanBase ? `${cleanBase}/api/action/quick-capture` : '/api/action/quick-capture');
 
       // Automatic Language Detection (Hindi, English, or Hinglish based on user's query)
       const isDevanagari = /[\u0900-\u097F]/.test(cleanPrompt);
@@ -495,11 +494,8 @@ export default function GeminiLiveModal({
       }
 
       let aiText = data?.response || data?.message || data?.content;
-      if (!aiText || aiText.trim() === 'समझ गया।' || aiText.trim() === 'समझ गया') {
-        const isHi = autoLang === 'hi' || /[\u0900-\u097F]/.test(cleanPrompt) || /\b(bhai|kya|kaise|sun|idhar|suno|karo|batao)\b/i.test(cleanPrompt);
-        aiText = isHi
-          ? 'हाँ जी भाई, मैं सुन रहा हूँ। बताइए मैं क्या मदद करूँ?'
-          : (autoLang === 'hinglish' ? 'Haan, main sun raha hoon. Bataiye kya madad kar sakta hoon?' : 'Yes, I can hear you clearly. How can I help?');
+      if (!aiText || !aiText.trim() || ['समझ गया।', 'समझ गया'].includes(aiText.trim())) {
+        throw new Error('AI provider ने कोई उपयोगी उत्तर नहीं दिया। Provider settings और API key जाँचें, फिर दोबारा प्रयास करें।');
       }
       setAiResponse(aiText);
       startCuratedStreamingText(aiText);
