@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_, false
+from sqlalchemy import func, or_, and_, false, case
 from resource_limits import AI_CONTEXT_CHAT_LIMIT, AI_CONTEXT_FINANCE_LIMIT, AI_CONTEXT_MEMORY_LIMIT, AI_CONTEXT_TASK_LIMIT, bounded_page, WRITE_BATCH_SIZE
 from sqlalchemy.exc import IntegrityError
 import httpx
@@ -438,6 +438,7 @@ class KeyValidationRequest(BaseModel):
 
 class QuickCaptureRequest(BaseModel):
     input_text: str = ""
+    live_voice: Optional[bool] = False
     image_data: Optional[str] = None
     images: Optional[list] = None
     user_email: Optional[str] = None
@@ -2042,24 +2043,16 @@ async def direct_chat_endpoint(
         timezone=req.timezone,
         latitude=req.latitude,
         longitude=req.longitude,
-        city=req.city
+        city=req.city,
+        live_voice=True
     )
     result = await _execute_quick_capture(qc_req, current_user, db)
     
     reply = result.get("message") or ""
     if not reply and result.get("parsed"):
         reply = result.get("parsed", {}).get("data", {}).get("response", "")
-    if not reply or reply.strip() == "समझ गया।":
-        # Provide natural, polite conversational answers instead of one-word robotic acknowledgments
-        user_l = text.lower()
-        is_hi = any('\u0900' <= ch <= '\u097f' for ch in text) or any(w in user_l for w in ["kya", "bhai", "kaise", "suno", "sun", "idhar", "batao", "namaste", "yaar"])
-        is_en = any(w in user_l for w in ["listen", "hearing", "how", "what", "hello", "hi", "there", "you"])
-        if is_hi:
-            reply = "हाँ जी भाई, मैं आपकी बात ध्यान से सुन रहा हूँ। बताइए मैं क्या मदद करूँ?"
-        elif is_en:
-            reply = "Yes, I am listening to you clearly. How can I help you right now?"
-        else:
-            reply = "हाँ, मैं सुन रहा हूँ। कृपया बताइए अभी आपके किस काम में मदद करूँ?"
+    if not reply or reply.strip() in {"समझ गया।", "समझ गया"}:
+        raise HTTPException(status_code=502, detail="AI provider returned no substantive answer. Check provider credentials and retry.")
         
     return {
         "status": "ok",
@@ -2661,7 +2654,7 @@ def list_tasks(
         query = query.filter(Task.status == status)
 
     page_rows = (
-        query.order_by(Task.created_at.desc(), Task.id.desc())
+        query.order_by(case((Task.recurrence.isnot(None), 0), else_=1), Task.created_at.desc(), Task.id.desc())
         .offset(safe_offset).limit(safe_limit + 1).all()
     )
     has_more = len(page_rows) > safe_limit
@@ -3892,6 +3885,7 @@ async def draft_email_reply_endpoint(
 def list_memory(
     limit: int = 50,
     offset: int = 0,
+    before_id: Optional[int] = None,
     response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
@@ -3905,17 +3899,18 @@ def list_memory(
         safe_limit, safe_offset = bounded_page(limit, offset)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    rows = (
-        db.query(MemoryItem)
-        .filter(tenant_filter(MemoryItem, current_user))
-        .order_by(MemoryItem.created_at.desc(), MemoryItem.id.desc())
-        .offset(safe_offset).limit(safe_limit + 1).all()
-    )
+    memory_query = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user))
+    if before_id is not None:
+        memory_query = memory_query.filter(MemoryItem.id < before_id)
+        rows = memory_query.order_by(MemoryItem.id.desc()).limit(safe_limit + 1).all()
+    else:
+        rows = memory_query.order_by(MemoryItem.id.desc()).offset(safe_offset).limit(safe_limit + 1).all()
     has_more = len(rows) > safe_limit
     rows = rows[:safe_limit]
     if response is not None:
         response.headers["X-Has-More"] = "true" if has_more else "false"
         response.headers["X-Next-Offset"] = str(safe_offset + len(rows))
+        response.headers["X-Next-Cursor"] = str(rows[-1].id) if rows else ""
     return rows
 
 @app.post("/api/memory")
