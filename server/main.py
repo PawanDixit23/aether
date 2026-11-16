@@ -2444,8 +2444,26 @@ def get_chat_history(
         if before_id is not None:
             query = query.filter(ChatMessage.id < before_id)
             safe_offset = 0
+
+        # Chat-history clients need message content and action metadata, not the
+        # server-side embedding vector. Avoid transferring that large vector on
+        # every history page while retaining the existing response fields.
+        history_query = query.with_entities(
+            ChatMessage.id,
+            ChatMessage.user_email,
+            ChatMessage.owner_user_id,
+            ChatMessage.session_id,
+            ChatMessage.role,
+            ChatMessage.content,
+            ChatMessage.action_type,
+            ChatMessage.action_data,
+            ChatMessage.confidence,
+            ChatMessage.importance,
+            ChatMessage.last_accessed_at,
+            ChatMessage.created_at,
+        )
         page_rows = (
-            query.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            history_query.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .offset(safe_offset)
             .limit(safe_limit + 1)
             .all()
@@ -2455,7 +2473,23 @@ def get_chat_history(
         if response is not None:
             response.headers["X-Has-More"] = "true" if has_more else "false"
             response.headers["X-Next-Offset"] = str(safe_offset + len(msgs))
-        return list(reversed(msgs))
+        return [
+            {
+                "id": row.id,
+                "user_email": row.user_email,
+                "owner_user_id": row.owner_user_id,
+                "session_id": row.session_id,
+                "role": row.role,
+                "content": row.content,
+                "action_type": row.action_type,
+                "action_data": row.action_data,
+                "confidence": row.confidence,
+                "importance": row.importance,
+                "last_accessed_at": row.last_accessed_at,
+                "created_at": row.created_at,
+            }
+            for row in reversed(msgs)
+        ]
     except Exception:
         db.rollback()
         raise
