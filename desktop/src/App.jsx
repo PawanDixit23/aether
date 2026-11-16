@@ -10127,7 +10127,11 @@ export default function App() {
         isOpen={showGeminiLive}
         onClose={() => setShowGeminiLive(false)}
         apiBase={API_BASE}
+        apiFetch={apiFetch}
         userEmail={userEmail}
+        latitude={userCoords?.latitude ?? null}
+        longitude={userCoords?.longitude ?? null}
+        city={userLocationName || ''}
         selectedVoice={selectedVoice}
         selectedLang={selectedLang}
         isFriendMode={isFriendMode}
