@@ -89,6 +89,11 @@ jobs:
         run: |
           python server/test_p0_security.py
 
+      - name: Run Live Data Regression Tests
+        run: |
+          cd server
+          python test_live_data_regressions.py
+
       - name: Run Real PostgreSQL RLS & Concurrency Integration Tests (Non-Superuser Runtime)
         run: |
           DATABASE_URL="postgresql://aether_app_runtime:runtime_secure_pass@localhost:5432/aether_test" python server/test_postgres_rls_security.py
