@@ -1996,19 +1996,31 @@ def detect_user_location(request: Request):
 # ----------------- Chat Sessions & History -----------------
 @app.get("/api/chat/sessions")
 def get_chat_sessions(
+    limit: int = 50,
+    offset: int = 0,
+    response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    # Exclude any temporary or ephemeral sessions
-    sessions = (
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    # Exclude temporary sessions and retrieve only one bounded page.
+    session_query = (
         db.query(ChatSession)
         .filter(tenant_filter(ChatSession, current_user), ~ChatSession.id.startswith("temp_"), ChatSession.id != "temporary")
-        .order_by(ChatSession.updated_at.desc())
-        .all()
+        .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
     )
+    page_rows = session_query.offset(safe_offset).limit(safe_limit + 1).all()
+    has_more = len(page_rows) > safe_limit
+    sessions = page_rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(sessions))
     
     # If no sessions exist yet but user has legacy messages without session, backfill default session
-    if not sessions:
+    if not sessions and safe_offset == 0:
         try:
             first_msg = (
                 db.query(ChatMessage)
@@ -2232,6 +2244,7 @@ def get_chat_history(
     limit: int = 60,
     offset: int = 0,
     current_user: UserIdentity = Depends(get_current_user_identity),
+    response: Response = None,
     db: Session = Depends(get_db)
 ):
     """Return the newest bounded page, in chronological order.
@@ -2240,17 +2253,21 @@ def get_chat_history(
     the Render process just to return the last few messages.
     """
     try:
-        safe_limit = max(1, min(int(limit), 100))
-        safe_offset = max(0, int(offset))
+        safe_limit, safe_offset = bounded_page(limit, offset)
         query = db.query(ChatMessage).filter(tenant_filter(ChatMessage, current_user))
         if session_id:
             query = query.filter(ChatMessage.session_id == session_id)
-        msgs = (
+        page_rows = (
             query.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .offset(safe_offset)
-            .limit(safe_limit)
+            .limit(safe_limit + 1)
             .all()
         )
+        has_more = len(page_rows) > safe_limit
+        msgs = page_rows[:safe_limit]
+        if response is not None:
+            response.headers["X-Has-More"] = "true" if has_more else "false"
+            response.headers["X-Next-Offset"] = str(safe_offset + len(msgs))
         return list(reversed(msgs))
     except Exception:
         db.rollback()
@@ -3684,6 +3701,7 @@ async def draft_email_reply_endpoint(
 def list_memory(
     limit: int = 50,
     offset: int = 0,
+    response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
@@ -3692,16 +3710,22 @@ def list_memory(
     The response remains a list for backward compatibility. Clients can request
     older pages with offset; limit is capped to prevent unbounded database reads.
     """
-    safe_limit = max(1, min(int(limit), 100))
-    safe_offset = max(0, int(offset))
-    return (
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    rows = (
         db.query(MemoryItem)
         .filter(tenant_filter(MemoryItem, current_user))
         .order_by(MemoryItem.created_at.desc(), MemoryItem.id.desc())
-        .offset(safe_offset)
-        .limit(safe_limit)
-        .all()
+        .offset(safe_offset).limit(safe_limit + 1).all()
     )
+    has_more = len(rows) > safe_limit
+    rows = rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(rows))
+    return rows
 
 @app.post("/api/memory")
 def create_memory(
