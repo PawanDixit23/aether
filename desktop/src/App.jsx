@@ -5697,15 +5697,14 @@ export default function App() {
       if (!resp.ok) throw new Error(`Subtask page request failed (${resp.status})`);
       const page = await resp.json();
       const rows = Array.isArray(page) ? page : [];
-      setTasks(prev => prev.map(task => {
-        if (String(task.id) !== String(taskId)) return task;
-        const existing = new Set((task.subtasks || []).map(subtask => String(subtask.id)));
-        return {
-          ...task,
-          subtasks: [...(task.subtasks || []), ...rows.filter(subtask => !existing.has(String(subtask.id)))],
-          subtasks_has_more: rows.length === 100
-        };
-      }));
+      const existing = new Set((parent.subtasks || []).map(subtask => String(subtask.id)));
+      const updatedParent = {
+        ...parent,
+        subtasks: [...(parent.subtasks || []), ...rows.filter(subtask => !existing.has(String(subtask.id)))],
+        subtasks_has_more: rows.length === 100
+      };
+      setTasks(prev => prev.map(task => String(task.id) === String(taskId) ? updatedParent : task));
+      mergeLocalBackupRecords('tasks', [updatedParent]);
     } catch (err) {
       console.error('Failed to load more subtasks:', err);
       showToast('Could not load more subtasks. Please try again.', 'error');
@@ -5741,6 +5740,22 @@ export default function App() {
     }
   };
 
+  const mergeLocalBackupRecords = (field, rows) => {
+    if (!userEmail || !Array.isArray(rows) || rows.length === 0) return;
+    try {
+      const key = `aether_backup_${userEmail}`;
+      const current = JSON.parse(localStorage.getItem(key) || '{}');
+      const existing = Array.isArray(current[field]) ? current[field] : [];
+      const byId = new Map(existing.filter(row => row && row.id != null).map(row => [String(row.id), row]));
+      rows.filter(row => row && row.id != null).forEach(row => byId.set(String(row.id), row));
+      current[field] = Array.from(byId.values());
+      localStorage.setItem(key, JSON.stringify(current));
+      if (field === 'tasks') localStorage.setItem('aether_cached_tasks', JSON.stringify(current.tasks));
+    } catch (err) {
+      console.warn(`Could not update local ${field} backup cache:`, err);
+    }
+  };
+
   const handleLoadMoreTasks = async () => {
     if (taskLoadingMore || !taskHasMore) return;
     setTaskLoadingMore(true);
@@ -5755,6 +5770,7 @@ export default function App() {
         rows.forEach(task => byId.set(String(task.id), task));
         return Array.from(byId.values());
       });
+      mergeLocalBackupRecords('tasks', rows);
       setTaskFetchedCount(offset + (Array.isArray(page) ? page.length : 0));
       setTaskHasMore(Array.isArray(page) && page.length === 50);
     } catch (err) {
@@ -5779,6 +5795,7 @@ export default function App() {
         rows.forEach(record => byId.set(String(record.id), record));
         return Array.from(byId.values());
       });
+      mergeLocalBackupRecords('finances', rows);
       setFinanceFetchedCount(offset + (Array.isArray(page) ? page.length : 0));
       setFinanceHasMore(Array.isArray(page) && page.length === 100);
     } catch (err) {
