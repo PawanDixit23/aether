@@ -2455,61 +2455,53 @@ def get_next_weekday(dt: datetime) -> datetime:
     return next_day
 
 def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = None):
-    """Stream recurring tasks in small batches; never load the tenant's full task table."""
+    """Advance at most 100 overdue recurring tasks per call; later calls continue naturally."""
     try:
         if not owner_user_id or not str(owner_user_id).strip():
             print("[Security Notice] auto_advance_recurring_tasks called without valid owner_user_id - failing closed.")
             return
         now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
         today = now.date()
-        updated = False
-        last_id = 0
-        while True:
-            batch = db.query(Task).filter(
-                Task.recurrence != None,
-                Task.owner_user_id == str(owner_user_id).strip(),
-                Task.id > last_id
-            ).order_by(Task.id.asc()).limit(100).all()
-            if not batch:
-                break
-            last_id = batch[-1].id
-            for task in batch:
-                if task.status == "completed":
-                    task.notified = True
-                    continue
-                title_lower = (task.title or "").lower()
-                if any(word in title_lower for word in ["challan", "fine", "ticket", "one-time"]):
-                    task.recurrence = None
-                    task.notified = True
-                    updated = True
-                    continue
-                if not task.due_date:
-                    task.due_date = datetime.combine(today, datetime.min.time())
-                    updated = True
-                    continue
-                due_dt = task.due_date
-                if isinstance(due_dt, str):
-                    due_dt = datetime.fromisoformat(due_dt.replace(" ", "T"))
-                if due_dt.date() < today:
-                    if task.recurrence == "daily":
-                        new_dt = datetime.combine(today, due_dt.time())
-                    elif task.recurrence in ["weekdays", "monday_to_friday"]:
-                        new_dt = datetime.combine(today, due_dt.time())
-                        while new_dt.weekday() >= 5:
-                            new_dt += timedelta(days=1)
-                    elif str(task.recurrence).startswith("weekly"):
-                        new_dt = due_dt
-                        while new_dt.date() < today:
-                            new_dt += timedelta(days=7)
-                    else:
-                        new_dt = datetime.combine(today, due_dt.time())
-                    task.due_date = new_dt
-                    task.status = "pending"
-                    task.notified = False
-                    updated = True
-            if updated:
-                db.commit()
-                updated = False
+        today_start = datetime.combine(today, datetime.min.time())
+        batch = db.query(Task).filter(
+            Task.recurrence != None,
+            Task.owner_user_id == str(owner_user_id).strip(),
+            or_(Task.due_date == None, Task.due_date < today_start)
+        ).order_by(Task.id.asc()).limit(100).all()
+        if not batch:
+            return
+
+        for task in batch:
+            if task.status == "completed":
+                task.notified = True
+                continue
+            title_lower = (task.title or "").lower()
+            if any(word in title_lower for word in ["challan", "fine", "ticket", "one-time"]):
+                task.recurrence = None
+                task.notified = True
+                continue
+            if not task.due_date:
+                task.due_date = today_start
+                continue
+            due_dt = task.due_date
+            if isinstance(due_dt, str):
+                due_dt = datetime.fromisoformat(due_dt.replace(" ", "T"))
+            if task.recurrence == "daily":
+                new_dt = datetime.combine(today, due_dt.time())
+            elif task.recurrence in ["weekdays", "monday_to_friday"]:
+                new_dt = datetime.combine(today, due_dt.time())
+                while new_dt.weekday() >= 5:
+                    new_dt += timedelta(days=1)
+            elif str(task.recurrence).startswith("weekly"):
+                new_dt = due_dt
+                while new_dt.date() < today:
+                    new_dt += timedelta(days=7)
+            else:
+                new_dt = datetime.combine(today, due_dt.time())
+            task.due_date = new_dt
+            task.status = "pending"
+            task.notified = False
+        db.commit()
     except Exception as exc:
         db.rollback()
         print(f"[AutoAdvanceRecurringTasks Note] {exc}")
@@ -3095,38 +3087,41 @@ def reschedule_task(
 
 @app.post("/api/tasks/reschedule-overdue")
 def reschedule_all_overdue(
+    limit: int = 200,
+    after_id: int = 0,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Reschedule overdue tasks using keyset batches; no full-table ORM load."""
+    """Process a bounded keyset page; clients can continue with next_after_id."""
+    safe_limit = max(1, min(int(limit), 200))
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     today = now.date()
+    rows = db.query(Task).filter(
+        tenant_filter(Task, current_user), Task.status == "pending",
+        Task.recurrence == None, Task.due_date != None, Task.id > max(0, int(after_id))
+    ).order_by(Task.id.asc()).limit(safe_limit + 1).all()
+    has_more = len(rows) > safe_limit
+    batch = rows[:safe_limit]
     count = 0
-    last_id = 0
-    while True:
-        batch = db.query(Task).filter(
-            tenant_filter(Task, current_user), Task.status == "pending",
-            Task.recurrence == None, Task.due_date != None, Task.id > last_id
-        ).order_by(Task.id.asc()).limit(200).all()
-        if not batch:
-            break
-        last_id = batch[-1].id
-        batch_changed = 0
-        for task in batch:
-            due = task.due_date
-            if isinstance(due, str):
-                try:
-                    due = datetime.fromisoformat(due.replace(" ", "T"))
-                except Exception:
-                    continue
-            if due and due.date() < today:
-                task.due_date = datetime.combine(today, due.time())
-                task.notified = False
-                batch_changed += 1
-        if batch_changed:
-            db.commit()
-            count += batch_changed
-    return {"status": "ok", "rescheduled_count": count}
+    for task in batch:
+        due = task.due_date
+        if isinstance(due, str):
+            try:
+                due = datetime.fromisoformat(due.replace(" ", "T"))
+            except Exception:
+                continue
+        if due and due.date() < today:
+            task.due_date = datetime.combine(today, due.time())
+            task.notified = False
+            count += 1
+    if count:
+        db.commit()
+    next_after_id = batch[-1].id if batch else max(0, int(after_id))
+    return {
+        "status": "ok", "rescheduled_count": count,
+        "has_more": has_more, "next_after_id": next_after_id,
+        "processed_count": len(batch)
+    }
 
 @app.delete("/api/tasks/{task_id}")
 def delete_task(
