@@ -135,7 +135,7 @@ try:
     from ai_engine import parse_intent_with_llm
 except ImportError:
     try:
-        from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_db_rls_context, set_webhook_service_rls_context
+        from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_db_rls_context, set_webhook_service_rls_context, set_worker_rls_context
         from server.models import (
             Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
             ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
@@ -144,7 +144,7 @@ except ImportError:
         )
         from server.ai_engine import parse_intent_with_llm
     except ImportError:
-        from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal
+        from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_db_rls_context, set_webhook_service_rls_context, set_worker_rls_context
         from .models import (
             Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription,
             ChatSession, TaskDateCompletion, WhatsAppMessage, ProcessedMutation,
