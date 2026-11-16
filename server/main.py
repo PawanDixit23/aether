@@ -469,8 +469,8 @@ class TaskCreate(BaseModel):
     reminder_time: Optional[str] = None
     recurrence: Optional[str] = None
     parent_id: Optional[int] = None
-    dependency_task_ids: Optional[List[int]] = None
-    subtasks: Optional[List[str]] = None
+    dependency_task_ids: Optional[List[int]] = Field(default=None, max_length=100)
+    subtasks: Optional[List[str]] = Field(default=None, max_length=100)
     completion_comment: Optional[str] = None
     attachments: Optional[str] = None
 
