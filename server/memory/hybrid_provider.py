@@ -13,7 +13,7 @@ import hashlib
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 import httpx
 
 from models import MemoryItem
@@ -129,7 +129,7 @@ class HybridMemoryProvider:
             MemoryItem.user_email == user_email,
             MemoryItem.category == category
         )
-        exact = scoped.filter(MemoryItem.fact.ilike(clean_fact)).order_by(
+        exact = scoped.filter(func.lower(MemoryItem.fact) == clean_fact.lower()).order_by(
             MemoryItem.updated_at.desc(), MemoryItem.id.desc()
         ).first()
         candidates = []
