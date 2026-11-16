@@ -1647,7 +1647,10 @@ async def _execute_quick_capture(
         if not c_num:
             try:
                 search_terms = [c_name.lower(), c_name.replace(" ", "").lower()]
-                mems = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
+                mems = db.query(MemoryItem).filter(
+                    MemoryItem.owner_user_id == owner_user_id,
+                    or_(*[MemoryItem.fact.ilike(f"%{term}%") for term in search_terms])
+                ).order_by(MemoryItem.importance.desc(), MemoryItem.id.desc()).limit(25).all()
                 for m in mems:
                     m_fact = (m.fact or "").lower()
                     if any(st in m_fact for st in search_terms):
@@ -3275,7 +3278,10 @@ def list_finance_records(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    return db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user)).order_by(FinancialRecord.date.desc()).limit(limit).all()
+    safe_limit = max(1, min(int(limit), 100))
+    return db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user)).order_by(
+        FinancialRecord.date.desc(), FinancialRecord.id.desc()
+    ).limit(safe_limit).all()
 
 @app.post("/api/finance/records")
 def create_finance_record(
@@ -3905,9 +3911,16 @@ def get_executive_briefing(
         return _cached["data"]
 
     eff_email = current_user.email
-    tasks = db.query(Task).filter(tenant_filter(Task, current_user), Task.status == "pending").all()
-    memories = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user)).limit(5).all()
-    urgent_tasks = [t for t in tasks if t.priority in ["high", "urgent"]]
+    pending_tasks_count = db.query(func.count(Task.id)).filter(
+        tenant_filter(Task, current_user), Task.status == "pending"
+    ).scalar() or 0
+    memories = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user)).order_by(
+        MemoryItem.importance.desc(), MemoryItem.created_at.desc()
+    ).limit(5).all()
+    urgent_tasks = db.query(Task).filter(
+        tenant_filter(Task, current_user), Task.status == "pending",
+        Task.priority.in_(["high", "urgent"])
+    ).order_by(Task.due_date.asc().nullslast(), Task.id.desc()).limit(10).all()
     finance = get_finance_summary(current_user=current_user, db=db)
 
     now = datetime.now()
@@ -3963,8 +3976,8 @@ def get_executive_briefing(
     response_data = {
         "greeting": f"{greeting}, {display_name}!",
         "date_str": now.strftime("%d %b").upper(),
-        "pending_tasks_count": len(tasks),
-        "upcoming_count": len(tasks),
+        "pending_tasks_count": int(pending_tasks_count),
+        "upcoming_count": int(pending_tasks_count),
         "alert_count": len(urgent_tasks),
         "urgent_tasks": [{"id": t.id, "title": t.title, "priority": t.priority} for t in urgent_tasks],
         "financial_snapshot": finance,
@@ -4033,7 +4046,7 @@ def get_executive_audio_briefing(
     auto_advance_recurring_tasks(db, owner_user_id=current_user.id)
     task_query = db.query(Task).filter(tenant_filter(Task, current_user), Task.status == "pending", (Task.parent_id == None) | (Task.parent_id == 0))
     
-    all_pending = task_query.all()
+    all_pending = task_query.order_by(Task.due_date.asc().nullslast(), Task.id.desc()).limit(100).all()
     today_tasks = []
     for t in all_pending:
         t_due = t.due_date.date() if t.due_date else None
@@ -4150,19 +4163,16 @@ def list_audit_logs(
     db: Session = Depends(get_db)
 ):
     query = db.query(AuditLog).filter(tenant_filter(AuditLog, current_user))
+    safe_limit = max(1, min(int(limit), 100))
     if date and date.strip():
         try:
             target_date = datetime.strptime(date.strip(), "%Y-%m-%d").date()
-            # Expand UTC window by 1 day before & after to account for timezone shifts (e.g. IST +05:30)
             start_dt = datetime.combine(target_date - timedelta(days=1), datetime.min.time())
             end_dt = datetime.combine(target_date + timedelta(days=1), datetime.max.time())
             query = query.filter(AuditLog.executed_at >= start_dt, AuditLog.executed_at <= end_dt)
-            logs = query.order_by(AuditLog.executed_at.desc()).all()
-        except Exception as e:
-            print(f"[Audit Log Date Filter Error] {e}")
-            logs = query.order_by(AuditLog.executed_at.desc()).limit(limit).all()
-    else:
-        logs = query.order_by(AuditLog.executed_at.desc()).limit(limit).all()
+        except Exception as exc:
+            print(f"[Audit Log Date Filter Error] {exc}")
+    logs = query.order_by(AuditLog.executed_at.desc(), AuditLog.id.desc()).limit(safe_limit).all()
 
     # Always ensure executed_at string carries ISO 8601 UTC indicator 'Z' so browser parses in local time
     results = []
@@ -6431,7 +6441,7 @@ def list_routines(
     jobs = db.query(ScheduledJob).filter(
         tenant_filter(ScheduledJob, current_user),
         ScheduledJob.job_type == "routine"
-    ).order_by(ScheduledJob.created_at.desc()).all()
+    ).order_by(ScheduledJob.created_at.desc(), ScheduledJob.id.desc()).limit(100).all()
     results = []
     for j in jobs:
         try:
