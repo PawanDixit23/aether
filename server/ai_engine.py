@@ -2148,10 +2148,26 @@ async def parse_intent_with_llm(
             live_feed += "\n".join(cric_lines) + "\n\n"
 
     if is_weather_query:
-        # Pass user_input and user_city so detected or mentioned city is used
+        # Weather is deterministic provider data: do not let the LLM replace an
+        # unavailable live reading with seasonal averages or plausible guesses.
         cur_city_loc = user_city or (context or {}).get("user_location")
         weather_info = fetch_live_weather(user_query=user_input, lat=user_lat, lon=user_lon, city_name=cur_city_loc)
         live_feed += f"[TODAY'S LIVE ACCURATE WEATHER]:\n{weather_info}\n\n"
+        if not is_sports_query and not is_general_news:
+            return {
+                "action": "query",
+                "confidence": 1.0,
+                "confidence_level": "high",
+                "data": {
+                    "response": weather_info,
+                    "follow_ups": generate_contextual_follow_ups(
+                        user_input,
+                        is_hi=effective_lang in ["hi", "hi_friend"],
+                        action="query"
+                    )
+                },
+                "explanation": "Deterministic live weather provider response"
+            }
 
     # 🗺️ Local Travel & Food Discovery Guide Injection
     is_travel_or_food_query = any(w in user_lower for w in [
