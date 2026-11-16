@@ -136,7 +136,7 @@ class HybridMemoryProvider:
         if exact:
             candidates = [exact]
         else:
-            tokens = [token.lower() for token in re.findall(r'\\b\\w{3,}\\b', clean_fact)[:8]]
+            tokens = [token.lower() for token in re.findall(r'\b\w{3,}\b', clean_fact)[:8]]
             if tokens:
                 candidates = scoped.filter(or_(*[
                     MemoryItem.fact.ilike(f"%{token}%") for token in tokens
@@ -189,7 +189,7 @@ class HybridMemoryProvider:
 
         safe_limit = max(1, min(int(limit), 20))
         q_clean = query.strip()
-        q_tokens = [word.lower() for word in re.findall(r'\\b\\w{3,}\\b', q_clean)[:12]]
+        q_tokens = [word.lower() for word in re.findall(r'\b\w{3,}\b', q_clean)[:12]]
         q_embedding = get_embedding(q_clean)
         now = datetime.utcnow()
 
@@ -268,6 +268,6 @@ class HybridMemoryProvider:
             formatted.append(f"• [{memory.category.upper()}] (Match: {pct}%) {memory.fact}")
         return {
             "relevant_facts": [memory.fact for _, _, memory in top_items],
-            "formatted_context": "\\n".join(formatted),
+            "formatted_context": "\n".join(formatted),
             "top_memories": [memory for _, _, memory in top_items]
         }
