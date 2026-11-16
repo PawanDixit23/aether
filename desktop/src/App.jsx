@@ -3994,7 +3994,9 @@ export default function App() {
             const savedTasks = Array.isArray(backupData) ? backupData : (backupData.tasks || []);
             const savedMemories = Array.isArray(backupData) ? [] : (backupData.memories || []);
             const savedFinances = Array.isArray(backupData) ? [] : (backupData.finances || []);
-            const bTasks = loadedTasks.length === 0 ? savedTasks : [];
+            const taskRestoreBlockedKey = `aether_backup_task_restore_blocked_${currentEmail}`;
+            const taskRestoreAlreadyBlocked = localStorage.getItem(taskRestoreBlockedKey) === 'true';
+            const bTasks = loadedTasks.length === 0 && !taskRestoreAlreadyBlocked ? savedTasks : [];
             const bMems = loadedMemories.length === 0 ? savedMemories : [];
             const bFin = loadedFinances.length === 0 ? savedFinances : [];
 
@@ -4017,6 +4019,7 @@ export default function App() {
               );
               const taskRestoreBlocked = hasUnloadedSubtasks(bTasks);
               if (taskRestoreBlocked) {
+                localStorage.setItem(taskRestoreBlockedKey, 'true');
                 showToast('Task backup has unloaded subtasks; task restore was paused to avoid losing child records. Other empty modules will still restore.', 'error');
               }
               const uploadBackupChunks = async (field, records) => {
@@ -4042,8 +4045,14 @@ export default function App() {
                   if (!taskRestoreBlocked) await uploadBackupChunks('tasks', backupTaskRows);
                   await uploadBackupChunks('memories', bMems);
                   await uploadBackupChunks('finances', bFin);
-                  showToast('Local backup restored safely in batches', 'success');
-                  await refreshAllData({ force: true });
+                  if (taskRestoreBlocked) {
+                    showToast('Other missing modules were restored. Task restore remains paused because the local task tree is incomplete.', 'error');
+                  } else {
+                    showToast('Local backup restored safely in batches', 'success');
+                  }
+                  if (!taskRestoreBlocked || bMems.length > 0 || bFin.length > 0) {
+                    await refreshAllData({ force: true });
+                  }
                 } catch (restoreError) {
                   console.error('Chunked backup restore failed:', restoreError);
                   showToast('Backup restore is incomplete. Retry sync; completed batches are safe to retry.', 'error');
