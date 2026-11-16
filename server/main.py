@@ -3960,8 +3960,6 @@ def sync_bulk_contacts(
     db: Session = Depends(get_db)
 ):
     eff_email = current_user.email
-    from memory.hybrid_provider import get_embedding
-
     contacts_list = req.contacts or []
     if not contacts_list:
         return {"status": "ok", "synced_count": 0, "message": "No contacts provided"}
@@ -4003,17 +4001,17 @@ def sync_bulk_contacts(
                     MemoryItem.fact.ilike(f"Contact: {safe_name} - Phone:%", escape="\\")
                 ).order_by(MemoryItem.updated_at.desc(), MemoryItem.id.desc()).first()
 
-                emb = get_embedding(fact_str)
-                emb_json = json.dumps(emb) if emb else None
+                # Contact facts are indexed lexically in PostgreSQL; do not issue one
+                # external embedding request per imported contact.
                 if matched:
                     matched.fact = fact_str
-                    matched.embedding = emb_json
+                    matched.embedding = None
                     matched.updated_at = datetime.utcnow()
                 else:
                     db.add(MemoryItem(
                         owner_user_id=current_user.id, user_email=eff_email,
                         category="contact", fact=fact_str, confidence=1.0,
-                        embedding=emb_json
+                        importance=1.2, embedding=None
                     ))
                 synced += 1
                 batch_synced += 1
