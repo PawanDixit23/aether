@@ -20,7 +20,7 @@ from document_parser import extract_text_from_file
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from resource_limits import AI_CONTEXT_CHAT_LIMIT, AI_CONTEXT_FINANCE_LIMIT, AI_CONTEXT_MEMORY_LIMIT, AI_CONTEXT_TASK_LIMIT, bounded_page, chunks, WRITE_BATCH_SIZE
@@ -517,9 +517,11 @@ class MemoryCreate(BaseModel):
 
 class ClientSyncBackup(BaseModel):
     user_email: str
-    tasks: Optional[List[dict]] = []
-    memories: Optional[List[dict]] = []
-    finances: Optional[List[dict]] = []
+    # The client must upload each dataset in bounded chunks; oversized batches are rejected,
+    # never silently truncated or partially accepted.
+    tasks: List[dict] = Field(default_factory=list, max_length=200)
+    memories: List[dict] = Field(default_factory=list, max_length=200)
+    finances: List[dict] = Field(default_factory=list, max_length=200)
 
 class ICalSyncRequest(BaseModel):
     url: str
