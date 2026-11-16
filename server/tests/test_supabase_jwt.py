@@ -77,12 +77,12 @@ class SupabaseJwtVerificationTests(unittest.TestCase):
 
     def test_accepts_es256_token_from_jwks(self):
         token = jwt.encode(self.claims, self.private_key, algorithm="ES256", headers={"kid": "test-key"})
-        with patch.object(auth, "PyJWKClient", FakeJwksClient):
+        with patch.object(auth, "_get_jwks_client", return_value=FakeJwksClient()):
             payload = auth.verify_supabase_jwt(token, "", expected_iss=ISSUER)
         self.assertEqual(payload["sub"], USER_ID)
 
     def test_accepts_legacy_hs256_token(self):
-        secret = "test-only-legacy-jwt-secret"
+        secret = "test-only-legacy-jwt-secret-with-32-bytes-minimum"
         token = jwt.encode(self.claims, secret, algorithm="HS256")
         payload = auth.verify_supabase_jwt(token, secret, expected_iss=ISSUER)
         self.assertEqual(payload["sub"], USER_ID)
