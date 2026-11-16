@@ -612,6 +612,7 @@ export default function App() {
   
   // App data states
   const [briefing, setBriefing] = useState(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
   const [cityGuide, setCityGuide] = useState(null);
   const [chatSessionsHasMore, setChatSessionsHasMore] = useState(false);
   const [chatSessionsFetchedCount, setChatSessionsFetchedCount] = useState(0);
@@ -6043,17 +6044,57 @@ export default function App() {
     return parts;
   };
 
+  // Never present fabricated fallback values as live weather.
   const weather = briefing?.weather || {
-    temp: 28,
-    condition_hi: 'Mostly Sunny',
-    condition_en: 'Mostly Sunny',
-    city: userLocationName || 'Jaipur',
-    city_en: userLocationName || 'Jaipur',
-    city_hi: userLocationName || 'Jaipur',
-    city_hinglish: userLocationName || 'Jaipur',
-    humidity: '42%',
-    wind: '10 km/h'
+    status: 'unavailable',
+    city: userLocationName || 'Current location',
+    condition_en: 'Live weather not loaded yet',
+    condition_hi: 'लाइव मौसम अभी उपलब्ध नहीं है',
+    temp: null,
+    humidity: null,
+    wind: null
   };
+
+  const refreshWeather = async () => {
+    if (weatherLoading) return;
+    setWeatherLoading(true);
+    try {
+      const params = new URLSearchParams({
+        user_name: userName || 'Operator',
+        lat: userCoords?.latitude != null ? String(userCoords.latitude) : '',
+        lon: userCoords?.longitude != null ? String(userCoords.longitude) : '',
+        city: userLocationName || ''
+      });
+      const response = await apiFetch(`${API_BASE}/briefing?${params.toString()}`);
+      if (!response.ok) throw new Error(`Weather request failed (${response.status})`);
+      const data = await response.json();
+      if (!data?.weather || data.weather.temp == null || data.weather.status === 'unavailable') {
+        throw new Error(data?.weather?.error || 'Live weather is currently unavailable');
+      }
+      setBriefing(previous => ({
+        ...(previous || {}),
+        ...data,
+        weather: data.weather,
+        city_guide: data.city_guide || previous?.city_guide
+      }));
+    } catch (error) {
+      console.warn('[Aether Weather] Refresh failed:', error);
+      setBriefing(previous => previous ? previous : ({
+        weather: { status: 'unavailable', city: userLocationName || 'Current location', temp: null }
+      }));
+    } finally {
+      setWeatherLoading(false);
+    }
+  };
+
+  // When GPS/IP location resolves after sign-in, refresh the briefing with the actual coordinates.
+  useEffect(() => {
+    if (userCoords?.latitude != null && userCoords?.longitude != null) {
+      refreshWeather();
+    }
+    // Intentionally react only to location changes; refreshWeather reads current auth/session state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userCoords?.latitude, userCoords?.longitude, userLocationName]);
 
   const pendingTasksList = tasks.filter(t => t.status !== 'completed');
   const alertCount = briefing?.alert_count ?? 1;
@@ -7327,6 +7368,8 @@ export default function App() {
                     userName={userPreferredName || userName}
                     currentTime={currentTime}
                     weatherData={weather}
+                    weatherLoading={weatherLoading}
+                    onRefreshWeather={refreshWeather}
                     userLocationName={userLocationName}
                     cityGuide={cityGuide}
                     onAskAether={(q) => {
