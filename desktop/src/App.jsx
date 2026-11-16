@@ -3931,7 +3931,10 @@ export default function App() {
         });
         setMemoryFetchedCount(prev => Math.max(prev, Array.isArray(loadedMemories) ? loadedMemories.length : 0));
         const serverMemoryTotal = Number(resMem.headers?.get?.('X-Total-Count'));
-        if (Number.isFinite(serverMemoryTotal) && serverMemoryTotal >= 0) setMemoryTotalCount(serverMemoryTotal);
+        if (Number.isFinite(serverMemoryTotal) && serverMemoryTotal >= 0) {
+          setMemoryTotalCount(serverMemoryTotal);
+          setMemoryHasMore(serverMemoryTotal > (Array.isArray(loadedMemories) ? loadedMemories.length : 0));
+        }
         setMemoryNextCursor(prev => {
           const firstPageCursor = Array.isArray(loadedMemories) && loadedMemories.length ? loadedMemories[loadedMemories.length - 1].id : null;
           return prev == null ? firstPageCursor : (firstPageCursor == null ? prev : Math.min(Number(prev), Number(firstPageCursor)));
@@ -5780,9 +5783,13 @@ export default function App() {
       });
       setMemoryFetchedCount(prev => prev + (Array.isArray(page) ? page.length : 0));
       const serverMemoryTotal = Number(resp.headers?.get?.('X-Total-Count'));
-      if (Number.isFinite(serverMemoryTotal) && serverMemoryTotal >= 0) setMemoryTotalCount(serverMemoryTotal);
+      if (Number.isFinite(serverMemoryTotal) && serverMemoryTotal >= 0) {
+        setMemoryTotalCount(serverMemoryTotal);
+        setMemoryHasMore(serverMemoryTotal > (memories.length + (Array.isArray(page) ? page.length : 0)));
+      } else {
+        setMemoryHasMore(resp.headers?.get?.('X-Has-More') === 'true' || (Array.isArray(page) && page.length === 50));
+      }
       if (Array.isArray(page) && page.length) setMemoryNextCursor(page[page.length - 1].id);
-      setMemoryHasMore(resp.headers?.get?.('X-Has-More') === 'true' || (Array.isArray(page) && page.length === 50));
     } catch (err) {
       console.error('Failed to load more memories:', err);
       showToast('Could not load more memories. Please try again.', 'error');
