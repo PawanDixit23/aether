@@ -1,6 +1,7 @@
 import { StrictMode, Component } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+import './clean-ui.css'
 import App from './App.jsx'
 
 class ErrorBoundary extends Component {
@@ -25,13 +26,13 @@ class ErrorBoundary extends Component {
             {this.state.error?.stack}
           </pre>
           <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
-            <button 
+            <button
               onClick={() => window.location.reload()}
               style={{ padding: '10px 18px', background: '#38bdf8', color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}
             >
               Reload Page
             </button>
-            <button 
+            <button
               onClick={() => { localStorage.clear(); window.location.reload(); }}
               style={{ padding: '10px 18px', background: 'rgba(255,255,255,0.1)', color: '#fff', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px', cursor: 'pointer' }}
             >
