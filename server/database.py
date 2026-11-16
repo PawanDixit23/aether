@@ -457,9 +457,17 @@ def ensure_schema_migrations():
                 conn.exec_driver_sql(
                     "REVOKE ALL ON TABLE public.aether_schema_migrations FROM PUBLIC"
                 )
-                conn.exec_driver_sql(
-                    "REVOKE ALL ON TABLE public.aether_schema_migrations FROM anon, authenticated, service_role"
-                )
+                # Supabase defines these API roles; plain PostgreSQL test/development
+                # clusters may not. Revoke only for roles that actually exist.
+                for api_role in ("anon", "authenticated", "service_role"):
+                    role_exists = conn.execute(
+                        text("SELECT 1 FROM pg_roles WHERE rolname = :role_name"),
+                        {"role_name": api_role},
+                    ).first()
+                    if role_exists:
+                        conn.exec_driver_sql(
+                            f"REVOKE ALL ON TABLE public.aether_schema_migrations FROM {api_role}"
+                        )
 
         with engine.connect() as conn:
             already_applied = conn.execute(
