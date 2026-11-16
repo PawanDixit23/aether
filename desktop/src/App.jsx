@@ -9620,28 +9620,6 @@ export default function App() {
 
               {/* News & Market Briefing */}
               {newsItems.length > 0 && (
-                {memoryHasMore && (
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
-                  <button
-                    type="button"
-                    onClick={handleLoadMoreMemories}
-                    disabled={memoryLoadingMore}
-                    style={{
-                      background: 'rgba(56, 189, 248, 0.12)',
-                      border: '1px solid rgba(56, 189, 248, 0.32)',
-                      color: '#7dd3fc',
-                      borderRadius: '10px',
-                      padding: '9px 14px',
-                      fontSize: '0.8rem',
-                      fontWeight: 700,
-                      cursor: memoryLoadingMore ? 'wait' : 'pointer',
-                      opacity: memoryLoadingMore ? 0.65 : 1
-                    }}
-                  >
-                    {memoryLoadingMore ? 'Loading...' : `Load next 50 · ${Math.max(0, (memoryTotalCount ?? memoryFetchedCount) - memories.length).toLocaleString()} remaining`}
-                  </button>
-                </div>
-              )}
               <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: '#f59e0b', fontWeight: 700, fontSize: '0.85rem' }}>
                     <Newspaper size={16} />
@@ -9706,6 +9684,29 @@ export default function App() {
                   <span>{isSyncingContacts ? "Syncing..." : contactsEnabled ? "Sync Phone Contacts" : "Enable Contacts Permission"}</span>
                 </button>
               </div>
+
+              {memoryHasMore && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={handleLoadMoreMemories}
+                    disabled={memoryLoadingMore}
+                    style={{
+                      background: 'rgba(56, 189, 248, 0.12)',
+                      border: '1px solid rgba(56, 189, 248, 0.32)',
+                      color: '#7dd3fc',
+                      borderRadius: '10px',
+                      padding: '9px 14px',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                      cursor: memoryLoadingMore ? 'wait' : 'pointer',
+                      opacity: memoryLoadingMore ? 0.65 : 1
+                    }}
+                  >
+                    {memoryLoadingMore ? 'Loading...' : `Load next 50 · ${Math.max(0, (memoryTotalCount ?? memoryFetchedCount) - memories.length).toLocaleString()} remaining`}
+                  </button>
+                </div>
+              )}
 
               <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px' }}>
                 {memories.length === 0 ? (
