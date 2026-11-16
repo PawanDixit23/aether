@@ -744,6 +744,7 @@ export default function App() {
   const [financeSummary, setFinanceSummary] = useState({ total_income: 0, total_expense: 0, balance: 0 });
   const [memories, setMemories] = useState([]);
   const [memoryHasMore, setMemoryHasMore] = useState(false);
+  const [memoryFetchedCount, setMemoryFetchedCount] = useState(0);
   const [memoryLoadingMore, setMemoryLoadingMore] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
   const [newsItems, setNewsItems] = useState([]);
@@ -3843,7 +3844,8 @@ export default function App() {
           ? loadedMemories.filter(m => !deletedMemoryIdsRef.current.has(String(m.id)))
           : [];
         setMemories(validMemories);
-        setMemoryHasMore(validMemories.length === 50);
+        setMemoryFetchedCount(Array.isArray(loadedMemories) ? loadedMemories.length : 0);
+        setMemoryHasMore(Array.isArray(loadedMemories) && loadedMemories.length === 50);
       }
       if (resAudit.ok) setAuditLogs(await resAudit.json());
       if (resNews.ok) setNewsItems(await resNews.json());
@@ -5580,7 +5582,7 @@ export default function App() {
     if (memoryLoadingMore || !memoryHasMore) return;
     setMemoryLoadingMore(true);
     try {
-      const offset = memories.length;
+      const offset = memoryFetchedCount;
       const resp = await apiFetch(`${API_BASE}/memory?limit=50&offset=${offset}`, {
         headers: { /* apiFetch attaches the verified Supabase Bearer token */ }
       });
@@ -5593,6 +5595,7 @@ export default function App() {
         const existingIds = new Set(prev.map(m => String(m.id)));
         return [...prev, ...validPage.filter(m => !existingIds.has(String(m.id)))];
       });
+      setMemoryFetchedCount(offset + (Array.isArray(page) ? page.length : 0));
       setMemoryHasMore(Array.isArray(page) && page.length === 50);
     } catch (err) {
       console.error('Failed to load more memories:', err);
