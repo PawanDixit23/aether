@@ -93,6 +93,19 @@ def ensure_schema_migrations():
     """Ensure all required columns and tables exist across both SQLite and PostgreSQL."""
     is_pg = "postgres" in str(engine.url).lower()
 
+    # The ORM metadata contains a PostgreSQL GIN/trigram index. The extension
+    # must exist before create_all attempts to create that index. Production
+    # deployments should apply this with the migration/admin connection first;
+    # CREATE EXTENSION IF NOT EXISTS is harmless when it is already installed.
+    if is_pg:
+        try:
+            with engine.begin() as extension_conn:
+                extension_conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        except Exception as exc:
+            raise RuntimeError(
+                "CRITICAL: PostgreSQL extension pg_trgm must be enabled by the migration/admin role before startup"
+            ) from exc
+
     # Register every ORM model before create_all. This function is also invoked
     # from a fresh Python process by CI/CLI, where Alembic's earlier "import models"
     # does not carry over and Base.metadata would otherwise be empty.
