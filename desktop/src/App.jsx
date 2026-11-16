@@ -3939,7 +3939,13 @@ export default function App() {
           const firstPageCursor = Array.isArray(loadedMemories) && loadedMemories.length ? loadedMemories[loadedMemories.length - 1].id : null;
           return prev == null ? firstPageCursor : (firstPageCursor == null ? prev : Math.min(Number(prev), Number(firstPageCursor)));
         });
-        setMemoryHasMore(resMem.headers?.get?.('X-Has-More') === 'true' || (Array.isArray(loadedMemories) && loadedMemories.length === 50));
+        // Prefer the server's authoritative continuation flag. Only fall back
+        // to page length for older deployments that do not expose pagination headers.
+        if (resMem.headers?.get?.('X-Has-More') != null) {
+          setMemoryHasMore(resMem.headers.get('X-Has-More') === 'true');
+        } else {
+          setMemoryHasMore(Array.isArray(loadedMemories) && loadedMemories.length === 50);
+        }
       }
       if (resAudit.ok) setAuditLogs(await resAudit.json());
       if (resNews.ok) setNewsItems(await resNews.json());
@@ -5789,7 +5795,12 @@ export default function App() {
       } else {
         setMemoryHasMore(resp.headers?.get?.('X-Has-More') === 'true' || (Array.isArray(page) && page.length === 50));
       }
-      if (Array.isArray(page) && page.length) setMemoryNextCursor(page[page.length - 1].id);
+      const responseCursor = Number(resp.headers?.get?.('X-Next-Cursor'));
+      if (Number.isFinite(responseCursor) && responseCursor > 0) {
+        setMemoryNextCursor(responseCursor);
+      } else if (Array.isArray(page) && page.length) {
+        setMemoryNextCursor(page[page.length - 1].id);
+      }
     } catch (err) {
       console.error('Failed to load more memories:', err);
       showToast('Could not load more memories. Please try again.', 'error');
@@ -9609,7 +9620,29 @@ export default function App() {
 
               {/* News & Market Briefing */}
               {newsItems.length > 0 && (
-                <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px' }}>
+                {memoryHasMore && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={handleLoadMoreMemories}
+                    disabled={memoryLoadingMore}
+                    style={{
+                      background: 'rgba(56, 189, 248, 0.12)',
+                      border: '1px solid rgba(56, 189, 248, 0.32)',
+                      color: '#7dd3fc',
+                      borderRadius: '10px',
+                      padding: '9px 14px',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                      cursor: memoryLoadingMore ? 'wait' : 'pointer',
+                      opacity: memoryLoadingMore ? 0.65 : 1
+                    }}
+                  >
+                    {memoryLoadingMore ? 'Loading...' : `Load next 50 · ${Math.max(0, (memoryTotalCount ?? memoryFetchedCount) - memories.length).toLocaleString()} remaining`}
+                  </button>
+                </div>
+              )}
+              <div style={{ background: '#101625', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '18px', padding: '18px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: '#f59e0b', fontWeight: 700, fontSize: '0.85rem' }}>
                     <Newspaper size={16} />
                     <span>EXECUTIVE NEWS WIRE</span>
@@ -9630,9 +9663,14 @@ export default function App() {
             <div style={{ maxWidth: '640px', margin: '0 auto', width: '100%', padding: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
-                  <h1 style={{ fontFamily: 'Newsreader', fontSize: '1.8rem', fontWeight: 600, color: '#ffffff' }}>
-                    Memory Vault
-                  </h1>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap' }}>
+                    <h1 style={{ fontFamily: 'Newsreader', fontSize: '1.8rem', fontWeight: 600, color: '#ffffff', margin: 0 }}>
+                      Memory Vault
+                    </h1>
+                    <span style={{ borderRadius: '999px', padding: '4px 9px', fontSize: '0.72rem', fontWeight: 700, color: '#7dd3fc', background: 'rgba(56, 189, 248, 0.12)', border: '1px solid rgba(56, 189, 248, 0.28)' }}>
+                      {(memoryTotalCount ?? memories.length).toLocaleString()} facts
+                    </span>
+                  </div>
                   <p style={{ fontSize: '0.82rem', color: '#94a3b8', marginTop: '2px' }}>
                     Semantic vector memory & contacts Aether remembers about you
                     <span style={{ display: 'block', marginTop: '5px', color: '#64748b', fontSize: '0.74rem' }}>
