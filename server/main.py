@@ -3697,13 +3697,18 @@ def create_memory(
         raise HTTPException(status_code=400, detail="Empty fact")
     cat = (req.category or "contact").strip().lower()
 
-    # Check if existing item exists for this contact/subject to avoid duplicates
+    # Resolve one possible match in SQL instead of loading every memory in this category.
     first_token = fact_str.split()[0].lower() if fact_str else ""
-    existing = db.query(MemoryItem).filter(
-        tenant_filter(MemoryItem, current_user),
-        MemoryItem.category == cat
-    ).all()
-    matched = next((ex for ex in existing if first_token in (ex.fact or "").lower()), None)
+    matched = (
+        db.query(MemoryItem)
+        .filter(
+            tenant_filter(MemoryItem, current_user),
+            MemoryItem.category == cat,
+            MemoryItem.fact.ilike(f"%{first_token}%")
+        )
+        .order_by(MemoryItem.updated_at.desc(), MemoryItem.id.desc())
+        .first()
+    )
     from memory.hybrid_provider import get_embedding
     emb = get_embedding(fact_str)
     emb_json = json.dumps(emb) if emb else None
@@ -3737,63 +3742,78 @@ def sync_bulk_contacts(
 ):
     eff_email = current_user.email
     from memory.hybrid_provider import get_embedding
-    
+
     contacts_list = req.contacts or []
     if not contacts_list:
         return {"status": "ok", "synced_count": 0, "message": "No contacts provided"}
-        
+
     synced = 0
-    existing = db.query(MemoryItem).filter(
-        tenant_filter(MemoryItem, current_user),
-        MemoryItem.category == "contact"
-    ).all()
-    existing_facts = { (e.fact or "").lower(): e for e in existing }
+    skipped = 0
+    failed = 0
+    failure_samples = []
+    for batch_start in range(0, len(contacts_list), WRITE_BATCH_SIZE):
+        batch = contacts_list[batch_start:batch_start + WRITE_BATCH_SIZE]
+        for local_index, contact in enumerate(batch):
+            try:
+                name = str(contact.get("name") or "").strip()
+                phone = str(contact.get("phone") or contact.get("phoneNumber") or "").strip()
+                if not name or not phone:
+                    skipped += 1
+                    continue
+                clean_phone = re.sub(r'[^\\d+]', '', phone)
+                if len(clean_phone) < 5:
+                    skipped += 1
+                    continue
 
-    for c in contacts_list:
-        name = (c.get("name") or "").strip()
-        phone = (c.get("phone") or c.get("phoneNumber") or "").strip()
-        if not name or not phone:
-            continue
-        clean_phone = re.sub(r'[^\d+]', '', phone)
-        if len(clean_phone) < 5:
-            continue
-            
-        fact_str = f"Contact: {name} - Phone: {clean_phone}"
-        if c.get("email"):
-            fact_str += f" - Email: {c.get('email').strip()}"
-        
-        # Skip if exact fact already present
-        if fact_str.lower() in existing_facts:
-            continue
-        
-        # Check if same contact name already exists, update number
-        matched = next((e for e in existing if name.lower() in (e.fact or "").lower()), None)
-        emb = get_embedding(fact_str)
-        emb_json = json.dumps(emb) if emb else None
-        
-        if matched:
-            matched.fact = fact_str
-            matched.embedding = emb_json
-            matched.updated_at = datetime.utcnow()
-        else:
-            new_item = MemoryItem(
-                owner_user_id=current_user.id,
-                user_email=eff_email,
-                category="contact",
-                fact=fact_str,
-                confidence=1.0,
-                embedding=emb_json
-            )
-            db.add(new_item)
-            existing.append(new_item)
-        synced += 1
+                fact_str = f"Contact: {name} - Phone: {clean_phone}"
+                if contact.get("email"):
+                    fact_str += f" - Email: {str(contact.get('email')).strip()}"
 
-    db.commit()
+                scoped = db.query(MemoryItem).filter(
+                    tenant_filter(MemoryItem, current_user),
+                    MemoryItem.category == "contact"
+                )
+                exact = scoped.filter(func.lower(MemoryItem.fact) == fact_str.lower()).first()
+                if exact:
+                    skipped += 1
+                    continue
+
+                safe_name = name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                matched = scoped.filter(
+                    MemoryItem.fact.ilike(f"Contact: {safe_name} - Phone:%", escape="\\")
+                ).order_by(MemoryItem.updated_at.desc(), MemoryItem.id.desc()).first()
+
+                emb = get_embedding(fact_str)
+                emb_json = json.dumps(emb) if emb else None
+                if matched:
+                    matched.fact = fact_str
+                    matched.embedding = emb_json
+                    matched.updated_at = datetime.utcnow()
+                else:
+                    db.add(MemoryItem(
+                        owner_user_id=current_user.id, user_email=eff_email,
+                        category="contact", fact=fact_str, confidence=1.0,
+                        embedding=emb_json
+                    ))
+                synced += 1
+            except Exception as exc:
+                failed += 1
+                if len(failure_samples) < 25:
+                    failure_samples.append({"index": batch_start + local_index, "error": str(exc)[:240]})
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            failed += len(batch)
+            synced = max(0, synced - len(batch))
+            if len(failure_samples) < 25:
+                failure_samples.append({"batch_start": batch_start, "error": str(exc)[:240]})
+
     return {
-        "status": "ok", 
-        "synced_count": synced, 
+        "status": "ok", "synced_count": synced, "skipped_count": skipped,
+        "failed_count": failed, "failure_samples": failure_samples,
         "total_contacts": len(contacts_list),
-        "message": f"Successfully synced {synced} contacts into Memory Vault! ⚡"
+        "message": f"Processed {len(contacts_list)} contacts in bounded batches."
     }
 
 @app.put("/api/memory/{item_id}")
