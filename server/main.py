@@ -3579,7 +3579,6 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
                 reply = data_inner.get("response", "Done.")
 
         twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{reply}</Message></Response>'
-        from fastapi.responses import Response
         return Response(content=twiml, media_type="application/xml")
     except Exception as e:
         print(f"[Twilio WA Error] {e}")
