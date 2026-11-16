@@ -196,7 +196,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
     allow_headers=["*"],
-    expose_headers=["X-Has-More", "X-Next-Offset", "X-Page-Limit", "Content-Disposition"],
+    expose_headers=["X-Has-More", "X-Next-Offset", "X-Next-Cursor", "X-Total-Count", "X-Page-Limit", "Content-Disposition"],
 )
 
 # ─── Security & Observability Subsystems ─────────────────────────────────────
