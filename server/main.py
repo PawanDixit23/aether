@@ -153,8 +153,8 @@ except ImportError:
         )
         from .ai_engine import parse_intent_with_llm
 
-# Initialize tables & run automated schema migrations
-Base.metadata.create_all(bind=engine)
+# The versioned migration runner owns table bootstrap and serializes it across
+# Render instances. Do not call create_all separately on every process startup.
 ensure_schema_migrations()
 
 from security.auth import validate_security_config_at_startup
