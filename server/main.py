@@ -237,9 +237,9 @@ async def security_and_observability_middleware(request: Request, call_next):
         expected_worker_token = os.environ.get("AETHER_WORKER_TOKEN", "").strip()
         authorization = request.headers.get("Authorization", "")
         scheme, _, supplied_worker_token = authorization.partition(" ")
-        if not expected_worker_token:
+        if len(expected_worker_token) < 32:
             from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=503, content={"detail": "Reminder worker authentication is not configured"})
+            return JSONResponse(status_code=503, content={"detail": "Reminder worker authentication is not configured or token is shorter than 32 characters"})
         if scheme.lower() != "bearer" or not hmac.compare_digest(supplied_worker_token.strip(), expected_worker_token):
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=401, content={"detail": "Invalid worker credentials"})
