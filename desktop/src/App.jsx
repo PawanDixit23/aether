@@ -3927,7 +3927,32 @@ export default function App() {
                   }
                 }
                 if (bTasks.length > 0) setTasks(bTasks);
-                if (bMems.length > 0) setMemories(bMems);
+                if (bMems.length > 0) {
+                  // Re-read the first server page after restore so the Memory Vault
+                  // pagination counters always describe persisted rows, not local cache size.
+                  const restoredMemResp = await apiFetch(`${API_BASE}/memory?limit=50&offset=0`, {
+                    headers: authHeaders
+                  });
+                  if (restoredMemResp.ok) {
+                    const restoredMemories = await restoredMemResp.json();
+                    if (Array.isArray(restoredMemories)) {
+                      loadedMemories = restoredMemories;
+                      setMemories(restoredMemories.filter(
+                        memory => !deletedMemoryIdsRef.current.has(String(memory.id))
+                      ));
+                      setMemoryFetchedCount(restoredMemories.length);
+                      setMemoryHasMore(restoredMemories.length === 50);
+                    } else {
+                      setMemories(bMems.filter(memory => !deletedMemoryIdsRef.current.has(String(memory.id))));
+                      setMemoryFetchedCount(bMems.length);
+                      setMemoryHasMore(false);
+                    }
+                  } else {
+                    setMemories(bMems.filter(memory => !deletedMemoryIdsRef.current.has(String(memory.id))));
+                    setMemoryFetchedCount(bMems.length);
+                    setMemoryHasMore(false);
+                  }
+                }
                 if (bFin.length > 0) setFinanceRecords(bFin);
               } catch (backupError) {
                 console.error('Backup restore failed:', backupError);
