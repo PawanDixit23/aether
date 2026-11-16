@@ -481,7 +481,7 @@ class TaskUpdate(BaseModel):
     due_date: Optional[datetime] = None
     reminder_time: Optional[str] = None
     recurrence: Optional[str] = None
-    dependency_task_ids: Optional[List[int]] = None
+    dependency_task_ids: Optional[List[int]] = Field(default=None, max_length=100)
     status: Optional[str] = None
     completion_comment: Optional[str] = None
     attachments: Optional[str] = None
