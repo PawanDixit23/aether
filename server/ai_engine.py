@@ -119,180 +119,169 @@ def find_city_in_text(text: str):
 
     return None
 
-# Cached Live Weather with timestamp — per-coordinate caching + global fallback
-# FIX: lat/lon pass होने पर भी cache use करो, 15 min TTL, 429 on backoff
-WEATHER_CACHE = {"data": None, "timestamp": 0}
-WEATHER_COORD_CACHE = {}   # key: "lat,lon" → {"data": ..., "timestamp": ...}
-WEATHER_BACKOFF_UNTIL = 0  # 429 मिलने पर इस timestamp तक API call बंद रहे
-
-WEATHER_CACHE_TTL = 15 * 60        # 15 minutes default TTL
-WEATHER_429_BACKOFF = 20 * 60      # 429 मिलने पर 20 min के लिए API calls रोको
+# Live weather: cache is strictly scoped to coordinates and never crosses users/locations.
+WEATHER_COORD_CACHE = {}
+WEATHER_CACHE_TTL = 10 * 60
+WEATHER_STALE_MAX_AGE = 6 * 60 * 60
 
 def get_live_weather_data(lat: float = None, lon: float = None, city_name: str = None) -> dict:
-    """Fetch live accurate weather from Open-Meteo with per-coordinate caching (15 min TTL).
-    
-    FIX: 429 rate-limit handled with:
-    1. Per-coordinate cache — same lat/lon पर repeat calls cache से serve होंगी
-    2. Global backoff — 429 मिलने पर 20 min के लिए API calls बंद
-    3. Stale cache fallback — network error / rate limit पर cached data return करो
-    """
-    global WEATHER_CACHE, WEATHER_COORD_CACHE, WEATHER_BACKOFF_UNTIL
     import time
     now_ts = time.time()
-
+    location_name = (city_name or "").strip()
     try:
-        use_lat = round(float(lat), 4) if lat is not None and str(lat).strip() else 26.85
+        use_lat = float(lat) if lat is not None and str(lat).strip() else None
+        use_lon = float(lon) if lon is not None and str(lon).strip() else None
     except (ValueError, TypeError):
-        use_lat = 26.85
+        use_lat = use_lon = None
+
+    if use_lat is None or use_lon is None:
+        geocoded = geocode_city(location_name) if location_name else None
+        if geocoded:
+            use_lat, use_lon = float(geocoded["lat"]), float(geocoded["lon"])
+            location_name = geocoded.get("name") or location_name
+        elif not location_name:
+            detected = get_user_location()
+            use_lat, use_lon = float(detected["lat"]), float(detected["lon"])
+            location_name = detected.get("city") or "Current location"
+
+    if use_lat is None or use_lon is None:
+        return {"status": "unavailable", "city": location_name or "Unknown location", "error": "Could not resolve the requested location"}
+    if not (-90 <= use_lat <= 90 and -180 <= use_lon <= 180):
+        return {"status": "unavailable", "city": location_name or "Unknown location", "error": "Invalid coordinates"}
+
+    coord_key = f"{use_lat:.4f},{use_lon:.4f}"
+    cached = WEATHER_COORD_CACHE.get(coord_key)
+    if cached and now_ts - cached["timestamp"] < WEATHER_CACHE_TTL:
+        return dict(cached["data"])
 
     try:
-        use_lon = round(float(lon), 4) if lon is not None and str(lon).strip() else 75.72
-    except (ValueError, TypeError):
-        use_lon = 75.72
-    coord_key = f"{use_lat},{use_lon}_{city_name or ''}"
+        params = urllib.parse.urlencode({
+            "latitude": use_lat,
+            "longitude": use_lon,
+            "current": "temperature_2m,apparent_temperature,relative_humidity_2m,is_day,precipitation,rain,showers,weather_code,wind_speed_10m,wind_direction_10m",
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset",
+            "forecast_days": 1,
+            "timezone": "auto"
+        })
+        req = urllib.request.Request(
+            f"https://api.open-meteo.com/v1/forecast?{params}",
+            headers={"User-Agent": "AetherAI/2.0"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Open-Meteo returned HTTP {resp.status}")
+            payload = json.loads(resp.read().decode("utf-8"))
 
-    # 1. Per-coordinate cache check (15 min TTL)
-    coord_entry = WEATHER_COORD_CACHE.get(coord_key)
-    if coord_entry and (now_ts - coord_entry["timestamp"] < WEATHER_CACHE_TTL):
-        return coord_entry["data"]
+        current = payload.get("current") or {}
+        daily = payload.get("daily") or {}
+        if current.get("temperature_2m") is None or current.get("weather_code") is None:
+            raise ValueError("Weather provider returned incomplete current conditions")
 
-    # 2. Global cache fallback (no lat — same as before, also 15 min)
-    if not lat and WEATHER_CACHE["data"] and (now_ts - WEATHER_CACHE["timestamp"] < WEATHER_CACHE_TTL):
-        return WEATHER_CACHE["data"]
+        code = int(current.get("weather_code", 0))
+        conditions = {
+            0: ("☀️", "Clear sky", "आसमान साफ़ है"),
+            1: ("🌤️", "Mainly clear", "मुख्यतः साफ़"),
+            2: ("⛅", "Partly cloudy", "आंशिक बादल"),
+            3: ("☁️", "Overcast", "बादल छाए हुए हैं"),
+            45: ("🌫️", "Fog", "कोहरा"),
+            48: ("🌫️", "Depositing rime fog", "घना कोहरा"),
+            51: ("🌦️", "Light drizzle", "हल्की बूंदाबांदी"),
+            53: ("🌦️", "Moderate drizzle", "मध्यम बूंदाबांदी"),
+            55: ("🌧️", "Dense drizzle", "तेज़ बूंदाबांदी"),
+            56: ("🌧️", "Freezing drizzle", "जमने वाली बूंदाबांदी"),
+            57: ("🌧️", "Heavy freezing drizzle", "भारी जमने वाली बूंदाबांदी"),
+            61: ("🌧️", "Slight rain", "हल्की बारिश"),
+            63: ("🌧️", "Moderate rain", "मध्यम बारिश"),
+            65: ("🌧️", "Heavy rain", "तेज़ बारिश"),
+            66: ("🌧️", "Freezing rain", "जमने वाली बारिश"),
+            67: ("🌧️", "Heavy freezing rain", "भारी जमने वाली बारिश"),
+            71: ("🌨️", "Slight snow", "हल्की बर्फ़बारी"),
+            73: ("🌨️", "Moderate snow", "मध्यम बर्फ़बारी"),
+            75: ("❄️", "Heavy snow", "भारी बर्फ़बारी"),
+            77: ("🌨️", "Snow grains", "बर्फ़ के कण"),
+            80: ("🌦️", "Slight rain showers", "हल्की बौछारें"),
+            81: ("🌧️", "Moderate rain showers", "मध्यम बौछारें"),
+            82: ("⛈️", "Violent rain showers", "तेज़ बारिश की बौछारें"),
+            85: ("🌨️", "Slight snow showers", "हल्की बर्फ़ीली बौछारें"),
+            86: ("❄️", "Heavy snow showers", "भारी बर्फ़ीली बौछारें"),
+            95: ("⛈️", "Thunderstorm", "गरज के साथ तूफ़ान"),
+            96: ("⛈️", "Thunderstorm with hail", "ओलों के साथ तूफ़ान"),
+            99: ("⛈️", "Severe thunderstorm with hail", "ओलों के साथ तेज़ तूफ़ान")
+        }
+        icon, condition_en, condition_hi = conditions.get(code, ("🌡️", "Conditions unavailable", "मौसम की स्थिति उपलब्ध नहीं"))
+        def first_daily(key):
+            values = daily.get(key) or []
+            return values[0] if values else None
 
-    # 3. 429 backoff check — rate limit मिला था तो अभी API call नहीं करेंगे
-    if now_ts < WEATHER_BACKOFF_UNTIL:
-        remaining = int(WEATHER_BACKOFF_UNTIL - now_ts)
-        print(f"[Aether Weather] ⏳ Rate-limit backoff active — {remaining}s remaining, serving stale cache")
-        # Stale cache से serve करो
-        if coord_entry and coord_entry.get("data"):
-            return coord_entry["data"]
-        if WEATHER_CACHE["data"]:
-            return WEATHER_CACHE["data"]
-
-    try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={use_lat}&longitude={use_lon}&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m"
-        req = urllib.request.Request(url, headers={'User-Agent': 'AetherAI/1.0'})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            # 429 check on response status
-            if resp.status == 429:
-                WEATHER_BACKOFF_UNTIL = now_ts + WEATHER_429_BACKOFF
-                print(f"[Aether Engine] ℹ️ Weather API rate-limited (429) — gracefully serving cached weather ({WEATHER_429_BACKOFF//60} min backoff)")
-                if coord_entry and coord_entry.get("data"):
-                    return coord_entry["data"]
-                if WEATHER_CACHE["data"]:
-                    return WEATHER_CACHE["data"]
-                raise Exception("HTTP Error 429: Too Many Requests")
-            data = json.loads(resp.read().decode())
-            current = data.get('current', {})
-            temp = round(current.get('temperature_2m', 31.4), 1)
-            code = current.get('weather_code', 0)
-            wind = round(current.get('wind_speed_10m', 4.0), 1)
-            humidity = f"{current.get('relative_humidity_2m', 35)}%"
-            
-            icon = "☀️"
-            condition_en = "Mostly Sunny & Clear"
-            condition_hi = "धूप खिली हुई और मौसम साफ़"
-
-            if code in [1, 2]:
-                icon = "🌤️"
-                condition_en = "Partly Cloudy"
-                condition_hi = "हल्के बादलों के साथ धूप"
-            elif code == 3:
-                icon = "☁️"
-                condition_en = "Cloudy"
-                condition_hi = "बादल छाए हुए हैं"
-            elif code >= 50:
-                icon = "🌧️"
-                condition_en = "Rain Showers"
-                condition_hi = "बारिश / बूंदाबांदी"
-
-            clean_city = (city_name or "").strip()
-            if not clean_city:
-                clean_city = "Jaipur"
-
-            result = {
-                "temp": temp,
-                "wind": f"{wind} km/h",
-                "humidity": humidity,
-                "icon": icon,
-                "condition_en": condition_en,
-                "condition_hi": condition_hi,
-                "city": clean_city,
-                "city_en": clean_city,
-                "city_hi": clean_city,
-                "city_hinglish": clean_city
-            }
-            # Per-coordinate cache save (Memory capped)
-            if len(WEATHER_COORD_CACHE) > 15:
-                WEATHER_COORD_CACHE.clear()
-            WEATHER_COORD_CACHE[coord_key] = {"data": result, "timestamp": now_ts}
-            # Global cache भी update (default location के लिए)
-            if not lat:
-                WEATHER_CACHE["data"] = result
-                WEATHER_CACHE["timestamp"] = now_ts
-            return result
-    except Exception as e:
-        err_str = str(e)
-        # 429 urllib error
-        if "429" in err_str or "Too Many Requests" in err_str:
-            WEATHER_BACKOFF_UNTIL = now_ts + WEATHER_429_BACKOFF
-            print(f"[Aether Engine] ℹ️ Weather API rate-limited (429) — gracefully serving cached weather ({WEATHER_429_BACKOFF//60} min backoff)")
-        else:
-            print(f"[Aether Engine] Live weather fetch error: {e}")
-        # Stale cache से serve करो (any age)
-        if coord_entry and coord_entry.get("data"):
-            return coord_entry["data"]
-        if WEATHER_CACHE["data"]:
-            return WEATHER_CACHE["data"]
-        import datetime
-        cur_hour = datetime.datetime.now().hour
-        dynamic_temp = 31.4 if 12 <= cur_hour <= 17 else (25.0 if cur_hour >= 20 or cur_hour <= 6 else 28.5)
-        fallback_city = (city_name or "").strip() or "Jaipur"
+        result = {
+            "status": "success",
+            "source": "Open-Meteo",
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+            "is_stale": False,
+            "temp": round(float(current["temperature_2m"]), 1),
+            "feels_like": round(float(current.get("apparent_temperature", current["temperature_2m"])), 1),
+            "wind": f'{round(float(current.get("wind_speed_10m", 0)), 1)} km/h',
+            "wind_direction": current.get("wind_direction_10m"),
+            "humidity": f'{int(current.get("relative_humidity_2m", 0))}%',
+            "precipitation_mm": round(float(current.get("precipitation", 0)), 1),
+            "rain_mm": round(float(current.get("rain", 0)), 1),
+            "showers_mm": round(float(current.get("showers", 0)), 1),
+            "precipitation_probability": first_daily("precipitation_probability_max"),
+            "today_high": first_daily("temperature_2m_max"),
+            "today_low": first_daily("temperature_2m_min"),
+            "sunrise": first_daily("sunrise"),
+            "sunset": first_daily("sunset"),
+            "icon": icon,
+            "condition_en": condition_en,
+            "condition_hi": condition_hi,
+            "city": location_name or f"{use_lat:.3f}, {use_lon:.3f}",
+            "city_en": location_name or f"{use_lat:.3f}, {use_lon:.3f}",
+            "city_hi": location_name or f"{use_lat:.3f}, {use_lon:.3f}",
+            "city_hinglish": location_name or f"{use_lat:.3f}, {use_lon:.3f}"
+        }
+        if len(WEATHER_COORD_CACHE) >= 64:
+            oldest = min(WEATHER_COORD_CACHE, key=lambda key: WEATHER_COORD_CACHE[key]["timestamp"])
+            WEATHER_COORD_CACHE.pop(oldest, None)
+        WEATHER_COORD_CACHE[coord_key] = {"data": result, "timestamp": now_ts}
+        return result
+    except Exception as exc:
+        if cached and now_ts - cached["timestamp"] <= WEATHER_STALE_MAX_AGE:
+            stale = dict(cached["data"])
+            stale["is_stale"] = True
+            stale["stale_reason"] = str(exc)[:180]
+            return stale
         return {
-            "temp": dynamic_temp,
-            "wind": "4.2 km/h",
-            "humidity": "36%",
-            "icon": "☀️",
-            "condition_en": "Sunny & Clear",
-            "condition_hi": "धूप खिली हुई",
-            "city": fallback_city,
-            "city_en": fallback_city,
-            "city_hi": fallback_city,
-            "city_hinglish": fallback_city
+            "status": "unavailable",
+            "source": "Open-Meteo",
+            "city": location_name or "Requested location",
+            "error": str(exc)[:180],
+            "is_stale": False
         }
 
 def fetch_live_weather(user_query: str = "", lat: float = None, lon: float = None, city_name: str = None) -> str:
-    """Fetch and format a proper, executive-grade weather report."""
+    """Return a current, location-specific weather report without inventing fallback values."""
     extracted = find_city_in_text(user_query) if user_query else None
     if extracted:
-        lat = extracted["lat"]
-        lon = extracted["lon"]
+        lat, lon = extracted["lat"], extracted["lon"]
         location_name = extracted["name"]
-    elif city_name:
-        location_name = city_name
     else:
-        loc = get_user_location()
-        lat = lat or loc["lat"]
-        lon = lon or loc["lon"]
-        location_name = loc.get("city", "Your Location")
+        location_name = city_name
+    weather = get_live_weather_data(lat, lon, city_name=location_name)
+    if weather.get("status") != "success":
+        return (
+            f"अभी {weather.get('city') or 'आपके स्थान'} का verified weather data उपलब्ध नहीं है। "
+            "कृपया कुछ देर बाद दोबारा प्रयास करें।"
+        )
+    stale_note = " (पिछला उपलब्ध अपडेट; live refresh असफल रहा)" if weather.get("is_stale") else ""
+    return f"""{weather.get('icon', '🌡️')} **Weather Report: {weather.get('city', location_name or 'Your location')}**{stale_note}
 
-    w = get_live_weather_data(lat, lon, city_name=location_name)
-    temp = w["temp"]
-    wind = w["wind"]
-    humidity = w.get("humidity", "35%")
-    icon = w["icon"]
-    condition_en = w["condition_en"]
-    condition_hi = w["condition_hi"]
-
-    return f"""{icon} **Weather Report for {location_name}:**
-
-• **Temperature (तापमान):** {temp}°C
-• **Condition (मौसम):** {condition_en} ({condition_hi})
-• **Wind Speed (हवा की गति):** {wind}
-• **Humidity (नमी):** {humidity}
-
-*Summary: Currently in {location_name}, it is {temp}°C with {condition_en.lower()}.*"""
+• **तापमान:** {weather['temp']}°C (महसूस: {weather.get('feels_like', weather['temp'])}°C)
+• **स्थिति:** {weather.get('condition_en')} ({weather.get('condition_hi')})
+• **आज का अधिकतम / न्यूनतम:** {weather.get('today_high', '—')}°C / {weather.get('today_low', '—')}°C
+• **हवा:** {weather.get('wind', '—')}
+• **नमी:** {weather.get('humidity', '—')}
+• **बारिश की संभावना:** {weather.get('precipitation_probability', '—')}%
+• **अपडेट:** {weather.get('updated_at', '—')}"""
 
 # ----------------- Dynamic City Explorer & Local Discovery Guide -----------------
 CITY_GUIDE_CACHE = {}
@@ -685,7 +674,7 @@ def fetch_live_news_items(query: str = "", limit: int = 5, lang: str = "en") -> 
             items = root.findall('.//item')[:limit]
             
             # Fallback to general headlines if specific search produced 0 items
-            if not items and clean_q:
+            if not items and clean_q and not is_sports and not is_match_or_result:
                 fb_url = f"https://news.google.com/rss?hl={hl}&gl={gl}&ceid={ceid}"
                 req_fb = urllib.request.Request(fb_url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req_fb, timeout=5) as resp_fb:
@@ -708,43 +697,50 @@ def fetch_live_news_items(query: str = "", limit: int = 5, lang: str = "en") -> 
         print(f"[Aether Engine] Live news RSS error: {e}")
         return ""
 
+NEWS_CACHE = {"all": {"data": [], "timestamp": 0}, "sports": {"data": [], "timestamp": 0}}
+NEWS_CACHE_TTL = 5 * 60
+NEWS_STALE_MAX_AGE = 30 * 60
+
 def get_structured_news(limit: int = 5, category: str = None) -> list:
-    """Fetch live top headlines as structured JSON objects for the Aether UI."""
+    """Fetch verified Google News RSS items; never replace a feed failure with invented headlines."""
+    import time
+    key = "sports" if category == "sports" else "all"
+    cache = NEWS_CACHE[key]
+    now_ts = time.time()
+    if cache["data"] and now_ts - cache["timestamp"] < NEWS_CACHE_TTL:
+        return cache["data"][:max(1, min(int(limit), 20))]
     try:
-        if category == 'sports':
-            url = 'https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-IN&gl=IN&ceid=IN:en'
+        if key == "sports":
+            url = "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-IN&gl=IN&ceid=IN:en"
         else:
-            url = 'https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en'
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+            url = "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; Aether/2.0)"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Google News returned HTTP {resp.status}")
             root = ET.fromstring(resp.read())
-            items = root.findall('.//item')[:limit]
-            results = []
-            for item in items:
-                raw_title = item.find('title').text.strip() if item.find('title') is not None else ""
-                link = item.find('link').text.strip() if item.find('link') is not None else ""
-                pubDate = item.find('pubDate').text.strip() if item.find('pubDate') is not None else ""
-                
-                source = "Google News"
-                clean_title = raw_title
-                if " - " in raw_title:
-                    parts = raw_title.rsplit(" - ", 1)
-                    clean_title = parts[0]
-                    source = parts[1]
-                
-                results.append({
-                    "title": clean_title,
-                    "source": source,
-                    "link": link,
-                    "pubDate": pubDate
-                })
+        results = []
+        for item in root.findall(".//item")[:max(1, min(int(limit), 20))]:
+            raw_title = item.find("title").text.strip() if item.find("title") is not None and item.find("title").text else ""
+            link = item.find("link").text.strip() if item.find("link") is not None and item.find("link").text else ""
+            pub_date = item.find("pubDate").text.strip() if item.find("pubDate") is not None and item.find("pubDate").text else ""
+            if not raw_title or not link:
+                continue
+            source = "Google News"
+            clean_title = raw_title
+            if " - " in raw_title:
+                clean_title, source = [part.strip() for part in raw_title.rsplit(" - ", 1)]
+            results.append({"title": clean_title, "source": source, "link": link, "pubDate": pub_date})
+        if results:
+            cache["data"] = results
+            cache["timestamp"] = now_ts
             return results
-    except Exception as e:
-        print(f"[Aether Engine] Structured news error: {e}")
-        return [
-            {"title": "देश और दुनिया की महत्वपूर्ण राष्ट्रीय व अंतर्राष्ट्रीय खबरें", "source": "लाइव फीड", "link": "https://news.google.com", "pubDate": "ताज़ा अपडेट"},
-            {"title": "तकनीक, AI, कारोबार और शेयर बाजार के मुख्य समाचार", "source": "मार्केट वॉच", "link": "https://news.google.com", "pubDate": "ताज़ा अपडेट"}
-        ]
+        raise RuntimeError("Google News RSS returned no usable articles")
+    except Exception as exc:
+        print(f"[Aether Engine] Structured news error: {exc}")
+        if cache["data"] and now_ts - cache["timestamp"] <= NEWS_STALE_MAX_AGE:
+            return cache["data"][:max(1, min(int(limit), 20))]
+        return []
 
 # In-memory cache for live cricket scorecards (15s TTL to prevent rate limits)
 _cricket_cache = {
@@ -898,7 +894,7 @@ def fetch_cricinfo_live_matches(force: bool = False) -> list:
             return _cricket_cache["data"]
         elif age < 120.0:
             _trigger_async_live_cricket()
-            return _cricket_cache["data"]
+            return [{**match, "is_stale": True, "stale_age_seconds": int(age)} for match in _cricket_cache["data"]]
 
     matches = []
     
@@ -908,7 +904,7 @@ def fetch_cricinfo_live_matches(force: bool = False) -> list:
             'https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket',
             headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         )
-        with urllib.request.urlopen(req, timeout=2.5) as resp:
+        with urllib.request.urlopen(req, timeout=7.5) as resp:
             data = json.loads(resp.read().decode('utf-8'))
         
         sports = data.get('sports', [])
@@ -1026,125 +1022,17 @@ def fetch_cricinfo_live_matches(force: bool = False) -> list:
         _cricket_cache["timestamp"] = now_ts
         return matches
 
-    if _cricket_cache["data"]:
-        return _cricket_cache["data"]
-
-    # 3. Robust Baseline Fallback when Cricinfo network is temporarily offline or unreachable
-    fallback_defaults = [
-        {
-            'id': '1447477',
-            'league_id': '8768',
-            'name': 'New Zealand A v India A',
-            'series': 'India A tour of New Zealand 2026/27',
-            'description': '1st unofficial Test • Day 2',
-            'venue': 'Hagley Oval, Christchurch',
-            'is_international': True,
-            'status': 'in',
-            'status_text': 'New Zealand A trail by 158 runs with 7 wickets remaining in the 1st innings',
-            'date': datetime.now().isoformat(),
-            'ist_time': '3:30 AM IST',
-            'streaming': {
-                'platform': 'Sony LIV / Sony Sports Ten',
-                'channel': 'Sony Sports Ten 1 / 5',
-                'ott': 'Sony LIV App',
-                'badge': 'Sony LIV'
-            },
-            'cricinfo_url': 'https://www.espncricinfo.com/series/india-a-tour-of-new-zealand-2026-27-1447475/new-zealand-a-vs-india-a-1st-unofficial-test-1447477/live-cricket-score',
-            'toss': 'New Zealand A , elected to field first',
-            'session': 'Day 2 Session 3',
-            'day_number': 'Day 2',
-            'highlights': ['India A 1st Innings: 346 all out', 'New Zealand A 1st Innings: 188/3 (52 ov)'],
-            'team1': {
-                'name': 'New Zealand A',
-                'short_name': 'NZ-A',
-                'score': '188/3 (52 ov)',
-                'logo': 'https://a.espncdn.com/combiner/i?img=/i/teamlogos/cricket/500/5.png',
-                'is_winner': False
-            },
-            'team2': {
-                'name': 'India A',
-                'short_name': 'IND-A',
-                'score': '346',
-                'logo': 'https://a.espncdn.com/combiner/i?img=/i/teamlogos/cricket/500/6.png',
-                'is_winner': False
-            }
-        },
-        {
-            'id': '1448834',
-            'league_id': '8840',
-            'name': 'Bangladesh v India',
-            'series': 'Hong Kong International Cricket Sixes',
-            'description': 'Bowl Match • Hong Kong Sixes',
-            'venue': 'Mission Road Ground, Mong Kok, Hong Kong',
-            'is_international': True,
-            'status': 'post',
-            'status_text': 'India won by 5 wickets (with 0 balls remaining)',
-            'date': datetime.now().isoformat(),
-            'ist_time': '7:10 AM IST',
-            'streaming': {
-                'platform': 'FanCode / Star Sports',
-                'channel': 'Star Sports Network',
-                'ott': 'FanCode App & Web',
-                'badge': 'FanCode'
-            },
-            'cricinfo_url': 'https://www.espncricinfo.com/series/hong-kong-sixes-2024-25-1448820/bangladesh-vs-india-bowl-match-1448834/live-cricket-score',
-            'toss': 'India , elected to field first',
-            'highlights': ['Bangladesh 116 (6 ov)', 'India 117/1 (6 ov, target 117)'],
-            'team1': {
-                'name': 'Bangladesh',
-                'short_name': 'BAN',
-                'score': '116',
-                'logo': 'https://a.espncdn.com/combiner/i?img=/i/teamlogos/cricket/500/25.png',
-                'is_winner': False
-            },
-            'team2': {
-                'name': 'India',
-                'short_name': 'IND',
-                'score': '117/1 (6 ov, target 117)',
-                'logo': 'https://a.espncdn.com/combiner/i?img=/i/teamlogos/cricket/500/6.png',
-                'is_winner': True
-            }
-        },
-        {
-            'id': '1449012',
-            'league_id': '8768',
-            'name': 'New Zealand v India',
-            'series': 'India tour of New Zealand 2026/27',
-            'description': '1st ODI • Bay Oval, Mount Maunganui',
-            'venue': 'Bay Oval, Mount Maunganui',
-            'is_international': True,
-            'status': 'pre',
-            'status_text': 'Match scheduled to begin at 14:00 local time (06:30 AM IST)',
-            'date': datetime.now().isoformat(),
-            'ist_time': '6:30 AM IST',
-            'streaming': {
-                'platform': 'Sony LIV / Sony Sports Ten',
-                'channel': 'Sony Sports Ten 1 HD',
-                'ott': 'Sony LIV App',
-                'badge': 'Sony LIV'
-            },
-            'cricinfo_url': 'https://www.espncricinfo.com',
-            'toss': 'Toss scheduled before match',
-            'highlights': ['International ODI fixture'],
-            'team1': {
-                'name': 'New Zealand',
-                'short_name': 'NZ',
-                'score': 'Yet to bat',
-                'logo': 'https://a.espncdn.com/combiner/i?img=/i/teamlogos/cricket/500/5.png',
-                'is_winner': False
-            },
-            'team2': {
-                'name': 'India',
-                'short_name': 'IND',
-                'score': 'Yet to bat',
-                'logo': 'https://a.espncdn.com/combiner/i?img=/i/teamlogos/cricket/500/6.png',
-                'is_winner': False
-            }
-        }
-    ]
-    _cricket_cache["data"] = fallback_defaults
-    _cricket_cache["timestamp"] = now_ts
-    return fallback_defaults
+    # Never fabricate a live fixture or score. Serve a clearly marked recent cache only.
+    cached_age = now_ts - _cricket_cache["timestamp"] if _cricket_cache["timestamp"] else float("inf")
+    if _cricket_cache["data"] and cached_age <= 300:
+        stale_matches = []
+        for match in _cricket_cache["data"]:
+            stale_match = dict(match)
+            stale_match["is_stale"] = True
+            stale_match["stale_age_seconds"] = int(cached_age)
+            stale_matches.append(stale_match)
+        return stale_matches
+    return []
 
 _scorecard_cache = {}
 _match_league_map = {}
@@ -1161,7 +1049,10 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
             return cached_result
         elif age < 120.0:
             _trigger_async_scorecard(match_id, known_lid)
-            return cached_result
+            stale_result = dict(cached_result)
+            stale_result["is_stale"] = True
+            stale_result["status"] = "stale"
+            return stale_result
     if known_lid:
         league_candidates = [known_lid]
     else:
@@ -1172,9 +1063,9 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
         url = f'https://site.api.espn.com/apis/site/v2/sports/cricket/{lid}/summary?event={match_id}'
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-            with urllib.request.urlopen(req, timeout=2.0) as resp:
+            with urllib.request.urlopen(req, timeout=4.0) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
-                if 'matchcards' in data or 'rosters' in data or 'notes' in data:
+                if data.get('matchcards') or data.get('rosters'):
                     matchcards = data.get('matchcards', [])
                     notes = [n.get('text') for n in data.get('notes', []) if n.get('text')]
                     raw_rosters = data.get('rosters', [])
@@ -1358,125 +1249,25 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
         except Exception:
             continue
 
-    # 2. Rich fallback scorecards when Cricinfo API is unreachable
-    fallback_nza_cards = [
-        {
-            'typeID': '11',
-            'headline': 'Batting',
-            'inningsNumber': '1',
-            'teamName': 'India A',
-            'runs': '346',
-            'total': '(102.4 ov)',
-            'extras': '5 (b 1, lb 2, w 1, nb 1)',
-            'playerDetails': [
-                {'playerName': 'Abhimanyu Easwaran (c)', 'dismissal': 'c Hay b Clarke', 'runs': '24', 'ballsFaced': '45', 'fours': '3', 'sixes': '0', 'strikeRate': '53.33'},
-                {'playerName': 'Ruturaj Gaikwad', 'dismissal': 'c Mariu b Randell', 'runs': '48', 'ballsFaced': '72', 'fours': '6', 'sixes': '1', 'strikeRate': '66.67'},
-                {'playerName': 'Devdutt Padikkal', 'dismissal': 'c Hay b Sheat', 'runs': '88', 'ballsFaced': '144', 'fours': '10', 'sixes': '0', 'strikeRate': '61.11'},
-                {'playerName': 'Shreyas Iyer', 'dismissal': 'c Robinson b Foxcroft', 'runs': '42', 'ballsFaced': '68', 'fours': '4', 'sixes': '1', 'strikeRate': '61.76'},
-                {'playerName': 'Dhruv Jurel (wk)', 'dismissal': 'c Heaphy b Sheat', 'runs': '65', 'ballsFaced': '112', 'fours': '7', 'sixes': '0', 'strikeRate': '58.04'},
-                {'playerName': 'Nitish Kumar Reddy', 'dismissal': 'c Hay b Randell', 'runs': '21', 'ballsFaced': '38', 'fours': '2', 'sixes': '0', 'strikeRate': '55.26'},
-                {'playerName': 'Tanush Kotian', 'dismissal': 'c Foxcroft b Clarke', 'runs': '28', 'ballsFaced': '52', 'fours': '3', 'sixes': '0', 'strikeRate': '53.85'},
-                {'playerName': 'Mohammed Siraj', 'dismissal': 'c Heaphy b Sheat', 'runs': '12', 'ballsFaced': '22', 'fours': '1', 'sixes': '0', 'strikeRate': '54.55'},
-                {'playerName': 'Mukesh Kumar', 'dismissal': 'not out', 'runs': '8', 'ballsFaced': '18', 'fours': '1', 'sixes': '0', 'strikeRate': '44.44'},
-                {'playerName': 'Navdeep Saini', 'dismissal': 'c Hay b Randell', 'runs': '4', 'ballsFaced': '11', 'fours': '0', 'sixes': '0', 'strikeRate': '36.36'},
-                {'playerName': 'Khaleel Ahmed', 'dismissal': 'c Mariu b Sheat', 'runs': '1', 'ballsFaced': '6', 'fours': '0', 'sixes': '0', 'strikeRate': '16.67'}
-            ]
-        },
-        {
-            'typeID': '12',
-            'headline': 'Bowling',
-            'inningsNumber': '1',
-            'teamName': 'New Zealand A',
-            'playerDetails': [
-                {'playerName': 'Brett Randell', 'overs': '24.0', 'maidens': '5', 'conceded': '74', 'wickets': '3', 'economyRate': '3.08'},
-                {'playerName': 'Fraser Sheat', 'overs': '22.4', 'maidens': '4', 'conceded': '68', 'wickets': '4', 'economyRate': '3.00'},
-                {'playerName': 'Kristian Clarke', 'overs': '20.0', 'maidens': '3', 'conceded': '62', 'wickets': '2', 'economyRate': '3.10'},
-                {'playerName': 'Dean Foxcroft', 'overs': '18.0', 'maidens': '2', 'conceded': '58', 'wickets': '1', 'economyRate': '3.22'},
-                {'playerName': 'Jayden Lennox', 'overs': '18.0', 'maidens': '3', 'conceded': '72', 'wickets': '0', 'economyRate': '4.00'}
-            ]
-        },
-        {
-            'typeID': '11',
-            'headline': 'Batting',
-            'inningsNumber': '2',
-            'teamName': 'New Zealand A',
-            'runs': '218/3',
-            'total': '(62.0 ov)',
-            'extras': '20 (b 9, lb 8, w 0, nb 3, p 0)',
-            'playerDetails': [
-                {'playerName': 'Rhys Mariu (c)', 'dismissal': 'c Dhruv Jurel b Mohammed Siraj', 'runs': '4', 'ballsFaced': '17', 'fours': '1', 'sixes': '0', 'strikeRate': '23.53'},
-                {'playerName': 'Curtis Heaphy', 'dismissal': 'c Yashasvi Jaiswal b Mukesh Kumar', 'runs': '4', 'ballsFaced': '21', 'fours': '1', 'sixes': '0', 'strikeRate': '19.05'},
-                {'playerName': 'Tim Robinson', 'dismissal': 'lbw b Mukesh Kumar', 'runs': '3', 'ballsFaced': '9', 'fours': '0', 'sixes': '0', 'strikeRate': '33.33'},
-                {'playerName': 'Matthew Boyle', 'dismissal': 'batting', 'runs': '107', 'ballsFaced': '148', 'fours': '14', 'sixes': '1', 'strikeRate': '72.30', 'onStrike': True},
-                {'playerName': 'Dean Foxcroft', 'dismissal': 'batting', 'runs': '80', 'ballsFaced': '180', 'fours': '9', 'sixes': '0', 'strikeRate': '44.44', 'onStrike': False}
-            ]
-        },
-        {
-            'typeID': '12',
-            'headline': 'Bowling',
-            'inningsNumber': '2',
-            'teamName': 'India A',
-            'playerDetails': [
-                {'playerName': 'Mohammed Siraj', 'overs': '14.0', 'maidens': '3', 'conceded': '48', 'wickets': '1', 'economyRate': '3.42'},
-                {'playerName': 'Mukesh Kumar', 'overs': '16.0', 'maidens': '4', 'conceded': '52', 'wickets': '2', 'economyRate': '3.25'},
-                {'playerName': 'Navdeep Saini', 'overs': '12.0', 'maidens': '2', 'conceded': '44', 'wickets': '0', 'economyRate': '3.66'},
-                {'playerName': 'Khaleel Ahmed', 'overs': '10.0', 'maidens': '1', 'conceded': '38', 'wickets': '0', 'economyRate': '3.80'},
-                {'playerName': 'Tanush Kotian', 'overs': '10.0', 'maidens': '2', 'conceded': '28', 'wickets': '0', 'economyRate': '2.80'}
-            ]
-        }
-    ]
-    fallback_res = {
-        'status': 'success',
-        'match_id': match_id,
-        'league_id': league_id or '8768',
-        'matchcards': fallback_nza_cards,
-        'notes': [
-            'Day 2: Stumps - New Zealand A trail by 128 runs with 7 wickets remaining in the 1st innings',
-            'Toss: New Zealand A, elected to field first',
-            'Venue: Hagley Oval, Christchurch'
-        ],
-        'rosters': [
-            {
-                'team': 'India A',
-                'logo': 'https://a.espncdn.com/combiner/i?img=/i/teamlogos/cricket/500/6.png',
-                'players': [
-                    {'name': 'Abhimanyu Easwaran (c)', 'position': 'Opening Batter'},
-                    {'name': 'Ruturaj Gaikwad', 'position': 'Batter'},
-                    {'name': 'Devdutt Padikkal', 'position': 'Top-order Batter'},
-                    {'name': 'Shreyas Iyer', 'position': 'Middle-order Batter'},
-                    {'name': 'Dhruv Jurel (wk)', 'position': 'Wicketkeeper'},
-                    {'name': 'Nitish Kumar Reddy', 'position': 'All-rounder'},
-                    {'name': 'Tanush Kotian', 'position': 'All-rounder'},
-                    {'name': 'Mohammed Siraj', 'position': 'Fast Bowler'},
-                    {'name': 'Mukesh Kumar', 'position': 'Fast Bowler'},
-                    {'name': 'Navdeep Saini', 'position': 'Fast Bowler'},
-                    {'name': 'Khaleel Ahmed', 'position': 'Fast Bowler'}
-                ]
-            },
-            {
-                'team': 'New Zealand A',
-                'logo': 'https://a.espncdn.com/combiner/i?img=/i/teamlogos/cricket/500/5.png',
-                'players': [
-                    {'name': 'Rhys Mariu (c)', 'position': 'Opening Batter'},
-                    {'name': 'Curtis Heaphy', 'position': 'Opening Batter'},
-                    {'name': 'Tim Robinson', 'position': 'Top-order Batter'},
-                    {'name': 'Matthew Boyle', 'position': 'Middle-order Batter'},
-                    {'name': 'Dean Foxcroft', 'position': 'All-rounder'},
-                    {'name': 'Mitchell Hay (wk)', 'position': 'Wicketkeeper'},
-                    {'name': 'Kristian Clarke', 'position': 'Fast Bowler'},
-                    {'name': 'Brett Randell', 'position': 'Fast Bowler'},
-                    {'name': 'Fraser Sheat', 'position': 'Fast Bowler'},
-                    {'name': 'Jayden Lennox', 'position': 'Spin Bowler'},
-                    {'name': 'Jarrod McKay', 'position': 'Fast Bowler'}
-                ]
-            }
-        ],
-        'game_info': {'venue': 'Hagley Oval, Christchurch', 'series': 'India A tour of New Zealand 2026/27'}
+    # No fabricated batting/bowling tables: report provider unavailability honestly.
+    cached = _scorecard_cache.get(match_id)
+    if cached and now_ts - cached[0] <= 300:
+        stale_result = dict(cached[1])
+        stale_result["is_stale"] = True
+        stale_result["status"] = "stale"
+        return stale_result
+    return {
+        "status": "unavailable",
+        "match_id": match_id,
+        "league_id": known_lid,
+        "matchcards": [],
+        "notes": [],
+        "rosters": [],
+        "game_info": {},
+        "situation": {},
+        "error": "Live scorecard is temporarily unavailable from the data provider."
     }
-    if len(_scorecard_cache) > 8:
-        _scorecard_cache.clear()
-    _scorecard_cache[match_id] = (now_ts, fallback_res)
-    return fallback_res
+
 
 def parse_reminder_time(text: str) -> tuple:
     """

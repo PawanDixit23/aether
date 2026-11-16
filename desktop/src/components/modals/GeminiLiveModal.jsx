@@ -41,6 +41,7 @@ export default function GeminiLiveModal({
   isOpen,
   onClose,
   apiBase,
+  apiFetch: authenticatedApiFetch,
   userEmail,
   selectedVoice = 'Kavya',
   selectedLang = 'hi',
@@ -430,10 +431,10 @@ export default function GeminiLiveModal({
       try { recognitionRef.current.abort(); } catch (e) {}
     }
 
+    let liveTimeoutId = null;
     try {
       const cleanBase = (apiBase || '').replace(/\/+$/, '');
       const chatEndpoint = cleanBase.endsWith('/api') ? `${cleanBase}/chat` : (cleanBase ? `${cleanBase}/api/chat` : '/api/chat');
-      const fallbackEndpoint = cleanBase.endsWith('/api') ? `${cleanBase}/action/quick-capture` : (cleanBase ? `${cleanBase}/api/action/quick-capture` : '/api/action/quick-capture');
 
       // Automatic Language Detection (Hindi, English, or Hinglish based on user's query)
       const isDevanagari = /[\u0900-\u097F]/.test(cleanPrompt);
@@ -442,7 +443,7 @@ export default function GeminiLiveModal({
 
       let data = null;
       const liveAbortController = new AbortController();
-      const liveTimeoutId = setTimeout(() => {
+      liveTimeoutId = setTimeout(() => {
         try { liveAbortController.abort('timeout'); } catch (e) {}
       }, 180000); // 3-minute (180s) watchdog
 
@@ -463,7 +464,8 @@ export default function GeminiLiveModal({
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
         };
 
-        const resp = await fetch(chatEndpoint, {
+        if (typeof authenticatedApiFetch !== 'function') throw new Error('Authenticated API client is unavailable. Please sign in again.');
+        const resp = await authenticatedApiFetch(chatEndpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -472,40 +474,18 @@ export default function GeminiLiveModal({
           body: JSON.stringify(livePayload),
           signal: liveAbortController.signal
         });
-        if (resp.ok) {
-          data = await resp.json();
+        if (!resp.ok) {
+          let detail = `AI request failed (${resp.status})`;
+          try { const body = await resp.json(); detail = body.detail || body.message || detail; } catch (e) {}
+          throw new Error(detail);
         }
+        data = await resp.json();
       } catch (e) {
-        console.warn('Live chat primary endpoint error, trying fallback', e);
+        throw e;
       }
 
-      if (!data && !liveAbortController.signal.aborted) {
-        try {
-          const respFallback = await fetch(fallbackEndpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(userEmail ? { 'X-User-Email': userEmail } : {})
-            },
-            body: JSON.stringify({
-              input_text: cleanPrompt,
-              user_email: userEmail,
-              language: autoLang,
-              api_key: (localStorage.getItem('aether_gemini_key') || '').trim(),
-              openai_key: (localStorage.getItem('aether_openai_key') || '').trim(),
-              grok_key: (localStorage.getItem('aether_grok_key') || '').trim(),
-              active_provider: localStorage.getItem('aether_active_provider') || 'gemini',
-              user_name: localStorage.getItem('aether_user_name') || 'Pawan'
-            }),
-            signal: liveAbortController.signal
-          });
-          if (respFallback.ok) {
-            data = await respFallback.json();
-          }
-        } catch (e) {
-          console.warn('Live chat fallback endpoint error', e);
-        }
-      }
+      if (!data) throw new Error('AI provider returned an empty response.');
+
       clearTimeout(liveTimeoutId);
 
       if (!isSessionActiveRef.current) {
@@ -514,11 +494,8 @@ export default function GeminiLiveModal({
       }
 
       let aiText = data?.response || data?.message || data?.content;
-      if (!aiText || aiText.trim() === 'समझ गया।' || aiText.trim() === 'समझ गया') {
-        const isHi = autoLang === 'hi' || /[\u0900-\u097F]/.test(cleanPrompt) || /\b(bhai|kya|kaise|sun|idhar|suno|karo|batao)\b/i.test(cleanPrompt);
-        aiText = isHi
-          ? 'हाँ जी भाई, मैं सुन रहा हूँ। बताइए मैं क्या मदद करूँ?'
-          : (autoLang === 'hinglish' ? 'Haan, main sun raha hoon. Bataiye kya madad kar sakta hoon?' : 'Yes, I can hear you clearly. How can I help?');
+      if (!aiText || !aiText.trim() || ['समझ गया।', 'समझ गया'].includes(aiText.trim())) {
+        throw new Error('AI provider ने कोई उपयोगी उत्तर नहीं दिया। Provider settings और API key जाँचें, फिर दोबारा प्रयास करें।');
       }
       setAiResponse(aiText);
       startCuratedStreamingText(aiText);
@@ -565,9 +542,10 @@ export default function GeminiLiveModal({
       speakLiveResponse(aiText);
     } catch (err) {
       console.error('[Gemini Live Dispatch Error]', err);
+      try { clearTimeout(liveTimeoutId); } catch (e) {}
       isDispatchingRef.current = false;
       latestSpokenRef.current = '';
-      const fallbackText = "नमस्ते! मैं सुन रहा हूँ, कृपया दोबारा बोलें।";
+      const fallbackText = err?.message || "अभी AI से उत्तर प्राप्त नहीं हो पाया। कृपया कनेक्शन और login जाँचकर दोबारा प्रयास करें।";
       setAiResponse(fallbackText);
       startCuratedStreamingText(fallbackText);
       speakLiveResponse(fallbackText);

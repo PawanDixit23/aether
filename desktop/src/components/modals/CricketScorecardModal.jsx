@@ -99,7 +99,9 @@ export function CricketScorecardModal({
       const res = await fetch(`${effectiveApiBase}/cricket/live${isForce ? '?force=true' : ''}`);
       if (res.ok) {
         const data = await res.json();
-        if (data && data.matches && data.matches.length > 0) {
+        if (data && Array.isArray(data.matches)) {
+          // An empty verified feed means there are no matches available right now;
+          // do not keep displaying an old list indefinitely.
           setInternalMatches(data.matches);
         }
       }
@@ -819,10 +821,12 @@ export function CricketScorecardModal({
                     }}>
                       <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>🏏</div>
                       <div style={{ fontSize: '0.96rem', fontWeight: 700, color: '#f8fafc' }}>
-                        Scorecard is being updated
+                        {detailData?.status === 'unavailable' ? 'Live scorecard temporarily unavailable' : 'Scorecard is being updated'}
                       </div>
                       <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '4px' }}>
-                        {selectedMatch.status_text || 'Ball-by-ball commentary and full scorecard will update live as the match progresses.'}
+                        {detailData?.status === 'unavailable'
+                          ? (detailData.error || 'The live data provider did not return a verified scorecard. Please refresh shortly.')
+                          : (detailData?.is_stale ? 'Showing the last available scorecard while the provider refreshes.' : (selectedMatch.status_text || 'Ball-by-ball commentary and full scorecard will update live as the match progresses.'))}
                       </div>
                     </div>
                   )}

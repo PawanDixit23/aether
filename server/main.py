@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_, false
+from sqlalchemy import func, or_, and_, false, case
 from resource_limits import AI_CONTEXT_CHAT_LIMIT, AI_CONTEXT_FINANCE_LIMIT, AI_CONTEXT_MEMORY_LIMIT, AI_CONTEXT_TASK_LIMIT, bounded_page, WRITE_BATCH_SIZE
 from sqlalchemy.exc import IntegrityError
 import httpx
@@ -438,6 +438,7 @@ class KeyValidationRequest(BaseModel):
 
 class QuickCaptureRequest(BaseModel):
     input_text: str = ""
+    live_voice: Optional[bool] = False
     image_data: Optional[str] = None
     images: Optional[list] = None
     user_email: Optional[str] = None
@@ -1452,14 +1453,16 @@ async def _execute_quick_capture(
             if lang == "hi"
             else f"Hello {req.user_name or 'Pawan'}! Systems operational. What work or tasks can I handle for you right now?"
         )
-        result_message = data.get("response", fallback_greeting)
+        result_message = (data.get("response") or "").strip()
+        if not result_message and not req.live_voice:
+            result_message = fallback_greeting
         if isinstance(result_message, str) and (result_message.strip().startswith('{') or '"action":' in result_message):
             clean_res = re.sub(r'\{|\}|"action"\s*:\s*"[^"]*",?|"data"\s*:\s*\{?|"confidence(?:_level)?"\s*:\s*(?:"[^"]*"|[\d.]+),?|"response"\s*:\s*"?|"explanation"\s*:\s*"?', '', result_message)
             clean_res = re.sub(r'^[\s,"]+|[\s,"]+$', '', clean_res).strip()
             if clean_res and len(clean_res) > 3:
                 result_message = clean_res
             else:
-                result_message = fallback_greeting
+                result_message = "" if req.live_voice else fallback_greeting
             data["response"] = result_message
         executed = True
         
@@ -1925,17 +1928,21 @@ async def _execute_quick_capture(
             if (lang == "hi" or lang == "auto")
             else f"Hello {req.user_name or 'Pawan'}! I am listening. How can I assist you right now?"
         )
-        result_message = data.get("response") or data.get("explanation") or data.get("message") or fallback_greeting
+        result_message = data.get("response") or data.get("explanation") or data.get("message") or ("" if req.live_voice else fallback_greeting)
         data["response"] = result_message
         executed = True
 
     if not result_message or not result_message.strip():
-        fallback_greeting = (
-            f"नमस्ते {req.user_name or 'साथी'}! मैं सुन रहा हूँ। बताइए, मैं आपकी क्या सहायता करूँ?"
-            if (lang == "hi" or lang == "auto")
-            else f"Hello {req.user_name or 'Pawan'}! I am listening. How can I assist you right now?"
-        )
-        result_message = data.get("response") or data.get("explanation") or fallback_greeting
+        if req.live_voice:
+            # Live Talk must never disguise a provider failure as a conversational answer.
+            result_message = ""
+        else:
+            fallback_greeting = (
+                f"नमस्ते {req.user_name or 'साथी'}! मैं सुन रहा हूँ। बताइए, मैं आपकी क्या सहायता करूँ?"
+                if (lang == "hi" or lang == "auto")
+                else f"Hello {req.user_name or 'Pawan'}! I am listening. How can I assist you right now?"
+            )
+            result_message = data.get("response") or data.get("explanation") or fallback_greeting
         data["response"] = result_message
 
     # Record AI Response in Chat History (resilient to schema constraints, skip for temporary chats)
@@ -2042,24 +2049,16 @@ async def direct_chat_endpoint(
         timezone=req.timezone,
         latitude=req.latitude,
         longitude=req.longitude,
-        city=req.city
+        city=req.city,
+        live_voice=True
     )
     result = await _execute_quick_capture(qc_req, current_user, db)
     
     reply = result.get("message") or ""
     if not reply and result.get("parsed"):
         reply = result.get("parsed", {}).get("data", {}).get("response", "")
-    if not reply or reply.strip() == "समझ गया।":
-        # Provide natural, polite conversational answers instead of one-word robotic acknowledgments
-        user_l = text.lower()
-        is_hi = any('\u0900' <= ch <= '\u097f' for ch in text) or any(w in user_l for w in ["kya", "bhai", "kaise", "suno", "sun", "idhar", "batao", "namaste", "yaar"])
-        is_en = any(w in user_l for w in ["listen", "hearing", "how", "what", "hello", "hi", "there", "you"])
-        if is_hi:
-            reply = "हाँ जी भाई, मैं आपकी बात ध्यान से सुन रहा हूँ। बताइए मैं क्या मदद करूँ?"
-        elif is_en:
-            reply = "Yes, I am listening to you clearly. How can I help you right now?"
-        else:
-            reply = "हाँ, मैं सुन रहा हूँ। कृपया बताइए अभी आपके किस काम में मदद करूँ?"
+    if not reply or reply.strip() in {"समझ गया।", "समझ गया"}:
+        raise HTTPException(status_code=502, detail="AI provider returned no substantive answer. Check provider credentials and retry.")
         
     return {
         "status": "ok",
@@ -2520,7 +2519,6 @@ def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = Non
         today_start = datetime.combine(today, datetime.min.time())
         batch = db.query(Task).filter(
             Task.recurrence != None,
-            Task.status != "completed",
             Task.owner_user_id == str(owner_user_id).strip(),
             or_(Task.due_date == None, Task.due_date < today_start)
         ).order_by(Task.id.asc()).limit(100).all()
@@ -2528,9 +2526,8 @@ def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = Non
             return
 
         for task in batch:
-            if task.status == "completed":
-                task.notified = True
-                continue
+            # A recurring master can be marked completed for yesterday/today only.
+            # Once its due date rolls over, always reopen the series for the new occurrence.
             title_lower = (task.title or "").lower()
             if any(word in title_lower for word in ["challan", "fine", "ticket", "one-time"]):
                 task.recurrence = None
@@ -2538,6 +2535,8 @@ def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = Non
                 continue
             if not task.due_date:
                 task.due_date = today_start
+                task.status = "pending"
+                task.notified = False
                 continue
             due_dt = task.due_date
             if isinstance(due_dt, str):
@@ -2661,7 +2660,7 @@ def list_tasks(
         query = query.filter(Task.status == status)
 
     page_rows = (
-        query.order_by(Task.created_at.desc(), Task.id.desc())
+        query.order_by(case((and_(Task.recurrence.isnot(None), Task.recurrence != "", Task.recurrence != "none"), 0), else_=1), Task.created_at.desc(), Task.id.desc())
         .offset(safe_offset).limit(safe_limit + 1).all()
     )
     has_more = len(page_rows) > safe_limit
@@ -3892,6 +3891,7 @@ async def draft_email_reply_endpoint(
 def list_memory(
     limit: int = 50,
     offset: int = 0,
+    before_id: Optional[int] = None,
     response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
@@ -3905,17 +3905,18 @@ def list_memory(
         safe_limit, safe_offset = bounded_page(limit, offset)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    rows = (
-        db.query(MemoryItem)
-        .filter(tenant_filter(MemoryItem, current_user))
-        .order_by(MemoryItem.created_at.desc(), MemoryItem.id.desc())
-        .offset(safe_offset).limit(safe_limit + 1).all()
-    )
+    memory_query = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user))
+    if before_id is not None:
+        memory_query = memory_query.filter(MemoryItem.id < before_id)
+        rows = memory_query.order_by(MemoryItem.id.desc()).limit(safe_limit + 1).all()
+    else:
+        rows = memory_query.order_by(MemoryItem.id.desc()).offset(safe_offset).limit(safe_limit + 1).all()
     has_more = len(rows) > safe_limit
     rows = rows[:safe_limit]
     if response is not None:
         response.headers["X-Has-More"] = "true" if has_more else "false"
         response.headers["X-Next-Offset"] = str(safe_offset + len(rows))
+        response.headers["X-Next-Cursor"] = str(rows[-1].id) if rows else ""
     return rows
 
 @app.post("/api/memory")
@@ -4164,17 +4165,26 @@ def get_executive_briefing(
 
     effective_city = (city or "").strip() or live_w.get("city") or "Jaipur"
     weather = {
-        "temp": live_w.get("temp", 31.4),
-        "condition_en": live_w.get("condition_en", "Mostly Sunny"),
-        "condition_hi": live_w.get("condition_hi", "धूप खिली हुई"),
+        "status": live_w.get("status", "unavailable"),
+        "source": live_w.get("source", "Open-Meteo"),
+        "updated_at": live_w.get("updated_at"),
+        "is_stale": bool(live_w.get("is_stale", False)),
+        "temp": live_w.get("temp"),
+        "feels_like": live_w.get("feels_like"),
+        "today_high": live_w.get("today_high"),
+        "today_low": live_w.get("today_low"),
+        "precipitation_probability": live_w.get("precipitation_probability"),
+        "condition_en": live_w.get("condition_en") or "Weather data unavailable",
+        "condition_hi": live_w.get("condition_hi") or "मौसम का डेटा उपलब्ध नहीं है",
         "city": effective_city,
         "city_en": effective_city,
         "city_hi": live_w.get("city_hi") or effective_city,
         "city_hinglish": effective_city,
         "time_phase": time_phase,
-        "icon": weather_icon,
-        "humidity": live_w.get("humidity", "36%"),
-        "wind": live_w.get("wind", "4.2 km/h")
+        "icon": live_w.get("icon") or weather_icon,
+        "humidity": live_w.get("humidity"),
+        "wind": live_w.get("wind"),
+        "error": live_w.get("error")
     }
 
     display_name = user_name or "साथी"
