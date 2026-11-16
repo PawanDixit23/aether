@@ -3297,14 +3297,27 @@ def sync_ical_feed(req: ICalSyncRequest, user_email: Optional[str] = Depends(get
 # ----------------- Finance Endpoints -----------------
 @app.get("/api/finance/records")
 def list_finance_records(
-    limit: int = 100, 
+    limit: int = 100,
+    offset: int = 0,
+    response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    safe_limit = max(1, min(int(limit), 100))
-    return db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user)).order_by(
-        FinancialRecord.date.desc(), FinancialRecord.id.desc()
-    ).limit(safe_limit).all()
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    rows = db.query(FinancialRecord).filter(
+        tenant_filter(FinancialRecord, current_user)
+    ).order_by(FinancialRecord.date.desc(), FinancialRecord.id.desc()).offset(
+        safe_offset
+    ).limit(safe_limit + 1).all()
+    has_more = len(rows) > safe_limit
+    rows = rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(rows))
+    return rows
 
 @app.post("/api/finance/records")
 def create_finance_record(
