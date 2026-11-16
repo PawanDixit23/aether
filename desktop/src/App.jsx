@@ -4015,8 +4015,8 @@ export default function App() {
                 return;
               }
               const uploadBackupChunks = async (field, records) => {
-                for (let offset = 0; offset < records.length; offset += 200) {
-                  const payload = { user_email: currentEmail, [field]: records.slice(offset, offset + 200) };
+                for (let offset = 0; offset < records.length; offset += 50) {
+                  const payload = { user_email: currentEmail, [field]: records.slice(offset, offset + 50) };
                   const resp = await apiFetch(`${API_BASE}/sync/backup`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
