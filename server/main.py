@@ -2758,16 +2758,34 @@ def toggle_task(
 
 @app.get("/api/tasks/date-completions")
 def get_task_date_completions(
+    task_id: Optional[int] = None,
+    limit: int = 100,
+    offset: int = 0,
+    response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    records = db.query(TaskDateCompletion).filter(tenant_filter(TaskDateCompletion, current_user)).all()
-    res = {}
-    for r in records:
-        if r.task_id not in res:
-            res[r.task_id] = {}
-        res[r.task_id][r.date_str] = r.completed
-    return res
+    """Return completion history in bounded pages; use task_id to page one task."""
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    query = db.query(TaskDateCompletion).filter(tenant_filter(TaskDateCompletion, current_user))
+    if task_id is not None:
+        owned_task = db.query(Task.id).filter(Task.id == task_id, tenant_filter(Task, current_user)).first()
+        if not owned_task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        query = query.filter(TaskDateCompletion.task_id == task_id)
+    rows = query.order_by(TaskDateCompletion.id.desc()).offset(safe_offset).limit(safe_limit + 1).all()
+    has_more = len(rows) > safe_limit
+    rows = rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(rows))
+    result = {}
+    for row in rows:
+        result.setdefault(row.task_id, {})[row.date_str] = row.completed
+    return result
 
 @app.post("/api/tasks/{task_id}/date-completion")
 def set_task_date_completion(
