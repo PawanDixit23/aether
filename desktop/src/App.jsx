@@ -1095,27 +1095,38 @@ export default function App() {
       return;
     }
     try {
-      showToast(`Saving ${contactsList.length} contacts to Memory Vault... ⚡`, "info");
-      const resp = await apiFetch(`${API_BASE}/memory/bulk-contacts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(userEmail ? { 'X-User-Email': userEmail } : {})
-        },
-        body: JSON.stringify({
-          contacts: contactsList,
-          user_email: userEmail
-        })
-      });
-      const data = await resp.json();
-      if (data.status === 'ok') {
-        showToast(`✅ ${data.message || 'Contacts saved!'}`, "success");
-        fetchMemories();
-      } else {
-        showToast("Contacts sync error", "error");
+      let synced = 0;
+      let skipped = 0;
+      let failed = 0;
+      showToast(`Saving ${contactsList.length} contacts in safe batches... ⚡`, "info");
+      for (let offset = 0; offset < contactsList.length; offset += 200) {
+        const resp = await apiFetch(`${API_BASE}/memory/bulk-contacts`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(userEmail ? { 'X-User-Email': userEmail } : {})
+          },
+          body: JSON.stringify({
+            contacts: contactsList.slice(offset, offset + 200),
+            user_email: userEmail
+          })
+        });
+        if (!resp.ok) throw new Error(`Contacts batch failed (${resp.status})`);
+        const data = await resp.json();
+        if (data.status !== 'ok') throw new Error(data.message || 'Contacts sync error');
+        synced += Number(data.synced_count || 0);
+        skipped += Number(data.skipped_count || 0);
+        failed += Number(data.failed_count || 0);
       }
+      if (failed > 0) {
+        showToast(`Partial contact sync: ${synced} saved, ${skipped} skipped, ${failed} failed. Retry to continue.`, "error");
+      } else {
+        showToast(`✅ Contacts sync complete: ${synced} saved, ${skipped} already present or invalid.`, "success");
+      }
+      fetchMemories();
     } catch (e) {
-      showToast("Could not reach server to sync contacts", "error");
+      console.error('Chunked contact sync failed:', e);
+      showToast("Contact sync stopped. Retry to continue; saved batches are safe to retry.", "error");
     } finally {
       setIsSyncingContacts(false);
     }
