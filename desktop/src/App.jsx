@@ -613,6 +613,9 @@ export default function App() {
   // App data states
   const [briefing, setBriefing] = useState(null);
   const [cityGuide, setCityGuide] = useState(null);
+  const [chatSessionsHasMore, setChatSessionsHasMore] = useState(false);
+  const [chatSessionsFetchedCount, setChatSessionsFetchedCount] = useState(0);
+  const [chatSessionsLoadingMore, setChatSessionsLoadingMore] = useState(false);
   const [chatSessions, setChatSessions] = useState(() => {
     try {
       const email = localStorage.getItem('aether_user_email');
@@ -3611,7 +3614,7 @@ export default function App() {
       const [resBrief, resChat, resSessions, resTasks, resFin, resFinSum, resMem, resAudit, resNews, resDue, resCricket] = await Promise.all([
         apiFetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}${briefLocParams}`, { headers: authHeaders }),
         opts.skipChatHistory ? Promise.resolve({ ok: false }) : apiFetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(curSessionId)}&limit=60`, { headers: authHeaders }),
-        apiFetch(`${API_BASE}/chat/sessions`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/chat/sessions?limit=50&offset=0`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/tasks?limit=50&offset=0`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/finance/records?limit=100&offset=0`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/finance/summary`, { headers: authHeaders }),
@@ -3634,6 +3637,8 @@ export default function App() {
             // Drop any session that was intentionally deleted or temporary
             const validSessions = sessData.filter(s => !deletedSessionIdsRef.current.has(s.id) && !s.id.startsWith('temp_') && s.id !== 'temporary');
             setChatSessions(validSessions);
+            setChatSessionsFetchedCount(sessData.length);
+            setChatSessionsHasMore(sessData.length === 50);
             if (currentEmail) {
               try {
                 localStorage.setItem(`aether_chat_sessions_${currentEmail}`, JSON.stringify(validSessions));
@@ -5737,6 +5742,32 @@ export default function App() {
       showToast('Could not load more memories. Please try again.', 'error');
     } finally {
       setMemoryLoadingMore(false);
+    }
+  };
+
+  const handleLoadMoreChatSessions = async () => {
+    if (chatSessionsLoadingMore || !chatSessionsHasMore) return;
+    setChatSessionsLoadingMore(true);
+    try {
+      const offset = chatSessionsFetchedCount;
+      const resp = await apiFetch(`${API_BASE}/chat/sessions?limit=50&offset=${offset}`, { headers: {} });
+      if (!resp.ok) throw new Error(`Chat session page failed (${resp.status})`);
+      const page = await resp.json();
+      const rows = Array.isArray(page) ? page.filter(session =>
+        !deletedSessionIdsRef.current.has(session.id) && !String(session.id).startsWith('temp_') && session.id !== 'temporary'
+      ) : [];
+      setChatSessions(prev => {
+        const byId = new Map(prev.map(session => [String(session.id), session]));
+        rows.forEach(session => byId.set(String(session.id), session));
+        return Array.from(byId.values());
+      });
+      setChatSessionsFetchedCount(offset + (Array.isArray(page) ? page.length : 0));
+      setChatSessionsHasMore(Array.isArray(page) && page.length === 50);
+    } catch (err) {
+      console.error('Failed to load more chat sessions:', err);
+      showToast('Could not load more conversations. Please try again.', 'error');
+    } finally {
+      setChatSessionsLoadingMore(false);
     }
   };
 
