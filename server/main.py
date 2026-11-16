@@ -3778,7 +3778,7 @@ def sync_bulk_contacts(
                 if not name or not phone:
                     skipped += 1
                     continue
-                clean_phone = re.sub(r'[^\\d+]', '', phone)
+                clean_phone = re.sub(r'[^\d+]', '', phone)
                 if len(clean_phone) < 5:
                     skipped += 1
                     continue
