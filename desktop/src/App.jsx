@@ -657,6 +657,9 @@ export default function App() {
   });
   const isClearingChatRef = useRef(false);
   const handledDueIdsRef = useRef(new Set());
+  const [taskHasMore, setTaskHasMore] = useState(false);
+  const [taskFetchedCount, setTaskFetchedCount] = useState(0);
+  const [taskLoadingMore, setTaskLoadingMore] = useState(false);
   const [tasks, setTasks] = useState(() => {
     try {
       const email = localStorage.getItem('aether_user_email');
@@ -741,6 +744,9 @@ export default function App() {
     );
   };
   const [financeRecords, setFinanceRecords] = useState([]);
+  const [financeHasMore, setFinanceHasMore] = useState(false);
+  const [financeFetchedCount, setFinanceFetchedCount] = useState(0);
+  const [financeLoadingMore, setFinanceLoadingMore] = useState(false);
   const [financeSummary, setFinanceSummary] = useState({ total_income: 0, total_expense: 0, balance: 0 });
   const [memories, setMemories] = useState([]);
   const [memoryHasMore, setMemoryHasMore] = useState(false);
@@ -3575,8 +3581,8 @@ export default function App() {
         apiFetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}${briefLocParams}`, { headers: authHeaders }),
         opts.skipChatHistory ? Promise.resolve({ ok: false }) : apiFetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(curSessionId)}&limit=60`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/chat/sessions`, { headers: authHeaders }),
-        apiFetch(`${API_BASE}/tasks`, { headers: authHeaders }),
-        apiFetch(`${API_BASE}/finance/records`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/tasks?limit=50&offset=0`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/finance/records?limit=100&offset=0`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/finance/summary`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/memory?limit=50&offset=0`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/audit-logs`, { headers: authHeaders }),
@@ -3734,17 +3740,35 @@ export default function App() {
           });
         });
 
+        setTaskFetchedCount(cleanTasks.length);
+        setTaskHasMore(cleanTasks.length === 50);
+
         if (cleanTasks.length > 0) {
-          localStorage.setItem('aether_cached_tasks', JSON.stringify(cleanTasks));
+          const priorBackupText = currentEmail ? localStorage.getItem(`aether_backup_${currentEmail}`) : null;
+          let priorBackup = {};
+          try { priorBackup = priorBackupText ? JSON.parse(priorBackupText) : {}; } catch (e) {}
+          const cachedTaskRows = Array.isArray(priorBackup.tasks) ? priorBackup.tasks : [];
+          const mergedTaskBackup = Array.from(new Map(
+            [...cachedTaskRows, ...cleanTasks]
+              .filter(task => task && task.id != null && !deletedTaskIdsRef.current.has(String(task.id)))
+              .map(task => [String(task.id), task])
+          ).values());
+          localStorage.setItem('aether_cached_tasks', JSON.stringify(mergedTaskBackup));
           setOnboardingDone(true);
           try {
             localStorage.setItem('aether_onboarding_done', 'true');
           } catch (e) {}
           if (currentEmail) {
+            const cachedFinanceRows = Array.isArray(priorBackup.finances) ? priorBackup.finances : [];
+            const mergedFinanceBackup = Array.from(new Map(
+              [...cachedFinanceRows, ...loadedFinances]
+                .filter(record => record && record.id != null && !deletedFinanceIdsRef.current.has(String(record.id)))
+                .map(record => [String(record.id), record])
+            ).values());
             localStorage.setItem(`aether_backup_${currentEmail}`, JSON.stringify({
-              tasks: cleanTasks,
+              tasks: mergedTaskBackup,
               memories: mergeMemoryBackup(currentEmail, loadedMemories),
-              finances: loadedFinances
+              finances: mergedFinanceBackup
             }));
           }
 
@@ -3836,6 +3860,8 @@ export default function App() {
           ? loadedFinances.filter(f => !deletedFinanceIdsRef.current.has(String(f.id)))
           : [];
         setFinanceRecords(validFinances);
+        setFinanceFetchedCount(validFinances.length);
+        setFinanceHasMore(validFinances.length === 100);
       }
       if (resFinSum.ok) setFinanceSummary(await resFinSum.json());
       if (resMem.ok) {
@@ -5602,6 +5628,54 @@ export default function App() {
       showToast('Could not load more memories. Please try again.', 'error');
     } finally {
       setMemoryLoadingMore(false);
+    }
+  };
+
+  const handleLoadMoreTasks = async () => {
+    if (taskLoadingMore || !taskHasMore) return;
+    setTaskLoadingMore(true);
+    try {
+      const offset = taskFetchedCount;
+      const resp = await apiFetch(`${API_BASE}/tasks?limit=50&offset=${offset}`, { headers: {} });
+      if (!resp.ok) throw new Error(`Task page request failed (${resp.status})`);
+      const page = await resp.json();
+      const rows = Array.isArray(page) ? page.filter(task => !deletedTaskIdsRef.current.has(String(task.id))) : [];
+      setTasks(prev => {
+        const byId = new Map(prev.map(task => [String(task.id), task]));
+        rows.forEach(task => byId.set(String(task.id), task));
+        return Array.from(byId.values());
+      });
+      setTaskFetchedCount(offset + rows.length);
+      setTaskHasMore(rows.length === 50);
+    } catch (err) {
+      console.error('Failed to load more tasks:', err);
+      showToast('Could not load more tasks. Please try again.', 'error');
+    } finally {
+      setTaskLoadingMore(false);
+    }
+  };
+
+  const handleLoadMoreFinance = async () => {
+    if (financeLoadingMore || !financeHasMore) return;
+    setFinanceLoadingMore(true);
+    try {
+      const offset = financeFetchedCount;
+      const resp = await apiFetch(`${API_BASE}/finance/records?limit=100&offset=${offset}`, { headers: {} });
+      if (!resp.ok) throw new Error(`Finance page request failed (${resp.status})`);
+      const page = await resp.json();
+      const rows = Array.isArray(page) ? page.filter(record => !deletedFinanceIdsRef.current.has(String(record.id))) : [];
+      setFinanceRecords(prev => {
+        const byId = new Map(prev.map(record => [String(record.id), record]));
+        rows.forEach(record => byId.set(String(record.id), record));
+        return Array.from(byId.values());
+      });
+      setFinanceFetchedCount(offset + rows.length);
+      setFinanceHasMore(rows.length === 100);
+    } catch (err) {
+      console.error('Failed to load more finance records:', err);
+      showToast('Could not load more transactions. Please try again.', 'error');
+    } finally {
+      setFinanceLoadingMore(false);
     }
   };
 
@@ -9529,6 +9603,9 @@ export default function App() {
           onClose={() => { setActiveSubModal(null); setEditingFinanceRecord(null); setIsAddingExpense(false); }}
           financeSummary={financeSummary}
           financeRecords={financeRecords}
+          financeHasMore={financeHasMore}
+          onLoadMoreFinance={handleLoadMoreFinance}
+          financeLoadingMore={financeLoadingMore}
           isAddingExpense={isAddingExpense}
           setIsAddingExpense={setIsAddingExpense}
           newExpenseForm={newExpenseForm}
