@@ -674,7 +674,7 @@ def fetch_live_news_items(query: str = "", limit: int = 5, lang: str = "en") -> 
             items = root.findall('.//item')[:limit]
             
             # Fallback to general headlines if specific search produced 0 items
-            if not items and clean_q:
+            if not items and clean_q and not is_sports and not is_match_or_result:
                 fb_url = f"https://news.google.com/rss?hl={hl}&gl={gl}&ceid={ceid}"
                 req_fb = urllib.request.Request(fb_url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req_fb, timeout=5) as resp_fb:
@@ -1060,9 +1060,9 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
         url = f'https://site.api.espn.com/apis/site/v2/sports/cricket/{lid}/summary?event={match_id}'
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-            with urllib.request.urlopen(req, timeout=8.0) as resp:
+            with urllib.request.urlopen(req, timeout=4.0) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
-                if 'matchcards' in data or 'rosters' in data or 'notes' in data:
+                if data.get('matchcards') or data.get('rosters'):
                     matchcards = data.get('matchcards', [])
                     notes = [n.get('text') for n in data.get('notes', []) if n.get('text')]
                     raw_rosters = data.get('rosters', [])
