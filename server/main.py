@@ -726,7 +726,11 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
             try:
                 from memory import HybridMemoryProvider
                 recalled = HybridMemoryProvider.recall_context(
-                    prompt_query, user_email or owner_user_id, db, limit=AI_CONTEXT_MEMORY_LIMIT
+                    prompt_query,
+                    user_email or owner_user_id,
+                    db,
+                    limit=AI_CONTEXT_MEMORY_LIMIT,
+                    owner_user_id=owner_user_id,
                 )
                 recalled_facts = list(dict.fromkeys(recalled.get("relevant_facts", [])))[:AI_CONTEXT_MEMORY_LIMIT]
             except Exception as recall_error:
