@@ -660,6 +660,7 @@ export default function App() {
   const [taskHasMore, setTaskHasMore] = useState(false);
   const [taskFetchedCount, setTaskFetchedCount] = useState(0);
   const [taskLoadingMore, setTaskLoadingMore] = useState(false);
+  const [rescheduleCursor, setRescheduleCursor] = useState(0);
   const [tasks, setTasks] = useState(() => {
     try {
       const email = localStorage.getItem('aether_user_email');
@@ -3136,15 +3137,33 @@ export default function App() {
   const handleRescheduleAllOverdue = async () => {
     try {
       const authHeaders = userEmail ? { 'X-User-Email': userEmail } : {};
-      const res = await apiFetch(`${API_BASE}/tasks/reschedule-overdue`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders }
-      });
-      const data = await res.json();
+      let cursor = rescheduleCursor;
+      let totalRescheduled = 0;
+      let hasMore = true;
+      let batches = 0;
+      while (hasMore && batches < 20) {
+        const res = await apiFetch(`${API_BASE}/tasks/reschedule-overdue?limit=200&after_id=${cursor}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders }
+        });
+        if (!res.ok) throw new Error(`Reschedule batch failed (${res.status})`);
+        const data = await res.json();
+        totalRescheduled += Number(data.rescheduled_count || 0);
+        cursor = Number(data.next_after_id || cursor);
+        hasMore = !!data.has_more;
+        batches += 1;
+      }
+      setRescheduleCursor(hasMore ? cursor : 0);
       refreshAllData();
-      showToast(`${data.rescheduled_count || 0} overdue tasks rescheduled to today!`, 'success');
+      showToast(
+        hasMore
+          ? `${totalRescheduled} overdue tasks processed. Tap again to continue the remaining batches.`
+          : `${totalRescheduled} overdue tasks rescheduled to today!`,
+        hasMore ? 'info' : 'success'
+      );
     } catch (e) {
-      showToast('Failed to reschedule', 'error');
+      console.error('Reschedule batches failed:', e);
+      showToast('Reschedule paused. Tap again to retry from the saved cursor.', 'error');
     }
   };
 
