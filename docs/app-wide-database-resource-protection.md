@@ -30,7 +30,7 @@ The following endpoints now use bounded pages and accept limit/offset:
 - GET /api/finance/records (default 100)
 - GET /api/audit-logs (default 60; capped at 100)
 
-Responses retain their existing list/map payload shapes for compatibility. Pagination state is exposed through X-Has-More and X-Next-Offset response headers. CORS exposes these headers to the web client.
+Responses retain their existing list/map payload shapes for compatibility. Pagination state is exposed through X-Has-More, X-Next-Offset, X-Next-Cursor, and X-Total-Count response headers. CORS exposes these headers to the web client. Memory Vault keeps each request bounded to 50 records by default and exposes the tenant-scoped total separately; the client loads older pages explicitly rather than fetching the entire vault in one request.
 
 The desktop client now loads more tasks, subtasks, memories, finance records, chat sessions, and older chat messages on demand. A page is never treated as the entire dataset merely because the first response completed.
 

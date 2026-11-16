@@ -23,6 +23,21 @@ class _FakeResponse:
 
 
 class LiveDataRegressionTests(unittest.TestCase):
+    def test_gemini_model_cascade_skips_retired_models_and_prefers_current_flash(self):
+        models = ai_engine.get_gemini_model_cascade()
+        self.assertEqual(models[0], ai_engine.GEMINI_MODEL)
+        self.assertIn("gemini-3.8-flash", models)
+        self.assertIn("gemini-2.5-flash", models)
+        self.assertEqual(models[-1], "gemini-flash-lite-latest")
+        self.assertFalse(any(model in models for model in (
+            "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-2.0-flash"
+        )))
+
+    def test_gemini_model_cascade_ignores_retired_configured_model(self):
+        models = ai_engine.get_gemini_model_cascade("gemini-2.0-flash")
+        self.assertNotIn("gemini-2.0-flash", models)
+        self.assertEqual(models[0], "gemini-3.8-flash")
+
     def setUp(self):
         ai_engine.WEATHER_COORD_CACHE.clear()
         ai_engine.NEWS_CACHE["all"] = {"data": [], "timestamp": 0}

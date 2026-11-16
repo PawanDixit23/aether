@@ -29,10 +29,30 @@ if os.path.exists(env_path):
     load_dotenv(env_path)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3:8b")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini")
+
+
+def get_gemini_model_cascade(preferred_model: Optional[str] = None) -> List[str]:
+    """Return unique current Gemini model IDs, excluding retired API models."""
+    retired = {
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+        "gemini-2.0-flash",
+    }
+    candidates = [
+        preferred_model or GEMINI_MODEL,
+        "gemini-3.8-flash",
+        "gemini-2.5-flash",
+        "gemini-flash-lite-latest",
+    ]
+    return list(dict.fromkeys(
+        model.strip() for model in candidates
+        if model and model.strip() and model.strip() not in retired
+    ))
+
 
 # Cached IP Location
 CACHED_LOCATION = None
@@ -2421,14 +2441,9 @@ async def parse_intent_with_llm(
         if len(conversation_contents) > 10:
             conversation_contents = conversation_contents[-10:]
 
-        models_to_try = [
-            "gemini-1.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash-8b",
-            GEMINI_MODEL,
-            "gemini-2.5-flash"
-        ]
-        unique_models = list(dict.fromkeys([m for m in models_to_try if m]))
+        # Retired IDs caused repeated 404s; the preferred current model is
+        # followed by supported fallbacks, with the rate-limited lite model last.
+        unique_models = get_gemini_model_cascade()
 
         key_blocked_notice = None
         for active_gemini_key in candidate_keys:
