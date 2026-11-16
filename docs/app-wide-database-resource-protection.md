@@ -82,7 +82,7 @@ The API startup check verifies that the extension is present before ORM schema i
 
 The cross-tenant reminder worker is a privileged maintenance principal and must not be exposed through a spoofable header.
 
-- Set the same high-entropy `AETHER_WORKER_TOKEN` in Render environment variables and GitHub Actions repository secrets.
+- Set the same high-entropy `AETHER_WORKER_TOKEN` (minimum 32 characters) in Render environment variables and GitHub Actions repository secrets.
 - The scheduled workflow sends `Authorization: Bearer $AETHER_WORKER_TOKEN` to `/api/reminders/push-check`.
 - The API rejects missing configuration with HTTP 503 and missing/invalid bearer credentials with HTTP 401. The legacy `X-GitHub-Actions` header is not accepted.
 - PostgreSQL RLS grants cross-tenant maintenance access only when the transaction-local `request.worker_authorized` flag is set by the authenticated worker dependency or the trusted in-process reminder worker. The flag is reset when a tenant identity context is applied.
