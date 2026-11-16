@@ -7016,7 +7016,7 @@ export default function App() {
                 <span>Live Cricket & Sports</span>
               </div>
               <div className="settings-row-right">
-                <span style={{ color: cricketMatches.some(m => m.status === 'in') ? '#ef4444' : '#38bdf8', fontWeight: 600, fontSize: '0.84rem' }}>
+                <span style={{ color: cricketMatches.some(m => m.status === 'in' && !m.is_stale) ? '#ef4444' : '#38bdf8', fontWeight: 600, fontSize: '0.84rem' }}>
                   {cricketMatches.some(m => m.status === 'in') ? '● Live Scores' : 'Scorecards'}
                 </span>
                 <ChevronRight size={16} />
@@ -9547,7 +9547,7 @@ export default function App() {
 
                   {/* Highlights of Top Live or International Matches */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {(cricketMatches.filter(m => m.status === 'in').length > 0
+                    {(cricketMatches.filter(m => m.status === 'in' && !m.is_stale).length > 0
                       ? cricketMatches.filter(m => m.status === 'in').slice(0, 2)
                       : (cricketMatches.filter(m => m.is_international).slice(0, 2).length > 0
                           ? cricketMatches.filter(m => m.is_international).slice(0, 2)
@@ -9574,8 +9574,8 @@ export default function App() {
                           <span style={{ color: m.is_international ? '#38bdf8' : '#94a3b8', fontWeight: 600 }}>
                             {m.series}
                           </span>
-                          <span style={{ color: m.status === 'in' ? '#f87171' : (m.status === 'post' ? '#34d399' : '#fbbf24'), fontWeight: 600 }}>
-                            {m.status === 'in' ? '● LIVE' : (m.status === 'post' ? 'Result' : 'Scheduled')}
+                          <span style={{ color: m.is_stale ? '#fbbf24' : (m.status === 'in' ? '#f87171' : (m.status === 'post' ? '#34d399' : '#fbbf24')), fontWeight: 600 }}>
+                            {m.is_stale ? 'LAST UPDATE' : (m.status === 'in' ? '● LIVE' : (m.status === 'post' ? 'Result' : 'Scheduled'))}
                           </span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.86rem', fontWeight: 600, color: '#f8fafc' }}>
