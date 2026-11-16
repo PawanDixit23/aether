@@ -648,6 +648,9 @@ export default function App() {
   const [showGeminiLive, setShowGeminiLive] = useState(false);
   const [isChatDrawerOpen, setIsChatDrawerOpen] = useState(false);
   const [isTemporaryChat, setIsTemporaryChat] = useState(false);
+  const [chatHistoryHasMore, setChatHistoryHasMore] = useState(false);
+  const [chatHistoryOldestId, setChatHistoryOldestId] = useState(null);
+  const [chatHistoryLoadingMore, setChatHistoryLoadingMore] = useState(false);
   const [chatHistory, setChatHistory] = useState(() => {
     try {
       const email = localStorage.getItem('aether_user_email');
@@ -3660,6 +3663,8 @@ export default function App() {
           ...c,
           role: c.role === 'aether' ? 'assistant' : c.role
         })) : [];
+        setChatHistoryHasMore(Array.isArray(chats) && chats.length === 60);
+        setChatHistoryOldestId(normalizedChats.length ? normalizedChats[0].id : null);
 
         // Guard against race conditions: only update if activeSessionId hasn't changed during fetch
         if (activeSessionIdRef.current === curSessionId) {
@@ -5751,6 +5756,36 @@ export default function App() {
     }
   };
 
+  const handleLoadOlderChatMessages = async () => {
+    if (chatHistoryLoadingMore || !chatHistoryHasMore || !chatHistoryOldestId) return;
+    const sessionId = activeSessionIdRef.current || 'default';
+    if (sessionId.startsWith('temp_') || sessionId === 'temporary') return;
+    setChatHistoryLoadingMore(true);
+    try {
+      const resp = await apiFetch(
+        `${API_BASE}/chat/history?session_id=${encodeURIComponent(sessionId)}&limit=60&before_id=${chatHistoryOldestId}`,
+        { headers: {} }
+      );
+      if (!resp.ok) throw new Error(`Older chat history request failed (${resp.status})`);
+      const page = await resp.json();
+      const older = Array.isArray(page) ? page.map(message => ({
+        ...message, role: message.role === 'aether' ? 'assistant' : message.role
+      })) : [];
+      setChatHistory(prev => {
+        const existingIds = new Set(prev.filter(message => message.id != null).map(message => String(message.id)));
+        const uniqueOlder = older.filter(message => message.id == null || !existingIds.has(String(message.id)));
+        return [...uniqueOlder, ...prev];
+      });
+      if (older.length > 0) setChatHistoryOldestId(older[0].id || chatHistoryOldestId);
+      setChatHistoryHasMore(older.length === 60);
+    } catch (err) {
+      console.error('Failed to load older chat messages:', err);
+      showToast('Could not load older messages. Please try again.', 'error');
+    } finally {
+      setChatHistoryLoadingMore(false);
+    }
+  };
+
   const handleLoadMoreChatSessions = async () => {
     if (chatSessionsLoadingMore || !chatSessionsHasMore) return;
     setChatSessionsLoadingMore(true);
@@ -7307,6 +7342,18 @@ export default function App() {
                 </div>
               ) : (
                 <div className="gemini-chat-feed" ref={geminiChatFeedRef}>
+                  {chatHistoryHasMore && (
+                    <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 18px' }}>
+                      <button
+                        type="button"
+                        onClick={handleLoadOlderChatMessages}
+                        disabled={chatHistoryLoadingMore}
+                        style={{ background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.25)', color: '#7dd3fc', borderRadius: '10px', padding: '8px 14px', fontSize: '0.78rem', fontWeight: 600, cursor: chatHistoryLoadingMore ? 'wait' : 'pointer', opacity: chatHistoryLoadingMore ? 0.65 : 1 }}
+                      >
+                        {chatHistoryLoadingMore ? 'Loading older messages...' : 'Load older messages'}
+                      </button>
+                    </div>
+                  )}
                   {chatHistory.map((msg, idx) => (
                     <div 
                       key={msg.id ? `msg-${msg.id}` : (msg.created_at ? `msg-${msg.created_at}-${idx}` : `msg-${idx}`)} 
