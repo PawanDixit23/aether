@@ -13,6 +13,7 @@ import hashlib
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 import httpx
 
 from models import MemoryItem
@@ -117,52 +118,62 @@ class HybridMemoryProvider:
         confidence: float = 1.0,
         importance: float = 1.0
     ) -> MemoryItem:
-        """
-        Deduplicates incoming memory against existing items using cosine similarity threshold 0.88 (AETH-MEM-02).
-        If duplicate detected, updates existing memory instead of inserting redundant row.
-        """
+        """Deduplicate against a bounded candidate set; never load a whole category."""
         clean_fact = (fact or "").strip()
+        if not clean_fact:
+            raise ValueError("Memory fact cannot be empty")
         new_vec = get_embedding(clean_fact)
         now = datetime.utcnow()
 
-        existing = db.query(MemoryItem).filter(
+        scoped = db.query(MemoryItem).filter(
             MemoryItem.user_email == user_email,
             MemoryItem.category == category
-        ).all()
-
-        for mem in existing:
-            if mem.embedding:
-                try:
-                    mem_vec = json.loads(mem.embedding)
-                    sim = cosine_similarity(new_vec, mem_vec)
-                    if sim >= 0.88:
-                        # High similarity detected: merge and update existing memory
-                        mem.fact = clean_fact
-                        mem.confidence = max(mem.confidence or 1.0, confidence)
-                        mem.importance = max(getattr(mem, "importance", 1.0) or 1.0, importance)
-                        mem.last_accessed_at = now
-                        mem.updated_at = now
-                        mem.embedding = json.dumps(new_vec)
-                        db.commit()
-                        db.refresh(mem)
-                        return mem
-                except Exception:
-                    pass
-
-        # No duplicate: insert new memory item
-        new_mem = MemoryItem(
-            user_email=user_email,
-            category=category,
-            fact=clean_fact,
-            confidence=confidence,
-            importance=importance,
-            last_accessed_at=now,
-            embedding=json.dumps(new_vec)
         )
-        db.add(new_mem)
+        exact = scoped.filter(MemoryItem.fact.ilike(clean_fact)).order_by(
+            MemoryItem.updated_at.desc(), MemoryItem.id.desc()
+        ).first()
+        candidates = []
+        if exact:
+            candidates = [exact]
+        else:
+            tokens = [token.lower() for token in re.findall(r'\\b\\w{3,}\\b', clean_fact)[:8]]
+            if tokens:
+                candidates = scoped.filter(or_(*[
+                    MemoryItem.fact.ilike(f"%{token}%") for token in tokens
+                ])).order_by(
+                    MemoryItem.importance.desc(), MemoryItem.last_accessed_at.desc(), MemoryItem.id.desc()
+                ).limit(200).all()
+            if not candidates:
+                candidates = scoped.order_by(
+                    MemoryItem.importance.desc(), MemoryItem.last_accessed_at.desc(), MemoryItem.id.desc()
+                ).limit(200).all()
+
+        for memory in candidates:
+            if memory.embedding:
+                try:
+                    mem_vec = json.loads(memory.embedding)
+                    if cosine_similarity(new_vec, mem_vec) >= 0.88:
+                        memory.fact = clean_fact
+                        memory.confidence = max(memory.confidence or 1.0, confidence)
+                        memory.importance = max(getattr(memory, "importance", 1.0) or 1.0, importance)
+                        memory.last_accessed_at = now
+                        memory.updated_at = now
+                        memory.embedding = json.dumps(new_vec)
+                        db.commit()
+                        db.refresh(memory)
+                        return memory
+                except Exception:
+                    continue
+
+        new_memory = MemoryItem(
+            user_email=user_email, category=category, fact=clean_fact,
+            confidence=confidence, importance=importance,
+            last_accessed_at=now, embedding=json.dumps(new_vec)
+        )
+        db.add(new_memory)
         db.commit()
-        db.refresh(new_mem)
-        return new_mem
+        db.refresh(new_memory)
+        return new_memory
 
     @staticmethod
     def recall_context(
@@ -172,99 +183,91 @@ class HybridMemoryProvider:
         limit: int = 10,
         min_similarity: float = 0.25
     ) -> Dict[str, Any]:
+        """Rank a bounded retrieval candidate window; the full vault stays in PostgreSQL."""
         if not query or not query.strip():
-            return {"relevant_facts": [], "formatted_context": ""}
+            return {"relevant_facts": [], "formatted_context": "", "top_memories": []}
 
+        safe_limit = max(1, min(int(limit), 20))
         q_clean = query.strip()
-        q_tokens = [w.lower() for w in re.findall(r'\b\w{3,}\b', q_clean)]
+        q_tokens = [word.lower() for word in re.findall(r'\\b\\w{3,}\\b', q_clean)[:12]]
         q_embedding = get_embedding(q_clean)
         now = datetime.utcnow()
 
-        # Enforce strict tenant isolation: Never return NULL/unowned records as personal memory
-        all_memories = db.query(MemoryItem).filter(
-            (MemoryItem.user_email == user_email) | 
-            (MemoryItem.category == "system_knowledge")
-        ).all()
+        tenant_scope = or_(
+            MemoryItem.user_email == user_email,
+            MemoryItem.category == "system_knowledge"
+        )
+        base_query = db.query(MemoryItem).filter(tenant_scope)
+        candidate_by_id = {}
 
-        if not all_memories:
-            return {"relevant_facts": [], "formatted_context": ""}
+        # Keyword candidates can retrieve older matching memories, while the
+        # importance/recency window provides semantic candidates without a table scan in Python.
+        if q_tokens:
+            keyword_rows = base_query.filter(or_(*[
+                MemoryItem.fact.ilike(f"%{token}%") for token in q_tokens
+            ])).order_by(
+                MemoryItem.importance.desc(), MemoryItem.last_accessed_at.desc(), MemoryItem.id.desc()
+            ).limit(200).all()
+            for memory in keyword_rows:
+                candidate_by_id[memory.id] = memory
+
+        recent_rows = base_query.order_by(
+            MemoryItem.importance.desc(), MemoryItem.last_accessed_at.desc(),
+            MemoryItem.created_at.desc(), MemoryItem.id.desc()
+        ).limit(200).all()
+        for memory in recent_rows:
+            candidate_by_id.setdefault(memory.id, memory)
+
+        if not candidate_by_id:
+            return {"relevant_facts": [], "formatted_context": "", "top_memories": []}
 
         scored = []
         needs_commit = False
-
-        for mem in all_memories:
-            fact_str = (mem.fact or "").strip()
-            if not fact_str:
+        for memory in candidate_by_id.values():
+            fact = (memory.fact or "").strip()
+            if not fact:
                 continue
-
-            # Load or compute vector embedding
             mem_vec = None
-            if mem.embedding:
+            if memory.embedding:
                 try:
-                    mem_vec = json.loads(mem.embedding)
+                    mem_vec = json.loads(memory.embedding)
                 except Exception:
                     mem_vec = None
-            
             if not mem_vec or len(mem_vec) != 768:
-                mem_vec = get_embedding(fact_str)
-                try:
-                    mem.embedding = json.dumps(mem_vec)
-                    needs_commit = True
-                except Exception:
-                    pass
+                mem_vec = get_embedding(fact)
 
-            # 1. Semantic Cosine Similarity
             semantic_score = cosine_similarity(q_embedding, mem_vec)
-
-            # 2. Token overlap boost
-            fact_lower = fact_str.lower()
-            keyword_score = 0.0
-            for tok in q_tokens:
-                if tok in fact_lower:
-                    keyword_score += 0.25
-
-            # 3. Category weighting
-            cat = (mem.category or "").lower()
-            cat_boost = 0.0
-            if cat in ["contact", "personal_rule", "preference"]:
-                cat_boost = 0.15
-            elif cat in ["routine", "context"]:
-                cat_boost = 0.08
-
-            # 4. Temporal Decay Scoring (AETH-MEM-02)
-            last_date = mem.last_accessed_at or mem.created_at or now
+            fact_lower = fact.lower()
+            keyword_score = sum(0.25 for token in q_tokens if token in fact_lower)
+            category = (memory.category or "").lower()
+            category_boost = 0.15 if category in ["contact", "personal_rule", "preference"] else (
+                0.08 if category in ["routine", "context"] else 0.0
+            )
+            last_date = memory.last_accessed_at or memory.created_at or now
             delta_days = max(0, (now - last_date).days)
-            # Gentle exponential decay over 90+ days
             decay_factor = math.exp(-0.005 * delta_days)
-            importance = getattr(mem, "importance", 1.0) or 1.0
+            importance = getattr(memory, "importance", 1.0) or 1.0
+            score = ((semantic_score * 0.70) + (keyword_score * 0.20) + category_boost) * decay_factor * min(importance, 2.0)
+            if score >= min_similarity:
+                scored.append((score, semantic_score, memory))
 
-            total_score = ((semantic_score * 0.70) + (keyword_score * 0.20) + cat_boost) * decay_factor * min(importance, 2.0)
-
-            if total_score >= min_similarity:
-                scored.append((total_score, semantic_score, mem))
-
-        # Sort descending by total score
-        scored.sort(key=lambda x: x[0], reverse=True)
-        top_items = scored[:limit]
-
-        # Touch last_accessed_at for retrieved memories
-        for _, _, m in top_items:
-            m.last_accessed_at = now
+        scored.sort(key=lambda item: item[0], reverse=True)
+        top_items = scored[:safe_limit]
+        for _, _, memory in top_items:
+            memory.last_accessed_at = now
             needs_commit = True
-
         if needs_commit:
             try:
                 db.commit()
             except Exception:
                 db.rollback()
 
-        formatted_lines = []
-        for total_s, sem_s, m in top_items:
-            pct = int(max(0, min(100, sem_s * 100)))
-            formatted_lines.append(f"• [{m.category.upper()}] (Match: {pct}%) {m.fact}")
-
+        formatted = []
+        for _, semantic_score, memory in top_items:
+            pct = int(max(0, min(100, semantic_score * 100)))
+            formatted.append(f"• [{memory.category.upper()}] (Match: {pct}%) {memory.fact}")
         return {
-            "relevant_facts": [m.fact for _, _, m in top_items],
-            "formatted_context": "\n".join(formatted_lines),
-            "top_memories": [m for _, _, m in top_items]
+            "relevant_facts": [memory.fact for _, _, memory in top_items],
+            "formatted_context": "\\n".join(formatted),
+            "top_memories": [memory for _, _, memory in top_items]
         }
