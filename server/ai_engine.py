@@ -154,8 +154,11 @@ def find_city_in_text(text: str):
 
 # Live weather: cache is strictly scoped to coordinates and never crosses users/locations.
 WEATHER_COORD_CACHE = {}
-WEATHER_CACHE_TTL = 10 * 60
-WEATHER_STALE_MAX_AGE = 6 * 60 * 60
+WEATHER_CACHE_TTL = 15 * 60
+WEATHER_STALE_MAX_AGE = 24 * 60 * 60
+WEATHER_FAILURE_COOLDOWN = 120
+WEATHER_FAILURES = {}
+WEATHER_FETCH_LOCK = threading.Lock()
 
 def get_live_weather_data(lat: float = None, lon: float = None, city_name: str = None) -> dict:
     import time
@@ -187,7 +190,45 @@ def get_live_weather_data(lat: float = None, lon: float = None, city_name: str =
     if cached and now_ts - cached["timestamp"] < WEATHER_CACHE_TTL:
         return dict(cached["data"])
 
-    try:
+    # Avoid repeatedly hitting Open-Meteo during rate limits or transient outages.
+    failure = WEATHER_FAILURES.get(coord_key)
+    if failure and now_ts < failure.get("retry_at", 0):
+        if cached and now_ts - cached["timestamp"] <= WEATHER_STALE_MAX_AGE:
+            stale = dict(cached["data"])
+            stale["is_stale"] = True
+            stale["stale_reason"] = failure.get("error", "Weather provider is temporarily rate limited")
+            return stale
+        return {
+            "status": "unavailable", "source": "Open-Meteo",
+            "city": location_name or "Requested location",
+            "error": failure.get("error", "Weather provider temporarily rate limited"),
+            "retry_after_seconds": max(1, int(failure["retry_at"] - now_ts)),
+            "is_stale": False
+        }
+
+    # A single process-wide lock plus a second cache check coalesces concurrent
+    # dashboard/briefing/chat requests for the same location in this worker.
+    with WEATHER_FETCH_LOCK:
+        now_ts = time.time()
+        cached = WEATHER_COORD_CACHE.get(coord_key)
+        if cached and now_ts - cached["timestamp"] < WEATHER_CACHE_TTL:
+            return dict(cached["data"])
+        failure = WEATHER_FAILURES.get(coord_key)
+        if failure and now_ts < failure.get("retry_at", 0):
+            if cached and now_ts - cached["timestamp"] <= WEATHER_STALE_MAX_AGE:
+                stale = dict(cached["data"])
+                stale["is_stale"] = True
+                stale["stale_reason"] = failure.get("error", "Weather provider is temporarily rate limited")
+                return stale
+            return {
+                "status": "unavailable", "source": "Open-Meteo",
+                "city": location_name or "Requested location",
+                "error": failure.get("error", "Weather provider temporarily rate limited"),
+                "retry_after_seconds": max(1, int(failure["retry_at"] - now_ts)),
+                "is_stale": False
+            }
+
+        try:
         params = urllib.parse.urlencode({
             "latitude": use_lat,
             "longitude": use_lon,
@@ -276,20 +317,26 @@ def get_live_weather_data(lat: float = None, lon: float = None, city_name: str =
             oldest = min(WEATHER_COORD_CACHE, key=lambda key: WEATHER_COORD_CACHE[key]["timestamp"])
             WEATHER_COORD_CACHE.pop(oldest, None)
         WEATHER_COORD_CACHE[coord_key] = {"data": result, "timestamp": now_ts}
+        WEATHER_FAILURES.pop(coord_key, None)
         return result
-    except Exception as exc:
-        if cached and now_ts - cached["timestamp"] <= WEATHER_STALE_MAX_AGE:
-            stale = dict(cached["data"])
-            stale["is_stale"] = True
-            stale["stale_reason"] = str(exc)[:180]
-            return stale
-        return {
-            "status": "unavailable",
-            "source": "Open-Meteo",
-            "city": location_name or "Requested location",
-            "error": str(exc)[:180],
-            "is_stale": False
-        }
+        except Exception as exc:
+            error_text = str(exc)[:180]
+            is_rate_limited = "429" in error_text or "Too Many Requests" in error_text
+            cooldown = WEATHER_FAILURE_COOLDOWN if is_rate_limited else 30
+            WEATHER_FAILURES[coord_key] = {"error": error_text, "retry_at": time.time() + cooldown}
+            if cached and time.time() - cached["timestamp"] <= WEATHER_STALE_MAX_AGE:
+                stale = dict(cached["data"])
+                stale["is_stale"] = True
+                stale["stale_reason"] = error_text
+                return stale
+            return {
+                "status": "unavailable",
+                "source": "Open-Meteo",
+                "city": location_name or "Requested location",
+                "error": error_text,
+                "retry_after_seconds": cooldown,
+                "is_stale": False
+            }
 
 def fetch_live_weather(user_query: str = "", lat: float = None, lon: float = None, city_name: str = None) -> str:
     """Return a current, location-specific weather report without inventing fallback values."""
