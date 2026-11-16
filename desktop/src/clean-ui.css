@@ -251,3 +251,191 @@ button:disabled { cursor: not-allowed; opacity: .58; }
   .dashboard-greeting { flex-wrap: wrap; }
   .dashboard-quick-actions > button { min-height: 76px; }
 }
+
+/* Dashboard v2 — calmer hierarchy, deliberate spacing, and thumb-friendly actions. */
+.dashboard-main-view {
+  --dash-panel: #101925;
+  --dash-panel-raised: #141f2c;
+  --dash-line: rgba(166, 187, 207, .13);
+  --dash-muted: #91a0b2;
+  --dash-accent: #79c9d8;
+  max-width: 900px !important;
+  margin-inline: auto !important;
+  padding: 12px 18px 44px !important;
+  gap: 0;
+}
+.dashboard-main-view > * { order: 5; }
+.dashboard-main-view > .dashboard-greeting { order: 0; }
+.dashboard-main-view > .dashboard-weather-card { order: 1; }
+.dashboard-main-view > .dashboard-orb-section { order: 2; }
+.dashboard-main-view > .dashboard-quick-actions { order: 3; }
+.dashboard-main-view > .dashboard-social-hub { order: 4; }
+.dashboard-greeting {
+  align-items: center !important;
+  margin: 4px 0 16px !important;
+  gap: 14px !important;
+}
+.dashboard-greeting h1 {
+  font-size: clamp(1.35rem, 4vw, 1.85rem) !important;
+  font-weight: 720 !important;
+  letter-spacing: -.045em !important;
+  line-height: 1.12 !important;
+  color: #f2f6fa !important;
+}
+.dashboard-greeting > div > div {
+  font-size: .78rem !important;
+  color: var(--dash-muted) !important;
+  line-height: 1.5;
+}
+.dashboard-greeting button {
+  min-height: 38px;
+  border-radius: 12px !important;
+  background: rgba(121, 201, 216, .09) !important;
+  border: 1px solid rgba(121, 201, 216, .2) !important;
+  box-shadow: none !important;
+  white-space: nowrap;
+}
+.dashboard-weather-card {
+  order: 1;
+  width: 100%;
+  min-height: 88px;
+  box-sizing: border-box;
+  padding: 14px 16px !important;
+  margin: 0 0 12px !important;
+  background: linear-gradient(145deg, #121e2b, #0f1823) !important;
+  border: 1px solid var(--dash-line) !important;
+  border-radius: 18px !important;
+  cursor: pointer;
+  transition: border-color .18s ease, background .18s ease;
+}
+.dashboard-weather-card:hover { border-color: rgba(121, 201, 216, .3) !important; }
+.dashboard-weather-card > div:first-child > div:first-child {
+  width: 42px !important;
+  height: 42px !important;
+  border-radius: 13px !important;
+  background: rgba(121, 201, 216, .1) !important;
+}
+.dashboard-weather-card button {
+  width: 36px !important;
+  height: 36px !important;
+  min-width: 36px !important;
+  border-radius: 11px !important;
+}
+.dashboard-orb-section {
+  order: 2;
+  margin: 12px 0 22px !important;
+  padding: 8px 0 0;
+}
+.dashboard-orb-section > div:first-child {
+  width: 126px !important;
+  height: 126px !important;
+}
+.dashboard-orb-section > div:first-child > div:nth-child(2) {
+  width: 100px !important;
+  height: 100px !important;
+}
+.dashboard-orb-section > div:nth-child(2) {
+  margin: 12px 0 14px !important;
+  color: #aab6c5 !important;
+  font-size: .78rem !important;
+}
+.dashboard-orb-section > div:nth-child(3) {
+  padding: 4px !important;
+  border: 1px solid var(--dash-line) !important;
+  border-radius: 15px !important;
+  background: rgba(255,255,255,.025) !important;
+  gap: 3px !important;
+}
+.dashboard-orb-section > div:nth-child(3) button {
+  min-height: 38px;
+  padding-inline: 16px !important;
+  border-radius: 11px !important;
+}
+.dashboard-quick-actions {
+  order: 3;
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 10px !important;
+  margin: 0 0 14px !important;
+}
+.dashboard-quick-actions > button {
+  min-height: 88px !important;
+  padding: 13px 8px !important;
+  gap: 9px !important;
+  border-radius: 16px !important;
+  background: var(--dash-panel) !important;
+  border: 1px solid var(--dash-line) !important;
+  box-shadow: none !important;
+}
+.dashboard-quick-actions > button:hover {
+  transform: translateY(-1px);
+  background: var(--dash-panel-raised) !important;
+  border-color: rgba(121, 201, 216, .28) !important;
+}
+.dashboard-quick-actions > button > div {
+  width: 38px !important;
+  height: 38px !important;
+  border-radius: 12px !important;
+  background: rgba(121, 201, 216, .1) !important;
+  color: var(--dash-accent) !important;
+  box-shadow: none !important;
+}
+.dashboard-quick-actions > button > span {
+  font-size: .76rem !important;
+  font-weight: 620 !important;
+  color: #dce5ee !important;
+}
+.dashboard-social-hub {
+  order: 4;
+  min-height: 68px;
+  box-sizing: border-box;
+  padding: 13px 15px !important;
+  margin: 0 0 14px !important;
+  border-radius: 16px !important;
+  background: var(--dash-panel) !important;
+  border: 1px solid var(--dash-line) !important;
+  box-shadow: none !important;
+}
+.dashboard-social-hub:focus-visible {
+  outline: 2px solid var(--dash-accent);
+  outline-offset: 3px;
+}
+@media (min-width: 769px) {
+  .dashboard-main-view { padding: 20px 28px 52px !important; }
+  .dashboard-orb-section { margin: 22px 0 30px !important; }
+  .dashboard-quick-actions { gap: 14px !important; }
+  .dashboard-quick-actions > button { min-height: 104px !important; }
+}
+@media (max-width: 600px) {
+  .dashboard-main-view { padding: 8px 14px 34px !important; }
+  .dashboard-greeting { align-items: flex-start !important; }
+  .dashboard-greeting h1 { font-size: 1.32rem !important; }
+  .dashboard-greeting button { padding: 7px 10px !important; font-size: .7rem !important; }
+  .dashboard-quick-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+  .dashboard-quick-actions > button {
+    min-height: 78px !important;
+    flex-direction: row !important;
+    justify-content: flex-start !important;
+    padding: 12px !important;
+    gap: 11px !important;
+  }
+  .dashboard-quick-actions > button > span {
+    font-size: .84rem !important;
+    white-space: normal !important;
+    text-align: left;
+  }
+  .dashboard-orb-section { margin: 8px 0 18px !important; }
+  .dashboard-weather-card { padding: 12px !important; gap: 8px !important; }
+  .dashboard-weather-card > div:last-child { gap: 7px !important; }
+  .dashboard-weather-card > div:last-child > div > div:last-child { font-size: .62rem !important; }
+  .dashboard-social-hub { padding: 12px !important; }
+}
+@media (max-width: 360px) {
+  .dashboard-main-view { padding-inline: 11px !important; }
+  .dashboard-weather-card { gap: 5px !important; }
+  .dashboard-weather-card > div:first-child { gap: 8px !important; }
+  .dashboard-weather-card > div:last-child > div > div:last-child { white-space: normal !important; }
+}
