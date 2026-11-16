@@ -4979,8 +4979,6 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
                                     print(f"[WhatsApp Digest] Failed delivery to {p_phone}, will retry on next check.")
                         except Exception as p_err:
                             print(f"[Digest Pairing Error] {p_err}")
-                        except Exception as p_err:
-                            print(f"[Digest Pairing Error] {p_err}")
     except Exception as e_dig:
         print(f"[WhatsApp Digest Cron Notice] {e_dig}")
     
