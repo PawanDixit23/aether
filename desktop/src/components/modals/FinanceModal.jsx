@@ -89,6 +89,9 @@ export const FinanceModal = ({
   onClose,
   financeSummary = {},
   financeRecords = [],
+  financeHasMore = false,
+  onLoadMoreFinance,
+  financeLoadingMore = false,
   isAddingExpense,
   setIsAddingExpense,
   newExpenseForm = { type: 'expense', category: 'food', amount: '', note: '', payment_mode: 'upi' },
@@ -1606,6 +1609,18 @@ export const FinanceModal = ({
                     </div>
                   );
                 })}
+              </div>
+            )}
+            {financeHasMore && (
+              <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '12px' }}>
+                <button
+                  type="button"
+                  onClick={onLoadMoreFinance}
+                  disabled={financeLoadingMore}
+                  style={{ background: 'rgba(56, 189, 248, 0.10)', border: '1px solid rgba(56, 189, 248, 0.28)', color: '#7dd3fc', borderRadius: '10px', padding: '8px 14px', fontSize: '0.78rem', fontWeight: 600, cursor: financeLoadingMore ? 'wait' : 'pointer', opacity: financeLoadingMore ? 0.65 : 1 }}
+                >
+                  {financeLoadingMore ? 'Loading transactions...' : 'Load more transactions'}
+                </button>
               </div>
             )}
           </div>
