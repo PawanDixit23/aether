@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import FastAPI, Depends, HTTPException, Header, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -70,16 +70,16 @@ def _send_web_push(subscription_info: dict, title: str, body: str, tag: str = "a
 # ──────────────────────────────────────────────────────────────────────────────
 
 try:
-    from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_tenant_context, set_worker_context
+    from database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_tenant_context, set_worker_context, set_webhook_service_context
     from models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
     from ai_engine import parse_intent_with_llm
 except ImportError:
     try:
-        from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_tenant_context, set_worker_context
+        from server.database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_tenant_context, set_worker_context, set_webhook_service_context
         from server.models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
         from server.ai_engine import parse_intent_with_llm
     except ImportError:
-        from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_tenant_context, set_worker_context
+        from .database import engine, Base, get_db, ensure_schema_migrations, SessionLocal, set_tenant_context, set_worker_context, set_webhook_service_context
         from .models import Task, FinancialRecord, MemoryItem, AuditLog, ChatMessage, PushSubscription
         from .ai_engine import parse_intent_with_llm
 
@@ -107,9 +107,9 @@ def enforce_postgres_runtime_role():
         )
 
 try:
-    from auth import verify_supabase_access_token
+    from auth import verify_supabase_access_token, verify_telegram_webhook_request, verify_meta_whatsapp_webhook_request, verify_twilio_webhook_request
 except ImportError:
-    from .auth import verify_supabase_access_token
+    from .auth import verify_supabase_access_token, verify_telegram_webhook_request, verify_meta_whatsapp_webhook_request, verify_twilio_webhook_request
 
 _PUBLIC_API_PATHS = {
     "/api/health", "/api/metrics", "/api/news", "/api/cricket/live",
@@ -2938,6 +2938,9 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
 @app.post("/api/telegram/webhook")
 async def telegram_webhook(req: Request, db: Session = Depends(get_db)):
     """Receives and processes real-time Telegram messages from user to Aether."""
+    if not verify_telegram_webhook_request(req):
+        return JSONResponse(status_code=401, content={"detail": "Invalid Telegram webhook signature"})
+    set_webhook_service_context(db)
     try:
         data = await req.json()
         message = data.get("message") or data.get("edited_message")
@@ -3207,6 +3210,9 @@ def whatsapp_verify(request: Request):
 @app.post("/api/whatsapp/webhook")
 async def whatsapp_incoming(req: Request, db: Session = Depends(get_db)):
     """Receives and processes incoming WhatsApp messages from Meta Cloud API."""
+    if not await verify_meta_whatsapp_webhook_request(req):
+        return JSONResponse(status_code=401, content={"detail": "Invalid Meta WhatsApp webhook signature"})
+    set_webhook_service_context(db)
     try:
         payload = await req.json()
         entry = payload.get("entry", [{}])[0]
@@ -3480,6 +3486,9 @@ async def twilio_whatsapp_webhook(req: Request, db: Session = Depends(get_db)):
     """Receives and processes incoming WhatsApp messages from Twilio Sandbox."""
     try:
         form = await req.form()
+        if not verify_twilio_webhook_request(req, form):
+            return JSONResponse(status_code=401, content={"detail": "Invalid Twilio webhook signature"})
+        set_webhook_service_context(db)
         sender_full = form.get("From", "")  # e.g. "whatsapp:+919876543210"
         sender = sender_full.replace("whatsapp:", "").strip()
         body = form.get("Body", "").strip()
