@@ -2194,19 +2194,32 @@ def delete_chat_session(
 @app.get("/api/chat/history")
 def get_chat_history(
     session_id: Optional[str] = None,
-    limit: int = 60, 
+    limit: int = 60,
+    offset: int = 0,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
+    """Return the newest bounded page, in chronological order.
+
+    Applying LIMIT/OFFSET in SQL avoids loading a user's entire chat history into
+    the Render process just to return the last few messages.
+    """
     try:
+        safe_limit = max(1, min(int(limit), 100))
+        safe_offset = max(0, int(offset))
         query = db.query(ChatMessage).filter(tenant_filter(ChatMessage, current_user))
         if session_id:
             query = query.filter(ChatMessage.session_id == session_id)
-        msgs = query.order_by(ChatMessage.created_at.asc()).all()
-        return msgs[-limit:]
-    except Exception as e:
+        msgs = (
+            query.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .offset(safe_offset)
+            .limit(safe_limit)
+            .all()
+        )
+        return list(reversed(msgs))
+    except Exception:
         db.rollback()
-        return []
+        raise
 
 @app.delete("/api/chat/history")
 def clear_chat_history(
@@ -3528,10 +3541,26 @@ async def draft_email_reply_endpoint(
 # ----------------- Memory Vault Endpoints -----------------
 @app.get("/api/memory")
 def list_memory(
+    limit: int = 50,
+    offset: int = 0,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    return db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user)).order_by(MemoryItem.created_at.desc()).all()
+    """Return a bounded page of the current user's memories (newest first).
+
+    The response remains a list for backward compatibility. Clients can request
+    older pages with offset; limit is capped to prevent unbounded database reads.
+    """
+    safe_limit = max(1, min(int(limit), 100))
+    safe_offset = max(0, int(offset))
+    return (
+        db.query(MemoryItem)
+        .filter(tenant_filter(MemoryItem, current_user))
+        .order_by(MemoryItem.created_at.desc(), MemoryItem.id.desc())
+        .offset(safe_offset)
+        .limit(safe_limit)
+        .all()
+    )
 
 @app.post("/api/memory")
 def create_memory(
