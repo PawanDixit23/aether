@@ -196,6 +196,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["X-Has-More", "X-Next-Offset", "X-Page-Limit", "Content-Disposition"],
 )
 
 # ─── Security & Observability Subsystems ─────────────────────────────────────
@@ -208,7 +209,25 @@ _api_rate_limiter = TokenBucketRateLimiter(capacity=300, refill_rate_per_sec=10.
 async def security_and_observability_middleware(request: Request, call_next):
     start_time = time.time()
     client_ip = request.client.host if request.client else "unknown"
-    
+
+    # Reject oversized JSON payloads before FastAPI/Pydantic materializes them.
+    # File uploads use multipart and retain their separate upload policy.
+    if request.headers.get("content-type", "").lower().startswith("application/json"):
+        try:
+            content_length = int(request.headers.get("content-length", "0"))
+        except (TypeError, ValueError):
+            content_length = 0
+        max_json_bytes = int(os.environ.get("MAX_JSON_REQUEST_BYTES", str(2 * 1024 * 1024)))
+        if content_length > max_json_bytes:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "detail": "JSON request is too large. Split bulk data into batches of at most 200 records.",
+                    "max_bytes": max_json_bytes
+                }
+            )
+
     # Rate Limiting Guard on API routes
     if request.url.path.startswith("/api/"):
         allowed, remaining, retry_after = _api_rate_limiter.is_allowed(client_ip)
