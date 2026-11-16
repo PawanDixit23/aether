@@ -874,51 +874,85 @@ def client_backup_sync(
                         pass
                 prepared.append({
                     "index": batch_start + local_index, "key": stable_key,
-                    "numeric_id": numeric_id, "item": item, "title": title,
-                    "due_date": due_dt, "created_at": created_dt
+                    "numeric_id": numeric_id, "raw_id": raw_id, "parent_client_id": item.get("parent_client_id"),
+                    "item": item, "title": title, "due_date": due_dt, "created_at": created_dt
                 })
             except Exception as exc:
                 note_failure("task", batch_start + local_index, exc)
 
         candidate_keys = [entry["key"] for entry in prepared]
-        existing_keys = set()
+        existing_by_key = {}
         if candidate_keys:
-            existing_keys = {
-                key for (key,) in db.query(Task.backup_key).filter(
+            existing_by_key = {
+                key: task_id for task_id, key in db.query(Task.id, Task.backup_key).filter(
                     tenant_filter(Task, current_user), Task.backup_key.in_(candidate_keys)
                 ).all() if key
             }
-        existing_ids = set()
+        existing_by_id = {}
         if numeric_ids:
-            existing_ids = {
-                task_id for (task_id,) in db.query(Task.id).filter(
+            existing_by_id = {
+                task_id: task_id for (task_id,) in db.query(Task.id).filter(
                     tenant_filter(Task, current_user), Task.id.in_(numeric_ids)
                 ).all()
             }
 
+        client_id_map = {}
+        new_task_objects = []
         batch_inserted = 0
         for entry in prepared:
-            if entry["key"] in existing_keys or (
-                entry["numeric_id"] is not None and entry["numeric_id"] in existing_ids
-            ):
+            if entry["key"] in existing_by_key:
+                if entry["raw_id"] is not None:
+                    client_id_map[str(entry["raw_id"])] = existing_by_key[entry["key"]]
+                skipped["duplicate_tasks"] += 1
+                continue
+            if entry["numeric_id"] is not None and entry["numeric_id"] in existing_by_id:
+                client_id_map[str(entry["raw_id"])] = existing_by_id[entry["numeric_id"]]
                 skipped["duplicate_tasks"] += 1
                 continue
             item = entry["item"]
             try:
-                db.add(Task(
+                task_obj = Task(
                     user_email=email, owner_user_id=current_user.id,
                     title=entry["title"], priority=item.get("priority", "medium"),
                     status=item.get("status", "pending"), reminder_time=item.get("reminder_time"),
                     recurrence=item.get("recurrence"), completion_comment=item.get("completion_comment"),
                     attachments=item.get("attachments"), due_date=entry["due_date"],
                     created_at=entry["created_at"] or datetime.utcnow(),
-                    notified=item.get("notified", False), backup_key=entry["key"]
-                ))
+                    notified=item.get("notified", False), backup_key=entry["key"],
+                    parent_id=None
+                )
+                db.add(task_obj)
+                new_task_objects.append((entry, task_obj))
                 batch_inserted += 1
-                existing_keys.add(entry["key"])
             except Exception as exc:
                 note_failure("task", entry["index"], exc)
+
         try:
+            # One bounded flush obtains generated IDs before linking children.
+            db.flush()
+            for entry, task_obj in new_task_objects:
+                if entry["raw_id"] is not None:
+                    client_id_map[str(entry["raw_id"])] = task_obj.id
+            for entry, task_obj in new_task_objects:
+                parent_client_id = entry["parent_client_id"]
+                if parent_client_id is None:
+                    continue
+                parent_db_id = client_id_map.get(str(parent_client_id))
+                if parent_db_id is None:
+                    parent_key = f"client:{str(parent_client_id).strip()}"
+                    parent_db_id = db.query(Task.id).filter(
+                        tenant_filter(Task, current_user), Task.backup_key == parent_key
+                    ).scalar()
+                if parent_db_id is None and str(parent_client_id).isdigit():
+                    parent_db_id = db.query(Task.id).filter(
+                        tenant_filter(Task, current_user), Task.id == int(parent_client_id)
+                    ).scalar()
+                if parent_db_id is None:
+                    db.delete(task_obj)
+                    batch_inserted -= 1
+                    note_failure("task_parent", entry["index"], ValueError("Parent task is missing from the backup batch/history"))
+                else:
+                    task_obj.parent_id = parent_db_id
             db.commit()
             restored["tasks"] += batch_inserted
         except Exception as exc:
