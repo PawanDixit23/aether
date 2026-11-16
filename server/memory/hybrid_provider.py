@@ -207,14 +207,14 @@ class HybridMemoryProvider:
                 MemoryItem.fact.ilike(f"%{token}%") for token in q_tokens
             ])).order_by(
                 MemoryItem.importance.desc(), MemoryItem.last_accessed_at.desc(), MemoryItem.id.desc()
-            ).limit(200).all()
+            ).limit(100).all()
             for memory in keyword_rows:
                 candidate_by_id[memory.id] = memory
 
         recent_rows = base_query.order_by(
             MemoryItem.importance.desc(), MemoryItem.last_accessed_at.desc(),
             MemoryItem.created_at.desc(), MemoryItem.id.desc()
-        ).limit(200).all()
+        ).limit(100).all()
         for memory in recent_rows:
             candidate_by_id.setdefault(memory.id, memory)
 
