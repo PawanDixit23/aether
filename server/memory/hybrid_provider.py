@@ -128,7 +128,7 @@ class HybridMemoryProvider:
 
         # Search a bounded keyword candidate set first; if the fact has no
         # useful tokens, fall back to a small recency/importance sample.
-        tokens = list(dict.fromkeys(re.findall(r"\\b\\w{3,}\\b", clean_fact.lower())))[:8]
+        tokens = list(dict.fromkeys(re.findall(r"\b\w{3,}\b", clean_fact.lower())))[:8]
         candidate_query = db.query(MemoryItem).filter(
             MemoryItem.user_email == user_email,
             MemoryItem.category == category
