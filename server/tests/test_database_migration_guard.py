@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
 
 import database
 from database import _parse_add_column_target
@@ -35,7 +36,7 @@ class MigrationColumnParserTests(unittest.TestCase):
         self.assertIsNone(_parse_add_column_target("CREATE INDEX ix_tasks ON tasks (id)"))
 
     def test_startup_migration_runs_only_once_for_a_version(self):
-        test_engine = create_engine("sqlite:///:memory:")
+        test_engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
         try:
             with patch.object(database, "engine", test_engine), patch.object(
                 database, "_run_schema_migrations_once"
