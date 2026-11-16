@@ -5359,7 +5359,7 @@ async def trigger_whatsapp_digest(
         top_tasks = ", ".join([f"'{t.title}'" for t in p_tasks]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
         digest_msg = (
             f"☀️ *सुप्रभात! Aether Morning Digest*\n\n"
-            f"🎯 *आज के कार्य ({len(p_tasks)})*: {top_tasks}\n\n"
+            f"🎯 *आज के कार्य ({pending_task_count})*: {top_tasks}\n\n"
             f"दिन की शानदार शुरुआत करें! कोई भी नया काम या खर्च दर्ज करने के लिए सीधे यहाँ रिप्लाई करें। 🚀"
         )
     else:
