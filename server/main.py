@@ -877,8 +877,7 @@ def client_backup_sync(
         existing_titles.update((row[0] or "").strip().lower() for row in rows)
 
     if req.tasks:
-        for task_batch in chunks(req.tasks, SYNC_BATCH_SIZE):
-          for t in task_batch:
+        for t in req.tasks:
             try:
                 title = (t.get("title") or "").strip()
                 if not title or title.lower() in existing_titles:
@@ -936,8 +935,7 @@ def client_backup_sync(
         existing_facts.update((row[0] or "").strip().lower() for row in rows)
 
     if req.memories:
-        for memory_batch in chunks(req.memories, SYNC_BATCH_SIZE):
-          for m in memory_batch:
+        for m in req.memories:
             try:
                 fact_text = (m.get("fact") or m.get("content") or "").strip()
                 if not fact_text or fact_text.lower() in existing_facts:
