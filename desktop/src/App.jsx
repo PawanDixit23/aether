@@ -9200,6 +9200,19 @@ export default function App() {
                 );
               })()}
 
+              {taskHasMore && (
+                <div style={{ display: 'flex', justifyContent: 'center', margin: '8px 0 18px' }}>
+                  <button
+                    type="button"
+                    onClick={handleLoadMoreTasks}
+                    disabled={taskLoadingMore}
+                    style={{ background: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.3)', color: '#c084fc', borderRadius: '10px', padding: '9px 16px', fontSize: '0.8rem', fontWeight: 600, cursor: taskLoadingMore ? 'wait' : 'pointer', opacity: taskLoadingMore ? 0.65 : 1 }}
+                  >
+                    {taskLoadingMore ? 'Loading tasks...' : 'Load more tasks'}
+                  </button>
+                </div>
+              )}
+
               {/* Cricinfo Live Match Scorecards Widget */}
               {cricketMatches.length > 0 && (
                 <div style={{
