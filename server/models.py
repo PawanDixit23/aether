@@ -29,6 +29,7 @@ class Task(Base):
     notified = Column(Boolean, default=False)
     completion_comment = Column(Text, nullable=True) # Comments / notes on completion
     attachments = Column(Text, nullable=True) # JSON array string of attached files [{name, url, type, size}]
+    backup_key = Column(String, nullable=True, index=True) # Idempotency key for chunked client-backup restore
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class FinancialRecord(Base):
