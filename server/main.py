@@ -4869,56 +4869,56 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
                         break
                     last_pairing_id = pairings[-1].id
                     for p in pairings:
-                    try:
-                        p_phone = p.channel_user_id
-                        p_owner_id = p.owner_user_id
-                        already_sent = db.query(MemoryItem).filter(
-                            MemoryItem.category == "whatsapp_digest_sent",
-                            MemoryItem.owner_user_id == p_owner_id,
-                            MemoryItem.fact == digest_key
-                        ).first()
+                        try:
+                            p_phone = p.channel_user_id
+                            p_owner_id = p.owner_user_id
+                            already_sent = db.query(MemoryItem).filter(
+                                MemoryItem.category == "whatsapp_digest_sent",
+                                MemoryItem.owner_user_id == p_owner_id,
+                                MemoryItem.fact == digest_key
+                            ).first()
 
-                        if not already_sent:
-                            if digest_type == "morning":
-                                task_count = db.query(func.count(Task.id)).filter(
-                                    Task.owner_user_id == p_owner_id,
-                                    Task.status == "pending",
-                                    Task.parent_id == None
-                                ).scalar() or 0
-                                p_tasks = db.query(Task).filter(
-                                    Task.owner_user_id == p_owner_id,
-                                    Task.status == "pending",
-                                    Task.parent_id == None
-                                ).order_by(Task.due_date.asc().nullslast(), Task.id.desc()).limit(3).all()
-                                top_tasks_str = ", ".join([f"'{t.title}'" for t in p_tasks]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
-                                digest_msg = (
-                                    f"☀️ *सुप्रभात! Aether Morning Digest*\n\n"
-                                    f"🎯 *आज के कार्य ({task_count})*: {top_tasks_str}\n\n"
-                                    f"दिन की शानदार शुरुआत करें! कोई भी नया काम या खर्च दर्ज करने के लिए सीधे यहाँ रिप्लाई करें। 🚀"
-                                )
-                            else:
-                                comp_count = db.query(Task).filter(Task.owner_user_id == p_owner_id, Task.status == "completed").count()
-                                pend_count = db.query(Task).filter(Task.owner_user_id == p_owner_id, Task.status == "pending").count()
-                                digest_msg = (
-                                    f"🌙 *शुभ संध्या! Aether Day Wrap-up*\n\n"
-                                    f"📊 *आज की प्रगति*:\n"
-                                    f"• पूरे हुए कार्य: ✅ {comp_count}\n"
-                                    f"• शेष कार्य: ⏳ {pend_count}\n\n"
-                                    f"क्या शेष कार्यों को कल के लिए आगे बढ़ाना है? बस मुझे यहाँ बता दें।"
-                                )
+                            if not already_sent:
+                                if digest_type == "morning":
+                                    task_count = db.query(func.count(Task.id)).filter(
+                                        Task.owner_user_id == p_owner_id,
+                                        Task.status == "pending",
+                                        Task.parent_id == None
+                                    ).scalar() or 0
+                                    p_tasks = db.query(Task).filter(
+                                        Task.owner_user_id == p_owner_id,
+                                        Task.status == "pending",
+                                        Task.parent_id == None
+                                    ).order_by(Task.due_date.asc().nullslast(), Task.id.desc()).limit(3).all()
+                                    top_tasks_str = ", ".join([f"'{t.title}'" for t in p_tasks]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
+                                    digest_msg = (
+                                        f"☀️ *सुप्रभात! Aether Morning Digest*\n\n"
+                                        f"🎯 *आज के कार्य ({task_count})*: {top_tasks_str}\n\n"
+                                        f"दिन की शानदार शुरुआत करें! कोई भी नया काम या खर्च दर्ज करने के लिए सीधे यहाँ रिप्लाई करें। 🚀"
+                                    )
+                                else:
+                                    comp_count = db.query(Task).filter(Task.owner_user_id == p_owner_id, Task.status == "completed").count()
+                                    pend_count = db.query(Task).filter(Task.owner_user_id == p_owner_id, Task.status == "pending").count()
+                                    digest_msg = (
+                                        f"🌙 *शुभ संध्या! Aether Day Wrap-up*\n\n"
+                                        f"📊 *आज की प्रगति*:\n"
+                                        f"• पूरे हुए कार्य: ✅ {comp_count}\n"
+                                        f"• शेष कार्य: ⏳ {pend_count}\n\n"
+                                        f"क्या शेष कार्यों को कल के लिए आगे बढ़ाना है? बस मुझे यहाँ बता दें।"
+                                    )
 
-                            # Synchronous dispatch for worker thread (Issue #1 fix)
-                            sent_ok = _send_whatsapp_message_sync(p_phone, digest_msg, wa_phone_id, wa_token)
-                            if sent_ok:
-                                db.add(MemoryItem(owner_user_id=p_owner_id, user_email=p.user_email, category="whatsapp_digest_sent", fact=digest_key))
-                                db.commit()
-                                print(f"[WhatsApp Digest] Successfully sent {digest_type} digest to {p_phone}")
-                            else:
-                                print(f"[WhatsApp Digest] Failed delivery to {p_phone}, will retry on next check.")
-                    except Exception as p_err:
-                        print(f"[Digest Pairing Error] {p_err}")
-                    except Exception as p_err:
-                        print(f"[Digest Pairing Error] {p_err}")
+                                # Synchronous dispatch for worker thread (Issue #1 fix)
+                                sent_ok = _send_whatsapp_message_sync(p_phone, digest_msg, wa_phone_id, wa_token)
+                                if sent_ok:
+                                    db.add(MemoryItem(owner_user_id=p_owner_id, user_email=p.user_email, category="whatsapp_digest_sent", fact=digest_key))
+                                    db.commit()
+                                    print(f"[WhatsApp Digest] Successfully sent {digest_type} digest to {p_phone}")
+                                else:
+                                    print(f"[WhatsApp Digest] Failed delivery to {p_phone}, will retry on next check.")
+                        except Exception as p_err:
+                            print(f"[Digest Pairing Error] {p_err}")
+                        except Exception as p_err:
+                            print(f"[Digest Pairing Error] {p_err}")
     except Exception as e_dig:
         print(f"[WhatsApp Digest Cron Notice] {e_dig}")
     
