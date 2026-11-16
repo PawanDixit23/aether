@@ -1,6 +1,8 @@
 name: App-wide resource guard checks
 
 on:
+  push:
+    branches: [feat/app-wide-db-resource-guard]
   pull_request:
     branches: [dev]
     paths:
