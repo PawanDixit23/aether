@@ -48,7 +48,7 @@ from models import (
     WhatsAppMessage, ProcessedMutation, BriefingPreference
 )
 from agent.governance import ActionApprovalManager
-from database import SessionLocal, set_db_rls_context, set_webhook_service_rls_context
+from database import SessionLocal, set_db_rls_context, set_webhook_service_rls_context, set_worker_rls_context
 
 
 def get_postgres_engine():
@@ -146,6 +146,18 @@ def test_postgres_rls_suite():
             assert sess.query(MemoryItem).filter(MemoryItem.id == mem_id).first() is None, "Security Violation: User B read User A's MemoryItem!"
             assert sess.query(ChatMessage).filter(ChatMessage.id == chat_id).first() is None, "Security Violation: User B read User A's ChatMessage!"
     print("✅ User B cannot read any of User A's actual records (0 rows returned across all tables under RLS).")
+
+    # Trusted reminder worker is the only cross-tenant maintenance principal.
+    # No context sees no rows; the worker context can see the task and push rows.
+    with Session() as sess:
+        with sess.begin():
+            assert sess.query(Task).filter(Task.id == task_id).first() is None, "Unscoped DB session unexpectedly read tenant task"
+    with Session() as sess:
+        with sess.begin():
+            set_worker_rls_context(sess)
+            worker_task = sess.query(Task).filter(Task.id == task_id).first()
+            assert worker_task is not None and worker_task.owner_user_id == user_a, "Trusted worker could not read tenant task"
+    print("✅ Trusted worker RLS context can read cross-tenant maintenance rows; unscoped sessions cannot.")
 
     # 5. Cross-tenant UPDATE & DELETE: User B cannot modify or delete User A's records
     with Session() as sess:
