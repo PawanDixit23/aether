@@ -48,6 +48,24 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .chat-bubble-user { background: rgba(99,199,216,.13); border: 1px solid rgba(99,199,216,.18); box-shadow: none; }
 .chat-bubble-aether { background: var(--ui-surface); border: 1px solid var(--ui-border); box-shadow: none; }
 
+/* Dashboard content order: keep live weather in the first viewport, immediately after greeting. */
+.dashboard-main-view > * { order: 4; }
+.dashboard-main-view > .dashboard-greeting { order: 0; }
+.dashboard-main-view > .dashboard-weather-card { order: 1; }
+.dashboard-main-view > .dashboard-orb-section { order: 2; }
+.dashboard-main-view > .dashboard-quick-actions { order: 3; }
+.dashboard-weather-card {
+  width: 100%;
+  box-sizing: border-box;
+  box-shadow: none !important;
+  background: var(--ui-surface) !important;
+  border: 1px solid var(--ui-border) !important;
+  border-radius: 16px !important;
+}
+.dashboard-weather-card:hover { border-color: var(--ui-border-strong) !important; }
+.dashboard-weather-card button { flex: 0 0 34px; }
+.dashboard-weather-card button:disabled { cursor: wait; }
+
 /* Consistent page rhythm and readable line lengths. */
 .aether-main-content { width: min(100%, 1120px); margin-inline: auto; padding: 28px 28px 88px; gap: 24px; }
 .dashboard-main-view { width: min(100%, 760px) !important; margin-inline: auto !important; padding: 12px 20px 44px !important; gap: 0; }
