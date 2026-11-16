@@ -3883,12 +3883,28 @@ export default function App() {
       // Auto-backup / restore client data so memory never disappears across Render container reboots
       if (currentEmail) {
         if (loadedTasks.length > 0 || loadedMemories.length > 0 || loadedFinances.length > 0) {
+          let previousBackup = {};
+          try {
+            const previousText = localStorage.getItem(`aether_backup_${currentEmail}`);
+            previousBackup = previousText ? JSON.parse(previousText) : {};
+          } catch (e) {}
+          const previousTasks = Array.isArray(previousBackup.tasks) ? previousBackup.tasks : [];
+          const previousFinances = Array.isArray(previousBackup.finances) ? previousBackup.finances : [];
+          const backupTasks = Array.from(new Map(
+            [...previousTasks, ...loadedTasks]
+              .filter(task => task && task.id != null && !deletedTaskIdsRef.current.has(String(task.id)))
+              .map(task => [String(task.id), task])
+          ).values());
+          const backupFinances = Array.from(new Map(
+            [...previousFinances, ...loadedFinances]
+              .filter(record => record && record.id != null && !deletedFinanceIdsRef.current.has(String(record.id)))
+              .map(record => [String(record.id), record])
+          ).values());
+          const backupMemories = mergeMemoryBackup(currentEmail, loadedMemories);
           localStorage.setItem(`aether_backup_${currentEmail}`, JSON.stringify({
-            tasks: loadedTasks,
-            memories: mergeMemoryBackup(currentEmail, loadedMemories),
-            finances: loadedFinances
+            tasks: backupTasks, memories: backupMemories, finances: backupFinances
           }));
-          localStorage.setItem('aether_cached_tasks', JSON.stringify(loadedTasks));
+          localStorage.setItem('aether_cached_tasks', JSON.stringify(backupTasks));
 
           // Also persist in mobile device native AsyncStorage via bridge
           if (typeof window !== 'undefined' && window.ReactNativeWebView) {
@@ -3897,9 +3913,9 @@ export default function App() {
                 type: 'STORE_NATIVE_BACKUP',
                 payload: {
                   email: currentEmail,
-                  tasks: loadedTasks,
-                  memories: mergeMemoryBackup(currentEmail, loadedMemories),
-                  finances: loadedFinances
+                  tasks: backupTasks,
+                  memories: backupMemories,
+                  finances: backupFinances
                 }
               }));
             } catch (e) {}
@@ -3927,20 +3943,36 @@ export default function App() {
             const bFin = backupData.finances || [];
 
             if (bTasks.length > 0 || bMems.length > 0 || bFin.length > 0) {
-              apiFetch(`${API_BASE}/sync/backup`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
-                body: JSON.stringify({
-                  user_email: currentEmail,
-                  tasks: bTasks,
-                  memories: bMems,
-                  finances: bFin
-                })
-              }).then(() => {
-                if (bTasks.length > 0) setTasks(bTasks);
-                if (bMems.length > 0) setMemories(bMems);
-                if (bFin.length > 0) setFinanceRecords(bFin);
-              }).catch(() => {});
+              const uploadBackupChunks = async (field, records) => {
+                for (let offset = 0; offset < records.length; offset += 200) {
+                  const payload = { user_email: currentEmail, [field]: records.slice(offset, offset + 200) };
+                  const resp = await apiFetch(`${API_BASE}/sync/backup`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
+                    body: JSON.stringify(payload)
+                  });
+                  if (!resp.ok) {
+                    const detail = await resp.text().catch(() => '');
+                    throw new Error(`Backup ${field} batch failed (${resp.status}): ${detail.slice(0, 200)}`);
+                  }
+                  const result = await resp.json();
+                  if (result.failed_count > 0) {
+                    throw new Error(`Backup ${field} batch had ${result.failed_count} failed records`);
+                  }
+                }
+              };
+              (async () => {
+                try {
+                  await uploadBackupChunks('tasks', bTasks);
+                  await uploadBackupChunks('memories', bMems);
+                  await uploadBackupChunks('finances', bFin);
+                  showToast('Local backup restored safely in batches', 'success');
+                  await refreshAllData({ force: true });
+                } catch (restoreError) {
+                  console.error('Chunked backup restore failed:', restoreError);
+                  showToast('Backup restore is incomplete. Retry sync; completed batches are safe to retry.', 'error');
+                }
+              })();
             }
           }
         }
