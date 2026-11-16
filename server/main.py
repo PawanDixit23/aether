@@ -3687,18 +3687,15 @@ def export_finance_csv(
     db: Session = Depends(get_db)
 ):
     """Stream CSV rows from PostgreSQL in bounded batches instead of buffering the ledger."""
-    query = db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user))
+    if month is not None and (month < 0 or month > 11):
+        raise HTTPException(status_code=400, detail="month must be between 0 and 11")
+    start = end = None
     if year is not None and month is not None:
-        if month < 0 or month > 11:
-            raise HTTPException(status_code=400, detail="month must be between 0 and 11")
         start = datetime(year, month + 1, 1)
         end = datetime(year + 1, 1, 1) if month == 11 else datetime(year, month + 2, 1)
-        query = query.filter(FinancialRecord.date >= start, FinancialRecord.date < end)
     elif year is not None:
-        query = query.filter(
-            FinancialRecord.date >= datetime(year, 1, 1),
-            FinancialRecord.date < datetime(year + 1, 1, 1)
-        )
+        start = datetime(year, 1, 1)
+        end = datetime(year + 1, 1, 1)
 
     month_names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
     m_name = month_names[month] if (month is not None and 0 <= month < 12) else "All"
@@ -3712,15 +3709,23 @@ def export_finance_csv(
         yield "\ufeff" + output.getvalue()
         output.seek(0)
         output.truncate(0)
-        for record in query.order_by(FinancialRecord.date.desc(), FinancialRecord.id.desc()).yield_per(500):
-            date_text = record.date.strftime("%d/%m/%Y") if hasattr(record.date, "strftime") else str(record.date or "")
-            writer.writerow([
+        stream_db = SessionLocal()
+        try:
+            set_db_rls_context(stream_db, current_user.id)
+            stream_query = stream_db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user))
+            if start is not None and end is not None:
+                stream_query = stream_query.filter(FinancialRecord.date >= start, FinancialRecord.date < end)
+            for record in stream_query.order_by(FinancialRecord.date.desc(), FinancialRecord.id.desc()).yield_per(500):
+                date_text = record.date.strftime("%d/%m/%Y") if hasattr(record.date, "strftime") else str(record.date or "")
+                writer.writerow([
                 record.id, date_text, record.type or "expense", record.category or "general",
                 record.amount or 0, record.payment_mode or "upi", record.note or ""
             ])
-            yield output.getvalue()
-            output.seek(0)
-            output.truncate(0)
+                yield output.getvalue()
+                output.seek(0)
+                output.truncate(0)
+        finally:
+            stream_db.close()
 
     return StreamingResponse(
         csv_stream(),
