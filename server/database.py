@@ -235,10 +235,13 @@ def ensure_schema_migrations():
             with engine.connect() as conn:
                 if is_pg:
                     conn = conn.execution_options(isolation_level="AUTOCOMMIT")
-                    conn.exec_driver_sql("SET statement_timeout = 0")
-                    concurrent_sql = index_sql.replace("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS", 1)
-                    concurrent_sql = concurrent_sql.replace("CREATE INDEX IF NOT EXISTS", "CREATE INDEX CONCURRENTLY IF NOT EXISTS", 1)
-                    conn.exec_driver_sql(concurrent_sql)
+                    try:
+                        conn.exec_driver_sql("SET statement_timeout = 0")
+                        concurrent_sql = index_sql.replace("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS", 1)
+                        concurrent_sql = concurrent_sql.replace("CREATE INDEX IF NOT EXISTS", "CREATE INDEX CONCURRENTLY IF NOT EXISTS", 1)
+                        conn.exec_driver_sql(concurrent_sql)
+                    finally:
+                        conn.exec_driver_sql("SET statement_timeout = 10000")
                 else:
                     conn.exec_driver_sql(index_sql)
         except Exception as e:
@@ -249,12 +252,15 @@ def ensure_schema_migrations():
         try:
             with engine.connect() as conn:
                 conn = conn.execution_options(isolation_level="AUTOCOMMIT")
-                conn.exec_driver_sql("SET statement_timeout = 0")
-                conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-                conn.exec_driver_sql(
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_memory_fact_trgm "
-                    "ON memory_vault USING gin (fact gin_trgm_ops)"
-                )
+                try:
+                    conn.exec_driver_sql("SET statement_timeout = 0")
+                    conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+                    conn.exec_driver_sql(
+                        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_memory_fact_trgm "
+                        "ON memory_vault USING gin (fact gin_trgm_ops)"
+                    )
+                finally:
+                    conn.exec_driver_sql("SET statement_timeout = 10000")
         except Exception as e:
             print(f"[Memory Search Index Note] pg_trgm index was not created: {e}")
 
