@@ -1453,7 +1453,9 @@ async def _execute_quick_capture(
             if lang == "hi"
             else f"Hello {req.user_name or 'Pawan'}! Systems operational. What work or tasks can I handle for you right now?"
         )
-        result_message = data.get("response", fallback_greeting)
+        result_message = (data.get("response") or "").strip()
+        if not result_message and not req.live_voice:
+            result_message = fallback_greeting
         if isinstance(result_message, str) and (result_message.strip().startswith('{') or '"action":' in result_message):
             clean_res = re.sub(r'\{|\}|"action"\s*:\s*"[^"]*",?|"data"\s*:\s*\{?|"confidence(?:_level)?"\s*:\s*(?:"[^"]*"|[\d.]+),?|"response"\s*:\s*"?|"explanation"\s*:\s*"?', '', result_message)
             clean_res = re.sub(r'^[\s,"]+|[\s,"]+$', '', clean_res).strip()
