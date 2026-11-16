@@ -2351,49 +2351,56 @@ def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = Non
             return
         now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
         today = now.date()
-        query = db.query(Task).filter(
-            Task.recurrence != None, Task.owner_user_id == str(owner_user_id).strip()
-        ).yield_per(100)
         updated = False
-        for task in query:
-            if task.status == "completed":
-                task.notified = True
-                continue
-            title_lower = (task.title or "").lower()
-            if any(word in title_lower for word in ["challan", "fine", "ticket", "one-time"]):
-                task.recurrence = None
-                task.notified = True
-                updated = True
-                continue
-            if not task.due_date:
-                task.due_date = datetime.combine(today, datetime.min.time())
-                updated = True
-                continue
-            due_dt = task.due_date
-            if isinstance(due_dt, str):
-                due_dt = datetime.fromisoformat(due_dt.replace(" ", "T"))
-            if due_dt.date() < today:
-                if task.recurrence == "daily":
-                    new_dt = datetime.combine(today, due_dt.time())
-                elif task.recurrence in ["weekdays", "monday_to_friday"]:
-                    new_dt = datetime.combine(today, due_dt.time())
-                    while new_dt.weekday() >= 5:
-                        new_dt += timedelta(days=1)
-                elif str(task.recurrence).startswith("weekly"):
-                    new_dt = due_dt
-                    while new_dt.date() < today:
-                        new_dt += timedelta(days=7)
-                else:
-                    new_dt = datetime.combine(today, due_dt.time())
-                task.due_date = new_dt
-                task.status = "pending"
-                task.notified = False
-                updated = True
-        if updated:
-            db.commit()
-    except Exception as exc:
-        db.rollback()
-        print(f"[AutoAdvanceRecurringTasks Note] {exc}")
+        last_id = 0
+        while True:
+            batch = db.query(Task).filter(
+                Task.recurrence != None,
+                Task.owner_user_id == str(owner_user_id).strip(),
+                Task.id > last_id
+            ).order_by(Task.id.asc()).limit(100).all()
+            if not batch:
+                break
+            last_id = batch[-1].id
+            for task in batch:
+                if task.status == "completed":
+                    task.notified = True
+                    continue
+                title_lower = (task.title or "").lower()
+                if any(word in title_lower for word in ["challan", "fine", "ticket", "one-time"]):
+                    task.recurrence = None
+                    task.notified = True
+                    updated = True
+                    continue
+                if not task.due_date:
+                    task.due_date = datetime.combine(today, datetime.min.time())
+                    updated = True
+                    continue
+                due_dt = task.due_date
+                if isinstance(due_dt, str):
+                    due_dt = datetime.fromisoformat(due_dt.replace(" ", "T"))
+                if due_dt.date() < today:
+                    if task.recurrence == "daily":
+                        new_dt = datetime.combine(today, due_dt.time())
+                    elif task.recurrence in ["weekdays", "monday_to_friday"]:
+                        new_dt = datetime.combine(today, due_dt.time())
+                        while new_dt.weekday() >= 5:
+                            new_dt += timedelta(days=1)
+                    elif str(task.recurrence).startswith("weekly"):
+                        new_dt = due_dt
+                        while new_dt.date() < today:
+                            new_dt += timedelta(days=7)
+                    else:
+                        new_dt = datetime.combine(today, due_dt.time())
+                    task.due_date = new_dt
+                    task.status = "pending"
+                    task.notified = False
+                    updated = True
+            if updated:
+                db.commit()
+        except Exception as exc:
+            db.rollback()
+            print(f"[AutoAdvanceRecurringTasks Note] {exc}")
 
 @app.get("/api/reminders/due")
 def get_due_reminders(
@@ -2971,27 +2978,34 @@ def reschedule_all_overdue(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Stream overdue tasks in bounded batches while preserving every matching row."""
+    """Reschedule overdue tasks using keyset batches; no full-table ORM load."""
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     today = now.date()
-    query = db.query(Task).filter(
-        tenant_filter(Task, current_user), Task.status == "pending",
-        Task.recurrence == None, Task.due_date != None
-    ).yield_per(200)
     count = 0
-    for task in query:
-        due = task.due_date
-        if isinstance(due, str):
-            try:
-                due = datetime.fromisoformat(due.replace(" ", "T"))
-            except Exception:
-                continue
-        if due and due.date() < today:
-            task.due_date = datetime.combine(today, due.time())
-            task.notified = False
-            count += 1
-    if count:
-        db.commit()
+    last_id = 0
+    while True:
+        batch = db.query(Task).filter(
+            tenant_filter(Task, current_user), Task.status == "pending",
+            Task.recurrence == None, Task.due_date != None, Task.id > last_id
+        ).order_by(Task.id.asc()).limit(200).all()
+        if not batch:
+            break
+        last_id = batch[-1].id
+        batch_changed = 0
+        for task in batch:
+            due = task.due_date
+            if isinstance(due, str):
+                try:
+                    due = datetime.fromisoformat(due.replace(" ", "T"))
+                except Exception:
+                    continue
+            if due and due.date() < today:
+                task.due_date = datetime.combine(today, due.time())
+                task.notified = False
+                batch_changed += 1
+        if batch_changed:
+            db.commit()
+            count += batch_changed
     return {"status": "ok", "rescheduled_count": count}
 
 @app.delete("/api/tasks/{task_id}")
