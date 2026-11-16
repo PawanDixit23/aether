@@ -2814,10 +2814,12 @@ def toggle_task(
         try:
             dep_ids = json.loads(task.dependency_task_ids)
             if dep_ids and isinstance(dep_ids, list):
+                if len(dep_ids) > 100:
+                    raise HTTPException(status_code=400, detail="A task can have at most 100 dependencies")
                 blocking = db.query(Task).filter(
                     Task.id.in_(dep_ids),
                     Task.status != "completed"
-                ).all()
+                ).limit(100).all()
                 if blocking:
                     titles = [b.title for b in blocking]
                     raise HTTPException(
