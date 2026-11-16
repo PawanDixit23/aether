@@ -2410,6 +2410,9 @@ def get_chat_history(
         query = db.query(ChatMessage).filter(tenant_filter(ChatMessage, current_user))
         if session_id:
             query = query.filter(ChatMessage.session_id == session_id)
+        if before_id is not None:
+            query = query.filter(ChatMessage.id < before_id)
+            safe_offset = 0
         page_rows = (
             query.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .offset(safe_offset)
