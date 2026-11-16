@@ -46,7 +46,16 @@ Set the exact same value in:
 
 The GitHub keep-alive workflow uses this secret to call /api/reminders/push-check. Do not reuse the Supabase anon key, service-role key, or a user access token.
 
-## 5. Deployment order
+## 5. Verify provider webhooks before enabling database pairing access
+
+Webhook routes fail closed unless the provider signature/secret is valid. Configure:
+- Telegram: set Render `TELEGRAM_WEBHOOK_SECRET` and register the webhook with Telegram's `secret_token` set to the same value. Telegram requests must include `X-Telegram-Bot-Api-Secret-Token`.
+- Meta WhatsApp: set Render `WHATSAPP_APP_SECRET` to the Meta app secret. Requests are verified using `X-Hub-Signature-256` over the raw request body.
+- Twilio: set Render `TWILIO_AUTH_TOKEN` and `TWILIO_WEBHOOK_URL`. The URL must exactly match the externally configured Twilio callback URL.
+
+Unsigned webhook requests are rejected before any provider-pairing RLS context is enabled. Do not expose a webhook endpoint until its matching provider secret is configured.
+
+## 6. Deployment order
 
 1. Apply the migration using the admin connection.
 2. Create the restricted runtime role and grant table/sequence privileges.
