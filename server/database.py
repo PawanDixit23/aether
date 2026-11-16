@@ -221,9 +221,13 @@ def ensure_schema_migrations():
         "CREATE INDEX IF NOT EXISTS ix_tasks_owner_parent_id ON tasks (owner_user_id, parent_id, id)",
         "CREATE INDEX IF NOT EXISTS ix_tasks_owner_status_due ON tasks (owner_user_id, status, due_date)",
         "CREATE INDEX IF NOT EXISTS ix_financial_owner_date_id ON financial_records (owner_user_id, date, id)",
+        "CREATE INDEX IF NOT EXISTS ix_financial_owner_type_date ON financial_records (owner_user_id, type, date)",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_financial_owner_backup_key ON financial_records (owner_user_id, backup_key) WHERE backup_key IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS ix_memory_owner_importance_created ON memory_vault (owner_user_id, importance, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_memory_owner_category_importance ON memory_vault (owner_user_id, category, importance, created_at)",
         "CREATE INDEX IF NOT EXISTS ix_chat_owner_session_id ON chat_messages (owner_user_id, session_id, id)",
+        "CREATE INDEX IF NOT EXISTS ix_audit_owner_executed ON audit_logs (owner_user_id, executed_at, id)",
+        "CREATE INDEX IF NOT EXISTS ix_chat_sessions_owner_updated ON chat_sessions (owner_user_id, updated_at, id)",
         "CREATE INDEX IF NOT EXISTS ix_task_completions_owner_task_id ON task_date_completions (owner_user_id, task_id, id)",
     ]
     for index_sql in resource_indexes:
