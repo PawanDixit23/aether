@@ -439,3 +439,69 @@ button:disabled { cursor: not-allowed; opacity: .58; }
   .dashboard-weather-card > div:first-child { gap: 8px !important; }
   .dashboard-weather-card > div:last-child > div > div:last-child { white-space: normal !important; }
 }
+
+
+/* Dashboard: content-first, calm and compact. Remove the "card inside a card" look. */
+.dashboard-main-view {
+  max-width: 780px !important;
+  padding: 8px 16px 32px !important;
+}
+.dashboard-greeting { margin: 2px 0 12px !important; }
+.dashboard-greeting h1 {
+  font-size: clamp(1.25rem, 4.2vw, 1.65rem) !important;
+  line-height: 1.16 !important;
+  letter-spacing: -.04em !important;
+}
+.dashboard-greeting button { min-height: 34px !important; padding: 6px 10px !important; }
+.dashboard-weather-card {
+  min-height: 72px !important;
+  padding: 10px 12px !important;
+  margin: 0 0 6px !important;
+  border-radius: 14px !important;
+  background: rgba(17, 27, 39, .72) !important;
+}
+.dashboard-weather-card > div:first-child > div:first-child {
+  width: 36px !important; height: 36px !important; border-radius: 11px !important;
+}
+.dashboard-weather-card > div:last-child > div > div:first-child { font-size: 1.28rem !important; }
+.dashboard-orb-section { margin: 6px 0 12px !important; padding-top: 0 !important; }
+.dashboard-orb-section > div:first-child { width: 108px !important; height: 108px !important; }
+.dashboard-orb-section > div:first-child > div:nth-child(2) { width: 88px !important; height: 88px !important; }
+.dashboard-orb-section > div:nth-child(2) { margin: 8px 0 10px !important; }
+.dashboard-orb-section > div:nth-child(3) {
+  background: transparent !important;
+  border: 0 !important;
+  padding: 0 !important;
+  gap: 8px !important;
+}
+.dashboard-orb-section > div:nth-child(3) button {
+  border: 1px solid var(--ui-border) !important;
+  background: rgba(255,255,255,.035) !important;
+  border-radius: 999px !important;
+  min-height: 36px !important;
+}
+.dashboard-quick-actions { gap: 8px !important; margin: 0 0 10px !important; }
+.dashboard-quick-actions > button {
+  min-height: 64px !important;
+  padding: 9px 11px !important;
+  border-radius: 13px !important;
+  background: rgba(16,24,36,.72) !important;
+}
+.dashboard-quick-actions > button > div {
+  width: 34px !important; height: 34px !important; border-radius: 10px !important;
+}
+.dashboard-quick-actions > button > span { font-size: .82rem !important; }
+.dashboard-social-hub {
+  min-height: 54px !important;
+  padding: 9px 12px !important;
+  margin-top: 2px !important;
+  border-radius: 13px !important;
+  background: rgba(16,24,36,.62) !important;
+  border-color: var(--ui-border) !important;
+}
+@media (max-width: 600px) {
+  .dashboard-main-view { padding: 6px 12px 28px !important; }
+  .dashboard-greeting { gap: 8px !important; }
+  .dashboard-weather-card { min-height: 66px !important; }
+  .dashboard-quick-actions > button { min-height: 62px !important; padding: 8px 9px !important; }
+}
