@@ -30,9 +30,12 @@ engine_options = {
 }
 if DATABASE_URL.startswith(("postgresql://", "postgresql+")):
     engine_options.update({
-        "pool_size": int(os.environ.get("DB_POOL_SIZE", "3")),
-        "max_overflow": int(os.environ.get("DB_POOL_MAX_OVERFLOW", "2")),
-        "pool_timeout": int(os.environ.get("DB_POOL_TIMEOUT_SECONDS", "10")),
+        # The mobile dashboard opens several independent API requests at once.
+        # Keep the per-process pool bounded, but large enough for normal dashboard
+        # fan-out plus the in-process reminder worker and occasional streaming export.
+        "pool_size": int(os.environ.get("DB_POOL_SIZE", "5")),
+        "max_overflow": int(os.environ.get("DB_POOL_MAX_OVERFLOW", "5")),
+        "pool_timeout": int(os.environ.get("DB_POOL_TIMEOUT_SECONDS", "20")),
         "pool_recycle": int(os.environ.get("DB_POOL_RECYCLE_SECONDS", "1800")),
         "pool_use_lifo": True,
         # Bound runaway SQL and lock waits at the database connection level.
@@ -78,6 +81,10 @@ def receive_after_begin(session, transaction, connection):
             connection.execute(
                 text("SELECT set_config('request.worker_authorized', :enabled, true)"),
                 {"enabled": "true" if worker_authorized else "false"}
+            )
+            # Never carry a provider webhook bridge into a tenant/worker transaction.
+            connection.execute(
+                text("SELECT set_config('request.webhook_service_authorized', 'false', true)")
             )
         except Exception as e:
             raise RuntimeError(f"Failed to apply transaction-local PostgreSQL RLS context: {e}")
@@ -406,35 +413,38 @@ def set_webhook_service_rls_context(db: Session, authorized_provider: str):
         raise RuntimeError(f"Webhook service security context initialization failed: {e}")
 
 
+def _apply_rls_context_to_active_transaction(db: Session):
+    """Apply session identity immediately only if a transaction already owns a connection."""
+    if "postgres" not in str(engine.url).lower() or not db.in_transaction():
+        return
+    user_id = str(db.info.get("rls_user_id") or "").strip()
+    worker_authorized = bool(db.info.get("rls_worker_authorized"))
+    db.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": user_id})
+    db.execute(text("SELECT set_config('request.worker_authorized', :enabled, true)"),
+               {"enabled": "true" if worker_authorized else "false"})
+    db.execute(text("SELECT set_config('request.webhook_service_authorized', 'false', true)"))
+
+
 def set_db_rls_context(db: Session, user_id: Optional[str]):
     """
-    Sets transaction-local PostgreSQL RLS context from verified authenticated UUID (AETH-P0-02).
-    Uses official PostgreSQL set_config(setting_name, new_val, is_local=true) for parameter-bound transaction isolation.
-    Fails closed if the identity cannot be set.
+    Store the verified tenant identity on the Session without checking out a DB
+    connection. The after_begin hook applies it on the same connection immediately
+    before the first SQL statement, keeping transaction-local RLS fail-closed.
     """
     clean_sub = str(user_id).strip() if user_id else ""
     db.info["rls_user_id"] = clean_sub
     db.info["rls_worker_authorized"] = False
     try:
-        is_pg = "postgres" in str(engine.url).lower()
-        if is_pg:
-            db.execute(text("SELECT set_config('request.jwt.claim.sub', :sub, true)"), {"sub": clean_sub})
-            # Clear webhook bridge authorization so subsequent business operations are strictly scoped to the tenant
-            db.execute(text("SELECT set_config('request.webhook_service_authorized', 'false', true)"))
-            db.execute(text("SELECT set_config('request.worker_authorized', 'false', true)"))
+        _apply_rls_context_to_active_transaction(db)
     except Exception as e:
-        raise RuntimeError(f"Database security context initialization failed: {e}")
-
+        raise RuntimeError(f"Database security context initialization failed: {e}") from e
 
 
 def set_worker_rls_context(db: Session):
-    """Authorize only the trusted in-process reminder worker for cross-tenant maintenance."""
+    """Authorize only the trusted in-process reminder worker, lazily at transaction start."""
     db.info["rls_worker_authorized"] = True
     db.info.pop("rls_user_id", None)
     try:
-        if "postgres" in str(engine.url).lower():
-            db.execute(text("SELECT set_config('request.jwt.claim.sub', '', true)"))
-            db.execute(text("SELECT set_config('request.webhook_service_authorized', 'false', true)"))
-            db.execute(text("SELECT set_config('request.worker_authorized', 'true', true)"))
+        _apply_rls_context_to_active_transaction(db)
     except Exception as exc:
         raise RuntimeError(f"Reminder worker RLS context initialization failed: {exc}") from exc
