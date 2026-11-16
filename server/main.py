@@ -2449,10 +2449,34 @@ def list_tasks(
     except Exception as e:
         print(f"[list_tasks] Error fetching task date completions: {e}")
 
+    top_level_tasks = query.order_by(Task.created_at.desc(), Task.id.desc()).all()
+    task_ids = [t.id for t in top_level_tasks]
+
+    # Fetch all subtasks in one tenant-scoped query instead of issuing one
+    # SELECT per parent task (the previous N+1 pattern generated hundreds of
+    # thousands of repeated parent_id queries under normal polling).
+    subtasks_by_parent = {}
+    if task_ids:
+        subtasks = (
+            db.query(Task)
+            .filter(
+                Task.owner_user_id == current_user.id,
+                Task.parent_id.in_(task_ids)
+            )
+            .order_by(Task.parent_id.asc(), Task.id.asc())
+            .all()
+        )
+        for subtask in subtasks:
+            subtasks_by_parent.setdefault(subtask.parent_id, []).append(subtask)
+
     tasks_out = []
-    for t in query.order_by(Task.created_at.desc()).all():
-        serialized = serialize_task(t, db=db)
-        serialized["date_completions"] = date_completions_map.get(t.id, {})
+    for task in top_level_tasks:
+        serialized = serialize_task(task)
+        serialized["subtasks"] = [
+            serialize_task(subtask)
+            for subtask in subtasks_by_parent.get(task.id, [])
+        ]
+        serialized["date_completions"] = date_completions_map.get(task.id, {})
         tasks_out.append(serialized)
     return tasks_out
 
