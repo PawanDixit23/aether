@@ -77,11 +77,11 @@ export async function apiFetch(input, options = {}) {
 
   const method = String(options.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
   const requestUrl = String(input instanceof Request ? input.url : input);
-  const isApiRequest = /(?:^|\/)api\//i.test(requestUrl);
-  const isStreamingOrLarge = /\/api\/(?:tts|audio|stream|download|export)(?:[/?]|$)/i.test(requestUrl);
+  // Only coalesce the known bounded dashboard reads. Media, exports, documents,
+  // arbitrary API payloads, and all non-GET requests keep the normal fetch path.
+  const isCoalescibleRead = /\/api\/(?:briefing|chat\/history|chat\/sessions|tasks|finance\/records|finance\/summary|memory|audit-logs|news|reminders\/due|cricket\/live)(?:[/?]|$)/i.test(requestUrl);
   const canDeduplicate = method === 'GET'
-    && isApiRequest
-    && !isStreamingOrLarge
+    && isCoalescibleRead
     && !options.signal
     && !headers.has('Range')
     && options.cache !== 'no-store';
