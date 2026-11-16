@@ -209,6 +209,31 @@ def ensure_schema_migrations():
         print(f"[Unique Constraint Migration Note] sender_pairing_rate_limits: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
+    # App-wide bounded-read indexes. Build PostgreSQL indexes CONCURRENTLY so
+    # existing user data remains readable while production indexes are created.
+    # SQLite uses the equivalent idempotent CREATE INDEX statement.
+    # ─────────────────────────────────────────────────────────────────────────
+    resource_indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_tasks_owner_created_id ON tasks (owner_user_id, created_at, id)",
+        "CREATE INDEX IF NOT EXISTS ix_tasks_owner_parent_id ON tasks (owner_user_id, parent_id, id)",
+        "CREATE INDEX IF NOT EXISTS ix_tasks_owner_status_due ON tasks (owner_user_id, status, due_date)",
+        "CREATE INDEX IF NOT EXISTS ix_financial_owner_date_id ON financial_records (owner_user_id, date, id)",
+        "CREATE INDEX IF NOT EXISTS ix_memory_owner_importance_created ON memory_vault (owner_user_id, importance, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_chat_owner_session_id ON chat_messages (owner_user_id, session_id, id)",
+        "CREATE INDEX IF NOT EXISTS ix_task_completions_owner_task_id ON task_date_completions (owner_user_id, task_id, id)",
+    ]
+    for index_sql in resource_indexes:
+        try:
+            with engine.connect() as conn:
+                if is_pg:
+                    conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+                    conn.exec_driver_sql(index_sql.replace("CREATE INDEX IF NOT EXISTS", "CREATE INDEX CONCURRENTLY IF NOT EXISTS", 1))
+                else:
+                    conn.exec_driver_sql(index_sql)
+        except Exception as e:
+            print(f"[Resource Index Migration Note] {index_sql.split(' ON ')[0]}: {e}")
+
+    # ─────────────────────────────────────────────────────────────────────────
     # AETH-P0-02: Trusted Supabase Auth Identity Mapping & Quarantining
     # ─────────────────────────────────────────────────────────────────────────
     tenant_tables = [
