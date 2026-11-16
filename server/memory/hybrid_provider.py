@@ -125,10 +125,16 @@ class HybridMemoryProvider:
         new_vec = get_embedding(clean_fact)
         now = datetime.utcnow()
 
+        # Bounded candidate window: embeddings are currently JSON text, so
+        # Python cosine scoring must never materialize an unbounded vault.
         existing = db.query(MemoryItem).filter(
             MemoryItem.user_email == user_email,
             MemoryItem.category == category
-        ).all()
+        ).order_by(
+            MemoryItem.importance.desc(),
+            MemoryItem.last_accessed_at.desc(),
+            MemoryItem.id.desc()
+        ).limit(500).all()
 
         for mem in existing:
             if mem.embedding:
