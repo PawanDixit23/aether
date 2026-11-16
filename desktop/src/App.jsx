@@ -9732,6 +9732,7 @@ export default function App() {
         onDeleteSession={handleDeleteSession}
         onTogglePinSession={handleTogglePinSession}
         apiBase={API_BASE}
+        apiFetch={apiFetch}
         userEmail={userEmail}
         userName={userName}
         todayTasks={getTodayTasks()}
