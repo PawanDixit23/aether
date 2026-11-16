@@ -613,6 +613,7 @@ export default function App() {
   // App data states
   const [briefing, setBriefing] = useState(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherError, setWeatherError] = useState('');
   const [cityGuide, setCityGuide] = useState(null);
   const [chatSessionsHasMore, setChatSessionsHasMore] = useState(false);
   const [chatSessionsFetchedCount, setChatSessionsFetchedCount] = useState(0);
@@ -6058,6 +6059,7 @@ export default function App() {
   const refreshWeather = async () => {
     if (weatherLoading) return;
     setWeatherLoading(true);
+    setWeatherError('');
     try {
       const params = new URLSearchParams({
         user_name: userName || 'Operator',
@@ -6069,8 +6071,11 @@ export default function App() {
       if (!response.ok) throw new Error(`Weather request failed (${response.status})`);
       const data = await response.json();
       if (!data?.weather || data.weather.temp == null || data.weather.status === 'unavailable') {
-        throw new Error(data?.weather?.error || 'Live weather is currently unavailable');
+        const reason = data?.weather?.error || 'Weather provider returned no current temperature';
+        setWeatherError(reason);
+        throw new Error(reason);
       }
+      setWeatherError('');
       setBriefing(previous => ({
         ...(previous || {}),
         ...data,
@@ -6079,6 +6084,7 @@ export default function App() {
       }));
     } catch (error) {
       console.warn('[Aether Weather] Refresh failed:', error);
+      setWeatherError(error?.message || 'Weather request failed. Please retry.');
       setBriefing(previous => previous ? previous : ({
         weather: { status: 'unavailable', city: userLocationName || 'Current location', temp: null }
       }));
@@ -7369,6 +7375,7 @@ export default function App() {
                     currentTime={currentTime}
                     weatherData={weather}
                     weatherLoading={weatherLoading}
+                    weatherError={weatherError || weather?.error || ''}
                     onRefreshWeather={refreshWeather}
                     userLocationName={userLocationName}
                     cityGuide={cityGuide}
