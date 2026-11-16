@@ -43,6 +43,9 @@ export default function GeminiLiveModal({
   apiBase,
   apiFetch: authenticatedApiFetch,
   userEmail,
+  latitude = null,
+  longitude = null,
+  city = '',
   selectedVoice = 'Kavya',
   selectedLang = 'hi',
   onNewMessage,
@@ -461,7 +464,10 @@ export default function GeminiLiveModal({
           active_provider: localStorage.getItem('aether_active_provider') || 'gemini',
           user_name: localStorage.getItem('aether_user_name') || 'Pawan',
           client_time: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }),
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
+          latitude: Number.isFinite(Number(latitude)) ? Number(latitude) : null,
+          longitude: Number.isFinite(Number(longitude)) ? Number(longitude) : null,
+          city: (city || '').trim()
         };
 
         if (typeof authenticatedApiFetch !== 'function') throw new Error('Authenticated API client is unavailable. Please sign in again.');
