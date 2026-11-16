@@ -2515,7 +2515,6 @@ def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = Non
         today_start = datetime.combine(today, datetime.min.time())
         batch = db.query(Task).filter(
             Task.recurrence != None,
-            Task.status != "completed",
             Task.owner_user_id == str(owner_user_id).strip(),
             or_(Task.due_date == None, Task.due_date < today_start)
         ).order_by(Task.id.asc()).limit(100).all()
@@ -2523,9 +2522,8 @@ def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = Non
             return
 
         for task in batch:
-            if task.status == "completed":
-                task.notified = True
-                continue
+            # A recurring master can be marked completed for yesterday/today only.
+            # Once its due date rolls over, always reopen the series for the new occurrence.
             title_lower = (task.title or "").lower()
             if any(word in title_lower for word in ["challan", "fine", "ticket", "one-time"]):
                 task.recurrence = None
@@ -2533,6 +2531,8 @@ def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = Non
                 continue
             if not task.due_date:
                 task.due_date = today_start
+                task.status = "pending"
+                task.notified = False
                 continue
             due_dt = task.due_date
             if isinstance(due_dt, str):
