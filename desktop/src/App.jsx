@@ -3901,20 +3901,49 @@ export default function App() {
             const bFin = backupData.finances || [];
 
             if (bTasks.length > 0 || bMems.length > 0 || bFin.length > 0) {
-              apiFetch(`${API_BASE}/sync/backup`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
-                body: JSON.stringify({
-                  user_email: currentEmail,
-                  tasks: bTasks,
-                  memories: bMems,
-                  finances: bFin
-                })
-              }).then(() => {
+              try {
+                const backupSyncResp = await apiFetch(`${API_BASE}/sync/backup`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'X-User-Email': currentEmail },
+                  body: JSON.stringify({
+                    user_email: currentEmail,
+                    tasks: bTasks,
+                    memories: bMems,
+                    finances: bFin
+                  })
+                });
+                if (!backupSyncResp.ok) throw new Error(`Backup restore failed (${backupSyncResp.status})`);
+
                 if (bTasks.length > 0) setTasks(bTasks);
-                if (bMems.length > 0) setMemories(bMems);
                 if (bFin.length > 0) setFinanceRecords(bFin);
-              }).catch(() => {});
+
+                // Re-read the restored server page so Memory Vault pagination state
+                // reflects server records, not just the local/native backup cache.
+                if (bMems.length > 0) {
+                  const restoredMemResp = await apiFetch(`${API_BASE}/memory?limit=50&offset=0`, { headers: authHeaders });
+                  if (restoredMemResp.ok) {
+                    const restoredMemories = await restoredMemResp.json();
+                    if (Array.isArray(restoredMemories)) {
+                      loadedMemories = restoredMemories;
+                      const validRestoredMemories = restoredMemories.filter(
+                        m => !deletedMemoryIdsRef.current.has(String(m.id))
+                      );
+                      setMemories(validRestoredMemories);
+                      setMemoryFetchedCount(restoredMemories.length);
+                      setMemoryHasMore(restoredMemories.length === 50);
+                    } else {
+                      setMemories(bMems.filter(m => !deletedMemoryIdsRef.current.has(String(m.id))));
+                    }
+                  } else {
+                    setMemories(bMems.filter(m => !deletedMemoryIdsRef.current.has(String(m.id))));
+                  }
+                }
+              } catch (restoreErr) {
+                console.error('Failed to restore client backup:', restoreErr);
+                if (bMems.length > 0) {
+                  setMemories(bMems.filter(m => !deletedMemoryIdsRef.current.has(String(m.id))));
+                }
+              }
             }
           }
         }
