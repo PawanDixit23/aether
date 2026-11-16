@@ -233,12 +233,15 @@ class HybridMemoryProvider:
                     mem_vec = json.loads(memory.embedding)
                 except Exception:
                     mem_vec = None
-            if not mem_vec or len(mem_vec) != 768:
-                mem_vec = get_embedding(fact)
-
-            semantic_score = cosine_similarity(q_embedding, mem_vec)
             fact_lower = fact.lower()
-            keyword_score = sum(0.25 for token in q_tokens if token in fact_lower)
+            keyword_matches = sum(1 for token in q_tokens if token in fact_lower)
+            keyword_score = 0.25 * keyword_matches
+            if not mem_vec or len(mem_vec) != 768:
+                # Do not fan out to an embedding API once per legacy row.
+                # Legacy rows are ranked with bounded lexical evidence instead.
+                semantic_score = min(0.65, 0.20 * keyword_matches)
+            else:
+                semantic_score = cosine_similarity(q_embedding, mem_vec)
             category = (memory.category or "").lower()
             category_boost = 0.15 if category in ["contact", "personal_rule", "preference"] else (
                 0.08 if category in ["routine", "context"] else 0.0
