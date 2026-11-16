@@ -18,7 +18,7 @@ import hmac
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, UploadFile, File
 from document_parser import extract_text_from_file
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -3506,52 +3506,44 @@ def export_finance_csv(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
+    """Stream CSV rows from PostgreSQL in bounded batches instead of buffering the ledger."""
     query = db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user))
-    records = query.order_by(FinancialRecord.date.desc()).all()
-
-    # If year and month are provided, filter records (month is 0-indexed: 0=Jan, 10=Nov)
     if year is not None and month is not None:
-        filtered = []
-        for r in records:
-            if not r.date:
-                continue
-            try:
-                if hasattr(r.date, 'year'):
-                    r_year = r.date.year
-                    r_month = r.date.month - 1
-                else:
-                    dt = datetime.fromisoformat(str(r.date))
-                    r_year = dt.year
-                    r_month = dt.month - 1
-                if r_year == year and r_month == month:
-                    filtered.append(r)
-            except Exception:
-                continue
-        records = filtered
+        if month < 0 or month > 11:
+            raise HTTPException(status_code=400, detail="month must be between 0 and 11")
+        start = datetime(year, month + 1, 1)
+        end = datetime(year + 1, 1, 1) if month == 11 else datetime(year, month + 2, 1)
+        query = query.filter(FinancialRecord.date >= start, FinancialRecord.date < end)
+    elif year is not None:
+        query = query.filter(
+            FinancialRecord.date >= datetime(year, 1, 1),
+            FinancialRecord.date < datetime(year + 1, 1, 1)
+        )
 
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Record ID", "Date", "Type", "Category", "Amount (INR)", "Payment Mode", "Notes"])
-    for r in records:
-        d_str = r.date.strftime("%d/%m/%Y") if hasattr(r.date, 'strftime') else str(r.date or '')
-        writer.writerow([
-            r.id,
-            d_str,
-            r.type or "expense",
-            r.category or "general",
-            r.amount or 0,
-            r.payment_mode or "upi",
-            r.note or ""
-        ])
-
-    csv_text = "\ufeff" + output.getvalue()
     month_names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
     m_name = month_names[month] if (month is not None and 0 <= month < 12) else "All"
     y_name = str(year) if year is not None else ""
     filename = f"aether_finance_{m_name}_{y_name}.csv" if y_name else f"aether_finance_{m_name}.csv"
 
-    return Response(
-        content=csv_text.encode("utf-8"),
+    def csv_stream():
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Record ID", "Date", "Type", "Category", "Amount (INR)", "Payment Mode", "Notes"])
+        yield "\ufeff" + output.getvalue()
+        output.seek(0)
+        output.truncate(0)
+        for record in query.order_by(FinancialRecord.date.desc(), FinancialRecord.id.desc()).yield_per(500):
+            date_text = record.date.strftime("%d/%m/%Y") if hasattr(record.date, "strftime") else str(record.date or "")
+            writer.writerow([
+                record.id, date_text, record.type or "expense", record.category or "general",
+                record.amount or 0, record.payment_mode or "upi", record.note or ""
+            ])
+            yield output.getvalue()
+            output.seek(0)
+            output.truncate(0)
+
+    return StreamingResponse(
+        csv_stream(),
         media_type="text/csv; charset=utf-8",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
@@ -6662,33 +6654,36 @@ def get_weekly_digest(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Returns a 7-day life & spend digest for the authenticated user (AETH-P0-02)."""
+    """Compute the weekly digest with database aggregates, never full-table ORM loads."""
     since = datetime.utcnow() - timedelta(days=7)
-    expenses = db.query(FinancialRecord).filter(
+    weekly_expense = float(db.query(func.coalesce(func.sum(FinancialRecord.amount), 0.0)).filter(
         tenant_filter(FinancialRecord, current_user),
         FinancialRecord.type == "expense",
         FinancialRecord.date >= since
-    ).all()
-    weekly_expense = sum(float(e.amount or 0) for e in expenses)
-    cat_totals: Dict[str, float] = {}
-    for e in expenses:
-        c = (e.category or "general").lower()
-        cat_totals[c] = cat_totals.get(c, 0.0) + float(e.amount or 0)
-    top_category = max(cat_totals, key=cat_totals.get) if cat_totals else "none"
+    ).scalar() or 0.0)
+    top_category_row = db.query(
+        FinancialRecord.category,
+        func.sum(FinancialRecord.amount).label("total")
+    ).filter(
+        tenant_filter(FinancialRecord, current_user),
+        FinancialRecord.type == "expense",
+        FinancialRecord.date >= since
+    ).group_by(FinancialRecord.category).order_by(func.sum(FinancialRecord.amount).desc()).first()
+    top_category = (top_category_row[0] or "general").lower() if top_category_row else "none"
 
-    all_tasks = db.query(Task).filter(tenant_filter(Task, current_user)).all()
-    tasks_completed = sum(1 for t in all_tasks if t.is_completed)
-    tasks_pending = sum(1 for t in all_tasks if not t.is_completed)
+    status_counts = dict(db.query(Task.status, func.count(Task.id)).filter(
+        tenant_filter(Task, current_user)
+    ).group_by(Task.status).all())
+    tasks_completed = int(status_counts.get("completed", 0))
+    tasks_pending = sum(int(count) for status, count in status_counts.items() if status != "completed")
 
     summary = (
         f"Last 7 days: You spent ₹{weekly_expense:,.0f} (top category: {top_category}). "
         f"You have completed {tasks_completed} task(s) with {tasks_pending} pending."
     )
     return {
-        "weekly_expense": weekly_expense,
-        "top_category": top_category,
-        "tasks_completed": tasks_completed,
-        "tasks_pending": tasks_pending,
+        "weekly_expense": weekly_expense, "top_category": top_category,
+        "tasks_completed": tasks_completed, "tasks_pending": tasks_pending,
         "summary": summary
     }
 
