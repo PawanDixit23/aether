@@ -759,6 +759,7 @@ export default function App() {
   const [memories, setMemories] = useState([]);
   const [memoryHasMore, setMemoryHasMore] = useState(false);
   const [memoryFetchedCount, setMemoryFetchedCount] = useState(0);
+  const [memoryTotalCount, setMemoryTotalCount] = useState(null);
   const [memoryNextCursor, setMemoryNextCursor] = useState(null);
   const [memoryLoadingMore, setMemoryLoadingMore] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
@@ -3929,6 +3930,8 @@ export default function App() {
           return Array.from(byId.values()).sort((a, b) => Number(b.id) - Number(a.id));
         });
         setMemoryFetchedCount(prev => Math.max(prev, Array.isArray(loadedMemories) ? loadedMemories.length : 0));
+        const serverMemoryTotal = Number(resMem.headers?.get?.('X-Total-Count'));
+        if (Number.isFinite(serverMemoryTotal) && serverMemoryTotal >= 0) setMemoryTotalCount(serverMemoryTotal);
         setMemoryNextCursor(prev => {
           const firstPageCursor = Array.isArray(loadedMemories) && loadedMemories.length ? loadedMemories[loadedMemories.length - 1].id : null;
           return prev == null ? firstPageCursor : (firstPageCursor == null ? prev : Math.min(Number(prev), Number(firstPageCursor)));
@@ -5776,6 +5779,8 @@ export default function App() {
         return [...prev, ...validPage.filter(m => !existingIds.has(String(m.id)))];
       });
       setMemoryFetchedCount(prev => prev + (Array.isArray(page) ? page.length : 0));
+      const serverMemoryTotal = Number(resp.headers?.get?.('X-Total-Count'));
+      if (Number.isFinite(serverMemoryTotal) && serverMemoryTotal >= 0) setMemoryTotalCount(serverMemoryTotal);
       if (Array.isArray(page) && page.length) setMemoryNextCursor(page[page.length - 1].id);
       setMemoryHasMore(resp.headers?.get?.('X-Has-More') === 'true' || (Array.isArray(page) && page.length === 50));
     } catch (err) {
@@ -9623,6 +9628,11 @@ export default function App() {
                   </h1>
                   <p style={{ fontSize: '0.82rem', color: '#94a3b8', marginTop: '2px' }}>
                     Semantic vector memory & contacts Aether remembers about you
+                    <span style={{ display: 'block', marginTop: '5px', color: '#64748b', fontSize: '0.74rem' }}>
+                      {memoryTotalCount == null
+                        ? `Loaded ${memories.length} memories`
+                        : `Showing ${memories.length.toLocaleString()} of ${memoryTotalCount.toLocaleString()} memories`}
+                    </span>
                   </p>
                 </div>
 
@@ -9697,7 +9707,7 @@ export default function App() {
                         opacity: memoryLoadingMore ? 0.65 : 1
                       }}
                     >
-                      {memoryLoadingMore ? 'Loading memories...' : 'Load more memories'}
+                      {memoryLoadingMore ? 'Loading memories...' : `Load 50 more memories (${Math.max(0, (memoryTotalCount ?? memoryFetchedCount) - memories.length).toLocaleString()} remaining)`}
                     </button>
                   </div>
                 )}
