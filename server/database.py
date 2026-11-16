@@ -231,7 +231,9 @@ def ensure_schema_migrations():
             with engine.connect() as conn:
                 if is_pg:
                     conn = conn.execution_options(isolation_level="AUTOCOMMIT")
-                    conn.exec_driver_sql(index_sql.replace("CREATE INDEX IF NOT EXISTS", "CREATE INDEX CONCURRENTLY IF NOT EXISTS", 1))
+                    concurrent_sql = index_sql.replace("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS", 1)
+                    concurrent_sql = concurrent_sql.replace("CREATE INDEX IF NOT EXISTS", "CREATE INDEX CONCURRENTLY IF NOT EXISTS", 1)
+                    conn.exec_driver_sql(concurrent_sql)
                 else:
                     conn.exec_driver_sql(index_sql)
         except Exception as e:
