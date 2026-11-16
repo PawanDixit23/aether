@@ -89,15 +89,15 @@ class SupabaseJwtVerificationTests(unittest.TestCase):
 
     def test_rejects_wrong_issuer(self):
         token = jwt.encode(self.claims, self.private_key, algorithm="ES256", headers={"kid": "test-key"})
-        with patch.object(auth, "PyJWKClient", FakeJwksClient):
-            payload = auth.verify_supabase_jwt(token, "", expected_iss="https://wrong.example/auth/v1")
+        with patch.object(auth, "_get_jwks_client", return_value=FakeJwksClient()):
+            payload = auth.verify_supabase_jwt(token, "", expected_iss="https://wrong.example/auth/v1", jwks_url="https://example.supabase.co/auth/v1/.well-known/jwks.json")
         self.assertIsNone(payload)
 
     def test_rejects_expired_token(self):
         expired = dict(self.claims, exp=int(time.time()) - 120)
         token = jwt.encode(expired, self.private_key, algorithm="ES256", headers={"kid": "test-key"})
-        with patch.object(auth, "PyJWKClient", FakeJwksClient):
-            payload = auth.verify_supabase_jwt(token, "", expected_iss=ISSUER)
+        with patch.object(auth, "_get_jwks_client", return_value=FakeJwksClient()):
+            payload = auth.verify_supabase_jwt(token, "", expected_iss=ISSUER, jwks_url="https://example.supabase.co/auth/v1/.well-known/jwks.json")
         self.assertIsNone(payload)
 
     def test_rejects_unsupported_algorithm(self):
