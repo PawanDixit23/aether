@@ -42,6 +42,11 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Run Bounded Data Access Regression Tests
+        run: |
+          cd server
+          python -m unittest discover -s tests -p "test_data_access.py"
+
       - name: Setup Dedicated Non-Superuser Runtime Role in PostgreSQL
         run: |
           export PGPASSWORD=aether_secure_password
