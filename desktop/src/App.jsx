@@ -760,6 +760,7 @@ export default function App() {
   const [memories, setMemories] = useState([]);
   const [memoryHasMore, setMemoryHasMore] = useState(false);
   const [memoryFetchedCount, setMemoryFetchedCount] = useState(0);
+  const [memoryNextCursor, setMemoryNextCursor] = useState(null);
   const [memoryLoadingMore, setMemoryLoadingMore] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
   const [newsItems, setNewsItems] = useState([]);
@@ -3774,25 +3775,28 @@ export default function App() {
           if (cleanTasks.length === 0 && prev.length > 0) {
             return prev;
           }
-          // Preserve any optimistic subtasks that are still being written to the backend
-          return cleanTasks.map(serverT => {
-            const localMatch = prev.find(p => String(p.id) === String(serverT.id));
-            if (!localMatch || !localMatch.subtasks) return serverT;
-            const pendingOptimistic = localMatch.subtasks.filter(s => String(s.id).startsWith('local_sub_'));
-            if (pendingOptimistic.length === 0) return serverT;
-            // Only keep optimistic subtasks that haven't landed in serverT.subtasks yet
-            const serverTitles = new Set((serverT.subtasks || []).map(st => (st.title || '').trim().toLowerCase()));
-            const unmerged = pendingOptimistic.filter(opt => !serverTitles.has((opt.title || '').trim().toLowerCase()));
-            if (unmerged.length === 0) return serverT;
-            return {
-              ...serverT,
-              subtasks: [...(serverT.subtasks || []), ...unmerged]
-            };
+          // Preserve every already-loaded task page. The 15-second background refresh only
+          // returns page one; replacing state here made older/recurring tasks disappear.
+          const mergedById = new Map(
+            prev.filter(task => task && task.id != null && !deletedTaskIdsRef.current.has(String(task.id)))
+              .map(task => [String(task.id), task])
+          );
+          cleanTasks.forEach(serverT => {
+            const localMatch = mergedById.get(String(serverT.id));
+            let nextTask = serverT;
+            if (localMatch?.subtasks) {
+              const pendingOptimistic = localMatch.subtasks.filter(s => String(s.id).startsWith('local_sub_'));
+              const serverTitles = new Set((serverT.subtasks || []).map(st => (st.title || '').trim().toLowerCase()));
+              const unmerged = pendingOptimistic.filter(opt => !serverTitles.has((opt.title || '').trim().toLowerCase()));
+              if (unmerged.length) nextTask = { ...serverT, subtasks: [...(serverT.subtasks || []), ...unmerged] };
+            }
+            mergedById.set(String(serverT.id), nextTask);
           });
+          return Array.from(mergedById.values());
         });
 
-        setTaskFetchedCount(Array.isArray(loadedTasks) ? loadedTasks.length : 0);
-        setTaskHasMore(Array.isArray(loadedTasks) && loadedTasks.length === 50);
+        setTaskFetchedCount(prev => Math.max(prev, Array.isArray(loadedTasks) ? loadedTasks.length : 0));
+        setTaskHasMore(resTasks.headers?.get?.('X-Has-More') === 'true' || (Array.isArray(loadedTasks) && loadedTasks.length === 50));
 
         if (cleanTasks.length > 0) {
           const priorBackupText = currentEmail ? localStorage.getItem(`aether_backup_${currentEmail}`) : null;
@@ -3920,9 +3924,17 @@ export default function App() {
         const validMemories = Array.isArray(loadedMemories)
           ? loadedMemories.filter(m => !deletedMemoryIdsRef.current.has(String(m.id)))
           : [];
-        setMemories(validMemories);
-        setMemoryFetchedCount(Array.isArray(loadedMemories) ? loadedMemories.length : 0);
-        setMemoryHasMore(Array.isArray(loadedMemories) && loadedMemories.length === 50);
+        setMemories(prev => {
+          const byId = new Map((prev || []).filter(m => m?.id != null && !deletedMemoryIdsRef.current.has(String(m.id))).map(m => [String(m.id), m]));
+          validMemories.forEach(m => byId.set(String(m.id), m));
+          return Array.from(byId.values()).sort((a, b) => Number(b.id) - Number(a.id));
+        });
+        setMemoryFetchedCount(prev => Math.max(prev, Array.isArray(loadedMemories) ? loadedMemories.length : 0));
+        setMemoryNextCursor(prev => {
+          const firstPageCursor = Array.isArray(loadedMemories) && loadedMemories.length ? loadedMemories[loadedMemories.length - 1].id : null;
+          return prev == null ? firstPageCursor : (firstPageCursor == null ? prev : Math.min(Number(prev), Number(firstPageCursor)));
+        });
+        setMemoryHasMore(resMem.headers?.get?.('X-Has-More') === 'true' || (Array.isArray(loadedMemories) && loadedMemories.length === 50));
       }
       if (resAudit.ok) setAuditLogs(await resAudit.json());
       if (resNews.ok) setNewsItems(await resNews.json());
@@ -5751,8 +5763,8 @@ export default function App() {
     if (memoryLoadingMore || !memoryHasMore) return;
     setMemoryLoadingMore(true);
     try {
-      const offset = memoryFetchedCount;
-      const resp = await apiFetch(`${API_BASE}/memory?limit=50&offset=${offset}`, {
+      if (memoryNextCursor == null) return;
+      const resp = await apiFetch(`${API_BASE}/memory?limit=50&before_id=${encodeURIComponent(memoryNextCursor)}`, {
         headers: { /* apiFetch attaches the verified Supabase Bearer token */ }
       });
       if (!resp.ok) throw new Error(`Memory page request failed (${resp.status})`);
@@ -5764,8 +5776,9 @@ export default function App() {
         const existingIds = new Set(prev.map(m => String(m.id)));
         return [...prev, ...validPage.filter(m => !existingIds.has(String(m.id)))];
       });
-      setMemoryFetchedCount(offset + (Array.isArray(page) ? page.length : 0));
-      setMemoryHasMore(Array.isArray(page) && page.length === 50);
+      setMemoryFetchedCount(prev => prev + (Array.isArray(page) ? page.length : 0));
+      if (Array.isArray(page) && page.length) setMemoryNextCursor(page[page.length - 1].id);
+      setMemoryHasMore(resp.headers?.get?.('X-Has-More') === 'true' || (Array.isArray(page) && page.length === 50));
     } catch (err) {
       console.error('Failed to load more memories:', err);
       showToast('Could not load more memories. Please try again.', 'error');
