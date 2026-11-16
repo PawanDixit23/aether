@@ -1049,7 +1049,10 @@ def fetch_cricinfo_match_scorecard(match_id: str, league_id: str = None, force: 
             return cached_result
         elif age < 120.0:
             _trigger_async_scorecard(match_id, known_lid)
-            return cached_result
+            stale_result = dict(cached_result)
+            stale_result["is_stale"] = True
+            stale_result["status"] = "stale"
+            return stale_result
     if known_lid:
         league_candidates = [known_lid]
     else:
