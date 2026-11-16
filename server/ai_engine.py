@@ -80,31 +80,44 @@ def get_user_location() -> dict:
     return {"city": "Jaipur", "region": "Rajasthan", "lat": 26.9136, "lon": 75.7858}
 
 def geocode_city(name: str):
-    """Geocode any city in the world using Open-Meteo free geocoding."""
+    """Geocode a city or locality, tolerating inputs such as 'Sanganer, Rajasthan'."""
     if not name or len(name.strip()) < 2:
         return None
-    try:
-        encoded = urllib.parse.quote(name.strip())
-        url = f"https://geocoding-api.open-meteo.com/v1/search?name={encoded}&count=1&language=en&format=json"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            data = json.loads(resp.read().decode())
-            res = data.get('results', [])
-            if res:
-                r = res[0]
-                city_name = r.get('name')
-                country = r.get('country', '')
-                admin1 = r.get('admin1', '')
-                full_name = f"{city_name}, {admin1 + ', ' if admin1 and admin1 != city_name else ''}{country}"
-                return {
-                    "name": full_name,
-                    "city": city_name,
-                    "country": country,
-                    "lat": r.get('latitude'),
-                    "lon": r.get('longitude')
-                }
-    except Exception as e:
-        print(f"[Aether Engine] Geocode error for '{name}': {e}")
+
+    raw_name = name.strip()
+    # Try the full input first, then its locality/city portion. Open-Meteo's
+    # name search can return no results when a state is appended to a small locality.
+    candidates = [raw_name]
+    locality = raw_name.split(",", 1)[0].strip()
+    if locality and locality.casefold() != raw_name.casefold():
+        candidates.append(locality)
+
+    for candidate in dict.fromkeys(candidates):
+        try:
+            encoded = urllib.parse.quote(candidate)
+            url = f"https://geocoding-api.open-meteo.com/v1/search?name={encoded}&count=5&language=en&format=json"
+            req = urllib.request.Request(url, headers={"User-Agent": "AetherAI/2.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            results = data.get("results") or []
+            if not results:
+                continue
+
+            # Prefer India when multiple similarly named localities are returned.
+            result = next((item for item in results if item.get("country_code") == "IN"), results[0])
+            city_name = result.get("name") or candidate
+            country = result.get("country", "")
+            admin1 = result.get("admin1", "")
+            full_name = f"{city_name}, {admin1 + ', ' if admin1 and admin1 != city_name else ''}{country}"
+            return {
+                "name": full_name,
+                "city": city_name,
+                "country": country,
+                "lat": result.get("latitude"),
+                "lon": result.get("longitude")
+            }
+        except Exception as exc:
+            print(f"[Aether Engine] Geocode error for '{candidate}': {exc}")
     return None
 
 def find_city_in_text(text: str):
