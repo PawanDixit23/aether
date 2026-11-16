@@ -4161,17 +4161,26 @@ def get_executive_briefing(
 
     effective_city = (city or "").strip() or live_w.get("city") or "Jaipur"
     weather = {
-        "temp": live_w.get("temp", 31.4),
-        "condition_en": live_w.get("condition_en", "Mostly Sunny"),
-        "condition_hi": live_w.get("condition_hi", "धूप खिली हुई"),
+        "status": live_w.get("status", "unavailable"),
+        "source": live_w.get("source", "Open-Meteo"),
+        "updated_at": live_w.get("updated_at"),
+        "is_stale": bool(live_w.get("is_stale", False)),
+        "temp": live_w.get("temp"),
+        "feels_like": live_w.get("feels_like"),
+        "today_high": live_w.get("today_high"),
+        "today_low": live_w.get("today_low"),
+        "precipitation_probability": live_w.get("precipitation_probability"),
+        "condition_en": live_w.get("condition_en") or "Weather data unavailable",
+        "condition_hi": live_w.get("condition_hi") or "मौसम का डेटा उपलब्ध नहीं है",
         "city": effective_city,
         "city_en": effective_city,
         "city_hi": live_w.get("city_hi") or effective_city,
         "city_hinglish": effective_city,
         "time_phase": time_phase,
-        "icon": weather_icon,
-        "humidity": live_w.get("humidity", "36%"),
-        "wind": live_w.get("wind", "4.2 km/h")
+        "icon": live_w.get("icon") or weather_icon,
+        "humidity": live_w.get("humidity"),
+        "wind": live_w.get("wind"),
+        "error": live_w.get("error")
     }
 
     display_name = user_name or "साथी"
