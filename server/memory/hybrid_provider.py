@@ -13,6 +13,7 @@ import hashlib
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 import httpx
 
 from models import MemoryItem
@@ -125,16 +126,27 @@ class HybridMemoryProvider:
         new_vec = get_embedding(clean_fact)
         now = datetime.utcnow()
 
-        # Bounded candidate window: embeddings are currently JSON text, so
-        # Python cosine scoring must never materialize an unbounded vault.
-        existing = db.query(MemoryItem).filter(
+        # Search a bounded keyword candidate set first; if the fact has no
+        # useful tokens, fall back to a small recency/importance sample.
+        tokens = list(dict.fromkeys(re.findall(r"\\b\\w{3,}\\b", clean_fact.lower())))[:8]
+        candidate_query = db.query(MemoryItem).filter(
             MemoryItem.user_email == user_email,
             MemoryItem.category == category
-        ).order_by(
-            MemoryItem.importance.desc(),
-            MemoryItem.last_accessed_at.desc(),
-            MemoryItem.id.desc()
-        ).limit(500).all()
+        )
+        if tokens:
+            existing = candidate_query.filter(or_(*[
+                MemoryItem.fact.ilike(f"%{token}%") for token in tokens
+            ])).order_by(
+                MemoryItem.importance.desc(),
+                MemoryItem.last_accessed_at.desc(),
+                MemoryItem.id.desc()
+            ).limit(200).all()
+        else:
+            existing = candidate_query.order_by(
+                MemoryItem.importance.desc(),
+                MemoryItem.last_accessed_at.desc(),
+                MemoryItem.id.desc()
+            ).limit(200).all()
 
         for mem in existing:
             if mem.embedding:
