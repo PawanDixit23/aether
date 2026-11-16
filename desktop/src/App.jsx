@@ -743,6 +743,9 @@ export default function App() {
   const [financeRecords, setFinanceRecords] = useState([]);
   const [financeSummary, setFinanceSummary] = useState({ total_income: 0, total_expense: 0, balance: 0 });
   const [memories, setMemories] = useState([]);
+  const [memoryHasMore, setMemoryHasMore] = useState(false);
+  const [memoryFetchedCount, setMemoryFetchedCount] = useState(0);
+  const [memoryLoadingMore, setMemoryLoadingMore] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
   const [newsItems, setNewsItems] = useState([]);
   const [toast, setToast] = useState(null);
@@ -3540,6 +3543,24 @@ export default function App() {
     }
   }, []);
 
+  // Keep older locally backed-up memories when the server now returns a paginated first page.
+  // Server data wins for duplicate IDs, and locally deleted IDs are never reintroduced.
+  const mergeMemoryBackup = (email, incoming = []) => {
+    let cached = [];
+    try {
+      const raw = email ? localStorage.getItem(`aether_backup_${email}`) : null;
+      const parsed = raw ? JSON.parse(raw) : null;
+      cached = Array.isArray(parsed?.memories) ? parsed.memories : [];
+    } catch (e) {}
+    const byId = new Map();
+    [...cached, ...(Array.isArray(incoming) ? incoming : [])].forEach(mem => {
+      if (mem?.id != null && !deletedMemoryIdsRef.current.has(String(mem.id))) {
+        byId.set(String(mem.id), mem);
+      }
+    });
+    return Array.from(byId.values());
+  };
+
   // Fetch all backend data and check due reminders with Multi-Tenant Isolation
   const refreshAllData = async (opts = {}) => {
     // If prompt is actively generating, skip to prevent screen flicker or uncommitted history overwriting
@@ -3557,7 +3578,7 @@ export default function App() {
         apiFetch(`${API_BASE}/tasks`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/finance/records`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/finance/summary`, { headers: authHeaders }),
-        apiFetch(`${API_BASE}/memory`, { headers: authHeaders }),
+        apiFetch(`${API_BASE}/memory?limit=50&offset=0`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/audit-logs`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/news?limit=4`),
         apiFetch(`${API_BASE}/reminders/due`, { headers: authHeaders }),
@@ -3722,7 +3743,7 @@ export default function App() {
           if (currentEmail) {
             localStorage.setItem(`aether_backup_${currentEmail}`, JSON.stringify({
               tasks: cleanTasks,
-              memories: loadedMemories,
+              memories: mergeMemoryBackup(currentEmail, loadedMemories),
               finances: loadedFinances
             }));
           }
@@ -3823,6 +3844,8 @@ export default function App() {
           ? loadedMemories.filter(m => !deletedMemoryIdsRef.current.has(String(m.id)))
           : [];
         setMemories(validMemories);
+        setMemoryFetchedCount(Array.isArray(loadedMemories) ? loadedMemories.length : 0);
+        setMemoryHasMore(Array.isArray(loadedMemories) && loadedMemories.length === 50);
       }
       if (resAudit.ok) setAuditLogs(await resAudit.json());
       if (resNews.ok) setNewsItems(await resNews.json());
@@ -3836,7 +3859,7 @@ export default function App() {
         if (loadedTasks.length > 0 || loadedMemories.length > 0 || loadedFinances.length > 0) {
           localStorage.setItem(`aether_backup_${currentEmail}`, JSON.stringify({
             tasks: loadedTasks,
-            memories: loadedMemories,
+            memories: mergeMemoryBackup(currentEmail, loadedMemories),
             finances: loadedFinances
           }));
           localStorage.setItem('aether_cached_tasks', JSON.stringify(loadedTasks));
@@ -3849,7 +3872,7 @@ export default function App() {
                 payload: {
                   email: currentEmail,
                   tasks: loadedTasks,
-                  memories: loadedMemories,
+                  memories: mergeMemoryBackup(currentEmail, loadedMemories),
                   finances: loadedFinances
                 }
               }));
@@ -5552,6 +5575,33 @@ export default function App() {
       showToast("New task added to your agenda!", 'success');
     } catch (err) {
       showToast("Failed to add task", 'error');
+    }
+  };
+
+  const handleLoadMoreMemories = async () => {
+    if (memoryLoadingMore || !memoryHasMore) return;
+    setMemoryLoadingMore(true);
+    try {
+      const offset = memoryFetchedCount;
+      const resp = await apiFetch(`${API_BASE}/memory?limit=50&offset=${offset}`, {
+        headers: { /* apiFetch attaches the verified Supabase Bearer token */ }
+      });
+      if (!resp.ok) throw new Error(`Memory page request failed (${resp.status})`);
+      const page = await resp.json();
+      const validPage = Array.isArray(page)
+        ? page.filter(m => !deletedMemoryIdsRef.current.has(String(m.id)))
+        : [];
+      setMemories(prev => {
+        const existingIds = new Set(prev.map(m => String(m.id)));
+        return [...prev, ...validPage.filter(m => !existingIds.has(String(m.id)))];
+      });
+      setMemoryFetchedCount(offset + (Array.isArray(page) ? page.length : 0));
+      setMemoryHasMore(Array.isArray(page) && page.length === 50);
+    } catch (err) {
+      console.error('Failed to load more memories:', err);
+      showToast('Could not load more memories. Please try again.', 'error');
+    } finally {
+      setMemoryLoadingMore(false);
     }
   };
 
@@ -9271,6 +9321,28 @@ export default function App() {
                       </button>
                     </div>
                   ))
+                )}
+                {memoryHasMore && (
+                  <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '16px' }}>
+                    <button
+                      type="button"
+                      onClick={handleLoadMoreMemories}
+                      disabled={memoryLoadingMore}
+                      style={{
+                        background: 'rgba(56, 189, 248, 0.10)',
+                        border: '1px solid rgba(56, 189, 248, 0.28)',
+                        color: '#7dd3fc',
+                        borderRadius: '10px',
+                        padding: '9px 16px',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        cursor: memoryLoadingMore ? 'wait' : 'pointer',
+                        opacity: memoryLoadingMore ? 0.65 : 1
+                      }}
+                    >
+                      {memoryLoadingMore ? 'Loading memories...' : 'Load more memories'}
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
