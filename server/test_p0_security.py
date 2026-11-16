@@ -19,6 +19,7 @@ import base64
 import hmac
 import hashlib
 import urllib.parse
+from unittest.mock import patch
 from datetime import datetime
 from fastapi.testclient import TestClient
 
@@ -835,6 +836,43 @@ def test_p0_03_whatsapp_direct_send_approval_gate():
                 os.environ[key] = value
 
 
+
+def test_p0_worker_authentication():
+    print("\\n--- P0-02: Trusted reminder worker authentication and RLS context ---")
+    with patch.dict(os.environ, {
+        "AETHER_WORKER_TOKEN": "",
+        "WHATSAPP_TOKEN": "",
+        "WHATSAPP_PHONE_ID": ""
+    }, clear=False):
+        not_configured = client.post("/api/reminders/push-check")
+        assert not_configured.status_code == 503, "Worker endpoint must fail closed when secret is missing"
+
+    with patch.dict(os.environ, {
+        "AETHER_WORKER_TOKEN": "test-worker-secret",
+        "WHATSAPP_TOKEN": "",
+        "WHATSAPP_PHONE_ID": ""
+    }, clear=False):
+        missing = client.post("/api/reminders/push-check")
+        forged = client.post(
+            "/api/reminders/push-check",
+            headers={"X-GitHub-Actions": "true"}
+        )
+        assert missing.status_code == 401, "Worker endpoint accepted missing bearer token"
+        assert forged.status_code == 401, "Spoofable GitHub Actions header must not authenticate worker"
+
+        with patch("main._run_push_check_internal", return_value={"status": "ok", "pushed": 0, "errors": []}) as run_worker:
+            with patch("database.set_worker_rls_context") as set_worker_context:
+                valid = client.post(
+                    "/api/reminders/push-check",
+                    headers={"Authorization": "Bearer test-worker-secret"}
+                )
+                assert valid.status_code == 200, f"Valid worker request failed: {valid.status_code} {valid.text}"
+                run_worker.assert_called_once()
+                set_worker_context.assert_called_once()
+
+    print("✅ Worker endpoint rejects missing/forged credentials and applies trusted RLS context.")
+
+
 def run_all_tests():
     print("======================================================================")
     print("🔒 RUNNING AETHER P0 CRITICAL SECURITY REGRESSION SUITE")
@@ -845,6 +883,7 @@ def run_all_tests():
     test_p0_03_whatsapp_direct_send_approval_gate()
     test_p0_04_android_webview()
     test_p0_05_messaging_webhooks()
+    test_p0_worker_authentication()
     print("\n======================================================================")
     print("🎉 ALL P0 SECURITY TESTS PASSED WITH ZERO VULNERABILITIES!")
     print("======================================================================")
