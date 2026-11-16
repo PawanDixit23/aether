@@ -2417,61 +2417,114 @@ def serialize_task(t: Task, db: Optional[Session] = None) -> dict:
 
 @app.get("/api/tasks")
 def list_tasks(
-    status: Optional[str] = None, 
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    response: Response = None,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    eff_email = current_user.email
-    auto_advance_recurring_tasks(db, owner_user_id=current_user.id)
+    """Return a bounded task page; response headers expose continuation explicitly."""
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
+    auto_advance_recurring_tasks(db, owner_user_id=current_user.id)
     query = db.query(Task).filter(tenant_filter(Task, current_user))
-    
-    # Return top-level tasks by default (nested subtasks are attached inside serialize_task)
     query = query.filter((Task.parent_id == None) | (Task.parent_id == 0))
     if status:
         query = query.filter(Task.status == status)
 
-    # Fetch persistent date completions across all dates for recurring tasks
-    date_completions_map = {}
-    try:
-        records = db.query(TaskDateCompletion).filter(tenant_filter(TaskDateCompletion, current_user)).all()
-        for r in records:
-            if r.task_id not in date_completions_map:
-                date_completions_map[r.task_id] = {}
-            date_completions_map[r.task_id][r.date_str] = r.completed
-    except Exception as e:
-        print(f"[list_tasks] Error fetching task date completions: {e}")
+    page_rows = (
+        query.order_by(Task.created_at.desc(), Task.id.desc())
+        .offset(safe_offset).limit(safe_limit + 1).all()
+    )
+    has_more = len(page_rows) > safe_limit
+    top_level_tasks = page_rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(top_level_tasks))
+        response.headers["X-Page-Limit"] = str(safe_limit)
 
-    top_level_tasks = query.order_by(Task.created_at.desc(), Task.id.desc()).all()
     task_ids = [t.id for t in top_level_tasks]
-
-    # Fetch all subtasks in one tenant-scoped query instead of issuing one
-    # SELECT per parent task (the previous N+1 pattern generated hundreds of
-    # thousands of repeated parent_id queries under normal polling).
-    subtasks_by_parent = {}
+    date_completions_map = {}
     if task_ids:
+        completion_rows = (
+            db.query(TaskDateCompletion)
+            .filter(tenant_filter(TaskDateCompletion, current_user), TaskDateCompletion.task_id.in_(task_ids))
+            .order_by(TaskDateCompletion.id.desc())
+            .limit(5000).all()
+        )
+        for item in completion_rows:
+            date_completions_map.setdefault(item.task_id, {})[item.date_str] = item.completed
+
+        # Keep nested children bounded per parent. The dedicated subtasks endpoint
+        # exposes the rest, and the response marks parents with additional children.
+        ranked_children = db.query(
+            Task.id.label("id"),
+            Task.parent_id.label("parent_id"),
+            func.row_number().over(partition_by=Task.parent_id, order_by=Task.id.asc()).label("row_num")
+        ).filter(
+            tenant_filter(Task, current_user), Task.parent_id.in_(task_ids)
+        ).subquery()
         subtasks = (
             db.query(Task)
-            .filter(
-                Task.owner_user_id == current_user.id,
-                Task.parent_id.in_(task_ids)
-            )
+            .join(ranked_children, Task.id == ranked_children.c.id)
+            .filter(ranked_children.c.row_num <= 100)
             .order_by(Task.parent_id.asc(), Task.id.asc())
             .all()
         )
-        for subtask in subtasks:
-            subtasks_by_parent.setdefault(subtask.parent_id, []).append(subtask)
+        subtask_counts = dict(
+            db.query(Task.parent_id, func.count(Task.id))
+            .filter(tenant_filter(Task, current_user), Task.parent_id.in_(task_ids))
+            .group_by(Task.parent_id).all()
+        )
+    else:
+        subtasks = []
+        subtask_counts = {}
+
+    subtasks_by_parent = {}
+    for subtask in subtasks:
+        subtasks_by_parent.setdefault(subtask.parent_id, []).append(subtask)
 
     tasks_out = []
     for task in top_level_tasks:
+        children = subtasks_by_parent.get(task.id, [])
         serialized = serialize_task(task)
-        serialized["subtasks"] = [
-            serialize_task(subtask)
-            for subtask in subtasks_by_parent.get(task.id, [])
-        ]
+        serialized["subtasks"] = [serialize_task(child) for child in children]
+        serialized["subtasks_has_more"] = subtask_counts.get(task.id, 0) > len(children)
         serialized["date_completions"] = date_completions_map.get(task.id, {})
         tasks_out.append(serialized)
     return tasks_out
+
+@app.get("/api/tasks/{task_id}/subtasks")
+def list_task_subtasks(
+    task_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    response: Response = None,
+    current_user: UserIdentity = Depends(get_current_user_identity),
+    db: Session = Depends(get_db)
+):
+    """Fetch all child tasks in bounded pages; no child records are discarded."""
+    parent = db.query(Task).filter(Task.id == task_id, tenant_filter(Task, current_user)).first()
+    if not parent:
+        raise HTTPException(status_code=404, detail="Task not found")
+    try:
+        safe_limit, safe_offset = bounded_page(limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    rows = (
+        db.query(Task).filter(Task.parent_id == task_id, tenant_filter(Task, current_user))
+        .order_by(Task.id.asc()).offset(safe_offset).limit(safe_limit + 1).all()
+    )
+    has_more = len(rows) > safe_limit
+    rows = rows[:safe_limit]
+    if response is not None:
+        response.headers["X-Has-More"] = "true" if has_more else "false"
+        response.headers["X-Next-Offset"] = str(safe_offset + len(rows))
+    return [serialize_task(row) for row in rows]
 
 @app.post("/api/tasks")
 def create_task(
@@ -3347,15 +3400,26 @@ def get_finance_summary(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    records = db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user)).all()
-    total_income = sum(r.amount for r in records if r.type == "income")
-    total_expense = sum(r.amount for r in records if r.type == "expense")
-    balance = total_income - total_expense
+    """Calculate lifetime totals in PostgreSQL without loading the ledger into RAM."""
+    totals = db.query(
+        FinancialRecord.type,
+        func.coalesce(func.sum(FinancialRecord.amount), 0.0)
+    ).filter(tenant_filter(FinancialRecord, current_user)).group_by(FinancialRecord.type).all()
+    total_income = 0.0
+    total_expense = 0.0
+    for record_type, amount in totals:
+        if (record_type or "").lower() == "income":
+            total_income = float(amount or 0.0)
+        elif (record_type or "").lower() == "expense":
+            total_expense = float(amount or 0.0)
+    record_count = db.query(func.count(FinancialRecord.id)).filter(
+        tenant_filter(FinancialRecord, current_user)
+    ).scalar() or 0
     return {
         "total_income": total_income,
         "total_expense": total_expense,
-        "balance": balance,
-        "record_count": len(records)
+        "balance": total_income - total_expense,
+        "record_count": int(record_count)
     }
 
 @app.get("/api/finance/export-csv")
