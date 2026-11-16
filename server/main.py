@@ -804,103 +804,145 @@ def record_user_login(req: AuthRecordRequest, db: Session = Depends(get_db)):
 # ----------------- Client Sync & Resilience Engine -----------------
 @app.post("/api/sync/backup")
 def client_backup_sync(
-    req: ClientSyncBackup, 
+    req: ClientSyncBackup,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Intelligently restore and merge client persistent cache into the database with zero duplication (AETH-P0-02)."""
+    """Merge client cache in bounded DB batches without scanning whole tenant tables."""
     email = current_user.email
     restored_counts = {"tasks": 0, "memories": 0, "finances": 0}
-    
-    # Existing task titles for this user to avoid duplicate insertions
-    existing_tasks = db.query(Task).filter(tenant_filter(Task, current_user)).all()
-    existing_titles = {t.title.strip().lower() for t in existing_tasks if t.title}
-    
-    if req.tasks:
-        for t in req.tasks:
+    skipped_counts = {"duplicate_tasks": 0, "duplicate_memories": 0, "finances_already_present": 0}
+    failed_count = 0
+    failure_samples = []
+
+    def note_failure(kind: str, index: int, error: Exception):
+        nonlocal failed_count
+        failed_count += 1
+        if len(failure_samples) < 25:
+            failure_samples.append({"type": kind, "index": index, "error": str(error)[:240]})
+
+    # Look up only candidate keys in bounded IN clauses. Existing rows are never
+    # materialized into Python, regardless of how large the tenant's history grows.
+    for batch_start in range(0, len(req.tasks or []), WRITE_BATCH_SIZE):
+        batch = (req.tasks or [])[batch_start:batch_start + WRITE_BATCH_SIZE]
+        candidate_titles = list({
+            str(item.get("title") or "").strip().lower()
+            for item in batch if str(item.get("title") or "").strip()
+        })
+        existing_titles = set()
+        if candidate_titles:
+            existing_titles = {
+                value for (value,) in db.query(func.lower(Task.title)).filter(
+                    tenant_filter(Task, current_user),
+                    func.lower(Task.title).in_(candidate_titles)
+                ).all() if value
+            }
+        for local_index, item in enumerate(batch):
             try:
-                title = (t.get("title") or "").strip()
-                if not title or title.lower() in existing_titles:
+                title = str(item.get("title") or "").strip()
+                if not title:
+                    skipped_counts["duplicate_tasks"] += 1
                     continue
-
+                if title.lower() in existing_titles:
+                    skipped_counts["duplicate_tasks"] += 1
+                    continue
                 due_dt = None
-                if t.get("due_date"):
+                if item.get("due_date"):
                     try:
-                        clean_due = str(t["due_date"]).replace("Z", "").replace(" ", "T")
-                        due_dt = datetime.fromisoformat(clean_due)
-                    except Exception:
+                        due_dt = datetime.fromisoformat(str(item["due_date"]).replace("Z", "").replace(" ", "T"))
+                    except (TypeError, ValueError):
                         pass
-
                 created_dt = None
-                if t.get("created_at"):
+                if item.get("created_at"):
                     try:
-                        clean_created = str(t["created_at"]).replace("Z", "").replace(" ", "T")
-                        created_dt = datetime.fromisoformat(clean_created)
-                    except Exception:
+                        created_dt = datetime.fromisoformat(str(item["created_at"]).replace("Z", "").replace(" ", "T"))
+                    except (TypeError, ValueError):
                         pass
-
                 db.add(Task(
-                    user_email=email,
-                    owner_user_id=current_user.id,
-                    title=title,
-                    priority=t.get("priority", "medium"),
-                    status=t.get("status", "pending"),
-                    reminder_time=t.get("reminder_time"),
-                    recurrence=t.get("recurrence"),
-                    completion_comment=t.get("completion_comment"),
-                    attachments=t.get("attachments"),
-                    due_date=due_dt,
-                    created_at=created_dt or datetime.utcnow(),
-                    notified=t.get("notified", False)
+                    user_email=email, owner_user_id=current_user.id, title=title,
+                    priority=item.get("priority", "medium"), status=item.get("status", "pending"),
+                    reminder_time=item.get("reminder_time"), recurrence=item.get("recurrence"),
+                    completion_comment=item.get("completion_comment"), attachments=item.get("attachments"),
+                    due_date=due_dt, created_at=created_dt or datetime.utcnow(),
+                    notified=item.get("notified", False)
                 ))
                 existing_titles.add(title.lower())
                 restored_counts["tasks"] += 1
-            except Exception:
-                pass
-        db.commit()
+            except Exception as exc:
+                db.rollback()
+                note_failure("task", batch_start + local_index, exc)
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            note_failure("task_batch", batch_start, exc)
 
-    # Existing memories for this user
-    existing_mems = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user)).all()
-    existing_facts = {m.fact.strip().lower() for m in existing_mems if m.fact}
-    if req.memories:
-        for m in req.memories:
+    for batch_start in range(0, len(req.memories or []), WRITE_BATCH_SIZE):
+        batch = (req.memories or [])[batch_start:batch_start + WRITE_BATCH_SIZE]
+        candidate_facts = list({
+            str(item.get("fact") or item.get("content") or "").strip().lower()
+            for item in batch if str(item.get("fact") or item.get("content") or "").strip()
+        })
+        existing_facts = set()
+        if candidate_facts:
+            existing_facts = {
+                value for (value,) in db.query(func.lower(MemoryItem.fact)).filter(
+                    tenant_filter(MemoryItem, current_user),
+                    func.lower(MemoryItem.fact).in_(candidate_facts)
+                ).all() if value
+            }
+        for local_index, item in enumerate(batch):
             try:
-                fact_text = (m.get("fact") or m.get("content") or "").strip()
+                fact_text = str(item.get("fact") or item.get("content") or "").strip()
                 if not fact_text or fact_text.lower() in existing_facts:
+                    skipped_counts["duplicate_memories"] += 1
                     continue
-
                 db.add(MemoryItem(
-                    owner_user_id=current_user.id,
-                    user_email=email,
-                    category=m.get("category", "preference"),
-                    fact=fact_text
+                    owner_user_id=current_user.id, user_email=email,
+                    category=item.get("category", "preference"), fact=fact_text
                 ))
                 existing_facts.add(fact_text.lower())
                 restored_counts["memories"] += 1
-            except Exception:
-                pass
-        db.commit()
+            except Exception as exc:
+                db.rollback()
+                note_failure("memory", batch_start + local_index, exc)
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            note_failure("memory_batch", batch_start, exc)
 
-    # Restore finances if DB has zero for this user
-    existing_fin = db.query(FinancialRecord).filter(tenant_filter(FinancialRecord, current_user)).count()
-    if existing_fin == 0 and req.finances:
-        for f in req.finances:
+    existing_finance_count = db.query(func.count(FinancialRecord.id)).filter(
+        tenant_filter(FinancialRecord, current_user)
+    ).scalar() or 0
+    if existing_finance_count == 0 and req.finances:
+        for batch_start in range(0, len(req.finances), WRITE_BATCH_SIZE):
+            batch = req.finances[batch_start:batch_start + WRITE_BATCH_SIZE]
+            for local_index, item in enumerate(batch):
+                try:
+                    db.add(FinancialRecord(
+                        owner_user_id=current_user.id, user_email=email,
+                        type=item.get("type", "expense"), category=item.get("category", "general"),
+                        amount=item.get("amount", 0.0), payment_mode=item.get("payment_mode", "upi"),
+                        note=item.get("note", "")
+                    ))
+                    restored_counts["finances"] += 1
+                except Exception as exc:
+                    db.rollback()
+                    note_failure("finance", batch_start + local_index, exc)
             try:
-                db.add(FinancialRecord(
-                    owner_user_id=current_user.id,
-                    user_email=email,
-                    type=f.get("type", "expense"),
-                    category=f.get("category", "general"),
-                    amount=f.get("amount", 0.0),
-                    payment_mode=f.get("payment_mode", "upi"),
-                    note=f.get("note", "")
-                ))
-                restored_counts["finances"] += 1
-            except Exception:
-                pass
-        db.commit()
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                note_failure("finance_batch", batch_start, exc)
+    elif req.finances:
+        skipped_counts["finances_already_present"] = len(req.finances)
 
-    return {"status": "synced", "user": email, "restored": restored_counts}
+    return {
+        "status": "synced", "user": email, "restored": restored_counts,
+        "skipped": skipped_counts, "failed_count": failed_count,
+        "failure_samples": failure_samples
+    }
 
 # ----------------- Autonomous Agent & Quick Capture Engine -----------------
 class AgentRunRequest(BaseModel):
