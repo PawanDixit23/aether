@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from resource_limits import AI_CONTEXT_CHAT_LIMIT, AI_CONTEXT_FINANCE_LIMIT, AI_CONTEXT_MEMORY_LIMIT, AI_CONTEXT_TASK_LIMIT, bounded_page, chunks, WRITE_BATCH_SIZE
 from sqlalchemy.exc import IntegrityError
 import httpx
@@ -2336,101 +2336,87 @@ def get_next_weekday(dt: datetime) -> datetime:
     return next_day
 
 def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = None):
-    """Automatically rolls recurring tasks (daily, weekdays, weekly) forward strictly isolated by owner_user_id (AETH-P0-02). Fails closed if owner_user_id is missing."""
+    """Stream recurring tasks in small batches; never load the tenant's full task table."""
     try:
-        # AETH-P0-02: Strict fail-closed tenant boundary. Never query or advance tasks without a valid authenticated tenant UUID!
         if not owner_user_id or not str(owner_user_id).strip():
-            print("[Security Notice] auto_advance_recurring_tasks called without valid owner_user_id - failing closed to protect tenant isolation.")
+            print("[Security Notice] auto_advance_recurring_tasks called without valid owner_user_id - failing closed.")
             return
-
         now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
         today = now.date()
-        query = db.query(Task).filter(Task.recurrence != None, Task.owner_user_id == str(owner_user_id).strip())
-        rec_tasks = query.all()
+        query = db.query(Task).filter(
+            Task.recurrence != None, Task.owner_user_id == str(owner_user_id).strip()
+        ).yield_per(100)
         updated = False
-        for dt in rec_tasks:
-            # If task has been marked completed by the user, never reset it or notify again
-            if dt.status == "completed":
-                dt.notified = True
+        for task in query:
+            if task.status == "completed":
+                task.notified = True
                 continue
-
-            # Strip accidental daily recurrence from one-time tasks (like challan, fine, etc.)
-            title_lower = (dt.title or "").lower()
-            if any(w in title_lower for w in ["challan", "fine", "ticket", "one-time"]):
-                dt.recurrence = None
-                dt.notified = True
+            title_lower = (task.title or "").lower()
+            if any(word in title_lower for word in ["challan", "fine", "ticket", "one-time"]):
+                task.recurrence = None
+                task.notified = True
                 updated = True
                 continue
-
-            if not dt.due_date:
-                dt.due_date = datetime.combine(today, datetime.min.time())
+            if not task.due_date:
+                task.due_date = datetime.combine(today, datetime.min.time())
                 updated = True
                 continue
-            due_dt = dt.due_date
+            due_dt = task.due_date
             if isinstance(due_dt, str):
-                due_dt = datetime.fromisoformat(due_dt.replace(' ', 'T'))
-            # If due date is in the past (yesterday or earlier), roll forward
+                due_dt = datetime.fromisoformat(due_dt.replace(" ", "T"))
             if due_dt.date() < today:
-                if dt.recurrence == "daily":
+                if task.recurrence == "daily":
                     new_dt = datetime.combine(today, due_dt.time())
-                elif dt.recurrence in ["weekdays", "monday_to_friday"]:
+                elif task.recurrence in ["weekdays", "monday_to_friday"]:
                     new_dt = datetime.combine(today, due_dt.time())
                     while new_dt.weekday() >= 5:
                         new_dt += timedelta(days=1)
-                elif str(dt.recurrence).startswith("weekly"):
+                elif str(task.recurrence).startswith("weekly"):
                     new_dt = due_dt
                     while new_dt.date() < today:
                         new_dt += timedelta(days=7)
                 else:
                     new_dt = datetime.combine(today, due_dt.time())
-                
-                dt.due_date = new_dt
-                dt.status = "pending"
-                dt.notified = False
+                task.due_date = new_dt
+                task.status = "pending"
+                task.notified = False
                 updated = True
         if updated:
             db.commit()
-    except Exception as e:
-        print(f"[AutoAdvanceRecurringTasks Note] {e}")
+    except Exception as exc:
+        db.rollback()
+        print(f"[AutoAdvanceRecurringTasks Note] {exc}")
 
 @app.get("/api/reminders/due")
 def get_due_reminders(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Fetch pending tasks whose reminder time has just arrived for verified user (AETH-P0-02)."""
+    """Read only the small due-time window; old pending tasks are not scanned."""
     auto_advance_recurring_tasks(db, owner_user_id=current_user.id)
-
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
+    start = now - timedelta(seconds=180)
     tasks = db.query(Task).filter(
         tenant_filter(Task, current_user),
         Task.status == "pending",
-        Task.notified == False
-    ).all()
-    
+        Task.notified == False,
+        Task.due_date >= start,
+        Task.due_date <= now
+    ).order_by(Task.due_date.asc(), Task.id.asc()).limit(200).all()
     due_tasks = []
-    for t in tasks:
-        if not t.due_date:
-            continue
+    for task in tasks:
+        dt = task.due_date
         try:
-            dt = t.due_date
             if isinstance(dt, str):
-                dt = datetime.fromisoformat(dt.replace(' ', 'T'))
-            # Only alert if due time arrived within the last 3 minutes (180s) to avoid blasting old overdue tasks
-            diff = (now - dt).total_seconds()
-            if 0 <= diff <= 180:
-                due_tasks.append({
-                    "id": t.id,
-                    "title": t.title,
-                    "priority": t.priority,
-                    "reminder_time": t.reminder_time or dt.strftime("%I:%M %p"),
-                    "recurrence": getattr(t, "recurrence", None),
-                    "parent_id": getattr(t, "parent_id", None),
-                    "due_date": dt.isoformat()
-                })
-        except Exception as e:
-            print(f"[Reminder Due Filter Error] {e}")
-
+                dt = datetime.fromisoformat(dt.replace(" ", "T"))
+            due_tasks.append({
+                "id": task.id, "title": task.title, "priority": task.priority,
+                "reminder_time": task.reminder_time or dt.strftime("%I:%M %p"),
+                "recurrence": getattr(task, "recurrence", None),
+                "parent_id": getattr(task, "parent_id", None), "due_date": dt.isoformat()
+            })
+        except Exception as exc:
+            print(f"[Reminder Due Filter Error] {exc}")
     return due_tasks
 
 @app.post("/api/reminders/{task_id}/ack")
@@ -2974,22 +2960,26 @@ def reschedule_all_overdue(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """Reschedules all overdue non-recurring tasks to today at their original reminder time."""
+    """Stream overdue tasks in bounded batches while preserving every matching row."""
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     today = now.date()
-    query = db.query(Task).filter(tenant_filter(Task, current_user), Task.status == "pending", Task.recurrence == None, Task.due_date != None)
-    tasks = query.all()
+    query = db.query(Task).filter(
+        tenant_filter(Task, current_user), Task.status == "pending",
+        Task.recurrence == None, Task.due_date != None
+    ).yield_per(200)
     count = 0
-    for t in tasks:
-        dt = t.due_date
-        if isinstance(dt, str):
-            try: dt = datetime.fromisoformat(dt.replace(' ', 'T'))
-            except Exception: continue
-        if dt and dt.date() < today:
-            t.due_date = datetime.combine(today, dt.time())
-            t.notified = False
+    for task in query:
+        due = task.due_date
+        if isinstance(due, str):
+            try:
+                due = datetime.fromisoformat(due.replace(" ", "T"))
+            except Exception:
+                continue
+        if due and due.date() < today:
+            task.due_date = datetime.combine(today, due.time())
+            task.notified = False
             count += 1
-    if count > 0:
+    if count:
         db.commit()
     return {"status": "ok", "rescheduled_count": count}
 
@@ -3371,52 +3361,42 @@ def get_cash_flow_forecast(
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    """
-    30-day forward cash flow forecast (AETH-FIN-01).
-    Computes projected balance using recurring commitments and 30-day historical daily average burn rate.
-    """
+    """Calculate forecast inputs with SQL aggregates, not materialized ledger rows."""
+    days = max(1, min(int(days), 365))
     now = datetime.utcnow()
     past_30d = now - timedelta(days=30)
-    
-    # 1. Historical 30-day expenses to calculate average daily discretionary spend
-    past_expenses = db.query(FinancialRecord).filter(
-        tenant_filter(FinancialRecord, current_user),
-        FinancialRecord.type == "expense",
+    past_expense_total = float(db.query(func.coalesce(func.sum(FinancialRecord.amount), 0.0)).filter(
+        tenant_filter(FinancialRecord, current_user), FinancialRecord.type == "expense",
         FinancialRecord.date >= past_30d
-    ).all()
-    past_expense_total = sum(round_currency(r.amount) for r in past_expenses)
-    avg_daily_spend = round_currency(past_expense_total / 30.0) if past_expenses else 0.0
-
-    # 2. Historical 30-day income
-    past_incomes = db.query(FinancialRecord).filter(
-        tenant_filter(FinancialRecord, current_user),
-        FinancialRecord.type == "income",
+    ).scalar() or 0.0)
+    past_income_total = float(db.query(func.coalesce(func.sum(FinancialRecord.amount), 0.0)).filter(
+        tenant_filter(FinancialRecord, current_user), FinancialRecord.type == "income",
         FinancialRecord.date >= past_30d
-    ).all()
-    past_income_total = sum(round_currency(r.amount) for r in past_incomes)
+    ).scalar() or 0.0)
+    recurring_totals = db.query(
+        FinancialRecord.type, func.coalesce(func.sum(FinancialRecord.amount), 0.0)
+    ).filter(
+        tenant_filter(FinancialRecord, current_user), FinancialRecord.is_recurring == True
+    ).group_by(FinancialRecord.type).all()
+    recurring_monthly_income = 0.0
+    recurring_monthly_expense = 0.0
+    for record_type, amount in recurring_totals:
+        if record_type == "income":
+            recurring_monthly_income = float(amount or 0.0)
+        elif record_type == "expense":
+            recurring_monthly_expense = float(amount or 0.0)
 
-    # 3. Recurring income & expenses
-    recurring_items = db.query(FinancialRecord).filter(
-        tenant_filter(FinancialRecord, current_user),
-        FinancialRecord.is_recurring == True
-    ).all()
-    
-    recurring_monthly_income = sum(round_currency(r.amount) for r in recurring_items if r.type == "income")
-    recurring_monthly_expense = sum(round_currency(r.amount) for r in recurring_items if r.type == "expense")
-
-    # 4. Projected 30-day cash flow
+    avg_daily_spend = round_currency(past_expense_total / 30.0)
     projected_discretionary = round_currency(avg_daily_spend * days)
     projected_total_outflow = round_currency(recurring_monthly_expense + projected_discretionary)
     projected_net_cashflow = round_currency(recurring_monthly_income - projected_total_outflow)
-
     return {
-        "status": "success",
-        "forecast_days": days,
+        "status": "success", "forecast_days": days,
         "average_daily_spend": avg_daily_spend,
-        "past_30d_income": past_income_total,
-        "past_30d_expense": past_expense_total,
-        "recurring_monthly_income": recurring_monthly_income,
-        "recurring_monthly_expense": recurring_monthly_expense,
+        "past_30d_income": round_currency(past_income_total),
+        "past_30d_expense": round_currency(past_expense_total),
+        "recurring_monthly_income": round_currency(recurring_monthly_income),
+        "recurring_monthly_expense": round_currency(recurring_monthly_expense),
         "projected_total_outflow": projected_total_outflow,
         "projected_net_cashflow": projected_net_cashflow,
         "runway_health": "positive" if projected_net_cashflow >= 0 else "burn_rate_warning"
