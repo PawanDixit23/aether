@@ -2194,19 +2194,32 @@ def delete_chat_session(
 @app.get("/api/chat/history")
 def get_chat_history(
     session_id: Optional[str] = None,
-    limit: int = 60, 
+    limit: int = 60,
+    offset: int = 0,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
+    """Return the newest bounded page, in chronological order.
+
+    Applying LIMIT/OFFSET in SQL avoids loading a user's entire chat history into
+    the Render process just to return the last few messages.
+    """
     try:
+        safe_limit = max(1, min(int(limit), 100))
+        safe_offset = max(0, int(offset))
         query = db.query(ChatMessage).filter(tenant_filter(ChatMessage, current_user))
         if session_id:
             query = query.filter(ChatMessage.session_id == session_id)
-        msgs = query.order_by(ChatMessage.created_at.asc()).all()
-        return msgs[-limit:]
-    except Exception as e:
+        msgs = (
+            query.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .offset(safe_offset)
+            .limit(safe_limit)
+            .all()
+        )
+        return list(reversed(msgs))
+    except Exception:
         db.rollback()
-        return []
+        raise
 
 @app.delete("/api/chat/history")
 def clear_chat_history(
@@ -2436,10 +2449,34 @@ def list_tasks(
     except Exception as e:
         print(f"[list_tasks] Error fetching task date completions: {e}")
 
+    top_level_tasks = query.order_by(Task.created_at.desc(), Task.id.desc()).all()
+    task_ids = [t.id for t in top_level_tasks]
+
+    # Fetch all subtasks in one tenant-scoped query instead of issuing one
+    # SELECT per parent task (the previous N+1 pattern generated hundreds of
+    # thousands of repeated parent_id queries under normal polling).
+    subtasks_by_parent = {}
+    if task_ids:
+        subtasks = (
+            db.query(Task)
+            .filter(
+                Task.owner_user_id == current_user.id,
+                Task.parent_id.in_(task_ids)
+            )
+            .order_by(Task.parent_id.asc(), Task.id.asc())
+            .all()
+        )
+        for subtask in subtasks:
+            subtasks_by_parent.setdefault(subtask.parent_id, []).append(subtask)
+
     tasks_out = []
-    for t in query.order_by(Task.created_at.desc()).all():
-        serialized = serialize_task(t, db=db)
-        serialized["date_completions"] = date_completions_map.get(t.id, {})
+    for task in top_level_tasks:
+        serialized = serialize_task(task)
+        serialized["subtasks"] = [
+            serialize_task(subtask)
+            for subtask in subtasks_by_parent.get(task.id, [])
+        ]
+        serialized["date_completions"] = date_completions_map.get(task.id, {})
         tasks_out.append(serialized)
     return tasks_out
 
@@ -3528,10 +3565,26 @@ async def draft_email_reply_endpoint(
 # ----------------- Memory Vault Endpoints -----------------
 @app.get("/api/memory")
 def list_memory(
+    limit: int = 50,
+    offset: int = 0,
     current_user: UserIdentity = Depends(get_current_user_identity),
     db: Session = Depends(get_db)
 ):
-    return db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user)).order_by(MemoryItem.created_at.desc()).all()
+    """Return a bounded page of the current user's memories (newest first).
+
+    The response remains a list for backward compatibility. Clients can request
+    older pages with offset; limit is capped to prevent unbounded database reads.
+    """
+    safe_limit = max(1, min(int(limit), 100))
+    safe_offset = max(0, int(offset))
+    return (
+        db.query(MemoryItem)
+        .filter(tenant_filter(MemoryItem, current_user))
+        .order_by(MemoryItem.created_at.desc(), MemoryItem.id.desc())
+        .offset(safe_offset)
+        .limit(safe_limit)
+        .all()
+    )
 
 @app.post("/api/memory")
 def create_memory(
