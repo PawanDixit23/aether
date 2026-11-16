@@ -3906,6 +3906,7 @@ def list_memory(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     memory_query = db.query(MemoryItem).filter(tenant_filter(MemoryItem, current_user))
+    total_count = memory_query.count()
     if before_id is not None:
         memory_query = memory_query.filter(MemoryItem.id < before_id)
         rows = memory_query.order_by(MemoryItem.id.desc()).limit(safe_limit + 1).all()
@@ -3917,6 +3918,7 @@ def list_memory(
         response.headers["X-Has-More"] = "true" if has_more else "false"
         response.headers["X-Next-Offset"] = str(safe_offset + len(rows))
         response.headers["X-Next-Cursor"] = str(rows[-1].id) if rows else ""
+        response.headers["X-Total-Count"] = str(total_count)
     return rows
 
 @app.post("/api/memory")
