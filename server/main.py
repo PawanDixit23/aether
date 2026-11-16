@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from resource_limits import AI_CONTEXT_CHAT_LIMIT, AI_CONTEXT_FINANCE_LIMIT, AI_CONTEXT_MEMORY_LIMIT, AI_CONTEXT_TASK_LIMIT, bounded_page, chunks, WRITE_BATCH_SIZE
 from sqlalchemy.exc import IntegrityError
 import httpx
 import re
@@ -598,109 +599,106 @@ def get_current_time_str(client_time: Optional[str] = None, tz_name: Optional[st
     return datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
 
 def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optional[str] = None, user_email: Optional[str] = None, exclude_chat_id: Optional[int] = None, prompt_query: Optional[str] = None, session_id: Optional[str] = None, user_lat: Optional[float] = None, user_lon: Optional[float] = None, user_city: Optional[str] = None, owner_user_id: Optional[str] = None) -> dict:
+    """Build a bounded AI context; aggregate history in SQL and fetch only useful recent rows."""
     user_loc = (user_city or "").strip()
     if not user_loc:
-        if user_lat and user_lon:
-            user_loc = f"{round(user_lat, 2)}, {round(user_lon, 2)}"
-        else:
-            user_loc = "Jaipur, Rajasthan"
+        user_loc = f"{round(user_lat, 2)}, {round(user_lon, 2)}" if user_lat and user_lon else "Jaipur, Rajasthan"
 
-    if not user_email:
-        # Even without user_email, retain session conversational memory!
-        recent_chat = []
-        try:
-            chat_q = db.query(ChatMessage)
-            if session_id:
-                chat_q = chat_q.filter(ChatMessage.session_id == session_id)
-            if exclude_chat_id:
-                chat_q = chat_q.filter(ChatMessage.id != exclude_chat_id)
-            recent_msgs = chat_q.order_by(ChatMessage.id.desc()).limit(40).all()
-            recent_msgs = list(reversed(recent_msgs))
-            recent_chat = [
-                {"role": ("User" if m.role == "user" else "Aether"), "content": m.content}
-                for m in recent_msgs
-            ]
-        except Exception:
-            db.rollback()
-
-        return {
-            "current_time": get_current_time_str(client_time, tz_name),
-            "tasks": [],
-            "total_income": 0,
-            "total_expense": 0,
-            "balance": 0,
-            "memories": [],
-            "recent_chat": recent_chat,
-            "user_location": user_loc,
-            "user_state": "Rajasthan",
-            "user_city": "Jaipur"
-        }
+    chat_q = db.query(ChatMessage)
     if owner_user_id:
-        tasks = db.query(Task).filter(Task.owner_user_id == owner_user_id, Task.status == "pending").all()
-        records = db.query(FinancialRecord).filter(FinancialRecord.owner_user_id == owner_user_id).all()
+        chat_q = chat_q.filter(ChatMessage.owner_user_id == owner_user_id)
+    elif session_id:
+        chat_q = chat_q.filter(ChatMessage.session_id == session_id)
     else:
-        tasks = []
-        records = []
-
-    # Hybrid Memory Retrieval: rank & surface relevant facts/contacts matching the prompt
-    recalled_mems = []
-    if prompt_query and owner_user_id:
-        try:
-            from memory import HybridMemoryProvider
-            recalled = HybridMemoryProvider.recall_context(prompt_query, user_email or owner_user_id, db, limit=12)
-            recalled_facts = set(recalled.get("relevant_facts", []))
-            all_mem_objs = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
-            # Prioritize recalled items first
-            recalled_mems = [m for m in all_mem_objs if m.fact in recalled_facts]
-            remaining_mems = [m for m in all_mem_objs if m.fact not in recalled_facts]
-            memories = recalled_mems + remaining_mems[:15]
-        except Exception:
-            memories = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
-    elif owner_user_id:
-        memories = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id).all()
-    else:
-        memories = []
-
-    # Fetch last 40 messages for comprehensive conversational memory strictly scoped to owner UUID
+        chat_q = chat_q.filter(sqlalchemy.sql.false())
+    if session_id:
+        chat_q = chat_q.filter(ChatMessage.session_id == session_id)
+    if exclude_chat_id:
+        chat_q = chat_q.filter(ChatMessage.id != exclude_chat_id)
     try:
-        chat_q = db.query(ChatMessage)
-        if owner_user_id:
-            chat_q = chat_q.filter(ChatMessage.owner_user_id == owner_user_id)
-        elif session_id:
-            chat_q = chat_q.filter(ChatMessage.session_id == session_id)
-        else:
-            chat_q = chat_q.filter(sqlalchemy.sql.false())
-        if session_id:
-            chat_q = chat_q.filter(ChatMessage.session_id == session_id)
-        if exclude_chat_id:
-            chat_q = chat_q.filter(ChatMessage.id != exclude_chat_id)
-        recent_msgs = chat_q.order_by(ChatMessage.id.desc()).limit(40).all()
-        recent_msgs = list(reversed(recent_msgs))
-        recent_chat = [
-            {"role": ("User" if m.role == "user" else "Aether"), "content": m.content}
-            for m in recent_msgs
-        ]
+        recent_msgs = list(reversed(chat_q.order_by(ChatMessage.id.desc()).limit(AI_CONTEXT_CHAT_LIMIT).all()))
     except Exception:
         db.rollback()
-        recent_chat = []
+        recent_msgs = []
+    recent_chat = [
+        {"role": ("User" if m.role == "user" else "Aether"), "content": m.content}
+        for m in recent_msgs
+    ]
 
-    total_income = sum(float(r.amount or 0.0) for r in records if r.type == "income")
-    total_expense = sum(float(r.amount or 0.0) for r in records if r.type == "expense")
+    if not user_email:
+        return {
+            "current_time": get_current_time_str(client_time, tz_name),
+            "tasks": [], "total_income": 0, "total_expense": 0, "balance": 0,
+            "memories": [], "recent_chat": recent_chat, "user_location": user_loc,
+            "user_state": "Rajasthan", "user_city": "Jaipur"
+        }
+
+    tasks = []
+    memories = []
+    recent_finances = []
+    total_income = 0.0
+    total_expense = 0.0
+    if owner_user_id:
+        tasks = (
+            db.query(Task)
+            .filter(Task.owner_user_id == owner_user_id, Task.status == "pending")
+            .order_by(Task.due_date.asc().nullslast(), Task.id.desc())
+            .limit(AI_CONTEXT_TASK_LIMIT)
+            .all()
+        )
+
+        # Compute lifetime totals inside PostgreSQL; never materialize the user's ledger.
+        totals = db.query(
+            FinancialRecord.type,
+            func.coalesce(func.sum(FinancialRecord.amount), 0.0)
+        ).filter(
+            FinancialRecord.owner_user_id == owner_user_id
+        ).group_by(FinancialRecord.type).all()
+        for record_type, amount in totals:
+            if (record_type or "").lower() == "income":
+                total_income = float(amount or 0.0)
+            elif (record_type or "").lower() == "expense":
+                total_expense = float(amount or 0.0)
+
+        recent_finances = (
+            db.query(FinancialRecord)
+            .filter(FinancialRecord.owner_user_id == owner_user_id)
+            .order_by(FinancialRecord.date.desc(), FinancialRecord.id.desc())
+            .limit(AI_CONTEXT_FINANCE_LIMIT)
+            .all()
+        )
+
+        recalled_facts = []
+        if prompt_query:
+            try:
+                from memory import HybridMemoryProvider
+                recalled = HybridMemoryProvider.recall_context(
+                    prompt_query, user_email or owner_user_id, db, limit=AI_CONTEXT_MEMORY_LIMIT
+                )
+                recalled_facts = list(dict.fromkeys(recalled.get("relevant_facts", [])))[:AI_CONTEXT_MEMORY_LIMIT]
+            except Exception as recall_error:
+                print(f"[AI Context Memory Recall] {recall_error}")
+
+        memory_q = db.query(MemoryItem).filter(MemoryItem.owner_user_id == owner_user_id)
+        if recalled_facts:
+            memory_q = memory_q.filter(MemoryItem.fact.in_(recalled_facts))
+        memories = (
+            memory_q.order_by(MemoryItem.importance.desc(), MemoryItem.created_at.desc(), MemoryItem.id.desc())
+            .limit(AI_CONTEXT_MEMORY_LIMIT)
+            .all()
+        )
+
     balance = total_income - total_expense
-
     category_totals = {}
     fin_list = []
-    for r in sorted(records, key=lambda x: x.date or datetime.min, reverse=True)[:60]:
+    for r in recent_finances:
         r_type = (r.type or "expense").lower()
         amt = float(r.amount or 0.0)
         cat = (r.category or "general").strip().capitalize()
         if r_type == "expense":
             category_totals[cat] = category_totals.get(cat, 0.0) + amt
         fin_list.append({
-            "id": r.id,
-            "type": r_type,
-            "category": cat,
-            "amount": amt,
+            "id": r.id, "type": r_type, "category": cat, "amount": amt,
             "note": r.note or "",
             "date": r.date.strftime("%Y-%m-%d %H:%M") if r.date else ""
         })
@@ -708,16 +706,11 @@ def build_context(db: Session, client_time: Optional[str] = None, tz_name: Optio
     return {
         "current_time": get_current_time_str(client_time, tz_name),
         "tasks": [{"id": t.id, "title": str(t.title or "Task"), "priority": str(t.priority or "medium"), "reminder_time": t.reminder_time} for t in tasks],
-        "total_income": total_income,
-        "total_expense": total_expense,
-        "balance": balance,
-        "financial_records": fin_list,
-        "financial_category_breakdown": category_totals,
+        "total_income": total_income, "total_expense": total_expense, "balance": balance,
+        "financial_records": fin_list, "financial_category_breakdown": category_totals,
         "memories": [{"category": str(m.category or "general"), "fact": str(m.fact or "")} for m in memories],
-        "recent_chat": recent_chat,
-        "user_location": user_loc,
-        "user_state": "India",
-        "user_city": user_loc
+        "recent_chat": recent_chat, "user_location": user_loc,
+        "user_state": "India", "user_city": user_loc
     }
 
 # ----------------- Multi-Provider Key Validation Engine (Gemini / OpenAI / Grok) -----------------
