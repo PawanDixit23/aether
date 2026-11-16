@@ -2039,6 +2039,7 @@ def get_chat_sessions(
         db.query(ChatSession)
         .filter(tenant_filter(ChatSession, current_user), ~ChatSession.id.startswith("temp_"), ChatSession.id != "temporary")
         .order_by(ChatSession.updated_at.desc())
+        .limit(100)
         .all()
     )
     
@@ -2494,7 +2495,7 @@ def serialize_task(t: Task, db: Optional[Session] = None) -> dict:
         "subtasks": []
     }
     if db:
-        subs = db.query(Task).filter(Task.parent_id == t.id, Task.owner_user_id == t.owner_user_id).order_by(Task.id.asc()).all()
+        subs = db.query(Task).filter(Task.parent_id == t.id, Task.owner_user_id == t.owner_user_id).order_by(Task.id.asc()).limit(500).all()
         if subs:
             res["subtasks"] = [serialize_task(st) for st in subs]
     return res
@@ -2521,7 +2522,7 @@ def list_tasks(
     # Fetch persistent date completions across all dates for recurring tasks
     date_completions_map = {}
     try:
-        records = db.query(TaskDateCompletion).filter(tenant_filter(TaskDateCompletion, current_user)).all()
+        records = db.query(TaskDateCompletion).filter(tenant_filter(TaskDateCompletion, current_user)).order_by(TaskDateCompletion.id.desc()).limit(500).all()
         for r in records:
             if r.task_id not in date_completions_map:
                 date_completions_map[r.task_id] = {}
@@ -2544,6 +2545,7 @@ def list_tasks(
                 Task.parent_id.in_(task_ids)
             )
             .order_by(Task.parent_id.asc(), Task.id.asc())
+            .limit(1000)
             .all()
         )
         for subtask in subtasks:
@@ -3340,27 +3342,27 @@ def get_cash_flow_forecast(
     past_30d = now - timedelta(days=30)
     
     # 1. Historical 30-day expenses to calculate average daily discretionary spend
-    past_expenses = db.query(FinancialRecord).filter(
+    past_expense_total = db.query(func.coalesce(func.sum(FinancialRecord.amount), 0.0)).filter(
         tenant_filter(FinancialRecord, current_user),
         FinancialRecord.type == "expense",
         FinancialRecord.date >= past_30d
-    ).all()
-    past_expense_total = sum(round_currency(r.amount) for r in past_expenses)
+    ).scalar() or 0.0
+    past_expense_total = round_currency(past_expense_total)
     avg_daily_spend = round_currency(past_expense_total / 30.0) if past_expenses else 0.0
 
     # 2. Historical 30-day income
-    past_incomes = db.query(FinancialRecord).filter(
+    past_income_total = db.query(func.coalesce(func.sum(FinancialRecord.amount), 0.0)).filter(
         tenant_filter(FinancialRecord, current_user),
         FinancialRecord.type == "income",
         FinancialRecord.date >= past_30d
-    ).all()
-    past_income_total = sum(round_currency(r.amount) for r in past_incomes)
+    ).scalar() or 0.0
+    past_income_total = round_currency(past_income_total)
 
     # 3. Recurring income & expenses
     recurring_items = db.query(FinancialRecord).filter(
         tenant_filter(FinancialRecord, current_user),
         FinancialRecord.is_recurring == True
-    ).all()
+    ).order_by(FinancialRecord.date.desc(), FinancialRecord.id.desc()).limit(100).all()
     
     recurring_monthly_income = sum(round_currency(r.amount) for r in recurring_items if r.type == "income")
     recurring_monthly_expense = sum(round_currency(r.amount) for r in recurring_items if r.type == "expense")
@@ -3736,7 +3738,7 @@ def sync_bulk_contacts(
     existing = db.query(MemoryItem).filter(
         tenant_filter(MemoryItem, current_user),
         MemoryItem.category == "contact"
-    ).all()
+    ).order_by(MemoryItem.updated_at.desc(), MemoryItem.id.desc()).limit(500).all()
     existing_facts = { (e.fact or "").lower(): e for e in existing }
 
     for c in contacts_list:
@@ -4117,7 +4119,7 @@ def list_audit_logs(
             start_dt = datetime.combine(target_date - timedelta(days=1), datetime.min.time())
             end_dt = datetime.combine(target_date + timedelta(days=1), datetime.max.time())
             query = query.filter(AuditLog.executed_at >= start_dt, AuditLog.executed_at <= end_dt)
-            logs = query.order_by(AuditLog.executed_at.desc()).all()
+            logs = query.order_by(AuditLog.executed_at.desc()).limit(500).all()
         except Exception as e:
             print(f"[Audit Log Date Filter Error] {e}")
             logs = query.order_by(AuditLog.executed_at.desc()).limit(limit).all()
@@ -4368,7 +4370,7 @@ def send_test_push(
 ):
     """Send an immediate test VAPID push notification strictly to the verified requesting user's devices (AETH-P0-02)."""
     email = current_user.email
-    db_subs = db.query(PushSubscription).filter(tenant_filter(PushSubscription, current_user)).all()
+    db_subs = db.query(PushSubscription).filter(tenant_filter(PushSubscription, current_user)).order_by(PushSubscription.id.desc()).limit(100).all()
     if db_subs:
         _push_subscriptions[email] = [
             {"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}}
@@ -5297,7 +5299,7 @@ async def trigger_whatsapp_digest(
     user_phone = pairing.channel_user_id
 
     if time_of_day == "morning":
-        p_tasks = db.query(Task).filter(Task.owner_user_id == current_user.id, Task.status == "pending", Task.parent_id == None).all()
+        p_tasks = db.query(Task).filter(Task.owner_user_id == current_user.id, Task.status == "pending", Task.parent_id == None).order_by(Task.due_date.asc(), Task.id.asc()).limit(100).all()
         top_tasks = ", ".join([f"'{t.title}'" for t in p_tasks[:3]]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
         digest_msg = (
             f"☀️ *सुप्रभात! Aether Morning Digest*\n\n"
@@ -6391,7 +6393,7 @@ def list_routines(
     jobs = db.query(ScheduledJob).filter(
         tenant_filter(ScheduledJob, current_user),
         ScheduledJob.job_type == "routine"
-    ).order_by(ScheduledJob.created_at.desc()).all()
+    ).order_by(ScheduledJob.created_at.desc()).limit(100).all()
     results = []
     for j in jobs:
         try:
@@ -6596,20 +6598,20 @@ def get_weekly_digest(
 ):
     """Returns a 7-day life & spend digest for the authenticated user (AETH-P0-02)."""
     since = datetime.utcnow() - timedelta(days=7)
-    expenses = db.query(FinancialRecord).filter(
+    weekly_expense = db.query(func.coalesce(func.sum(FinancialRecord.amount), 0.0)).filter(
         tenant_filter(FinancialRecord, current_user),
         FinancialRecord.type == "expense",
         FinancialRecord.date >= since
-    ).all()
-    weekly_expense = sum(float(e.amount or 0) for e in expenses)
+    ).scalar() or 0.0
     cat_totals: Dict[str, float] = {}
     for e in expenses:
         c = (e.category or "general").lower()
         cat_totals[c] = cat_totals.get(c, 0.0) + float(e.amount or 0)
     top_category = max(cat_totals, key=cat_totals.get) if cat_totals else "none"
 
-    all_tasks = db.query(Task).filter(tenant_filter(Task, current_user)).all()
-    tasks_completed = sum(1 for t in all_tasks if t.is_completed)
+    tasks_completed = db.query(func.count(Task.id)).filter(
+        tenant_filter(Task, current_user), Task.status == "completed"
+    ).scalar() or 0
     tasks_pending = sum(1 for t in all_tasks if not t.is_completed)
 
     summary = (
