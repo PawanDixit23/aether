@@ -2398,9 +2398,10 @@ def auto_advance_recurring_tasks(db: Session, owner_user_id: Optional[str] = Non
                     updated = True
             if updated:
                 db.commit()
-        except Exception as exc:
-            db.rollback()
-            print(f"[AutoAdvanceRecurringTasks Note] {exc}")
+                updated = False
+    except Exception as exc:
+        db.rollback()
+        print(f"[AutoAdvanceRecurringTasks Note] {exc}")
 
 @app.get("/api/reminders/due")
 def get_due_reminders(
