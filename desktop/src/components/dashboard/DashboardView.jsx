@@ -531,6 +531,10 @@ export const DashboardView = ({
           if (setActiveSubModal) setActiveSubModal('social');
         }}
         title="Open All-in-One Social Media Command Center"
+        className="dashboard-social-hub"
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setActiveSubModal?.('social'); } }}
         style={{
           background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(168, 85, 247, 0.12) 100%)',
           border: '1px solid rgba(56, 189, 248, 0.3)',
@@ -579,7 +583,7 @@ export const DashboardView = ({
       {/* Live weather: placed directly below the greeting so it is visible without hunting. */}
       <section
         className="dashboard-weather-card"
-        aria-label="Live weather"
+        aria-label="Live weather. Tap to refresh."
         onClick={() => onRefreshWeather?.()}
         style={{
           display: 'flex',
