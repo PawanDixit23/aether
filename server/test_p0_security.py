@@ -848,7 +848,7 @@ def test_p0_worker_authentication():
         assert not_configured.status_code == 503, "Worker endpoint must fail closed when secret is missing"
 
     with patch.dict(os.environ, {
-        "AETHER_WORKER_TOKEN": "test-worker-secret",
+        "AETHER_WORKER_TOKEN": "test-worker-secret-0123456789-abcdef",
         "WHATSAPP_TOKEN": "",
         "WHATSAPP_PHONE_ID": ""
     }, clear=False):
@@ -864,7 +864,7 @@ def test_p0_worker_authentication():
             with patch("database.set_worker_rls_context") as set_worker_context:
                 valid = client.post(
                     "/api/reminders/push-check",
-                    headers={"Authorization": "Bearer test-worker-secret"}
+                    headers={"Authorization": "Bearer test-worker-secret-0123456789-abcdef"}
                 )
                 assert valid.status_code == 200, f"Valid worker request failed: {valid.status_code} {valid.text}"
                 run_worker.assert_called_once()
