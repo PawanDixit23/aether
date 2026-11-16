@@ -917,33 +917,94 @@ def client_backup_sync(
             note_failure("memory_batch", batch_start, exc)
             failed_count += max(0, batch_inserted - 1)
 
-    existing_finance_count = db.query(func.count(FinancialRecord.id)).filter(
-        tenant_filter(FinancialRecord, current_user)
-    ).scalar() or 0
-    if existing_finance_count == 0 and req.finances:
-        for batch_start in range(0, len(req.finances), WRITE_BATCH_SIZE):
-            batch = req.finances[batch_start:batch_start + WRITE_BATCH_SIZE]
-            batch_inserted = 0
-            for local_index, item in enumerate(batch):
-                try:
-                    db.add(FinancialRecord(
-                        owner_user_id=current_user.id, user_email=email,
-                        type=item.get("type", "expense"), category=item.get("category", "general"),
-                        amount=item.get("amount", 0.0), payment_mode=item.get("payment_mode", "upi"),
-                        note=item.get("note", "")
-                    ))
-                    batch_inserted += 1
-                except Exception as exc:
-                    note_failure("finance", batch_start + local_index, exc)
+    for batch_start in range(0, len(req.finances or []), WRITE_BATCH_SIZE):
+        batch = (req.finances or [])[batch_start:batch_start + WRITE_BATCH_SIZE]
+        prepared = []
+        numeric_ids = []
+        for local_index, item in enumerate(batch):
             try:
-                db.commit()
-                restored["finances"] += batch_inserted
+                raw_id = item.get("id")
+                numeric_id = int(raw_id) if raw_id is not None and str(raw_id).isdigit() else None
+                if numeric_id and numeric_id > 0:
+                    numeric_ids.append(numeric_id)
+                stable_key = (
+                    f"client:{str(raw_id).strip()}" if raw_id is not None and str(raw_id).strip()
+                    else "hash:" + hashlib.sha256(json.dumps(item, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+                )
+                amount = abs(float(item.get("amount") or 0))
+                if amount <= 0:
+                    skipped.setdefault("invalid_finances", 0)
+                    skipped["invalid_finances"] += 1
+                    continue
+                record_date = None
+                raw_date = item.get("date") or item.get("created_at")
+                if raw_date:
+                    try:
+                        record_date = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00")).replace(tzinfo=None)
+                    except (TypeError, ValueError):
+                        record_date = None
+                next_due_date = None
+                if item.get("next_due_date"):
+                    try:
+                        next_due_date = datetime.fromisoformat(str(item["next_due_date"]).replace("Z", "+00:00")).replace(tzinfo=None)
+                    except (TypeError, ValueError):
+                        next_due_date = None
+                prepared.append({
+                    "index": batch_start + local_index, "key": stable_key,
+                    "numeric_id": numeric_id, "item": item, "amount": amount,
+                    "date": record_date, "next_due_date": next_due_date
+                })
             except Exception as exc:
-                db.rollback()
-                note_failure("finance_batch", batch_start, exc)
-                failed_count += max(0, batch_inserted - 1)
-    elif req.finances:
-        skipped["finances_already_present"] = len(req.finances)
+                note_failure("finance", batch_start + local_index, exc)
+
+        candidate_keys = [entry["key"] for entry in prepared]
+        existing_keys = set()
+        if candidate_keys:
+            existing_keys = {
+                key for (key,) in db.query(FinancialRecord.backup_key).filter(
+                    tenant_filter(FinancialRecord, current_user),
+                    FinancialRecord.backup_key.in_(candidate_keys)
+                ).all() if key
+            }
+        existing_ids = set()
+        if numeric_ids:
+            existing_ids = {
+                record_id for (record_id,) in db.query(FinancialRecord.id).filter(
+                    tenant_filter(FinancialRecord, current_user),
+                    FinancialRecord.id.in_(numeric_ids)
+                ).all()
+            }
+
+        batch_inserted = 0
+        for entry in prepared:
+            item = entry["item"]
+            if entry["key"] in existing_keys or (
+                entry["numeric_id"] is not None and entry["numeric_id"] in existing_ids
+            ):
+                skipped["finances_already_present"] += 1
+                continue
+            try:
+                db.add(FinancialRecord(
+                    owner_user_id=current_user.id, user_email=email,
+                    type=item.get("type", "expense"), category=item.get("category", "general"),
+                    amount=entry["amount"], currency=item.get("currency", "INR"),
+                    payment_mode=item.get("payment_mode", "upi"), note=item.get("note", ""),
+                    date=entry["date"] or datetime.utcnow(),
+                    is_recurring=bool(item.get("is_recurring", False)),
+                    recurrence_interval=item.get("recurrence_interval"),
+                    next_due_date=entry["next_due_date"], backup_key=entry["key"]
+                ))
+                batch_inserted += 1
+                existing_keys.add(entry["key"])
+            except Exception as exc:
+                note_failure("finance", entry["index"], exc)
+        try:
+            db.commit()
+            restored["finances"] += batch_inserted
+        except Exception as exc:
+            db.rollback()
+            note_failure("finance_batch", batch_start, exc)
+            failed_count += max(0, batch_inserted - 1)
 
     return {
         "status": "synced", "user": email, "restored": restored,
