@@ -4570,7 +4570,7 @@ def send_test_push(
 ):
     """Send an immediate test VAPID push notification strictly to the verified requesting user's devices (AETH-P0-02)."""
     email = current_user.email
-    db_subs = db.query(PushSubscription).filter(tenant_filter(PushSubscription, current_user)).all()
+    db_subs = db.query(PushSubscription).filter(tenant_filter(PushSubscription, current_user)).limit(50).all()
     if db_subs:
         _push_subscriptions[email] = [
             {"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}}
@@ -4737,76 +4737,75 @@ def is_task_due_for_notification(task, now: datetime) -> bool:
     return False
 
 def _run_push_check_internal(db: Session):
+    """Process notification owners and tasks in bounded keyset windows."""
     now = datetime.now(DEFAULT_TZ).replace(tzinfo=None) if DEFAULT_TZ else datetime.now()
     pushed_count = 0
     errors = []
+    last_owner_id = ""
+    due_start = now - timedelta(seconds=180)
 
-    # 1. Database से सभी active subscriptions reload करें grouped strictly by owner_user_id (AETH-P0-02)
-    subs_by_owner: Dict[str, List[dict]] = {}
-    try:
-        db_subs = db.query(PushSubscription).all()
-        for s in db_subs:
-            oid = (s.owner_user_id or "").strip()
-            if not oid:
-                continue
-            if oid not in subs_by_owner:
-                subs_by_owner[oid] = []
-            if not any(sub.get("endpoint") == s.endpoint for sub in subs_by_owner[oid]):
-                subs_by_owner[oid].append({
-                    "endpoint": s.endpoint,
-                    "keys": {
-                        "p256dh": s.p256dh,
-                        "auth": s.auth
-                    }
-                })
-    except Exception as dbe:
-        print(f"[PushCheck DB Load Error] {dbe}")
+    while True:
+        owner_rows = db.query(PushSubscription.owner_user_id).filter(
+            PushSubscription.owner_user_id.isnot(None),
+            PushSubscription.owner_user_id > last_owner_id
+        ).distinct().order_by(PushSubscription.owner_user_id.asc()).limit(100).all()
+        if not owner_rows:
+            break
+        owner_ids = [row[0] for row in owner_rows if row[0]]
+        last_owner_id = owner_ids[-1] if owner_ids else last_owner_id
 
-    # 2. सभी subscribed users के लिए strictly isolated owner UUID check करें
-    for owner_id, subscriptions in list(subs_by_owner.items()):
-        if not subscriptions or not owner_id:
-            continue
-        try:
-            tasks = db.query(Task).filter(
-                Task.owner_user_id == owner_id,
-                Task.status == "pending",
-                Task.notified == False
-            ).all()
+        for owner_id in owner_ids:
+            try:
+                due_tasks = db.query(Task).filter(
+                    Task.owner_user_id == owner_id,
+                    Task.status == "pending",
+                    Task.notified == False,
+                    Task.due_date >= due_start,
+                    Task.due_date <= now
+                ).order_by(Task.due_date.asc(), Task.id.asc()).limit(100).all()
 
-            due_tasks = [t for t in tasks if is_task_due_for_notification(t, now)]
+                for task in due_tasks:
+                    title = f"⏰ AETHER रिमाइंडर: {task.title}"
+                    body = f"समय: {task.reminder_time or 'अभी'} • कार्य का समय हो गया है!"
+                    task_pushed_success = False
+                    found_subscription = False
 
-            for task in due_tasks:
-                title = f"⏰ AETHER रिमाइंडर: {task.title}"
-                body = f"समय: {task.reminder_time or 'अभी'} • कार्य का समय हो गया है!"
+                    # Stream device subscriptions; never load every device into a list.
+                    subscriptions = db.query(PushSubscription).filter(
+                        PushSubscription.owner_user_id == owner_id
+                    ).yield_per(50)
+                    for subscription in subscriptions:
+                        found_subscription = True
+                        sub = {
+                            "endpoint": subscription.endpoint,
+                            "keys": {"p256dh": subscription.p256dh, "auth": subscription.auth}
+                        }
+                        success, is_expired = _send_web_push(sub, title, body, f"reminder-{task.id}")
+                        if success:
+                            pushed_count += 1
+                            task_pushed_success = True
+                        elif is_expired:
+                            try:
+                                db.query(PushSubscription).filter(
+                                    PushSubscription.owner_user_id == owner_id,
+                                    PushSubscription.endpoint == subscription.endpoint
+                                ).delete(synchronize_session=False)
+                                db.commit()
+                            except Exception:
+                                db.rollback()
 
-                task_pushed_success = False
-                expired_endpoints = []
-
-                for sub in subscriptions:
-                    success, is_expired = _send_web_push(sub, title, body, f"reminder-{task.id}")
-                    if success:
-                        pushed_count += 1
-                        task_pushed_success = True
-                    else:
-                        if is_expired:
-                            expired_endpoints.append(sub.get("endpoint"))
-
-                if expired_endpoints:
-                    try:
-                        db.query(PushSubscription).filter(PushSubscription.endpoint.in_(expired_endpoints)).delete(synchronize_session=False)
+                    if task_pushed_success:
+                        task.notified = True
                         db.commit()
-                        subs_by_owner[owner_id] = [s for s in subs_by_owner[owner_id] if s.get("endpoint") not in expired_endpoints]
-                    except Exception:
-                        pass
-
-                if task_pushed_success:
-                    task.notified = True
-                    db.commit()
-                else:
-                    errors.append(f"Push delivery failed for task {task.id} (owner {owner_id}).")
-        except Exception as e:
-            errors.append(f"Error for {owner_id}: {str(e)[:100]}")
-            print(f"[PushCheck Error] {email}: {e}")
+                    elif not found_subscription and len(errors) < 50:
+                        errors.append(f"No push subscriptions for owner {owner_id}.")
+                    elif len(errors) < 50:
+                        errors.append(f"Push delivery failed for task {task.id} (owner {owner_id}).")
+            except Exception as exc:
+                db.rollback()
+                if len(errors) < 50:
+                    errors.append(f"Error for {owner_id}: {str(exc)[:100]}")
+                print(f"[PushCheck Error] {owner_id}: {exc}")
 
     return {"status": "ok", "pushed": pushed_count, "errors": errors}
 
@@ -4860,7 +4859,7 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
                 pairings = db.query(UserIntegrationPairing).filter(
                     UserIntegrationPairing.channel == "whatsapp",
                     UserIntegrationPairing.is_active == True
-                ).all()
+                ).yield_per(100)
                 for p in pairings:
                     try:
                         p_phone = p.channel_user_id
@@ -4873,13 +4872,17 @@ def push_check_reminders(request: Request, db: Session = Depends(get_db)):
 
                         if not already_sent:
                             if digest_type == "morning":
+                                task_count = db.query(func.count(Task.id)).filter(
+                                    Task.owner_user_id == p_owner_id,
+                                    Task.status == "pending",
+                                    Task.parent_id == None
+                                ).scalar() or 0
                                 p_tasks = db.query(Task).filter(
                                     Task.owner_user_id == p_owner_id,
                                     Task.status == "pending",
                                     Task.parent_id == None
-                                ).all()
-                                task_count = len(p_tasks)
-                                top_tasks_str = ", ".join([f"'{t.title}'" for t in p_tasks[:3]]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
+                                ).order_by(Task.due_date.asc().nullslast(), Task.id.desc()).limit(3).all()
+                                top_tasks_str = ", ".join([f"'{t.title}'" for t in p_tasks]) if p_tasks else "कोई पेंडिंग कार्य नहीं"
                                 digest_msg = (
                                     f"☀️ *सुप्रभात! Aether Morning Digest*\n\n"
                                     f"🎯 *आज के कार्य ({task_count})*: {top_tasks_str}\n\n"
