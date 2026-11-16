@@ -428,20 +428,19 @@ def ensure_schema_migrations():
     """
     is_pg = "postgres" in str(engine.url).lower()
     lock_connection = engine.connect() if is_pg else None
-    lock_acquired = False
+    lock_transaction = None
     ledger_table = "public.aether_schema_migrations" if is_pg else "aether_schema_migrations"
     try:
         if is_pg:
-            # The connection-level defaults bound normal application queries. A
-            # deployment lock must wait for the active migrator rather than fail
-            # after the normal 3-second transaction lock timeout.
-            lock_connection.exec_driver_sql("SET lock_timeout = 0")
-            lock_connection.exec_driver_sql("SET statement_timeout = 0")
+            # Use a transaction-scoped advisory lock. Keep this transaction open
+            # until the migration finishes so it remains pinned to the same backend
+            # when DATABASE_URL uses Supavisor/PgBouncer transaction pooling.
+            lock_transaction = lock_connection.begin()
+            lock_connection.exec_driver_sql("SET LOCAL lock_timeout = 0")
+            lock_connection.exec_driver_sql("SET LOCAL statement_timeout = 0")
             lock_connection.execute(
-                text("SELECT pg_advisory_lock(hashtext('aether.schema_migrations.v1'))")
+                text("SELECT pg_advisory_xact_lock(hashtext('aether.schema_migrations.v1'))")
             )
-            lock_connection.commit()
-            lock_acquired = True
 
         # Keep the migration ledger out of the Supabase Data API for anon/authenticated clients.
         with engine.begin() as conn:
@@ -493,14 +492,17 @@ def ensure_schema_migrations():
         print(f"[Schema Migration] {SCHEMA_MIGRATION_VERSION} applied successfully.")
     finally:
         if lock_connection is not None:
-            if lock_acquired:
+            if lock_transaction is not None and lock_transaction.is_active:
                 try:
-                    lock_connection.execute(
-                        text("SELECT pg_advisory_unlock(hashtext('aether.schema_migrations.v1'))")
-                    )
-                    lock_connection.commit()
-                except Exception as unlock_error:
-                    print(f"[Schema Migration] Advisory unlock note: {type(unlock_error).__name__}")
+                    # The transaction contains only SET LOCAL + the xact lock.
+                    # Commit releases the lock; rollback is the fallback if commit fails.
+                    lock_transaction.commit()
+                except Exception as lock_release_error:
+                    print(f"[Schema Migration] Lock release note: {type(lock_release_error).__name__}")
+                    try:
+                        lock_transaction.rollback()
+                    except Exception:
+                        pass
             lock_connection.close()
 
 def set_webhook_service_rls_context(db: Session, authorized_provider: str):
