@@ -169,8 +169,7 @@ export const AuditModal = ({
             </div>
 
             {/* Custom Date Picker */}
-            <div className="aether-audit-date-control" style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255, 255, 255, 0.06)', border: `1px solid ${dateFilter === 'custom' ? '#38bdf8' : 'rgba(255, 255, 255, 0.15)'}`, borderRadius: '8px', padding: '3px 8px', minWidth: 0, boxSizing: 'border-box' }}>
-              <Calendar className="aether-audit-calendar-icon" size={13} color={dateFilter === 'custom' ? '#38bdf8' : '#94a3b8'} />
+            <div className="aether-audit-date-control" style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255, 255, 255, 0.06)', border: `1px solid ${dateFilter === 'custom' ? '#38bdf8' : 'rgba(255, 255, 255, 0.15)'}`, borderRadius: '8px', padding: '3px 8px', minWidth: 0, width: 'auto', flex: '0 1 auto', boxSizing: 'border-box' }}>
               <input
                 type="date"
                 value={customDate}
