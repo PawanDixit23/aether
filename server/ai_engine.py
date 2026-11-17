@@ -781,47 +781,101 @@ def fetch_live_news_items(query: str = "", limit: int = 5, lang: str = "en") -> 
 NEWS_CACHE = {"all": {"data": [], "timestamp": 0}, "sports": {"data": [], "timestamp": 0}}
 NEWS_CACHE_TTL = 5 * 60
 NEWS_STALE_MAX_AGE = 30 * 60
+# Google News can rate-limit dashboard clients. A process-wide lock coalesces
+# concurrent refreshes, while per-feed cooldown prevents every poll retrying 429.
+NEWS_REFRESH_LOCK = threading.Lock()
+NEWS_FAILURE_STATE = {
+    "all": {"retry_at": 0.0, "failures": 0},
+    "sports": {"retry_at": 0.0, "failures": 0},
+}
+NEWS_429_BASE_COOLDOWN = 120
+NEWS_ERROR_BASE_COOLDOWN = 30
+NEWS_MAX_COOLDOWN = 15 * 60
+
+
+def _news_retry_after_seconds(exc) -> Optional[float]:
+    """Read a provider Retry-After header when available (seconds only)."""
+    headers = getattr(exc, "headers", None)
+    raw = headers.get("Retry-After") if headers is not None else None
+    if raw is None:
+        return None
+    try:
+        return max(1.0, min(float(raw), NEWS_MAX_COOLDOWN))
+    except (TypeError, ValueError):
+        return None
+
 
 def get_structured_news(limit: int = 5, category: str = None) -> list:
-    """Fetch verified Google News RSS items; never replace a feed failure with invented headlines."""
+    """Fetch verified Google News RSS with single-flight refresh, cooldown and stale fallback."""
     import time
+
+    safe_limit = max(1, min(int(limit), 20))
     key = "sports" if category == "sports" else "all"
     cache = NEWS_CACHE[key]
+
+    def cached_or_empty(now_ts: float) -> list:
+        if cache["data"] and now_ts - cache["timestamp"] <= NEWS_STALE_MAX_AGE:
+            return cache["data"][:safe_limit]
+        return []
+
     now_ts = time.time()
     if cache["data"] and now_ts - cache["timestamp"] < NEWS_CACHE_TTL:
-        return cache["data"][:max(1, min(int(limit), 20))]
-    try:
-        if key == "sports":
-            url = "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-IN&gl=IN&ceid=IN:en"
-        else:
-            url = "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; Aether/2.0)"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"Google News returned HTTP {resp.status}")
-            root = ET.fromstring(resp.read())
-        results = []
-        for item in root.findall(".//item")[:max(1, min(int(limit), 20))]:
-            raw_title = item.find("title").text.strip() if item.find("title") is not None and item.find("title").text else ""
-            link = item.find("link").text.strip() if item.find("link") is not None and item.find("link").text else ""
-            pub_date = item.find("pubDate").text.strip() if item.find("pubDate") is not None and item.find("pubDate").text else ""
-            if not raw_title or not link:
-                continue
-            source = "Google News"
-            clean_title = raw_title
-            if " - " in raw_title:
-                clean_title, source = [part.strip() for part in raw_title.rsplit(" - ", 1)]
-            results.append({"title": clean_title, "source": source, "link": link, "pubDate": pub_date})
-        if results:
+        return cache["data"][:safe_limit]
+
+    # Do not let simultaneous dashboard requests fan out to the provider.
+    with NEWS_REFRESH_LOCK:
+        now_ts = time.time()
+        if cache["data"] and now_ts - cache["timestamp"] < NEWS_CACHE_TTL:
+            return cache["data"][:safe_limit]
+
+        failure = NEWS_FAILURE_STATE[key]
+        if now_ts < failure["retry_at"]:
+            return cached_or_empty(now_ts)
+
+        try:
+            if key == "sports":
+                url = "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-IN&gl=IN&ceid=IN:en"
+            else:
+                url = "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; Aether/2.0)"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"Google News returned HTTP {resp.status}")
+                root = ET.fromstring(resp.read())
+
+            results = []
+            for item in root.findall(".//item")[:safe_limit]:
+                raw_title = item.find("title").text.strip() if item.find("title") is not None and item.find("title").text else ""
+                link = item.find("link").text.strip() if item.find("link") is not None and item.find("link").text else ""
+                pub_date = item.find("pubDate").text.strip() if item.find("pubDate") is not None and item.find("pubDate").text else ""
+                if not raw_title or not link:
+                    continue
+                source = "Google News"
+                clean_title = raw_title
+                if " - " in raw_title:
+                    clean_title, source = [part.strip() for part in raw_title.rsplit(" - ", 1)]
+                results.append({"title": clean_title, "source": source, "link": link, "pubDate": pub_date})
+
+            if not results:
+                raise RuntimeError("Google News RSS returned no usable articles")
+
             cache["data"] = results
-            cache["timestamp"] = now_ts
+            cache["timestamp"] = time.time()
+            failure.update({"retry_at": 0.0, "failures": 0})
             return results
-        raise RuntimeError("Google News RSS returned no usable articles")
-    except Exception as exc:
-        print(f"[Aether Engine] Structured news error: {exc}")
-        if cache["data"] and now_ts - cache["timestamp"] <= NEWS_STALE_MAX_AGE:
-            return cache["data"][:max(1, min(int(limit), 20))]
-        return []
+        except Exception as exc:
+            failure["failures"] += 1
+            is_rate_limited = getattr(exc, "code", None) == 429 or "429" in str(exc) or "Too Many Requests" in str(exc)
+            base_cooldown = NEWS_429_BASE_COOLDOWN if is_rate_limited else NEWS_ERROR_BASE_COOLDOWN
+            exponential_cooldown = min(base_cooldown * (2 ** min(failure["failures"] - 1, 4)), NEWS_MAX_COOLDOWN)
+            retry_after = _news_retry_after_seconds(exc) if is_rate_limited else None
+            cooldown = retry_after if retry_after is not None else exponential_cooldown
+            failure["retry_at"] = time.time() + cooldown
+            print(
+                f"[Aether Engine] Structured news refresh failed "
+                f"(rate_limited={is_rate_limited}, retry_in={int(cooldown)}s): {exc}"
+            )
+            return cached_or_empty(time.time())
 
 # In-memory cache for live cricket scorecards (15s TTL to prevent rate limits)
 _cricket_cache = {
