@@ -40,6 +40,10 @@ export const SettingsSubModals = ({
   handleSendPrompt,
   memories,
   setMemories,
+  memoryTotalCount,
+  memoryCanLoadMore,
+  memoryLoadingMore,
+  onLoadMoreMemories,
   handleDeleteMemory,
   apiBase,
   userEmail,
@@ -1081,10 +1085,14 @@ export const SettingsSubModals = ({
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'nowrap' }}>
                       <span style={{ fontSize: isMobile ? '1.05rem' : '1.2rem', fontWeight: 700, color: '#ffffff', letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>Memory Vault</span>
                       <span style={{ fontSize: '0.68rem', fontWeight: 700, background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.3)', padding: '2px 8px', borderRadius: '999px', color: '#38bdf8', whiteSpace: 'nowrap', flexShrink: 0, display: 'inline-flex', alignItems: 'center' }}>
-                        {(memories || []).length} facts
+                        {Number.isFinite(memoryTotalCount) ? memoryTotalCount.toLocaleString() : (memories || []).length.toLocaleString()} facts
                       </span>
                     </div>
-                    <div style={{ fontSize: '0.70rem', color: '#64748b', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Personal context & continuous learning</div>
+                    <div style={{ fontSize: '0.70rem', color: '#64748b', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {Number.isFinite(memoryTotalCount)
+                        ? `Showing ${(memories || []).length.toLocaleString()} of ${memoryTotalCount.toLocaleString()} memories`
+                        : 'Personal context & continuous learning'}
+                    </div>
                   </div>
                 </div>
 
@@ -1737,6 +1745,28 @@ export const SettingsSubModals = ({
                   })
                 )}
               </div>
+              {memoryCanLoadMore && (
+                <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '8px', flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    onClick={onLoadMoreMemories}
+                    disabled={memoryLoadingMore}
+                    style={{
+                      background: 'rgba(56, 189, 248, 0.14)',
+                      border: '1px solid rgba(56, 189, 248, 0.38)',
+                      color: '#38bdf8',
+                      borderRadius: '999px',
+                      padding: '10px 20px',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                      cursor: memoryLoadingMore ? 'wait' : 'pointer',
+                      opacity: memoryLoadingMore ? 0.65 : 1
+                    }}
+                  >
+                    {memoryLoadingMore ? 'Loading memories…' : `Load More Memories (${Math.max(0, (Number.isFinite(memoryTotalCount) ? memoryTotalCount : memories.length) - memories.length).toLocaleString()} remaining)`}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         );
