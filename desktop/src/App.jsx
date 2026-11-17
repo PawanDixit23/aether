@@ -10169,6 +10169,10 @@ export default function App() {
         handleSendPrompt={handleSendPrompt}
         memories={memories}
         setMemories={setMemories}
+        memoryTotalCount={memoryTotalCount}
+        memoryCanLoadMore={memoryCanLoadMore}
+        memoryLoadingMore={memoryLoadingMore}
+        onLoadMoreMemories={handleLoadMoreMemories}
         handleDeleteMemory={handleDeleteMemory}
         apiBase={API_BASE}
         userEmail={userEmail}
