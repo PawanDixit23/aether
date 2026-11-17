@@ -1,3 +1,4 @@
+import { apiFetch } from '../../supabase';
 import React, { useState, useEffect } from 'react';
 import { 
   Activity, 
@@ -25,7 +26,7 @@ export const ObservabilityModal = ({
   const fetchMetrics = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${apiBase}/metrics`);
+      const res = await apiFetch(`${apiBase}/metrics`);
       if (res.ok) {
         const data = await res.json();
         setMetrics(data);

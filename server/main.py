@@ -157,7 +157,7 @@ except ImportError:
 # Render instances. Do not call create_all separately on every process startup.
 ensure_schema_migrations()
 
-from security.auth import validate_security_config_at_startup
+from security.auth import validate_security_config_at_startup, UserIdentity, get_current_user_identity
 try:
     validate_security_config_at_startup()
 except RuntimeError as e:
@@ -258,10 +258,45 @@ async def security_and_observability_middleware(request: Request, call_next):
             
     response = await call_next(request)
     
-    # Observability & Latency Tracking
+    # Observability & Latency + bandwidth tracking.
+    # Use the FastAPI route template where available, never query strings or
+    # user-specific values, so telemetry stays low-cardinality and privacy-safe.
+    request_path = request.url.path
+    matched_route = request.scope.get("route")
+    if request_path.startswith("/api/"):
+        metric_endpoint = getattr(matched_route, "path", request_path)
+    elif request_path.startswith("/assets/"):
+        metric_endpoint = "/assets/*"
+    elif request_path.startswith("/static/"):
+        metric_endpoint = "/static/*"
+    else:
+        metric_endpoint = request_path if len(request_path) <= 120 else "/other"
+
+    try:
+        request_bytes = max(0, int(request.headers.get("content-length", "0")))
+    except (TypeError, ValueError):
+        request_bytes = 0
+
     duration_ms = (time.time() - start_time) * 1000
-    obs_tracker.record_request(request.url.path, duration_ms, response.status_code)
+    obs_tracker.record_request(
+        metric_endpoint, duration_ms, response.status_code, request_bytes=request_bytes
+    )
     response.headers["X-Response-Time-Ms"] = str(round(duration_ms, 2))
+
+    # Count actual response-body bytes while preserving streaming behavior.
+    # This measures application response payloads (not TLS/protocol overhead).
+    original_body_iterator = response.body_iterator
+
+    async def count_response_bytes(body_iterator, endpoint):
+        async for chunk in body_iterator:
+            if isinstance(chunk, str):
+                byte_count = len(chunk.encode("utf-8"))
+            else:
+                byte_count = len(chunk)
+            obs_tracker.record_response_bytes(endpoint, byte_count)
+            yield chunk
+
+    response.body_iterator = count_response_bytes(original_body_iterator, metric_endpoint)
     
     # Security Hardening Headers
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -278,7 +313,7 @@ async def security_and_observability_middleware(request: Request, call_next):
     return response
 
 @app.get("/api/metrics")
-def get_system_metrics():
+def get_system_metrics(current_user: UserIdentity = Depends(get_current_user_identity)):
     """Return operational telemetry, including safe SQLAlchemy pool occupancy."""
     summary = obs_tracker.get_summary()
     if not isinstance(summary, dict):
