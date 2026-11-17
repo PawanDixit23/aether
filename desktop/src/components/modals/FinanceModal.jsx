@@ -2294,7 +2294,7 @@ export const FinanceModal = ({
                 className="aether-edge-header"
                 style={{
                   padding: isMobile ? '12px 14px' : '16px 20px',
-                  paddingTop: isMobile ? 'max(52px, calc(env(safe-area-inset-top, 0px) + 16px))' : '16px',
+                  paddingTop: isMobile ? '14px' : '16px',
                   borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
                   display: 'flex',
                   alignItems: 'center',
@@ -2448,7 +2448,7 @@ export const FinanceModal = ({
               </div>
 
               {/* Footer */}
-              <div style={{ padding: '12px 20px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', display: 'flex', justifyContent: 'flex-end', background: 'rgba(0, 0, 0, 0.2)', flexShrink: 0, paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))' }}>
+              <div style={{ padding: '12px 20px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', display: 'flex', justifyContent: 'flex-end', background: 'rgba(0, 0, 0, 0.2)', flexShrink: 0, paddingBottom: '12px' }}>
                 <button
                   type="button"
                   onClick={() => setSelectedDayDetail(null)}
