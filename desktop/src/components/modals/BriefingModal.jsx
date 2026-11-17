@@ -121,8 +121,8 @@ export const BriefingModal = ({
   const cityName = executiveBriefingData?.city || userLocationName || 'Live Location';
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.88)', backdropFilter: 'blur(16px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-      <div style={{ 
+    <div className="aether-feature-overlay aether-briefing-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.88)', backdropFilter: 'blur(16px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+      <div className="aether-feature-panel aether-briefing-panel" style={{ 
         background: '#0a101d', 
         border: '1px solid rgba(56, 189, 248, 0.35)', 
         borderRadius: '26px', 
