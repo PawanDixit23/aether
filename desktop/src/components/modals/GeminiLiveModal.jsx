@@ -755,7 +755,7 @@ export default function GeminiLiveModal({
     : (themeGradients[sessionState] || themeGradients.listening);
 
   return (
-    <div style={{
+    <div className="aether-live-overlay" style={{
       position: 'fixed',
       top: 0,
       left: 0,
