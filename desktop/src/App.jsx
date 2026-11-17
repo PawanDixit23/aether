@@ -3952,22 +3952,20 @@ export default function App() {
           return Array.from(byId.values()).sort((a, b) => Number(b.id) - Number(a.id));
         });
         setMemoryFetchedCount(prev => Math.max(prev, Array.isArray(loadedMemories) ? loadedMemories.length : 0));
-        const serverMemoryTotal = Number(resMem.headers?.get?.('X-Total-Count'));
-        if (Number.isFinite(serverMemoryTotal) && serverMemoryTotal >= 0) {
-          setMemoryTotalCount(serverMemoryTotal);
-          setMemoryHasMore(serverMemoryTotal > (Array.isArray(loadedMemories) ? loadedMemories.length : 0));
-        }
+        const totalHeader = resMem.headers?.get?.('X-Total-Count');
+        const serverMemoryTotal = totalHeader != null && totalHeader !== '' ? Number(totalHeader) : null;
+        const hasMoreHeader = resMem.headers?.get?.('X-Has-More');
+        const pageLength = Array.isArray(loadedMemories) ? loadedMemories.length : 0;
+        const totalProvesMore = Number.isFinite(serverMemoryTotal) && serverMemoryTotal > pageLength;
+        const serverProvesMore = hasMoreHeader === 'true';
+        setMemoryTotalCount(Number.isFinite(serverMemoryTotal) && serverMemoryTotal >= 0 ? serverMemoryTotal : null);
+        // The total count is a stronger signal than a stale/inconsistent page flag.
+        // Never hide pagination while the server reports more records than loaded.
+        setMemoryHasMore(totalProvesMore || serverProvesMore || (hasMoreHeader == null && pageLength === 50));
         setMemoryNextCursor(prev => {
-          const firstPageCursor = Array.isArray(loadedMemories) && loadedMemories.length ? loadedMemories[loadedMemories.length - 1].id : null;
+          const firstPageCursor = pageLength ? loadedMemories[pageLength - 1].id : null;
           return prev == null ? firstPageCursor : (firstPageCursor == null ? prev : Math.min(Number(prev), Number(firstPageCursor)));
         });
-        // Prefer the server's authoritative continuation flag. Only fall back
-        // to page length for older deployments that do not expose pagination headers.
-        if (resMem.headers?.get?.('X-Has-More') != null) {
-          setMemoryHasMore(resMem.headers.get('X-Has-More') === 'true');
-        } else {
-          setMemoryHasMore(Array.isArray(loadedMemories) && loadedMemories.length === 50);
-        }
       }
       if (resAudit.ok) setAuditLogs(await resAudit.json());
       if (resNews.ok) setNewsItems(await resNews.json());
@@ -5843,13 +5841,19 @@ export default function App() {
         return [...prev, ...validPage.filter(m => !existingIds.has(String(m.id)))];
       });
       setMemoryFetchedCount(prev => prev + (Array.isArray(page) ? page.length : 0));
-      const serverMemoryTotal = Number(resp.headers?.get?.('X-Total-Count'));
+      const totalHeader = resp.headers?.get?.('X-Total-Count');
+      const serverMemoryTotal = totalHeader != null && totalHeader !== '' ? Number(totalHeader) : null;
+      const hasMoreHeader = resp.headers?.get?.('X-Has-More');
+      const pageLength = Array.isArray(page) ? page.length : 0;
+      const loadedAfterPage = memories.length + pageLength;
+      const totalProvesMore = Number.isFinite(serverMemoryTotal) && serverMemoryTotal > loadedAfterPage;
+      const serverProvesMore = hasMoreHeader === 'true';
       if (Number.isFinite(serverMemoryTotal) && serverMemoryTotal >= 0) {
         setMemoryTotalCount(serverMemoryTotal);
-        setMemoryHasMore(serverMemoryTotal > (memories.length + (Array.isArray(page) ? page.length : 0)));
-      } else {
-        setMemoryHasMore(resp.headers?.get?.('X-Has-More') === 'true' || (Array.isArray(page) && page.length === 50));
       }
+      // Keep the Load More action available whenever total count proves that
+      // records remain, even if X-Has-More is false or inconsistent.
+      setMemoryHasMore(totalProvesMore || serverProvesMore || (hasMoreHeader == null && pageLength === 50));
       const responseCursor = Number(resp.headers?.get?.('X-Next-Cursor'));
       if (Number.isFinite(responseCursor) && responseCursor > 0) {
         setMemoryNextCursor(responseCursor);
