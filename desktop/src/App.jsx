@@ -8413,7 +8413,7 @@ export default function App() {
                         return null;
                       })()}
                       {msg.role !== 'user' && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                        <div className="gemini-message-actions" style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             {voiceOutputEnabled && (
                               <button
