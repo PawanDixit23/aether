@@ -1341,3 +1341,28 @@ input, textarea, select {
     font-size: 14px !important;
   }
 }
+
+
+/* The prompt bar is the single composer surface; the textarea inside must remain visually unboxed. */
+.gemini-prompt-bar .gemini-input-field,
+.gemini-prompt-bar .gemini-input-field:hover,
+.gemini-prompt-bar .gemini-input-field:focus,
+.gemini-prompt-bar .gemini-input-field:focus-visible,
+.gemini-prompt-bar .gemini-input-field:active {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: 0 !important;
+  outline-offset: 0 !important;
+  box-shadow: none !important;
+  -webkit-box-shadow: none !important;
+}
+.gemini-prompt-bar .gemini-input-field {
+  min-width: 0 !important;
+  width: 100% !important;
+  padding: 8px 4px !important;
+  margin: 0 !important;
+  resize: none !important;
+}
