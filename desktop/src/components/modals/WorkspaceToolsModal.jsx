@@ -186,8 +186,8 @@ export const WorkspaceToolsModal = ({
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 130, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-      <div style={{ background: '#0d1527', border: '1px solid rgba(56, 189, 248, 0.28)', borderRadius: '24px', padding: '22px', width: '100%', maxWidth: '580px', maxHeight: '88vh', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+    <div className="aether-feature-overlay aether-workspace-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 130, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+      <div className="aether-feature-panel aether-workspace-panel" style={{ background: '#0d1527', border: '1px solid rgba(56, 189, 248, 0.28)', borderRadius: '24px', padding: '22px', width: '100%', maxWidth: '580px', maxHeight: '88vh', display: 'flex', flexDirection: 'column', gap: '14px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#38bdf8' }}>
             AETHER WORKSPACE TOOLS

@@ -8413,7 +8413,7 @@ export default function App() {
                         return null;
                       })()}
                       {msg.role !== 'user' && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                        <div className="gemini-message-actions" style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             {voiceOutputEnabled && (
                               <button
@@ -9219,7 +9219,7 @@ export default function App() {
 
           {/* TAB 2: TODAY'S EXECUTIVE AGENDA */}
           {activeTab === 'today' && (
-            <div style={{ maxWidth: '640px', margin: '0 auto', width: '100%', padding: '20px' }}>
+            <div className="today-agenda-container" style={{ maxWidth: '640px', margin: '0 auto', width: '100%', padding: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                 <h1 style={{ fontFamily: 'Newsreader', fontSize: '1.8rem', fontWeight: 600, color: '#ffffff' }}>
                   Today's Agenda
