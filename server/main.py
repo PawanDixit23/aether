@@ -157,7 +157,7 @@ except ImportError:
 # Render instances. Do not call create_all separately on every process startup.
 ensure_schema_migrations()
 
-from security.auth import validate_security_config_at_startup
+from security.auth import validate_security_config_at_startup, UserIdentity, get_current_user_identity
 try:
     validate_security_config_at_startup()
 except RuntimeError as e:
@@ -313,7 +313,7 @@ async def security_and_observability_middleware(request: Request, call_next):
     return response
 
 @app.get("/api/metrics")
-def get_system_metrics():
+def get_system_metrics(current_user: UserIdentity = Depends(get_current_user_identity)):
     """Return operational telemetry, including safe SQLAlchemy pool occupancy."""
     summary = obs_tracker.get_summary()
     if not isinstance(summary, dict):
