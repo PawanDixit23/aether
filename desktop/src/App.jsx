@@ -769,6 +769,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [serverOnline, setServerOnline] = useState(true);
   const [lastSyncTime, setLastSyncTime] = useState('');
+  const lastAuthRefreshSessionRef = useRef('');
 
   // Time-of-day progression state calculated continuously
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -1681,8 +1682,6 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, name, provider: 'google' })
       });
-      const resAudit = await apiFetch(`${API_BASE}/audit-logs`);
-      if (resAudit.ok) setAuditLogs(await resAudit.json());
     } catch (err) {
       console.error('Failed to log auth event:', err);
     }
@@ -1748,7 +1747,7 @@ export default function App() {
         setUserName(gName);
         setUserEmail(gEmail);
 
-        recordAuthEvent(gEmail, gName);
+        // Session hydration is not a new login; audit events are recorded only for SIGNED_IN.
 
         // Immediate restore of saved tasks so re-login never shows 0 reminders
         const backupStr = localStorage.getItem(`aether_backup_${gEmail}`) || localStorage.getItem('aether_cached_tasks');
@@ -1761,10 +1760,6 @@ export default function App() {
             }
           } catch (e) {}
         }
-        setTimeout(() => {
-          refreshAllData();
-        }, 100);
-
         const alreadyDone = localStorage.getItem('aether_onboarding_done') === 'true';
         if (alreadyDone) {
           setOnboardingDone(true);
@@ -1781,7 +1776,7 @@ export default function App() {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session?.user) {
+      if (session?.user && ['INITIAL_SESSION', 'SIGNED_IN'].includes(event)) {
         if (session.provider_token) {
           localStorage.setItem('aether_google_provider_token', session.provider_token);
           setGoogleProviderToken(session.provider_token);
@@ -1806,7 +1801,14 @@ export default function App() {
         setUserName(gName);
         setUserEmail(gEmail);
 
-        recordAuthEvent(gEmail, gName);
+        if (event === 'SIGNED_IN') {
+          const loginSessionKey = `${user.id}:${user.last_sign_in_at || session.expires_at || ''}`;
+          const recordedKey = `aether_auth_recorded:${loginSessionKey}`;
+          if (localStorage.getItem(recordedKey) !== 'true') {
+            localStorage.setItem(recordedKey, 'true');
+            recordAuthEvent(gEmail, gName).catch(() => localStorage.removeItem(recordedKey));
+          }
+        }
 
         // Immediate restore of saved tasks so re-login never shows 0 reminders
         const backupStr = localStorage.getItem(`aether_backup_${gEmail}`) || localStorage.getItem('aether_cached_tasks');
@@ -1819,9 +1821,11 @@ export default function App() {
             }
           } catch (e) {}
         }
-        setTimeout(() => {
-          refreshAllData();
-        }, 100);
+        const authSessionKey = `${user.id}:${user.last_sign_in_at || session.expires_at || ''}`;
+        if (lastAuthRefreshSessionRef.current !== authSessionKey) {
+          lastAuthRefreshSessionRef.current = authSessionKey;
+          setTimeout(() => refreshAllData(), 100);
+        }
 
         const alreadyDone = localStorage.getItem('aether_onboarding_done') === 'true';
         if (alreadyDone) {
@@ -3608,6 +3612,19 @@ export default function App() {
     return Array.from(byId.values());
   };
 
+  // Keep one canonical URL for both dashboard hydration and weather refresh so the
+  // in-flight GET coalescer can share the same request instead of fetching twice.
+  const buildBriefingUrl = () => {
+    const params = new URLSearchParams();
+    params.set('user_name', userName || 'Operator');
+    if (userCoords?.latitude != null && userCoords?.longitude != null) {
+      params.set('lat', String(userCoords.latitude));
+      params.set('lon', String(userCoords.longitude));
+    }
+    if (userLocationName?.trim()) params.set('city', userLocationName.trim());
+    return `${API_BASE}/briefing?${params.toString()}`;
+  };
+
   // Fetch all backend data and check due reminders with Multi-Tenant Isolation
   const refreshAllData = async (opts = {}) => {
     // If prompt is actively generating, skip to prevent screen flicker or uncommitted history overwriting
@@ -3617,9 +3634,8 @@ export default function App() {
       const currentEmail = userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('aether_user_email') : '') || '';
       const authHeaders = {}; // apiFetch attaches the verified Supabase Bearer token
       const curSessionId = activeSessionIdRef.current || 'default';
-      const briefLocParams = `&lat=${userCoords?.latitude || ''}&lon=${userCoords?.longitude || ''}&city=${encodeURIComponent(userLocationName || '')}`;
       const [resBrief, resChat, resSessions, resTasks, resFin, resFinSum, resMem, resAudit, resNews, resDue, resCricket] = await Promise.all([
-        apiFetch(`${API_BASE}/briefing?user_name=${encodeURIComponent(userName || 'Operator')}${briefLocParams}`, { headers: authHeaders }),
+        apiFetch(buildBriefingUrl(), { headers: authHeaders }),
         opts.skipChatHistory ? Promise.resolve({ ok: false }) : apiFetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(curSessionId)}&limit=60`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/chat/sessions?limit=50&offset=0`, { headers: authHeaders }),
         apiFetch(`${API_BASE}/tasks?limit=50&offset=0`, { headers: authHeaders }),
@@ -4126,9 +4142,45 @@ export default function App() {
   };
 
   useEffect(() => {
-    refreshAllData({ skipChatHistory: true });
-    const interval = setInterval(() => refreshAllData({ skipChatHistory: true }), serverOnline ? 15000 : 3500);
-    return () => clearInterval(interval);
+    let disposed = false;
+
+    const poll = async () => {
+      if (disposed || document.visibilityState !== 'visible') return;
+
+      if (serverOnline) {
+        await refreshAllData({ skipChatHistory: true });
+        return;
+      }
+
+      // While offline, probe only health; avoid fanning out dashboard/database reads.
+      try {
+        const response = await fetch(`${API_BASE}/health`, {
+          method: 'GET',
+          cache: 'no-store',
+          signal: AbortSignal.timeout(10000)
+        });
+        if (!response.ok) throw new Error(`Health check failed (${response.status})`);
+        if (!disposed) {
+          setServerOnline(true);
+          await refreshAllData({ skipChatHistory: true });
+        }
+      } catch {
+        if (!disposed) setServerOnline(false);
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, serverOnline ? 60000 : 15000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') poll();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [serverOnline]);
 
   // Mobile Touch-Driven Pull to Refresh
@@ -6061,13 +6113,7 @@ export default function App() {
     setWeatherLoading(true);
     setWeatherError('');
     try {
-      const params = new URLSearchParams({
-        user_name: userName || 'Operator',
-        lat: userCoords?.latitude != null ? String(userCoords.latitude) : '',
-        lon: userCoords?.longitude != null ? String(userCoords.longitude) : '',
-        city: userLocationName || ''
-      });
-      const response = await apiFetch(`${API_BASE}/briefing?${params.toString()}`);
+      const response = await apiFetch(buildBriefingUrl());
       if (!response.ok) throw new Error(`Weather request failed (${response.status})`);
       const data = await response.json();
       if (!data?.weather || data.weather.temp == null || data.weather.status === 'unavailable') {
