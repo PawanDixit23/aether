@@ -2267,7 +2267,7 @@ export const FinanceModal = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              padding: isMobile ? 0 : '16px',
+              padding: isMobile ? '12px' : '16px',
               animation: 'fadeIn 0.2s ease-out'
             }}
           >
@@ -2275,10 +2275,10 @@ export const FinanceModal = ({
               className="aether-edge-modal-container"
               style={{
                 background: 'linear-gradient(180deg, #0e172a 0%, #070d19 100%)',
-                border: isMobile ? 'none' : '1px solid rgba(56, 189, 248, 0.35)',
-                borderRadius: isMobile ? 0 : '24px',
-                width: '100%',
-                maxWidth: isMobile ? '100%' : '420px',
+                border: '1px solid rgba(56, 189, 248, 0.28)',
+                borderRadius: isMobile ? '20px' : '24px',
+                width: isMobile ? 'calc(100% - 24px)' : '100%',
+                maxWidth: '420px',
                 height: 'auto',
                 minHeight: 0,
                 maxHeight: isMobile ? '76dvh' : '84vh',
