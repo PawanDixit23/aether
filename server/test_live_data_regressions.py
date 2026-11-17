@@ -42,6 +42,8 @@ class LiveDataRegressionTests(unittest.TestCase):
         ai_engine.WEATHER_COORD_CACHE.clear()
         ai_engine.NEWS_CACHE["all"] = {"data": [], "timestamp": 0}
         ai_engine.NEWS_CACHE["sports"] = {"data": [], "timestamp": 0}
+        ai_engine.NEWS_FAILURE_STATE["all"] = {"retry_at": 0.0, "failures": 0}
+        ai_engine.NEWS_FAILURE_STATE["sports"] = {"retry_at": 0.0, "failures": 0}
         ai_engine._cricket_cache.update({"data": [], "timestamp": 0})
         ai_engine._scorecard_cache.clear()
         ai_engine._match_league_map.clear()
@@ -100,6 +102,25 @@ class LiveDataRegressionTests(unittest.TestCase):
         with patch.object(ai_engine.urllib.request, "urlopen", side_effect=URLError("offline")):
             results = ai_engine.get_structured_news(limit=5)
         self.assertEqual(results, [])
+
+    def test_news_provider_failure_enters_cooldown_instead_of_retrying_every_poll(self):
+        with patch.object(ai_engine.urllib.request, "urlopen", side_effect=URLError("HTTP Error 429: Too Many Requests")) as fetch:
+            first = ai_engine.get_structured_news(limit=4)
+            second = ai_engine.get_structured_news(limit=4)
+        self.assertEqual(first, [])
+        self.assertEqual(second, [])
+        fetch.assert_called_once()
+        self.assertGreater(ai_engine.NEWS_FAILURE_STATE["all"]["retry_at"], 0)
+
+    def test_news_provider_cooldown_serves_recent_stale_articles(self):
+        import time
+        stale_articles = [{"title": "Previously verified headline", "source": "Google News", "link": "https://example.com", "pubDate": ""}]
+        ai_engine.NEWS_CACHE["all"] = {"data": stale_articles, "timestamp": time.time() - 60}
+        ai_engine.NEWS_FAILURE_STATE["all"] = {"retry_at": time.time() + 120, "failures": 1}
+        with patch.object(ai_engine.urllib.request, "urlopen") as fetch:
+            results = ai_engine.get_structured_news(limit=4)
+        self.assertEqual(results, stale_articles)
+        fetch.assert_not_called()
 
 
 
