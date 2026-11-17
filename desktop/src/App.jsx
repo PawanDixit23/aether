@@ -3961,7 +3961,7 @@ export default function App() {
         setMemoryTotalCount(Number.isFinite(serverMemoryTotal) && serverMemoryTotal >= 0 ? serverMemoryTotal : null);
         // The total count is a stronger signal than a stale/inconsistent page flag.
         // Never hide pagination while the server reports more records than loaded.
-        setMemoryHasMore(totalProvesMore || serverProvesMore || (hasMoreHeader == null && pageLength === 50));
+        setMemoryHasMore(totalProvesMore || serverProvesMore || pageLength === 50);
         setMemoryNextCursor(prev => {
           const firstPageCursor = pageLength ? loadedMemories[pageLength - 1].id : null;
           return prev == null ? firstPageCursor : (firstPageCursor == null ? prev : Math.min(Number(prev), Number(firstPageCursor)));
@@ -5853,7 +5853,7 @@ export default function App() {
       }
       // Keep the Load More action available whenever total count proves that
       // records remain, even if X-Has-More is false or inconsistent.
-      setMemoryHasMore(totalProvesMore || serverProvesMore || (hasMoreHeader == null && pageLength === 50));
+      setMemoryHasMore(totalProvesMore || serverProvesMore || pageLength === 50);
       const responseCursor = Number(resp.headers?.get?.('X-Next-Cursor'));
       if (Number.isFinite(responseCursor) && responseCursor > 0) {
         setMemoryNextCursor(responseCursor);
