@@ -1322,3 +1322,22 @@ input, textarea, select {
     overscroll-behavior: contain;
   }
 }
+
+
+/* Keep the Audit Trail controls below the Android status bar without forcing the date field onto its own row. */
+@media (max-width: 600px) {
+  .aether-audit-overlay {
+    padding-top: max(18px, calc(env(safe-area-inset-top, 0px) + 12px)) !important;
+  }
+  .aether-audit-date-control {
+    flex: 0 1 auto !important;
+    width: auto !important;
+    max-width: 150px;
+  }
+  .aether-audit-date-control input[type="date"] {
+    width: 132px !important;
+    max-width: 132px !important;
+    flex: 0 1 132px !important;
+    font-size: 14px !important;
+  }
+}
