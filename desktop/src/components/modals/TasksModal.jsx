@@ -759,7 +759,7 @@ export const TasksModal = ({
   if (!isOpen) return null;
 
   return (
-    <div style={{
+    <div className="aether-feature-overlay aether-tasks-overlay" style={{
       position: 'fixed',
       inset: 0,
       background: 'rgba(10, 15, 29, 0.94)',
@@ -771,7 +771,7 @@ export const TasksModal = ({
       justifyContent: 'center',
       padding: isMobile ? 0 : '12px'
     }}>
-      <div style={{
+      <div className="aether-feature-panel aether-tasks-panel" style={{
         background: '#0F172A',
         border: isMobile ? 'none' : '1px solid rgba(255, 255, 255, 0.1)',
         borderRadius: isMobile ? 0 : '24px',
