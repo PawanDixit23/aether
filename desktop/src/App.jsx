@@ -9219,7 +9219,7 @@ export default function App() {
 
           {/* TAB 2: TODAY'S EXECUTIVE AGENDA */}
           {activeTab === 'today' && (
-            <div style={{ maxWidth: '640px', margin: '0 auto', width: '100%', padding: '20px' }}>
+            <div className="today-agenda-container" style={{ maxWidth: '640px', margin: '0 auto', width: '100%', padding: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                 <h1 style={{ fontFamily: 'Newsreader', fontSize: '1.8rem', fontWeight: 600, color: '#ffffff' }}>
                   Today's Agenda
