@@ -1682,8 +1682,10 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, name, provider: 'google' })
       });
+      return true;
     } catch (err) {
       console.error('Failed to log auth event:', err);
+      return false;
     }
   };
 
@@ -1806,7 +1808,9 @@ export default function App() {
           const recordedKey = `aether_auth_recorded:${loginSessionKey}`;
           if (localStorage.getItem(recordedKey) !== 'true') {
             localStorage.setItem(recordedKey, 'true');
-            recordAuthEvent(gEmail, gName).catch(() => localStorage.removeItem(recordedKey));
+            recordAuthEvent(gEmail, gName).then(recorded => {
+              if (!recorded) localStorage.removeItem(recordedKey);
+            });
           }
         }
 
@@ -4160,10 +4164,7 @@ export default function App() {
           signal: AbortSignal.timeout(10000)
         });
         if (!response.ok) throw new Error(`Health check failed (${response.status})`);
-        if (!disposed) {
-          setServerOnline(true);
-          await refreshAllData({ skipChatHistory: true });
-        }
+        if (!disposed) setServerOnline(true);
       } catch {
         if (!disposed) setServerOnline(false);
       }
