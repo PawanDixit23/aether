@@ -5823,12 +5823,19 @@ export default function App() {
     }
   };
 
+  // Derive pagination visibility from the authoritative total and currently rendered rows.
+  // This avoids hiding Load More if overlapping refreshes leave the boolean flag stale.
+  const memoryCanLoadMore = Number.isFinite(memoryTotalCount)
+    ? memoryTotalCount > memories.length
+    : (memoryHasMore || memories.length >= 50);
+
   const handleLoadMoreMemories = async () => {
-    if (memoryLoadingMore || !memoryHasMore) return;
+    if (memoryLoadingMore || !memoryCanLoadMore) return;
     setMemoryLoadingMore(true);
     try {
-      if (memoryNextCursor == null) return;
-      const resp = await apiFetch(`${API_BASE}/memory?limit=50&before_id=${encodeURIComponent(memoryNextCursor)}`, {
+      const cursor = memoryNextCursor ?? memories[memories.length - 1]?.id;
+      if (cursor == null) return;
+      const resp = await apiFetch(`${API_BASE}/memory?limit=50&before_id=${encodeURIComponent(cursor)}`, {
         headers: { /* apiFetch attaches the verified Supabase Bearer token */ }
       });
       if (!resp.ok) throw new Error(`Memory page request failed (${resp.status})`);
@@ -9786,7 +9793,7 @@ export default function App() {
                 </button>
               </div>
 
-              {memoryHasMore && (
+              {memoryCanLoadMore && (
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
                   <button
                     type="button"
@@ -9836,7 +9843,7 @@ export default function App() {
                     </div>
                   ))
                 )}
-                {memoryHasMore && (
+                {memoryCanLoadMore && (
                   <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '16px' }}>
                     <button
                       type="button"
