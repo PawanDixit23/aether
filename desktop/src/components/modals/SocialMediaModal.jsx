@@ -590,7 +590,7 @@ export const SocialMediaModal = ({
   };
 
   return (
-    <div style={{
+    <div className="aether-feature-overlay aether-social-overlay" style={{
       position: 'fixed',
       inset: 0,
       zIndex: 99999,
@@ -601,7 +601,7 @@ export const SocialMediaModal = ({
       justifyContent: 'center',
       padding: '16px'
     }}>
-      <div style={{
+      <div className="aether-feature-panel aether-social-panel" style={{
         width: '100%',
         maxWidth: '960px',
         maxHeight: '92vh',
