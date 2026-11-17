@@ -1216,3 +1216,51 @@ input, textarea, select {
   .memory-vault-add-form { grid-template-columns: minmax(0,1fr) auto !important; }
   .memory-vault-add-form > button:first-child { grid-column: 1 / -1 !important; justify-self: start !important; }
 }
+
+
+/* Aether UI v2 — agenda and responsive content refinements. */
+.today-agenda-container {
+  width: min(100%, 780px) !important;
+  max-width: 780px !important;
+  padding: 18px 20px 40px !important;
+  margin-inline: auto !important;
+  color: var(--ui-fg);
+}
+.today-agenda-container > h1,
+.today-agenda-container h1,
+.today-agenda-container h2 { letter-spacing: -.04em; }
+.today-agenda-container button { box-shadow: none !important; }
+.today-agenda-container input,
+.today-agenda-container textarea,
+.today-agenda-container select {
+  background: #0a1420 !important;
+  border-color: var(--ui-line-strong) !important;
+}
+.aether-social-panel > div:first-child {
+  background: rgba(17,27,40,.8) !important;
+  border-bottom: 1px solid var(--ui-line) !important;
+  padding: 14px 18px !important;
+}
+.aether-social-panel > div:nth-child(2) {
+  background: rgba(255,255,255,.02) !important;
+  border-bottom: 1px solid var(--ui-line) !important;
+}
+.aether-social-panel > div:last-child { scrollbar-color: rgba(114,200,216,.28) transparent; }
+.aether-briefing-panel > div:first-child,
+.aether-workspace-panel > div:first-child {
+  background: rgba(255,255,255,.02) !important;
+  border-bottom: 1px solid var(--ui-line) !important;
+}
+.aether-tasks-panel > div:first-child {
+  background: rgba(255,255,255,.02) !important;
+}
+.aether-feature-panel button,
+.aether-edge-modal-container button {
+  min-height: 34px;
+}
+@media (max-width: 600px) {
+  .today-agenda-container {
+    padding: 12px 14px max(28px, env(safe-area-inset-bottom)) !important;
+  }
+  .aether-social-panel > div:first-child { padding: 12px 14px !important; }
+}
