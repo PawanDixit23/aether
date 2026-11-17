@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { apiFetch } from '../../supabase';
 import { 
   Wallet, 
@@ -2249,7 +2250,7 @@ export const FinanceModal = ({
         </div>
 
         {/* Day Breakdown Drawer / Popup on Day Click */}
-        {selectedDayDetail && (
+        {selectedDayDetail && typeof document !== 'undefined' && createPortal((
           <div 
             className="aether-edge-modal-overlay"
             style={{
@@ -2266,7 +2267,7 @@ export const FinanceModal = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              padding: isMobile ? 0 : '16px',
+              padding: isMobile ? '12px' : '16px',
               animation: 'fadeIn 0.2s ease-out'
             }}
           >
@@ -2274,13 +2275,13 @@ export const FinanceModal = ({
               className="aether-edge-modal-container"
               style={{
                 background: 'linear-gradient(180deg, #0e172a 0%, #070d19 100%)',
-                border: isMobile ? 'none' : '1px solid rgba(56, 189, 248, 0.35)',
-                borderRadius: isMobile ? 0 : '24px',
-                width: '100%',
-                maxWidth: isMobile ? '100%' : '420px',
-                height: isMobile ? '100dvh' : 'auto',
-                minHeight: isMobile ? '100dvh' : 0,
-                maxHeight: isMobile ? '100dvh' : '84vh',
+                border: '1px solid rgba(56, 189, 248, 0.28)',
+                borderRadius: isMobile ? '20px' : '24px',
+                width: isMobile ? 'calc(100% - 24px)' : '100%',
+                maxWidth: '420px',
+                height: 'auto',
+                minHeight: 0,
+                maxHeight: isMobile ? '76dvh' : '84vh',
                 boxSizing: 'border-box',
                 display: 'flex',
                 flexDirection: 'column',
@@ -2293,7 +2294,7 @@ export const FinanceModal = ({
                 className="aether-edge-header"
                 style={{
                   padding: isMobile ? '12px 14px' : '16px 20px',
-                  paddingTop: isMobile ? 'max(52px, calc(env(safe-area-inset-top, 0px) + 16px))' : '16px',
+                  paddingTop: isMobile ? '14px' : '16px',
                   borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
                   display: 'flex',
                   alignItems: 'center',
@@ -2332,7 +2333,7 @@ export const FinanceModal = ({
               </div>
 
               {/* Transactions List */}
-              <div style={{ padding: '16px 18px', overflowY: 'auto', flex: '1 1 auto', minHeight: 0, overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ padding: '14px 16px', overflowY: 'auto', flex: '0 1 auto', minHeight: 0, maxHeight: isMobile ? '48dvh' : '52vh', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {selectedDayDetail.transactions.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '36px 16px', color: '#94a3b8' }}>
                     <div style={{ fontSize: '2.2rem', marginBottom: '8px' }}>🎉</div>
@@ -2447,7 +2448,7 @@ export const FinanceModal = ({
               </div>
 
               {/* Footer */}
-              <div style={{ padding: '12px 20px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', display: 'flex', justifyContent: 'flex-end', background: 'rgba(0, 0, 0, 0.2)', flexShrink: 0, paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))' }}>
+              <div style={{ padding: '12px 20px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', display: 'flex', justifyContent: 'flex-end', background: 'rgba(0, 0, 0, 0.2)', flexShrink: 0, paddingBottom: '12px' }}>
                 <button
                   type="button"
                   onClick={() => setSelectedDayDetail(null)}
@@ -2467,7 +2468,7 @@ export const FinanceModal = ({
               </div>
             </div>
           </div>
-        )}
+        ), document.body)}
 
       </div>
     </div>
