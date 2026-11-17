@@ -1493,6 +1493,7 @@ async def _execute_quick_capture(
             except Exception:
                 pass
         record = FinancialRecord(
+            owner_user_id=owner_user_id,
             user_email=eff_email,
             type="expense",
             category=data.get("category", "general"),
