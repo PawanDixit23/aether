@@ -119,8 +119,8 @@ export const AuditModal = ({
   if (!isOpen) return null;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-      <div style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '20px 22px', width: '100%', maxWidth: '520px', maxHeight: '88vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+    <div className="aether-audit-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)', zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', boxSizing: 'border-box' }}>
+      <div className="aether-audit-panel" style={{ background: '#0d1527', border: '1px solid rgba(255, 255, 255, 0.15)', borderRadius: '24px', padding: '20px 22px', width: '100%', maxWidth: '520px', maxHeight: '88vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', boxSizing: 'border-box', minHeight: 0 }}>
         
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexShrink: 0 }}>
@@ -169,7 +169,7 @@ export const AuditModal = ({
             </div>
 
             {/* Custom Date Picker */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255, 255, 255, 0.06)', border: `1px solid ${dateFilter === 'custom' ? '#38bdf8' : 'rgba(255, 255, 255, 0.15)'}`, borderRadius: '8px', padding: '3px 8px' }}>
+            <div className="aether-audit-date-control" style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255, 255, 255, 0.06)', border: `1px solid ${dateFilter === 'custom' ? '#38bdf8' : 'rgba(255, 255, 255, 0.15)'}`, borderRadius: '8px', padding: '3px 8px', minWidth: 0, boxSizing: 'border-box' }}>
               <Calendar size={13} color={dateFilter === 'custom' ? '#38bdf8' : '#94a3b8'} />
               <input
                 type="date"
@@ -186,7 +186,12 @@ export const AuditModal = ({
                   fontSize: '0.74rem',
                   outline: 'none',
                   colorScheme: 'dark',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  appearance: 'none',
+                  WebkitAppearance: 'none',
+                  boxShadow: 'none',
+                  minWidth: 0,
+                  width: '100%'
                 }}
               />
               {dateFilter === 'custom' && (

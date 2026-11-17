@@ -1264,3 +1264,61 @@ input, textarea, select {
   }
   .aether-social-panel > div:first-child { padding: 12px 14px !important; }
 }
+
+
+/* Mobile polish: native date inputs, day-detail sheet sizing, and long-form chat readability. */
+.aether-audit-date-control {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+.aether-audit-date-control input[type="date"] {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 0 2px;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  color: #e2e8f0;
+  color-scheme: dark;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.aether-audit-date-control input[type="date"]:focus,
+.aether-audit-date-control input[type="date"]:focus-visible {
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+@media (max-width: 600px) {
+  .aether-audit-overlay {
+    padding: max(8px, env(safe-area-inset-top, 0px)) 8px max(8px, env(safe-area-inset-bottom, 0px)) !important;
+    align-items: center;
+  }
+  .aether-audit-panel {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 16px) !important;
+    padding: 16px 14px !important;
+    border-radius: 20px !important;
+    overflow: hidden !important;
+  }
+  .aether-audit-date-control {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+  .aether-audit-date-control input[type="date"] {
+    width: 100%;
+    font-size: 16px !important;
+  }
+  .gemini-msg-assistant {
+    line-height: 1.5 !important;
+  }
+  .gemini-msg-assistant > div {
+    overflow-wrap: anywhere;
+  }
+  .aether-edge-modal-overlay {
+    overscroll-behavior: contain;
+  }
+}

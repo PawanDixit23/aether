@@ -29,14 +29,14 @@ export const FormattedMessage = ({ text }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
       {lines.map((line, idx) => {
-        if (!line.trim()) return <div key={idx} style={{ height: '4px' }} />;
+        if (!line.trim()) return <div key={idx} aria-hidden="true" style={{ height: '8px', flexShrink: 0 }} />;
 
         // Match markdown links [title](url), bold **text**, or standalone (https://...) / https://...
         const regex = /(\[[^\]]+\]\(https?:\/\/[^\s)]+\)|\*\*.*?\*\*|\(?https?:\/\/[^\s)]+\)?)/g;
         const parts = line.split(regex);
 
         return (
-          <div key={idx} style={{ lineHeight: '1.58', wordBreak: 'break-word' }}>
+          <div key={idx} style={{ lineHeight: '1.48', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
             {parts.map((part, pIdx) => {
               if (!part) return null;
 

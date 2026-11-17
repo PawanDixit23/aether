@@ -2255,6 +2255,10 @@ export const FinanceModal = ({
             style={{
               position: 'fixed',
               inset: 0,
+              width: '100%',
+              height: '100dvh',
+              minHeight: '100dvh',
+              boxSizing: 'border-box',
               background: 'rgba(0, 0, 0, 0.88)',
               backdropFilter: 'blur(12px)',
               WebkitBackdropFilter: 'blur(12px)',
@@ -2275,7 +2279,9 @@ export const FinanceModal = ({
                 width: '100%',
                 maxWidth: isMobile ? '100%' : '420px',
                 height: isMobile ? '100dvh' : 'auto',
+                minHeight: isMobile ? '100dvh' : 0,
                 maxHeight: isMobile ? '100dvh' : '84vh',
+                boxSizing: 'border-box',
                 display: 'flex',
                 flexDirection: 'column',
                 boxShadow: isMobile ? 'none' : '0 25px 70px rgba(0, 0, 0, 0.9), 0 0 30px rgba(56, 189, 248, 0.2)',
@@ -2326,7 +2332,7 @@ export const FinanceModal = ({
               </div>
 
               {/* Transactions List */}
-              <div style={{ padding: '16px 18px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ padding: '16px 18px', overflowY: 'auto', flex: '1 1 auto', minHeight: 0, overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {selectedDayDetail.transactions.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '36px 16px', color: '#94a3b8' }}>
                     <div style={{ fontSize: '2.2rem', marginBottom: '8px' }}>🎉</div>
@@ -2441,7 +2447,7 @@ export const FinanceModal = ({
               </div>
 
               {/* Footer */}
-              <div style={{ padding: '12px 20px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', display: 'flex', justifyContent: 'flex-end', background: 'rgba(0, 0, 0, 0.2)' }}>
+              <div style={{ padding: '12px 20px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', display: 'flex', justifyContent: 'flex-end', background: 'rgba(0, 0, 0, 0.2)', flexShrink: 0, paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))' }}>
                 <button
                   type="button"
                   onClick={() => setSelectedDayDetail(null)}
