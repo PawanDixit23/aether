@@ -1145,3 +1145,74 @@ input, textarea, select {
     transition-duration: .01ms !important;
   }
 }
+
+
+/* Aether UI v2 feature-modal consistency. */
+.aether-feature-overlay {
+  background: rgba(3,7,13,.82) !important;
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+.aether-feature-panel {
+  color: var(--ui-fg) !important;
+  background: #0d1723 !important;
+  border: 1px solid var(--ui-line) !important;
+  border-radius: 20px !important;
+  box-shadow: var(--ui-elevation) !important;
+}
+.aether-feature-panel > div:first-child {
+  background: transparent !important;
+  border-bottom-color: var(--ui-line) !important;
+}
+.aether-tasks-panel { max-width: 680px !important; }
+.aether-social-panel { max-width: 980px !important; }
+.aether-briefing-panel, .aether-workspace-panel { max-width: 760px !important; }
+.aether-feature-panel input,
+.aether-feature-panel textarea,
+.aether-feature-panel select {
+  background: #0a1420 !important;
+  border: 1px solid var(--ui-line-strong) !important;
+  border-radius: 11px !important;
+  color: var(--ui-fg) !important;
+}
+.aether-feature-panel button {
+  box-shadow: none !important;
+}
+.aether-feature-panel button:hover {
+  filter: brightness(1.08);
+}
+.aether-feature-panel h1,
+.aether-feature-panel h2,
+.aether-feature-panel h3,
+.aether-feature-panel h4 {
+  letter-spacing: -.025em;
+}
+.aether-live-overlay {
+  background: #080d15 !important;
+}
+@media (max-width: 600px) {
+  .aether-feature-overlay {
+    padding: 0 !important;
+    align-items: stretch !important;
+  }
+  .aether-feature-panel {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 100dvh !important;
+    height: 100dvh !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    padding-bottom: max(14px, env(safe-area-inset-bottom)) !important;
+    box-shadow: none !important;
+  }
+  .memory-vault-sync { flex-wrap: nowrap !important; }
+  .memory-vault-sync > div:first-child { flex: 1 1 auto !important; min-width: 0 !important; }
+  .memory-vault-sync > div:last-child { width: auto !important; flex-shrink: 0 !important; }
+  .memory-vault-sync button { padding: 6px 9px !important; }
+}
+@media (max-width: 390px) {
+  .memory-vault-sync > div:last-child button:first-child { display: none !important; }
+  .memory-vault-header > div:last-child { gap: 4px !important; }
+  .memory-vault-add-form { grid-template-columns: minmax(0,1fr) auto !important; }
+  .memory-vault-add-form > button:first-child { grid-column: 1 / -1 !important; justify-self: start !important; }
+}
