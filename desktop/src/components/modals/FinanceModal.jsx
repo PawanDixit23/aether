@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { apiFetch } from '../../supabase';
 import { 
   Wallet, 
@@ -2249,7 +2250,7 @@ export const FinanceModal = ({
         </div>
 
         {/* Day Breakdown Drawer / Popup on Day Click */}
-        {selectedDayDetail && (
+        {selectedDayDetail && typeof document !== 'undefined' && createPortal((
           <div 
             className="aether-edge-modal-overlay"
             style={{
@@ -2278,9 +2279,9 @@ export const FinanceModal = ({
                 borderRadius: isMobile ? 0 : '24px',
                 width: '100%',
                 maxWidth: isMobile ? '100%' : '420px',
-                height: isMobile ? '100dvh' : 'auto',
-                minHeight: isMobile ? '100dvh' : 0,
-                maxHeight: isMobile ? '100dvh' : '84vh',
+                height: 'auto',
+                minHeight: 0,
+                maxHeight: isMobile ? '76dvh' : '84vh',
                 boxSizing: 'border-box',
                 display: 'flex',
                 flexDirection: 'column',
@@ -2332,7 +2333,7 @@ export const FinanceModal = ({
               </div>
 
               {/* Transactions List */}
-              <div style={{ padding: '16px 18px', overflowY: 'auto', flex: '1 1 auto', minHeight: 0, overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ padding: '14px 16px', overflowY: 'auto', flex: '0 1 auto', minHeight: 0, maxHeight: isMobile ? '48dvh' : '52vh', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {selectedDayDetail.transactions.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '36px 16px', color: '#94a3b8' }}>
                     <div style={{ fontSize: '2.2rem', marginBottom: '8px' }}>🎉</div>
@@ -2467,7 +2468,7 @@ export const FinanceModal = ({
               </div>
             </div>
           </div>
-        )}
+        ), document.body)}
 
       </div>
     </div>
