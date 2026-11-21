@@ -120,7 +120,9 @@ jobs:
             echo "⚠️  Push-check returned 401 Unauthorized — AETHER_WORKER_TOKEN may be out of sync with Render."
             echo "   Update the token in both Render Dashboard → Environment and GitHub → Secrets."
           elif [ "$PUSH_STATUS" = "503" ]; then
-            echo "⚠️  Push-check returned 503 — server starting up, will retry next cycle."
+            echo "⚠️  Push-check returned 503 — AETHER_WORKER_TOKEN may not yet be loaded on the server."
+            echo "   If you just added the env variable on Render, trigger a Manual Deploy on the Render Dashboard."
+            echo "   This is not a workflow failure — next cycle will retry automatically."
           else
             echo "⚠️  Push-check returned HTTP $PUSH_STATUS — handled gracefully, no action needed."
           fi
