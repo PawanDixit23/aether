@@ -1,13 +1,21 @@
 name: ⚡ Aether Keep-Alive & Push Notifications
 
 # Render free tier sleeps after 15 min inactivity.
-# यह workflow हर 10 मिनट पर server को जगाए रखता है
+# यह workflow हर 9 मिनट पर server को जगाए रखता है
 # और due reminders के लिए Web Push notifications भेजता है।
+#
+# DESIGN PRINCIPLE — Never fail the workflow run:
+#   • Network errors, cold starts, missing secrets, or non-200 responses are
+#     all WARNINGS — they must not send failure email to the repository owner.
+#   • The keep-alive job is best-effort infrastructure glue, not a test suite.
+#     Real tests run in ci.yml on push/PR.
+#   • `continue-on-error: true` is set on every step so a flaky step never
+#     blocks the rest of the cycle or marks the run failed.
 
 on:
   schedule:
-    - cron: '*/9 * * * *'   # हर 9 मिनट पर पिंग (Render 15 min स्लीप से हमेशा पहले)
-  workflow_dispatch:        # Manual trigger भी कर सकते हैं
+    - cron: '*/9 * * * *'   # हर 9 मिनट पर पिंग (Render 15-min sleep से हमेशा पहले)
+  workflow_dispatch:          # Manual trigger भी supported है
 
 jobs:
   keep-alive-and-push:
@@ -15,51 +23,115 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
+    # ── Job-level fail-safe ──────────────────────────────────────────────────
+    # Even if a step exits non-zero, the job is reported as SUCCESS so that
+    # GitHub does NOT send a failure-notification email.
+    # Individual step outcomes are logged clearly (✅ / ⚠️).
+    continue-on-error: true
+
     steps:
+      # ── Step 1: Wake server ────────────────────────────────────────────────
       - name: 🏓 Ping Aether Server (Keep-Alive)
+        continue-on-error: true
         run: |
           echo "⚡ Pinging Aether server to prevent cold start..."
-          # Render free tier cold start can take ~50 seconds.
-          # Allow 65s timeout and gracefully trap errors so GitHub Actions doesn't fail with false alarms.
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "User-Agent: AetherPingBot/2.0 (KeepAlive)" \
+          echo "   URL : https://aether-kjrj.onrender.com/api/health"
+          echo "   Time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+          # Render free-tier cold start can take ~50 s.
+          # --retry 3 with 5-second delay = up to ~75 s before giving up.
+          STATUS=$(curl -s -o /tmp/health_response.json \
+            -w "%{http_code}" \
+            -H "User-Agent: AetherPingBot/2.1 (KeepAlive)" \
             --connect-timeout 20 \
-            --max-time 65 \
-            --retry 2 \
+            --max-time 70 \
+            --retry 3 \
             --retry-delay 5 \
-            "https://aether-kjrj.onrender.com/api/health" || echo "000")
-          echo "Server response status: $STATUS"
+            --retry-all-errors \
+            "https://aether-kjrj.onrender.com/api/health" 2>/dev/null || echo "000")
+
+          echo "Server response HTTP status: $STATUS"
+
+          if [ -s /tmp/health_response.json ]; then
+            echo "Response body:"
+            cat /tmp/health_response.json || true
+          fi
+
           if [ "$STATUS" = "200" ]; then
             echo "✅ Server is awake and healthy!"
           elif [ "$STATUS" = "000" ]; then
-            echo "⚠️ Server ping timed out / waking up from cold sleep (handled gracefully)"
+            echo "⚠️  Server ping timed out — Render is waking up from cold sleep (this is normal, not an error)."
+          elif [ "$STATUS" = "503" ]; then
+            echo "⚠️  Server returned 503 (starting up) — will be ready by next ping cycle."
           else
-            echo "⚠️ Server returned $STATUS — waking up from sleep"
+            echo "⚠️  Server returned HTTP $STATUS — waking up from sleep (handled gracefully)."
           fi
 
+      # ── Step 2: Push notifications (optional — only if secret is set) ──────
       - name: 🔔 Trigger Due Reminder Push Notifications
+        continue-on-error: true
         env:
           AETHER_WORKER_TOKEN: ${{ secrets.AETHER_WORKER_TOKEN }}
         run: |
+          # If the secret is not configured in GitHub → skip gracefully (no failure).
           if [ -z "$AETHER_WORKER_TOKEN" ]; then
-            echo "::error::AETHER_WORKER_TOKEN secret is required"
-            exit 1
+            echo "⚠️  AETHER_WORKER_TOKEN secret is not set in GitHub Actions secrets."
+            echo "   ℹ️  To enable push notifications, add AETHER_WORKER_TOKEN in:"
+            echo "       Repository → Settings → Secrets and variables → Actions → New repository secret"
+            echo "   ℹ️  Use the same value that is set in your Render environment variables."
+            echo "   Skipping push-check step — keep-alive ping above is still active."
+            exit 0   # Explicit 0 = success, not a failure
           fi
+
+          # Minimum length guard (< 32 chars = misconfigured, skip gracefully)
+          if [ "${#AETHER_WORKER_TOKEN}" -lt 32 ]; then
+            echo "⚠️  AETHER_WORKER_TOKEN is set but shorter than 32 characters — skipping push-check."
+            echo "   Please regenerate a secure token (e.g. openssl rand -hex 32) and update both"
+            echo "   Render environment variables and this GitHub secret."
+            exit 0
+          fi
+
           echo "🔔 Triggering push notifications for due reminders..."
-          PUSH_STATUS=$(curl -s -o /tmp/push_response.json -w "%{http_code}" \
+
+          PUSH_STATUS=$(curl -s \
+            -o /tmp/push_response.json \
+            -w "%{http_code}" \
             --connect-timeout 15 \
             --max-time 45 \
             --retry 1 \
+            --retry-delay 5 \
             -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $AETHER_WORKER_TOKEN" \
-            "https://aether-kjrj.onrender.com/api/reminders/push-check" || echo "000")
-          echo "Push check status: $PUSH_STATUS"
+            "https://aether-kjrj.onrender.com/api/reminders/push-check" 2>/dev/null || echo "000")
+
+          echo "Push-check HTTP status: $PUSH_STATUS"
+
           if [ -s /tmp/push_response.json ]; then
+            echo "Response body:"
             cat /tmp/push_response.json || true
           fi
 
-      - name: 📊 Log Status
+          if [ "$PUSH_STATUS" = "200" ]; then
+            echo "✅ Push notifications triggered successfully!"
+          elif [ "$PUSH_STATUS" = "000" ]; then
+            echo "⚠️  Push-check timed out (server waking up) — will retry on next cycle."
+          elif [ "$PUSH_STATUS" = "401" ]; then
+            echo "⚠️  Push-check returned 401 Unauthorized — AETHER_WORKER_TOKEN may be out of sync with Render."
+            echo "   Update the token in both Render Dashboard → Environment and GitHub → Secrets."
+          elif [ "$PUSH_STATUS" = "503" ]; then
+            echo "⚠️  Push-check returned 503 — server starting up, will retry next cycle."
+          else
+            echo "⚠️  Push-check returned HTTP $PUSH_STATUS — handled gracefully, no action needed."
+          fi
+
+      # ── Step 3: Summary ───────────────────────────────────────────────────
+      - name: 📊 Cycle Summary
+        continue-on-error: true
         run: |
-          echo "✅ Keep-alive cycle complete at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "Next ping in ~10 minutes"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅  Keep-alive cycle complete"
+          echo "    Timestamp : $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "    Server URL: https://aether-kjrj.onrender.com"
+          echo "    Next ping : ~9 minutes"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
